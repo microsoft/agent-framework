@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 import aiofiles
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with OpenAPI Tool Example
 
-This sample demonstrates usage of AzureAIClient with OpenAPI tools
+This sample demonstrates usage of AzureAIProjectAgentProvider with OpenAPI tools
 to call external APIs defined by OpenAPI specifications.
 
 Prerequisites:
@@ -29,7 +29,9 @@ async def main() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyOpenAPIAgent",
             instructions="""You are a helpful assistant that can use country APIs to provide information.
             Use the available OpenAPI tools to answer questions about countries, currencies, and demographics.""",
@@ -42,8 +44,8 @@ async def main() -> None:
                     "auth": {"type": "anonymous"},
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = "What is the name and population of the country that uses currency with abbreviation THB?"
         print(f"User: {query}")
         result = await agent.run(query)

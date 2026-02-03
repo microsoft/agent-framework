@@ -18,7 +18,8 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -130,7 +131,8 @@ async def stream_widget(
 
     yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -168,14 +170,14 @@ def get_weather(
     )
     return WeatherResponse(text, weather_data)
 
-
+@tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
     logger.info("Getting current UTC time")
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
-
+@tool(approval_mode="never_require")
 def show_city_selector() -> str:
     """Show an interactive city selector widget to the user.
 
@@ -289,8 +291,10 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             # Use the chat client directly for a quick, lightweight call
             response = await self.weather_agent.chat_client.get_response(
                 messages=title_prompt,
-                temperature=0.3,
-                max_tokens=20,
+                options={
+                    "temperature": 0.3,
+                    "max_tokens": 20,
+                },
             )
 
             if response.messages and response.messages[-1].text:
@@ -363,7 +367,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             agent_stream = self.weather_agent.run_stream(agent_messages)
 
             # Create an intercepting stream that extracts function results while passing through updates
-            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+            async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
                 nonlocal weather_data, show_city_selector
                 async for update in agent_stream:
                     # Check for function results in the update
@@ -460,7 +464,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             agent_stream = self.weather_agent.run_stream(agent_messages)
 
             # Create an intercepting stream that extracts function results while passing through updates
-            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+            async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
                 nonlocal weather_data
                 async for update in agent_stream:
                     # Check for function results in the update

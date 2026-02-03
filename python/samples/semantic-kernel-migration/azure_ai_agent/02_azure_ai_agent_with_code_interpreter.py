@@ -16,7 +16,7 @@ async def run_semantic_kernel() -> None:
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()
         # Register the hosted code interpreter tool with the remote agent.
-        definition = await client.agents.create_agent(
+        definition = await client.agents.as_agent(
             model=settings.model_deployment_name,
             name="Analyst",
             instructions="Use the code interpreter for numeric work.",
@@ -33,11 +33,14 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient, HostedCodeInterpreterTool
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Analyst",
-        instructions="Use the code interpreter for numeric work.",
-        tools=[HostedCodeInterpreterTool()],
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).as_agent(
+            name="Analyst",
+            instructions="Use the code interpreter for numeric work.",
+            tools=[HostedCodeInterpreterTool()],
+        ) as agent,
+    ):
         # HostedCodeInterpreterTool mirrors the built-in Azure AI capability.
         reply = await agent.run(
             "Use Python to compute 42 ** 2 and explain the result.",

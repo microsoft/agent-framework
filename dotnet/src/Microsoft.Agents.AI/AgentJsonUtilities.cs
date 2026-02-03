@@ -4,7 +4,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Agents.AI.Data;
 
 namespace Microsoft.Agents.AI;
 
@@ -66,7 +65,7 @@ internal static partial class AgentJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(ChatClientAgentSession.SessionState))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
     [JsonSerializable(typeof(ChatHistoryMemoryProvider.ChatHistoryMemoryProviderState))]
 

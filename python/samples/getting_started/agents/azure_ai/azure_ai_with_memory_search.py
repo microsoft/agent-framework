@@ -3,7 +3,7 @@ import asyncio
 import os
 import uuid
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MemoryStoreDefaultDefinition, MemoryStoreDefaultOptions
 from azure.identity.aio import AzureCliCredential
@@ -11,7 +11,7 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent with Memory Search Example
 
-This sample demonstrates usage of AzureAIClient with memory search capabilities
+This sample demonstrates usage of AzureAIProjectAgentProvider with memory search capabilities
 to retrieve relevant past user messages and maintain conversation context across sessions.
 It shows explicit memory store creation using Azure AI Projects client and agent creation
 using the Agent Framework.
@@ -46,18 +46,20 @@ async def main() -> None:
             )
             print(f"Created memory store: {memory_store.name} ({memory_store.id}): {memory_store.description}")
 
-        # Then, create the agent using Agent Framework
-        async with AzureAIClient(async_credential=credential).create_agent(
-            name="MyMemoryAgent",
-            instructions="""You are a helpful assistant that remembers past conversations.
-            Use the memory search tool to recall relevant information from previous interactions.""",
-            tools={
-                "type": "memory_search",
-                "memory_store_name": memory_store.name,
-                "scope": "user_123",
-                "update_delay": 1,  # Wait 1 second before updating memories (use higher value in production)
-            },
-        ) as agent:
+        # Then, create the agent using Agent Framework provider
+        async with AzureAIProjectAgentProvider(credential=credential) as provider:
+            agent = await provider.create_agent(
+                name="MyMemoryAgent",
+                instructions="""You are a helpful assistant that remembers past conversations.
+                Use the memory search tool to recall relevant information from previous interactions.""",
+                tools={
+                    "type": "memory_search",
+                    "memory_store_name": memory_store.name,
+                    "scope": "user_123",
+                    "update_delay": 1,  # Wait 1 second before updating memories (use higher value in production)
+                },
+            )
+
             # First interaction - establish some preferences
             print("=== First conversation ===")
             query1 = "I prefer dark roast coffee"

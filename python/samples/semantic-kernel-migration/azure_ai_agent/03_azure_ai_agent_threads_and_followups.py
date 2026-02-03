@@ -10,7 +10,7 @@ async def run_semantic_kernel() -> None:
 
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()
-        definition = await client.agents.create_agent(
+        definition = await client.agents.as_agent(
             model=settings.model_deployment_name,
             name="Planner",
             instructions="Track follow-up questions within the same thread.",
@@ -36,10 +36,13 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Planner",
-        instructions="Track follow-up questions within the same thread.",
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).as_agent(
+            name="Planner",
+            instructions="Track follow-up questions within the same thread.",
+        ) as agent,
+    ):
         thread = agent.get_new_thread()
         # AF threads are explicit and can be serialized for external storage.
         first = await agent.run("Outline the onboarding checklist.", thread=thread)

@@ -7,11 +7,10 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import tool
+from agent_framework.azure import AzureAIClient
 from agent_framework.observability import get_tracer
-from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -30,7 +29,8 @@ for this sample to work.
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
 dotenv.load_dotenv()
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -40,36 +40,16 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def setup_azure_ai_observability(
-    project_client: AIProjectClient, enable_sensitive_data: bool | None = None
-) -> None:
-    """Use this method to setup tracing in your Azure AI Project.
-
-    This will take the connection string from the AIProjectClient.
-    It will override any connection string that is set in the environment variables.
-    It will disable any OTLP endpoint that might have been set.
-    """
-    try:
-        conn_string = await project_client.telemetry.get_application_insights_connection_string()
-    except ResourceNotFoundError:
-        print("No Application Insights connection string found for the Azure AI Project.")
-        return
-    from agent_framework.observability import setup_observability
-
-    setup_observability(applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data)
-
-
 async def main():
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-        AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
-        AzureAIAgentClient(agents_client=agents_client) as client,
+        AzureAIClient(project_client=project_client) as client,
     ):
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.
         # This will override any existing configuration.
-        await setup_azure_ai_observability(project_client)
+        await client.configure_azure_monitor(enable_live_metrics=True)
 
         questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
 
@@ -81,11 +61,12 @@ async def main():
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",
+                id="edvan-weather-agent",
             )
             thread = agent.get_new_thread()
             for question in questions:
-                print(f"User: {question}")
-                print(f"{agent.display_name}: ", end="")
+                print(f"\nUser: {question}")
+                print(f"{agent.name}: ", end="")
                 async for update in agent.run_stream(
                     question,
                     thread=thread,

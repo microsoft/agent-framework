@@ -5,10 +5,13 @@
 // WARNING: The Assistants API is deprecated and will be shut down.
 // For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration
 
+#pragma warning disable CS0618 // Type or member is obsolete - OpenAI Assistants API is deprecated but still used in this sample
+
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Assistants;
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
@@ -30,8 +33,8 @@ AIAgent agent2 = await assistantClient.CreateAIAgentAsync(
     instructions: JokerInstructions);
 
 // You can invoke the agent like any other AIAgent.
-AgentThread thread = agent1.GetNewThread();
-Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", thread));
+AgentSession session = await agent1.CreateSessionAsync();
+Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", session));
 
 // Cleanup for sample purposes.
 await assistantClient.DeleteAssistantAsync(agent1.Id);

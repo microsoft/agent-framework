@@ -15,10 +15,10 @@ namespace AgentWebChat.Web;
 /// </summary>
 internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentClientBase
 {
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
-        string? threadId = null,
+        string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         OpenAIClientOptions options = new()
@@ -27,15 +27,15 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 
-        var openAiClient = new OpenAIResponseClient(model: agentName, credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
+        var openAiClient = new ResponsesClient(model: agentName, credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
         var chatOptions = new ChatOptions()
         {
-            ConversationId = threadId
+            ConversationId = sessionId
         };
 
         await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
-            yield return new AgentRunResponseUpdate(update);
+            yield return new AgentResponseUpdate(update);
         }
     }
 }

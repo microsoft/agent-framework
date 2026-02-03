@@ -49,10 +49,10 @@ AIAgent agentOption2 = await aiProjectClient.CreateAIAgentAsync(
 
 // Either invoke option1 or option2 agent, should have same result
 // Option 1
-AgentRunResponse response = await agentOption1.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
+AgentResponse response = await agentOption1.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
 
 // Option 2
-// AgentRunResponse response = await agentOption2.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
+// AgentResponse response = await agentOption2.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
 
 // Get the CodeInterpreterToolCallContent
 CodeInterpreterToolCallContent? toolCallContent = response.Messages.SelectMany(m => m.Contents).OfType<CodeInterpreterToolCallContent>().FirstOrDefault();

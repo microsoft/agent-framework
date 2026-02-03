@@ -25,7 +25,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import AgentRunResponse, ChatAgent, ChatMessage, Role
+from agent_framework import AgentResponse, ChatAgent, ChatMessage, Role
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import (
     PurviewChatPolicyMiddleware,
@@ -154,14 +154,20 @@ async def run_with_agent_middleware() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middleware=purview_agent_middleware,
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Agent Middleware Path --")
-    first: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="Tell me a joke about a pirate.", additional_properties={"user_id": user_id}))
+    first: AgentResponse = await agent.run(
+        ChatMessage(role=Role.USER, text="Tell me a joke about a pirate.", additional_properties={"user_id": user_id})
+    )
     print("First response (agent middleware):\n", first)
 
-    second: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="That was funny. Tell me another one.", additional_properties={"user_id": user_id}))
+    second: AgentResponse = await agent.run(
+        ChatMessage(
+            role=Role.USER, text="That was funny. Tell me another one.", additional_properties={"user_id": user_id}
+        )
+    )
     print("Second response (agent middleware):\n", second)
 
 
@@ -195,7 +201,7 @@ async def run_with_chat_middleware() -> None:
     )
 
     print("-- Chat Middleware Path --")
-    first: AgentRunResponse = await agent.run(
+    first: AgentResponse = await agent.run(
         ChatMessage(
             role=Role.USER,
             text="Give me a short clean joke.",
@@ -204,7 +210,7 @@ async def run_with_chat_middleware() -> None:
     )
     print("First response (chat middleware):\n", first)
 
-    second: AgentRunResponse = await agent.run(
+    second: AgentResponse = await agent.run(
         ChatMessage(
             role=Role.USER,
             text="One more please.",
@@ -239,18 +245,20 @@ async def run_with_custom_cache_provider() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middleware=purview_agent_middleware,
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Custom Cache Provider Path --")
     print("Using SimpleDictCacheProvider")
 
-    first: AgentRunResponse = await agent.run(
-        ChatMessage(role=Role.USER, text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id})
+    first: AgentResponse = await agent.run(
+        ChatMessage(
+            role=Role.USER, text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id}
+        )
     )
     print("First response (custom provider):\n", first)
 
-    second: AgentRunResponse = await agent.run(
+    second: AgentResponse = await agent.run(
         ChatMessage(role=Role.USER, text="That's hilarious! One more?", additional_properties={"user_id": user_id})
     )
     print("Second response (custom provider):\n", second)
@@ -279,18 +287,18 @@ async def run_with_custom_cache_provider() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middleware=purview_agent_middleware,
+        middleware=[purview_agent_middleware],
     )
 
     print("-- Default Cache Path --")
     print("Using default InMemoryCacheProvider with settings-based configuration")
 
-    first: AgentRunResponse = await agent.run(
+    first: AgentResponse = await agent.run(
         ChatMessage(role=Role.USER, text="Tell me a joke about AI.", additional_properties={"user_id": user_id})
     )
     print("First response (default cache):\n", first)
 
-    second: AgentRunResponse = await agent.run(
+    second: AgentResponse = await agent.run(
         ChatMessage(role=Role.USER, text="Nice! Another AI joke please.", additional_properties={"user_id": user_id})
     )
     print("Second response (default cache):\n", second)

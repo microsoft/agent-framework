@@ -16,7 +16,7 @@ async def run_semantic_kernel() -> None:
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()  # Reads env vars for region/deployment.
         # SK builds the remote agent definition then wraps it with AzureAIAgent.
-        definition = await client.agents.create_agent(
+        definition = await client.agents.as_agent(
             model=settings.model_deployment_name,
             name="Support",
             instructions="Answer customer questions in one paragraph.",
@@ -30,10 +30,13 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Support",
-        instructions="Answer customer questions in one paragraph.",
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).as_agent(
+            name="Support",
+            instructions="Answer customer questions in one paragraph.",
+        ) as agent,
+    ):
         # AF client returns an asynchronous context manager for remote agents.
         reply = await agent.run("How do I upgrade my plan?")
         print("[AF]", reply.text)

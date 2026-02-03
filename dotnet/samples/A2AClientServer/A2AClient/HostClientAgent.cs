@@ -4,6 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using OpenAI;
+using OpenAI.Chat;
 
 namespace A2A;
 
@@ -28,7 +29,7 @@ internal sealed class HostClientAgent
             // Create the agent that uses the remote agents as tools
             this.Agent = new OpenAIClient(new ApiKeyCredential(apiKey))
              .GetChatClient(modelId)
-             .CreateAIAgent(instructions: "You specialize in handling queries for users and using your tools to provide answers.", name: "HostClient", tools: tools);
+             .AsAIAgent(instructions: "You specialize in handling queries for users and using your tools to provide answers.", name: "HostClient", tools: tools);
         }
         catch (Exception ex)
         {

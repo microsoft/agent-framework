@@ -5,6 +5,7 @@ import logging
 from random import randint
 from typing import Annotated
 
+from agent_framework.observability import enable_instrumentation
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
@@ -18,10 +19,11 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.semconv._incubating.attributes.service_attributes import SERVICE_NAME
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
+from agent_framework import tool
 
 """
 This sample shows how to manually configure to send traces, logs, and metrics to the console,
-without using the `setup_observability` helper function.
+without using the `configure_otel_providers` helper function.
 """
 
 resource = Resource.create({SERVICE_NAME: "ManualSetup"})
@@ -63,7 +65,8 @@ def setup_metrics():
     # Sets the global default meter provider
     set_meter_provider(meter_provider)
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -114,6 +117,7 @@ async def main():
     setup_logging()
     setup_tracing()
     setup_metrics()
+    enable_instrumentation()
 
     await run_chat_client()
 

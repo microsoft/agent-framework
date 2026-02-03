@@ -41,8 +41,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
-  // OpenAI proxy mode, Azure deployment, auth status, and server capabilities from store
-  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities } = useDevUIStore();
+  // OpenAI proxy mode, Azure deployment, auth status, server capabilities, streaming, and version from store
+  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode, streamingEnabled, setStreamingEnabled } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -353,6 +353,37 @@ export function SettingsModal({
                   />
                 </div>
               </div>
+
+              {/* Streaming Mode Setting */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Streaming Mode
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Stream responses token-by-token as they're generated
+                    </p>
+                  </div>
+                  <Switch
+                    checked={streamingEnabled}
+                    onCheckedChange={setStreamingEnabled}
+                  />
+                </div>
+                {!streamingEnabled && (
+                  <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 p-3 rounded">
+                    <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">Non-streaming mode limitations:</p>
+                      <ul className="mt-1 space-y-0.5 list-disc list-inside text-amber-600/80 dark:text-amber-400/80">
+                        <li>Tool calls won't display in real-time</li>
+                        <li>No typing indicator during generation</li>
+                        <li>Response appears all at once when complete</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -607,6 +638,62 @@ export function SettingsModal({
               <p className="text-sm text-muted-foreground">
                 DevUI is a sample app for getting started with Agent Framework.
               </p>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Version:</span>
+                  <span className="font-mono">{serverVersion || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Runtime:</span>
+                  <span className="font-mono capitalize">{runtime || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">UI Mode:</span>
+                  <span className="font-mono capitalize">{uiMode || 'Unknown'}</span>
+                </div>
+              </div>
+
+              {/* Capabilities section - only show if we have capability data */}
+              {(serverCapabilities || authRequired !== undefined) && (
+                <div className="space-y-2 pt-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Capabilities</p>
+                  <div className="space-y-1 text-sm">
+                    {serverCapabilities?.instrumentation !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Instrumentation:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.instrumentation ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.instrumentation ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                    )}
+                    {serverCapabilities?.openai_proxy !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">OpenAI Proxy:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.openai_proxy ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.openai_proxy ? 'Available' : 'Not Configured'}
+                        </span>
+                      </div>
+                    )}
+                    {serverCapabilities?.deployment !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Deployment:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.deployment ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.deployment ? 'Available' : 'Disabled'}
+                        </span>
+                      </div>
+                    )}
+                    {authRequired !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Authentication:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${authRequired ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-muted text-muted-foreground'}`}>
+                          {authRequired ? 'Required' : 'Not Required'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-center pt-2">
                 <Button

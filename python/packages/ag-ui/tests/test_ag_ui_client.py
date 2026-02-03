@@ -9,16 +9,15 @@ from typing import Any
 from agent_framework import (
     ChatMessage,
     ChatOptions,
+    ChatResponse,
     ChatResponseUpdate,
-    FunctionCallContent,
+    Content,
     Role,
-    TextContent,
-    ai_function,
+    tool,
 )
-from agent_framework._types import ChatResponse
 from pytest import MonkeyPatch
 
-from agent_framework_ag_ui._client import AGUIChatClient, ServerFunctionCallContent
+from agent_framework_ag_ui._client import AGUIChatClient
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
 
@@ -40,22 +39,22 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose message conversion helper."""
         return self._convert_messages_to_agui_format(messages)
 
-    def get_thread_id(self, chat_options: ChatOptions) -> str:
+    def get_thread_id(self, options: dict[str, Any]) -> str:
         """Expose thread id helper."""
-        return self._get_thread_id(chat_options)
+        return self._get_thread_id(options)
 
     async def inner_get_streaming_response(
-        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Proxy to protected streaming call."""
-        async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in self._inner_get_streaming_response(messages=messages, options=options):
             yield update
 
     async def inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any]
     ) -> ChatResponse:
         """Proxy to protected response call."""
-        return await self._inner_get_response(messages=messages, chat_options=chat_options)
+        return await self._inner_get_response(messages=messages, options=options)
 
 
 class TestAGUIChatClient:
@@ -96,13 +95,11 @@ class TestAGUIChatClient:
         state_json = json.dumps(state_data)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(role="user", text="Hello"),
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
@@ -121,12 +118,10 @@ class TestAGUIChatClient:
         invalid_json = "not valid json"
         state_b64 = base64.b64encode(invalid_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
@@ -191,7 +186,7 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        async for update in client.inner_get_streaming_response(messages=messages, options=chat_options):
             updates.append(update)
 
         assert len(updates) == 4
@@ -200,8 +195,8 @@ class TestAGUIChatClient:
 
         first_content = updates[1].contents[0]
         second_content = updates[2].contents[0]
-        assert isinstance(first_content, TextContent)
-        assert isinstance(second_content, TextContent)
+        assert first_content.type == "text"
+        assert second_content.type == "text"
         assert first_content.text == "Hello"
         assert second_content.text == " world"
 
@@ -221,9 +216,9 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test message")]
-        chat_options = ChatOptions()
+        chat_options = {}
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None
         assert len(response.messages) > 0
@@ -236,9 +231,9 @@ class TestAGUIChatClient:
         When server requests a client function, @use_function_invocation decorator
         intercepts and executes it locally. This matches .NET AG-UI implementation.
         """
-        from agent_framework import ai_function
+        from agent_framework import tool
 
-        @ai_function
+        @tool
         def test_tool(param: str) -> str:
             """Test tool."""
             return "result"
@@ -266,7 +261,7 @@ class TestAGUIChatClient:
         messages = [ChatMessage(role="user", text="Test with tools")]
         chat_options = ChatOptions(tools=[test_tool])
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None
 
@@ -288,25 +283,23 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.get_streaming_response(messages, chat_options=chat_options):
+        async for update in client.get_streaming_response(messages):
             updates.append(update)
 
         function_calls = [
-            content for update in updates for content in update.contents if isinstance(content, FunctionCallContent)
+            content for update in updates for content in update.contents if content.type == "function_call"
         ]
         assert function_calls
         assert function_calls[0].name == "get_time_zone"
-        assert not any(
-            isinstance(content, ServerFunctionCallContent) for update in updates for content in update.contents
-        )
+
+        assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
 
     async def test_server_tool_calls_not_executed_locally(self, monkeypatch: MonkeyPatch) -> None:
         """Server tools should not trigger local function invocation even when client tools exist."""
 
-        @ai_function
+        @tool
         def client_tool() -> str:
             """Client tool stub."""
             return "client"
@@ -332,9 +325,8 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
-        chat_options = ChatOptions(tool_choice="auto", tools=[client_tool])
 
-        async for _ in client.get_streaming_response(messages, chat_options=chat_options):
+        async for _ in client.get_streaming_response(messages, options={"tool_choice": "auto", "tools": [client_tool]}):
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
@@ -345,13 +337,11 @@ class TestAGUIChatClient:
         state_json = json.dumps(state_data)
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
-        from agent_framework import DataContent
-
         messages = [
             ChatMessage(role="user", text="Hello"),
             ChatMessage(
                 role="user",
-                contents=[DataContent(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
         ]
 
@@ -370,6 +360,6 @@ class TestAGUIChatClient:
 
         chat_options = ChatOptions()
 
-        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None

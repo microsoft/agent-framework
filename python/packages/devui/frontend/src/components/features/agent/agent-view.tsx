@@ -4,16 +4,11 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useCancellableRequest, isAbortError, useDragDrop } from "@/hooks";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileUpload } from "@/components/ui/file-upload";
-import {
-  AttachmentGallery,
-  type AttachmentItem,
-} from "@/components/ui/attachment-gallery";
+import { ChatMessageInput } from "@/components/ui/chat-message-input";
 import { OpenAIMessageRenderer } from "./message-renderers/OpenAIMessageRenderer";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   Select,
   SelectContent,
@@ -23,21 +18,19 @@ import {
 } from "@/components/ui/select";
 import { AgentDetailsModal } from "./agent-details-modal";
 import {
-  SendHorizontal,
   User,
   Bot,
   Plus,
   AlertCircle,
-  Paperclip,
   Info,
   Trash2,
-  FileText,
   Check,
   X,
   Copy,
   CheckCheck,
   RefreshCw,
   Wrench,
+  Square,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -273,12 +266,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const isStreaming = useDevUIStore((state) => state.isStreaming);
   const isSubmitting = useDevUIStore((state) => state.isSubmitting);
   const loadingConversations = useDevUIStore((state) => state.loadingConversations);
-  const inputValue = useDevUIStore((state) => state.inputValue);
-  const attachments = useDevUIStore((state) => state.attachments);
   const uiMode = useDevUIStore((state) => state.uiMode);
   const conversationUsage = useDevUIStore((state) => state.conversationUsage);
   const pendingApprovals = useDevUIStore((state) => state.pendingApprovals);
   const oaiMode = useDevUIStore((state) => state.oaiMode);
+  const streamingEnabled = useDevUIStore((state) => state.streamingEnabled);
 
   // Get conversation actions from Zustand (only the ones we actually use)
   const setCurrentConversation = useDevUIStore((state) => state.setCurrentConversation);
@@ -287,15 +279,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const setIsStreaming = useDevUIStore((state) => state.setIsStreaming);
   const setIsSubmitting = useDevUIStore((state) => state.setIsSubmitting);
   const setLoadingConversations = useDevUIStore((state) => state.setLoadingConversations);
-  const setInputValue = useDevUIStore((state) => state.setInputValue);
-  const setAttachments = useDevUIStore((state) => state.setAttachments);
   const updateConversationUsage = useDevUIStore((state) => state.updateConversationUsage);
   const setPendingApprovals = useDevUIStore((state) => state.setPendingApprovals);
 
   // Local UI state (not in Zustand - component-specific)
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [dragCounter, setDragCounter] = useState(0);
-  const [pasteNotification, setPasteNotification] = useState<string | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [conversationError, setConversationError] = useState<{
     message: string;
@@ -303,10 +290,18 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     type?: string;
   } | null>(null);
   const [isReloading, setIsReloading] = useState(false);
+  const [wasCancelled, setWasCancelled] = useState(false);
+
+  // Use the cancellation hook
+  const { isCancelling, createAbortSignal, handleCancel, resetCancelling } = useCancellableRequest();
+
+  // Use the drag/drop hook for parent-level file dropping
+  const { isDragOver, droppedFiles, clearDroppedFiles, dragHandlers } = useDragDrop({
+    disabled: isSubmitting || isStreaming,
+  });
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const currentMessageUsage = useRef<{
     total_tokens: number;
     input_tokens: number;
@@ -350,10 +345,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   }, [chatItems, isStreaming]);
 
   // Return focus to input after streaming completes
+  // Note: Focus handling is now managed by ChatMessageInput component
   useEffect(() => {
-    if (!isStreaming && !isSubmitting) {
-      textareaRef.current?.focus();
-    }
+    // ChatMessageInput will handle its own focus
   }, [isStreaming, isSubmitting]);
 
   // Load conversations when agent changes
@@ -385,6 +379,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           agent.id,
           openAIRequest,
           conversation.id,
+          undefined,  // No abort signal for resume
           storedState.responseId  // Pass response ID for resume
         );
 
@@ -576,6 +571,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               let allItems: unknown[] = [];
               let hasMore = true;
               let after: string | undefined = undefined;
+              let storedTraces: unknown[] = [];
 
               while (hasMore) {
                 const result = await apiClient.listConversationItems(
@@ -584,7 +580,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 );
                 allItems = allItems.concat(result.data);
                 hasMore = result.has_more;
-                
+
+                // Capture traces from metadata (only need from one response, they accumulate)
+                if (result.metadata?.traces && result.metadata.traces.length > 0) {
+                  storedTraces = result.metadata.traces;
+                }
+
                 // Get the last item's ID for pagination
                 if (hasMore && result.data.length > 0) {
                   const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -595,6 +596,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               // Use OpenAI ConversationItems directly (no conversion!)
               setChatItems(allItems as import("@/types/openai").ConversationItem[]);
               setIsStreaming(false);
+
+              // Restore stored traces as debug events for context inspection
+              if (storedTraces.length > 0) {
+                // Clear any previous debug events first
+                onDebugEvent("clear");
+                for (const trace of storedTraces) {
+                  // Convert stored trace back to ResponseTraceComplete event format
+                  const traceEvent: ExtendedResponseStreamEvent = {
+                    type: "response.trace.completed",
+                    data: trace as Record<string, unknown>,
+                    sequence_number: 0, // Not used for display
+                  };
+                  onDebugEvent(traceEvent);
+                }
+              }
 
               // Check for incomplete stream and resume if needed
               const state = loadStreamingState(mostRecent.id);
@@ -711,225 +727,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgent, onDebugEvent, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
 
-  // Handle file uploads
-  const handleFilesSelected = async (files: File[]) => {
-    const newAttachments: AttachmentItem[] = [];
-
-    for (const file of files) {
-      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const type = getFileType(file);
-
-      let preview: string | undefined;
-      if (type === "image") {
-        preview = await readFileAsDataURL(file);
-      }
-
-      newAttachments.push({
-        id,
-        file,
-        preview,
-        type,
-      });
-    }
-
-    setAttachments([...useDevUIStore.getState().attachments, ...newAttachments]);
-  };
-
-  const handleRemoveAttachment = (id: string) => {
-    setAttachments(useDevUIStore.getState().attachments.filter((att) => att.id !== id));
-  };
-
-  // Drag and drop handlers
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragCounter((prev) => prev + 1);
-    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-      setIsDragOver(true);
-    }
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const newCounter = dragCounter - 1;
-    setDragCounter(newCounter);
-    if (newCounter === 0) {
-      setIsDragOver(false);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    setDragCounter(0);
-
-    if (isSubmitting || isStreaming) return;
-
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) {
-      await handleFilesSelected(files);
-    }
-  };
-
-  // Paste handler
-  const handlePaste = async (e: React.ClipboardEvent) => {
-    const items = Array.from(e.clipboardData.items);
-    const files: File[] = [];
-    let hasProcessedText = false;
-    const TEXT_THRESHOLD = 8000; // Convert to file if text is larger than this
-
-    for (const item of items) {
-      // Handle pasted images (screenshots)
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const blob = item.getAsFile();
-        if (blob) {
-          const timestamp = Date.now();
-          files.push(
-            new File([blob], `screenshot-${timestamp}.png`, { type: blob.type })
-          );
-        }
-      }
-      // Handle text - only process first text item (browsers often duplicate)
-      else if (item.type === "text/plain" && !hasProcessedText) {
-        hasProcessedText = true;
-
-        // We need to check the text synchronously to decide whether to prevent default
-        // Unfortunately, getAsString is async, so we'll prevent default for all text
-        // and then decide whether to actually create a file or manually insert the text
-        e.preventDefault();
-
-        await new Promise<void>((resolve) => {
-          item.getAsString((text) => {
-            // Check if text should be converted to file
-            const lineCount = (text.match(/\n/g) || []).length;
-            const shouldConvert =
-              text.length > TEXT_THRESHOLD ||
-              lineCount > 50 || // Many lines suggests logs/data
-              /^\s*[{[][\s\S]*[}\]]\s*$/.test(text) || // JSON-like
-              /^<\?xml|^<html|^<!DOCTYPE/i.test(text); // XML/HTML
-
-            if (shouldConvert) {
-              // Create file for large/complex text
-              const extension = detectFileExtension(text);
-              const timestamp = Date.now();
-              const blob = new Blob([text], { type: "text/plain" });
-              files.push(
-                new File([blob], `pasted-text-${timestamp}${extension}`, {
-                  type: "text/plain",
-                })
-              );
-            } else {
-              // For small text, manually insert into textarea since we prevented default
-              const textarea = textareaRef.current;
-              if (textarea) {
-                const start = textarea.selectionStart;
-                const end = textarea.selectionEnd;
-                const currentValue = textarea.value;
-                const newValue =
-                  currentValue.slice(0, start) + text + currentValue.slice(end);
-                setInputValue(newValue);
-
-                // Restore cursor position after the inserted text
-                setTimeout(() => {
-                  textarea.selectionStart = textarea.selectionEnd =
-                    start + text.length;
-                  textarea.focus();
-                }, 0);
-              }
-            }
-            resolve();
-          });
-        });
-      }
-    }
-
-    // Process collected files
-    if (files.length > 0) {
-      await handleFilesSelected(files);
-
-      // Show notification with appropriate icon
-      const message =
-        files.length === 1
-          ? files[0].name.includes("screenshot")
-            ? "Screenshot added as attachment"
-            : "Large text converted to file"
-          : `${files.length} files added`;
-
-      setPasteNotification(message);
-      setTimeout(() => setPasteNotification(null), 3000);
-    }
-  };
-
-  // Detect file extension from content
-  const detectFileExtension = (text: string): string => {
-    const trimmed = text.trim();
-    const lines = trimmed.split("\n");
-
-    // JSON detection
-    if (/^{[\s\S]*}$|^\[[\s\S]*\]$/.test(trimmed)) return ".json";
-
-    // XML/HTML detection
-    if (/^<\?xml|^<html|^<!DOCTYPE/i.test(trimmed)) return ".html";
-
-    // Markdown detection (code blocks)
-    if (/^```/.test(trimmed)) return ".md";
-
-    // TSV detection (tabs with multiple lines)
-    if (/\t/.test(text) && lines.length > 1) return ".tsv";
-
-    // CSV detection (more strict) - need multiple lines with consistent comma patterns
-    if (lines.length > 2) {
-      const commaLines = lines.filter((line) => line.includes(","));
-      const semicolonLines = lines.filter((line) => line.includes(";"));
-
-      // If >50% of lines have commas and it looks tabular
-      if (commaLines.length > lines.length * 0.5) {
-        const avgCommas =
-          commaLines.reduce(
-            (sum, line) => sum + (line.match(/,/g) || []).length,
-            0
-          ) / commaLines.length;
-        if (avgCommas >= 2) return ".csv";
-      }
-
-      // If >50% of lines have semicolons and it looks tabular
-      if (semicolonLines.length > lines.length * 0.5) {
-        const avgSemicolons =
-          semicolonLines.reduce(
-            (sum, line) => sum + (line.match(/;/g) || []).length,
-            0
-          ) / semicolonLines.length;
-        if (avgSemicolons >= 2) return ".csv";
-      }
-    }
-
-    return ".txt";
-  };
-
-  // Helper functions
-  const getFileType = (file: File): AttachmentItem["type"] => {
-    if (file.type.startsWith("image/")) return "image";
-    if (file.type === "application/pdf") return "pdf";
-    if (file.type.startsWith("audio/")) return "audio";
-    return "other";
-  };
-
-  const readFileAsDataURL = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
+  // Removed old input handling functions - now handled by ChatMessageInput component
 
   // Handle new conversation creation
   const handleNewConversation = useCallback(async () => {
@@ -948,6 +746,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
 
+      // Clear debug panel for fresh conversation
+      onDebugEvent("clear");
+
       // Update localStorage cache with new conversation
       const cachedKey = `devui_convs_${selectedAgent.id}`;
       const updated = [newConversation, ...availableConversations];
@@ -960,7 +761,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         type: "conversation_creation_error",
       });
     }
-  }, [selectedAgent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
+  }, [selectedAgent, onDebugEvent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
   // Handle conversation deletion
   const handleDeleteConversation = useCallback(
@@ -1067,6 +868,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         let allItems: unknown[] = [];
         let hasMore = true;
         let after: string | undefined = undefined;
+        let storedTraces: unknown[] = [];
 
         while (hasMore) {
           const result = await apiClient.listConversationItems(conversationId, {
@@ -1075,7 +877,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           });
           allItems = allItems.concat(result.data);
           hasMore = result.has_more;
-          
+
+          // Capture traces from metadata (only need from one response, they accumulate)
+          if (result.metadata?.traces && result.metadata.traces.length > 0) {
+            storedTraces = result.metadata.traces;
+          }
+
           // Get the last item's ID for pagination
           if (hasMore && result.data.length > 0) {
             const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -1088,6 +895,19 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         setChatItems(items);
         setIsStreaming(false);
+
+        // Restore stored traces as debug events for context inspection
+        if (storedTraces.length > 0) {
+          for (const trace of storedTraces) {
+            // Convert stored trace back to ResponseTraceComplete event format
+            const traceEvent: ExtendedResponseStreamEvent = {
+              type: "response.trace.completed",
+              data: trace as Record<string, unknown>,
+              sequence_number: 0, // Not used for display
+            };
+            onDebugEvent(traceEvent);
+          }
+        }
 
         // Calculate usage from loaded items
         useDevUIStore.setState({
@@ -1299,10 +1119,14 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Clear text accumulator for new response
         accumulatedTextRef.current = "";
 
+        // Create new AbortController for this request
+        const signal = createAbortSignal();
+
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,
-          apiRequest
+          apiRequest,
+          signal
         );
 
         for await (const openAIEvent of streamGenerator) {
@@ -1469,13 +1293,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
             // Handle function calls as separate conversation items
             if (item.type === "function_call") {
+              // Type assertion for function call - narrows from union type
+              const funcCall = item as import("@/types/openai").ResponseFunctionToolCall;
               const functionCallItem: import("@/types/openai").ConversationFunctionCall = {
-                id: item.id || `call-${Date.now()}`,
+                id: funcCall.id || `call-${Date.now()}`,
                 type: "function_call",
-                name: item.name,
-                arguments: item.arguments || "",
-                call_id: item.call_id,
-                status: (item.status === "failed" || item.status === "cancelled" ? "incomplete" : item.status) || "in_progress",
+                name: funcCall.name,
+                arguments: funcCall.arguments || "",
+                call_id: funcCall.call_id,
+                status: funcCall.status || "in_progress",
                 created_at: Math.floor(Date.now() / 1000),
               };
 
@@ -1589,152 +1415,309 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Reset usage for next message
         currentMessageUsage.current = null;
       } catch (error) {
-        const currentItems = useDevUIStore.getState().chatItems;
-        setChatItems(currentItems.map((item) =>
-          item.id === assistantMessage.id && item.type === "message"
-            ? {
-                ...item,
-                content: [
-                  {
-                    type: "text",
-                    text: `Error: ${
-                      error instanceof Error
-                        ? error.message
-                        : "Failed to get response"
-                    }`,
-                  } as import("@/types/openai").MessageTextContent,
-                ],
-                status: "incomplete" as const,
-              }
-            : item
-        ));
+        // Handle abort separately - don't show error message
+        if (isAbortError(error)) {
+          // User cancelled - mark as cancelled for UI feedback
+          setWasCancelled(true);
+          // Mark the message as completed with what we have
+          const currentItems = useDevUIStore.getState().chatItems;
+          setChatItems(currentItems.map((item) =>
+            item.id === assistantMessage.id && item.type === "message"
+              ? {
+                  ...item,
+                  status: accumulatedTextRef.current ? "completed" as const : "incomplete" as const,
+                  // Keep whatever text we have accumulated
+                  content: item.content,
+                }
+              : item
+          ));
+        } else {
+          // Other errors - show error message
+          const currentItems = useDevUIStore.getState().chatItems;
+          setChatItems(currentItems.map((item) =>
+            item.id === assistantMessage.id && item.type === "message"
+              ? {
+                  ...item,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Error: ${
+                        error instanceof Error
+                          ? error.message
+                          : "Failed to get response"
+                      }`,
+                    } as import("@/types/openai").MessageTextContent,
+                  ],
+                  status: "incomplete" as const,
+                }
+              : item
+          ));
+        }
         setIsStreaming(false);
+        resetCancelling();
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setIsStreaming, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage]
+    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setIsStreaming, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling]
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Handle non-streaming message sending
+  const handleSendMessageSync = useCallback(
+    async (request: RunAgentRequest) => {
+      if (!selectedAgent) return;
 
-    if (
-      (!inputValue.trim() && attachments.length === 0) ||
-      isSubmitting ||
-      !selectedAgent
-    )
-      return;
+      // Check if this is a function approval response (internal, don't show in chat)
+      const isApprovalResponse = request.input.some(
+        (inputItem) =>
+          inputItem.type === "message" &&
+          Array.isArray(inputItem.content) &&
+          inputItem.content.some((c) => c.type === "function_approval_response")
+      );
 
-    // Set flag to force scroll when user sends message
-    userJustSentMessage.current = true;
+      // Extract content from OpenAI format to create ConversationMessage
+      const messageContent: import("@/types/openai").MessageContent[] = [];
 
-    setIsSubmitting(true);
-    const messageText = inputValue.trim();
-    setInputValue("");
-
-    try {
-      // Create OpenAI Responses API format
-      if (attachments.length > 0 || messageText) {
-        const content: import("@/types/agent-framework").ResponseInputContent[] =
-          [];
-
-        // Add text content if present - EXACT OpenAI ResponseInputTextParam
-        if (messageText) {
-          content.push({
-            text: messageText,
-            type: "input_text",
-          } as import("@/types/agent-framework").ResponseInputTextParam);
+      // Parse OpenAI ResponseInputParam to extract content
+      for (const inputItem of request.input) {
+        if (inputItem.type === "message" && Array.isArray(inputItem.content)) {
+          for (const contentItem of inputItem.content) {
+            if (contentItem.type === "input_text") {
+              messageContent.push({
+                type: "text",
+                text: contentItem.text,
+              });
+            } else if (contentItem.type === "input_image") {
+              messageContent.push({
+                type: "input_image",
+                image_url: contentItem.image_url || "",
+                detail: "auto",
+              });
+            } else if (contentItem.type === "input_file") {
+              const fileItem = contentItem as import("@/types/agent-framework").ResponseInputFileParam;
+              messageContent.push({
+                type: "input_file",
+                file_data: fileItem.file_data,
+                filename: fileItem.filename,
+              });
+            }
+          }
         }
+      }
 
-        // Add attachments using EXACT OpenAI types
-        for (const attachment of attachments) {
-          const dataUri = await readFileAsDataURL(attachment.file);
+      // Capture timestamp once for both user and assistant messages
+      const messageTimestamp = Math.floor(Date.now() / 1000); // Unix seconds
 
-          if (attachment.file.type.startsWith("image/")) {
-            // EXACT OpenAI ResponseInputImageParam
-            content.push({
-              detail: "auto",
-              type: "input_image",
-              image_url: dataUri,
-            } as import("@/types/agent-framework").ResponseInputImageParam);
-          } else if (
-            attachment.file.type === "text/plain" &&
-            (attachment.file.name.includes("pasted-text-") ||
-              attachment.file.name.endsWith(".txt") ||
-              attachment.file.name.endsWith(".csv") ||
-              attachment.file.name.endsWith(".json") ||
-              attachment.file.name.endsWith(".html") ||
-              attachment.file.name.endsWith(".md") ||
-              attachment.file.name.endsWith(".tsv"))
-          ) {
-            // Convert all text files (from pasted large text) back to input_text
-            const text = await attachment.file.text();
-            content.push({
-              text: text,
-              type: "input_text",
-            } as import("@/types/agent-framework").ResponseInputTextParam);
-          } else {
-            // EXACT OpenAI ResponseInputFileParam for other files
-            const base64Data = dataUri.split(",")[1]; // Extract base64 part
-            content.push({
-              type: "input_file",
-              file_data: base64Data,
-              file_url: dataUri, // Use data URI as the URL
-              filename: attachment.file.name,
-            } as import("@/types/agent-framework").ResponseInputFileParam);
+      // Only add user message to UI if it's not an approval response (internal messages)
+      if (!isApprovalResponse && messageContent.length > 0) {
+        const userMessage: import("@/types/openai").ConversationMessage = {
+          id: `user-${Date.now()}`,
+          type: "message",
+          role: "user",
+          content: messageContent,
+          status: "completed",
+          created_at: messageTimestamp,
+        };
+
+        setChatItems([...useDevUIStore.getState().chatItems, userMessage]);
+      }
+
+      // Show loading state (but not streaming indicator)
+      setIsSubmitting(true);
+
+      try {
+        // If no conversation selected, create one automatically
+        let conversationToUse = currentConversation;
+        if (!conversationToUse) {
+          try {
+            conversationToUse = await apiClient.createConversation({
+              agent_id: selectedAgent.id,
+            });
+            setCurrentConversation(conversationToUse);
+            setAvailableConversations([conversationToUse, ...useDevUIStore.getState().availableConversations]);
+            setConversationError(null);
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Failed to create conversation";
+            setConversationError({
+              message: errorMessage,
+              type: "conversation_creation_error",
+            });
+            setIsSubmitting(false);
+            return;
           }
         }
 
-        const openaiInput: import("@/types/agent-framework").ResponseInputParam =
-          [
-            {
-              type: "message",
-              role: "user",
-              content,
-            },
-          ];
-
-        // Use pure OpenAI format
-        await handleSendMessage({
-          input: openaiInput,
-          conversation_id: currentConversation?.id,
+        // Call non-streaming API
+        const response = await apiClient.runAgentSync(selectedAgent.id, {
+          input: request.input,
+          conversation_id: conversationToUse?.id,
         });
-      } else {
-        // Simple text message using OpenAI format
-        const openaiInput: import("@/types/agent-framework").ResponseInputParam =
-          [
-            {
-              type: "message",
-              role: "user",
-              content: [
-                {
-                  text: messageText,
-                  type: "input_text",
-                } as import("@/types/agent-framework").ResponseInputTextParam,
-              ],
-            },
-          ];
 
-        await handleSendMessage({
-          input: openaiInput,
-          conversation_id: currentConversation?.id,
-        });
+        // Extract content from response output
+        const assistantContent: import("@/types/openai").MessageContent[] = [];
+        const toolCalls: import("@/types/openai").ConversationFunctionCall[] = [];
+        const toolResults: import("@/types/openai").ConversationFunctionCallOutput[] = [];
+
+        if (response.output) {
+          for (const outputItem of response.output) {
+            if (outputItem.type === "message") {
+              // Extract message content
+              const msgItem = outputItem as import("@/types/openai").ResponseOutputMessage;
+              if (msgItem.content) {
+                for (const content of msgItem.content) {
+                  if (content.type === "output_text") {
+                    assistantContent.push({
+                      type: "text",
+                      text: (content as { text: string }).text,
+                    } as import("@/types/openai").MessageTextContent);
+                  } else if (content.type === "output_image") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
+                  } else if (content.type === "output_file") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputFile);
+                  } else if (content.type === "output_data") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputData);
+                  }
+                }
+              }
+            } else if (outputItem.type === "function_call") {
+              const funcCall = outputItem as unknown as import("@/types/openai").ResponseFunctionToolCall;
+              toolCalls.push({
+                id: funcCall.id || `call-${Date.now()}`,
+                type: "function_call",
+                name: funcCall.name,
+                arguments: funcCall.arguments || "",
+                call_id: funcCall.call_id,
+                status: funcCall.status || "completed",
+                created_at: messageTimestamp,
+              });
+            } else if (outputItem.type === "function_call_output") {
+              const resultItem = outputItem as unknown as { call_id: string; output: string };
+              toolResults.push({
+                id: `result-${Date.now()}`,
+                type: "function_call_output",
+                call_id: resultItem.call_id,
+                output: resultItem.output,
+                status: "completed",
+                created_at: messageTimestamp,
+              });
+            }
+          }
+        }
+
+        // Create assistant message with all content
+        const assistantMessage: import("@/types/openai").ConversationMessage = {
+          id: `assistant-${Date.now()}`,
+          type: "message",
+          role: "assistant",
+          content: assistantContent,
+          status: "completed",
+          created_at: messageTimestamp,
+          usage: response.usage ? {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            total_tokens: response.usage.total_tokens,
+          } : undefined,
+        };
+
+        // Add all items to chat
+        const currentItems = useDevUIStore.getState().chatItems;
+        const newItems: import("@/types/openai").ConversationItem[] = [
+          ...currentItems,
+          assistantMessage,
+          ...toolCalls,
+          ...toolResults,
+        ];
+        setChatItems(newItems);
+
+        // Update conversation-level usage stats
+        if (response.usage) {
+          updateConversationUsage(response.usage.total_tokens);
+        }
+
+        // Send debug event with response completed
+        onDebugEvent({
+          type: "response.completed",
+          response: response,
+          sequence_number: 0,
+        } as ExtendedResponseStreamEvent);
+
+      } catch (error) {
+        // Show error message
+        const errorMessage = error instanceof Error ? error.message : "Failed to get response";
+        const assistantMessage: import("@/types/openai").ConversationMessage = {
+          id: `assistant-${Date.now()}`,
+          type: "message",
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: `Error: ${errorMessage}`,
+          } as import("@/types/openai").MessageTextContent],
+          status: "incomplete",
+          created_at: messageTimestamp,
+        };
+
+        const currentItems = useDevUIStore.getState().chatItems;
+        setChatItems([...currentItems, assistantMessage]);
+      } finally {
+        setIsSubmitting(false);
       }
+    },
+    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting]
+  );
 
-      // Clear attachments after sending
-      setAttachments([]);
+
+  // Handle message submission from ChatMessageInput
+  const handleChatInputSubmit = async (content: import("@/types/agent-framework").ResponseInputContent[]) => {
+    if (!selectedAgent || content.length === 0) return;
+
+    // Set flag to force scroll when user sends message
+    userJustSentMessage.current = true;
+    setWasCancelled(false); // Reset cancelled state for new message
+
+    setIsSubmitting(true);
+
+    try {
+      // Create OpenAI Responses API format
+      const openaiInput: import("@/types/agent-framework").ResponseInputParam = [
+        {
+          type: "message",
+          role: "user",
+          content,
+        },
+      ];
+
+      const request = {
+        input: openaiInput,
+        conversation_id: currentConversation?.id,
+      };
+
+      // Use streaming or non-streaming based on setting
+      if (streamingEnabled) {
+        await handleSendMessage(request);
+      } else {
+        await handleSendMessageSync(request);
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const canSendMessage =
-    selectedAgent &&
-    !isSubmitting &&
-    !isStreaming &&
-    (inputValue.trim() || attachments.length > 0);
+  // Old handleSubmit and canSendMessage removed - replaced by handleChatInputSubmit
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+    <div className="flex h-[calc(100vh-3.5rem)] flex-col relative" {...dragHandlers}>
+      {/* Full-area drop overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 bg-blue-50/95 dark:bg-blue-950/95 backdrop-blur-sm flex items-center justify-center border-2 border-dashed border-blue-400 dark:border-blue-500 rounded-lg m-2">
+          <div className="text-center p-8">
+            <div className="text-blue-600 dark:text-blue-400 text-lg font-medium mb-2">
+              Drop files here
+            </div>
+            <div className="text-blue-500/80 dark:text-blue-400/70 text-sm">
+              Images, PDFs, audio, and other files
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="border-b pb-2  p-4 flex-shrink-0">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
@@ -1927,29 +1910,70 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           ) : (
             (() => {
               // Group tool calls and results with their assistant messages
+              // Bidirectional association:
+              // - Loading mode: tools come BEFORE assistant message (associate forward)
+              // - Streaming mode: tools come AFTER assistant message placeholder (associate backward)
               const processedItems: React.ReactElement[] = [];
               const toolCallsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCall[]>();
               const toolResultsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCallOutput[]>();
 
-              // First pass: collect tool calls and results, associate with preceding assistant message
+              // Track the last assistant message for backward association (streaming)
               let lastAssistantMessageId: string | null = null;
+              // Track orphaned tools for forward association (loading)
+              const orphanedToolCalls: import("@/types/openai").ConversationFunctionCall[] = [];
+              const orphanedToolResults: import("@/types/openai").ConversationFunctionCallOutput[] = [];
 
-              for (const item of chatItems) {
+              for (let i = 0; i < chatItems.length; i++) {
+                const item = chatItems[i];
+
                 if (item.type === "message" && item.role === "assistant") {
-                  lastAssistantMessageId = item.id;
-                  // Initialize arrays for this message if they don't exist
+                  // Initialize arrays for this message
                   if (!toolCallsByMessage.has(item.id)) {
                     toolCallsByMessage.set(item.id, []);
                     toolResultsByMessage.set(item.id, []);
                   }
-                } else if (item.type === "function_call" && lastAssistantMessageId) {
-                  const calls = toolCallsByMessage.get(lastAssistantMessageId) || [];
-                  calls.push(item);
-                  toolCallsByMessage.set(lastAssistantMessageId, calls);
-                } else if (item.type === "function_call_output" && lastAssistantMessageId) {
-                  const results = toolResultsByMessage.get(lastAssistantMessageId) || [];
-                  results.push(item);
-                  toolResultsByMessage.set(lastAssistantMessageId, results);
+
+                  // Forward association: if we have orphaned tools, associate with this message
+                  if (orphanedToolCalls.length > 0) {
+                    const calls = toolCallsByMessage.get(item.id) || [];
+                    calls.push(...orphanedToolCalls);
+                    toolCallsByMessage.set(item.id, calls);
+                    orphanedToolCalls.length = 0;
+                  }
+
+                  if (orphanedToolResults.length > 0) {
+                    const results = toolResultsByMessage.get(item.id) || [];
+                    results.push(...orphanedToolResults);
+                    toolResultsByMessage.set(item.id, results);
+                    orphanedToolResults.length = 0;
+                  }
+
+                  // Track this as the last assistant message for backward association
+                  lastAssistantMessageId = item.id;
+                } else if (item.type === "function_call") {
+                  // Try backward association first (streaming mode)
+                  if (lastAssistantMessageId) {
+                    const calls = toolCallsByMessage.get(lastAssistantMessageId) || [];
+                    calls.push(item);
+                    toolCallsByMessage.set(lastAssistantMessageId, calls);
+                  } else {
+                    // No previous assistant message, store for forward association
+                    orphanedToolCalls.push(item);
+                  }
+                } else if (item.type === "function_call_output") {
+                  // Try backward association first (streaming mode)
+                  if (lastAssistantMessageId) {
+                    const results = toolResultsByMessage.get(lastAssistantMessageId) || [];
+                    results.push(item);
+                    toolResultsByMessage.set(lastAssistantMessageId, results);
+                  } else {
+                    // No previous assistant message, store for forward association
+                    orphanedToolResults.push(item);
+                  }
+                } else if (item.type === "message" && item.role === "user") {
+                  // User message resets the backward association context
+                  // Tools after a user message belong to the next assistant response
+                  lastAssistantMessageId = null;
                 }
               }
 
@@ -1967,11 +1991,23 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                     />
                   );
                 }
-                // Tool calls and results are now rendered within messages, so skip them here
+                // Tool calls and results are rendered within messages, skip standalone
               }
 
               return processedItems;
             })()
+          )}
+
+          {/* Response cancelled card */}
+          {wasCancelled && !isStreaming && (
+            <div className="px-4 py-2">
+              <div className="border rounded-lg border-orange-500/40 bg-orange-500/5 dark:bg-orange-500/10">
+                <div className="px-4 py-3 flex items-center gap-2">
+                  <Square className="w-4 h-4 text-orange-500 dark:text-orange-400 fill-current" />
+                  <span className="font-medium text-sm text-orange-700 dark:text-orange-300">Response stopped by user</span>
+                </div>
+              </div>
+            </div>
           )}
 
           <div ref={messagesEndRef} />
@@ -2047,94 +2083,20 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
       {/* Input */}
       <div className="border-t flex-shrink-0">
-        <div
-          className={`p-4 relative transition-all duration-300 ease-in-out ${
-            isDragOver ? "bg-blue-50 dark:bg-blue-950/20" : ""
-          }`}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
-          {/* Drag overlay */}
-          {isDragOver && (
-            <div className="absolute inset-2 border-2 border-dashed border-blue-400 dark:border-blue-500 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 backdrop-blur-sm flex items-center justify-center transition-all duration-200 ease-in-out z-10">
-              <div className="text-center">
-                <div className="text-blue-600 dark:text-blue-400 text-sm font-medium mb-1">
-                  Drop files here
-                </div>
-                <div className="text-blue-500 dark:text-blue-500 text-xs">
-                  Images, PDFs, and other files
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Attachment gallery */}
-          {attachments.length > 0 && (
-            <div className="mb-3">
-              <AttachmentGallery
-                attachments={attachments}
-                onRemoveAttachment={handleRemoveAttachment}
-              />
-            </div>
-          )}
-
-          {/* Paste notification */}
-          {pasteNotification && (
-            <div
-              className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20
-                          bg-blue-500 text-white px-4 py-2 rounded-full text-sm
-                          animate-in slide-in-from-bottom-2 fade-in duration-200
-                          flex items-center gap-2 shadow-lg"
-            >
-              {pasteNotification.includes("screenshot") ? (
-                <Paperclip className="h-3 w-3" />
-              ) : (
-                <FileText className="h-3 w-3" />
-              )}
-              {pasteNotification}
-            </div>
-          )}
-
-          {/* Input form */}
-          <form onSubmit={handleSubmit} className="flex gap-2 items-end">
-            <Textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onPaste={handlePaste}
-              onKeyDown={(e) => {
-                // Submit on Enter (without shift)
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit(e);
-                }
-              }}
-              placeholder={`Message ${
-                selectedAgent.name || selectedAgent.id
-              }... (Shift+Enter for new line)`}
-              disabled={isSubmitting || isStreaming}
-              className="flex-1 min-h-[40px] max-h-[200px] resize-none"
-              style={{ fieldSizing: "content" } as React.CSSProperties}
-            />
-            <FileUpload
-              onFilesSelected={handleFilesSelected}
-              disabled={isSubmitting || isStreaming}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!canSendMessage}
-              className="shrink-0 h-10"
-            >
-              {isSubmitting ? (
-                <LoadingSpinner size="sm" />
-              ) : (
-                <SendHorizontal className="h-4 w-4" />
-              )}
-            </Button>
-          </form>
+        <div className="p-4">
+          <ChatMessageInput
+            onSubmit={handleChatInputSubmit}
+            isSubmitting={isSubmitting}
+            isStreaming={isStreaming}
+            onCancel={handleCancel}
+            isCancelling={isCancelling}
+            placeholder={`Message ${selectedAgent.name || selectedAgent.id}... (Shift+Enter for new line)`}
+            showFileUpload={true}
+            entityName={selectedAgent.name || selectedAgent.id}
+            disabled={!selectedAgent}
+            externalFiles={droppedFiles}
+            onExternalFilesProcessed={clearDroppedFiles}
+          />
         </div>
       </div>
 

@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {
@@ -174,9 +174,10 @@ internal sealed class WorkflowRunner
                     Console.WriteLine("\nACTIVITY:");
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine(activityEvent.Message.Trim());
+                    Console.ResetColor();
                     break;
 
-                case AgentRunUpdateEvent streamEvent:
+                case AgentResponseUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
                         hasStreamed = false;
@@ -189,6 +190,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"\n{agentName.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{messageId}]");
+                            Console.ResetColor();
                         }
                     }
 
@@ -204,6 +206,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.FunctionName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.CallId}]");
+                            Console.ResetColor();
                             break;
 
                         case McpToolCallItem actionUpdate:
@@ -211,6 +214,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.ToolName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.Id}]");
+                            Console.ResetColor();
                             break;
                     }
 
@@ -226,7 +230,7 @@ internal sealed class WorkflowRunner
                     }
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     try
                     {
                         if (hasStreamed)
@@ -238,6 +242,7 @@ internal sealed class WorkflowRunner
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
+                            Console.ResetColor();
                         }
                     }
                     finally

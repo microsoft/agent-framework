@@ -1,7 +1,7 @@
 ﻿<#@ template language="C#" inherits="CodeTemplate, IModeledAction" visibility="internal" linePragmas="false"  #>
 <#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
 <#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Interpreter" #>
-<#@ import namespace="Microsoft.Bot.ObjectModel" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
 <#@ assembly name="System.Core" #>
 /// <summary>
 /// The root executor for a declarative workflow.

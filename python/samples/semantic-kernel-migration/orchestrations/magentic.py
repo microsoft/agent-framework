@@ -136,12 +136,15 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    workflow = (
-        MagenticBuilder()
-        .participants(researcher=researcher, coder=coder)
-        .with_standard_manager(chat_client=OpenAIChatClient())
-        .build()
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
     )
+
+    workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
 
     final_text: str | None = None
     async for event in workflow.run_stream(prompt):

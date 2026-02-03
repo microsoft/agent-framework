@@ -17,6 +17,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
+from agent_framework import tool
 from agent_framework.openai import OpenAIChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
@@ -76,7 +77,8 @@ def load_app_config() -> AppConfig:
         port = 3978
     return AppConfig(use_anonymous_mode=use_anonymous_mode, port=port, agents_sdk_config=agents_sdk_config)
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -93,7 +95,7 @@ def get_weather(
 
 def build_agent() -> ChatAgent:
     """Create and return the chat agent instance with weather tool registered."""
-    return OpenAIChatClient().create_agent(
+    return OpenAIChatClient().as_agent(
         name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 
@@ -189,7 +191,7 @@ def create_app(config: AppConfig) -> web.Application:
         web.Application: Fully initialized web application.
     """
     middleware_fn = build_anonymous_claims_middleware(config.use_anonymous_mode)
-    app = web.Application(middlewares=[middleware_fn])
+    app = web.Application(middleware=[middleware_fn])
 
     storage = MemoryStorage()
     agent = build_agent()

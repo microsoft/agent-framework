@@ -36,7 +36,7 @@ var pirateAgentBuilder = builder.AddAIAgent(
     chatClientServiceKey: "chat-model")
     .WithAITool(new CustomAITool())
     .WithAITool(new CustomFunctionTool())
-    .WithInMemoryThreadStore();
+    .WithInMemorySessionStore();
 
 var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {

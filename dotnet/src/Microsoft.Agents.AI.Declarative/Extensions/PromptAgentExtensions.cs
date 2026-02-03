@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="GptComponentMetadata"/>.
@@ -35,7 +35,7 @@ public static class PromptAgentExtensions
 
         return new ChatOptions()
         {
-            Instructions = promptAgent.ResponseInstructions?.ToTemplateString(),
+            Instructions = promptAgent.Instructions?.ToTemplateString(),
             Temperature = (float?)modelOptions?.Temperature?.Eval(engine),
             MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.Eval(engine),
             TopP = (float?)modelOptions?.TopP?.Eval(engine),

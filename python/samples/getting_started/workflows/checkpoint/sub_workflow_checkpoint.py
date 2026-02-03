@@ -24,6 +24,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
     response_handler,
+    tool,
 )
 
 CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_checkpoints"
@@ -292,16 +293,16 @@ class LaunchCoordinator(Executor):
 
 
 def build_sub_workflow() -> WorkflowExecutor:
-    writer = DraftWriter()
-    router = DraftReviewRouter()
-    finaliser = DraftFinaliser()
-
+    """Assemble the sub-workflow used by the parent workflow executor."""
     sub_workflow = (
         WorkflowBuilder()
-        .set_start_executor(writer)
-        .add_edge(writer, router)
-        .add_edge(router, finaliser)
-        .add_edge(finaliser, writer)  # permits revision loops
+        .register_executor(DraftWriter, name="writer")
+        .register_executor(DraftReviewRouter, name="router")
+        .register_executor(DraftFinaliser, name="finaliser")
+        .set_start_executor("writer")
+        .add_edge("writer", "router")
+        .add_edge("router", "finaliser")
+        .add_edge("finaliser", "writer")  # permits revision loops
         .build()
     )
 
@@ -309,14 +310,14 @@ def build_sub_workflow() -> WorkflowExecutor:
 
 
 def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
-    coordinator = LaunchCoordinator()
-    sub_executor = build_sub_workflow()
-
+    """Assemble the parent workflow that embeds the sub-workflow."""
     return (
         WorkflowBuilder()
-        .set_start_executor(coordinator)
-        .add_edge(coordinator, sub_executor)
-        .add_edge(sub_executor, coordinator)
+        .register_executor(LaunchCoordinator, name="coordinator")
+        .register_executor(build_sub_workflow, name="sub_executor")
+        .set_start_executor("coordinator")
+        .add_edge("coordinator", "sub_executor")
+        .add_edge("sub_executor", "coordinator")
         .with_checkpointing(storage)
         .build()
     )

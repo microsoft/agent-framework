@@ -5,16 +5,17 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatClientProtocol,
     ChatMessage,
-    Contents,
+    Content,
     Executor,
     Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
@@ -100,7 +101,7 @@ class Reviewer(Executor):
         messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
 
         print("Reviewer: Sending review request to LLM...")
-        response = await self._chat_client.get_response(messages=messages, response_format=_Response)
+        response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
 
         parsed = _Response.model_validate_json(response.messages[-1].text)
 
@@ -155,13 +156,13 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[Contents] = []
+            contents: list[Content] = []
             for message in request.agent_messages:
                 contents.extend(message.contents)
 
             # Emit approved result to external consumer via AgentRunUpdateEvent.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role=Role.ASSISTANT))
             )
             return
 
@@ -195,19 +196,20 @@ async def main() -> None:
     print("Starting Workflow Agent Demo")
     print("=" * 50)
 
-    # Initialize chat clients and executors.
-    print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
-    chat_client = OpenAIChatClient(model_id="gpt-4.1")
-    reviewer = Reviewer(id="reviewer", chat_client=chat_client)
-    worker = Worker(id="worker", chat_client=mini_chat_client)
-
     print("Building workflow with Worker ↔ Reviewer cycle...")
     agent = (
         WorkflowBuilder()
-        .add_edge(worker, reviewer)  # Worker sends responses to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer provides feedback to Worker
-        .set_start_executor(worker)
+        .register_executor(
+            lambda: Worker(id="worker", chat_client=OpenAIChatClient(model_id="gpt-4.1-nano")),
+            name="worker",
+        )
+        .register_executor(
+            lambda: Reviewer(id="reviewer", chat_client=OpenAIChatClient(model_id="gpt-4.1")),
+            name="reviewer",
+        )
+        .add_edge("worker", "reviewer")  # Worker sends responses to Reviewer
+        .add_edge("reviewer", "worker")  # Reviewer provides feedback to Worker
+        .set_start_executor("worker")
         .build()
         .as_agent()  # Wrap workflow as an agent
     )

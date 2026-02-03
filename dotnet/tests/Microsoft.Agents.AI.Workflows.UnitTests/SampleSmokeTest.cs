@@ -371,6 +371,124 @@ public class SampleSmokeTest
 
         Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step13Async(ExecutionEnvironment environment)
+    {
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        CheckpointInfo? resumeFrom = null;
+
+        await RunAndValidateAsync(1);
+
+        // this should crash before fix
+        await RunAndValidateAsync(2);
+
+        async ValueTask RunAndValidateAsync(int step)
+        {
+            using StringWriter writer = new();
+            string input = $"[{step}] Hello, World!";
+
+            resumeFrom = await Step13EntryPoint.RunAsync(writer, input, executionEnvironment, checkpointManager, resumeFrom);
+
+            string result = writer.ToString();
+            string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+            const string ExpectedSource = "EchoSubworkflow";
+            Assert.Collection(lines,
+                line => Assert.Contains($"{ExpectedSource}: {input}", line)
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step13aAsync(ExecutionEnvironment environment)
+    {
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+        AgentSession? session = null;
+
+        await RunAndValidateAsync(1);
+
+        // this should crash before fix
+        await RunAndValidateAsync(2);
+
+        async ValueTask RunAndValidateAsync(int step)
+        {
+            using StringWriter writer = new();
+            string input = $"[{step}] Hello, World!";
+
+            session = await Step13EntryPoint.RunAsAgentAsync(writer, input, executionEnvironment, session);
+
+            string result = writer.ToString();
+            string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+
+            // We expect to get the message that was passed in directly; since we are passing it in as a string, there is no associated
+            // author information. The ExpectedSource is empty string.
+            const string ExpectedSource = "";
+            Assert.Collection(lines,
+                line => Assert.Contains($"{ExpectedSource}: {input}", line)
+            );
+        }
+    }
+
+    /// <summary>
+    /// Tests that shared state works WITHIN a subworkflow (internal persistence).
+    /// This verifies state written by one executor in a subworkflow can be read
+    /// by another executor in the SAME subworkflow.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    internal async Task Test_RunSample_Step14_SharedState_WorksWithinSubworkflowAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+        const string Text = "    Lorem ipsum dolor sit amet, consectetur adipiscing elit.  ";
+        int expectedCharCount = Text.Trim().Length;
+
+        // Act & Assert - All executors inside the subworkflow should share state
+        using StringWriter writer = new();
+        int result = await Step14EntryPoint.RunSubworkflowInternalStateAsync(Text, writer, executionEnvironment);
+        result.Should().Be(expectedCharCount, "executors within subworkflow should share state correctly");
+    }
+
+    /// <summary>
+    /// Documents that shared state is currently isolated across subworkflow boundaries.
+    /// This is the behavior reported in issue #2419.
+    /// When/if cross-boundary state sharing is implemented, this test should be updated
+    /// to expect success instead of failure.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    internal async Task Test_RunSample_Step14a_SharedState_IsolatedAcrossSubworkflowBoundaryAsync(ExecutionEnvironment environment)
+    {
+        // Arrange
+        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
+        const string Text = "    Lorem ipsum dolor sit amet, consectetur adipiscing elit.  ";
+
+        // Act - Attempt to use shared state across parent/subworkflow boundary
+        using StringWriter writer = new();
+        Exception? error = await Step14EntryPoint.RunCrossBoundaryStateAsync(Text, writer, executionEnvironment);
+
+        // Assert - Currently, state is isolated across subworkflow boundaries (issue #2419)
+        // The subworkflow executor cannot see state written by the parent workflow
+        error.Should().NotBeNull("state written in parent workflow is not visible in subworkflow");
+
+        // The exception may be wrapped in TargetInvocationException, so check inner exception too
+        Exception actualError = error is System.Reflection.TargetInvocationException tie && tie.InnerException != null
+            ? tie.InnerException
+            : error;
+
+        actualError.Should().BeOfType<InvalidOperationException>();
+    }
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>

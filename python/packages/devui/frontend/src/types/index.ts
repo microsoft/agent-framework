@@ -39,13 +39,20 @@ export interface AgentInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
-  middleware?: string[];
+  context_provider?: string | undefined;
+  middleware?: string[] | undefined;
 }
 
 // JSON Schema types for workflow input
 export interface JSONSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?:
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -53,6 +60,16 @@ export interface JSONSchemaProperty {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  // Union types (Pydantic generates these for Optional[T], Union[T1, T2], etc.)
+  anyOf?: JSONSchemaProperty[];
+  oneOf?: JSONSchemaProperty[];
+  allOf?: JSONSchemaProperty[];
+  // Additional JSON Schema properties
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
 }
 
 export interface JSONSchema {
@@ -82,7 +99,7 @@ export interface Conversation {
   id: string;
   object: "conversation";
   created_at: number;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunAgentRequest {
@@ -130,6 +147,7 @@ export type {
   ResponseCompletedEvent,
   ResponseFailedEvent,
   ResponseFunctionResultComplete,
+  ResponseFunctionToolCall,
   StructuredEvent,
   WorkflowItem,
   ExecutorActionItem,
@@ -159,7 +177,7 @@ export interface MetaResponse {
   framework: string;
   runtime: "python" | "dotnet";
   capabilities: {
-    tracing: boolean;
+    instrumentation: boolean;
     openai_proxy: boolean;
     deployment: boolean;
   };
@@ -170,7 +188,7 @@ export interface MetaResponse {
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
-  contents: import("./agent-framework").Contents[];
+  contents: import("./agent-framework").Content[];
   timestamp: string;
   streaming?: boolean;
   author_name?: string;
@@ -248,6 +266,12 @@ export interface WorkflowSession {
     name?: string;
     description?: string;
     type: "workflow_session";
+    checkpoint_summary?: {
+      count: number;
+      latest_iteration: number;
+      has_pending_hil: boolean;
+      pending_hil_count: number;
+    };
     [key: string]: unknown;
   };
 }
@@ -258,4 +282,46 @@ export interface CheckpointInfo {
   timestamp: number;
   iteration_count: number;
   metadata?: Record<string, unknown>;
+}
+
+// Full checkpoint data structure
+export interface FullCheckpoint {
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  messages: Record<string, unknown[]>;
+  shared_state: Record<string, unknown>;
+  pending_request_info_events: Record<string, PendingRequestInfoEvent>;
+  iteration_count: number;
+  metadata: Record<string, unknown>;
+  version: string;
+}
+
+// Pending request info event data
+export interface PendingRequestInfoEvent {
+  source_executor_id: string;
+  request_type?: string;
+  response_type?: string;
+  request_data?: Record<string, unknown>;
+  request_schema?: Record<string, unknown>;
+  timestamp?: string;
+}
+
+// Checkpoint item from conversation items API
+export interface CheckpointItem {
+  id: string;
+  type: "checkpoint";
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  status: "completed";
+  metadata: {
+    iteration_count: number;
+    pending_hil_count: number;
+    has_pending_hil: boolean;
+    message_count: number;
+    size_bytes?: number;
+    version: string;
+    full_checkpoint?: FullCheckpoint;
+  };
 }

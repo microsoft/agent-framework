@@ -35,9 +35,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     }
 
     /// <inheritdoc/>
-    public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
+    public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
     {
-        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, threadId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
+        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, sessionId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
 
         bool shouldBlock = false;
         string? resolvedUserId = null;
@@ -93,13 +93,13 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// Transform a list of ChatMessages into a list of ProcessContentRequests.
     /// </summary>
     /// <param name="messages">The messages to transform.</param>
-    /// <param name="threadId">The id of the message thread.</param>
+    /// <param name="sessionId">The id of the message session.</param>
     /// <param name="activity">The activity performed on the content.</param>
     /// <param name="settings">The settings used for purview integration.</param>
     /// <param name="userId">The entra id of the user who made the interaction.</param>
     /// <param name="cancellationToken">The cancellation token used to cancel async operations.</param>
     /// <returns>A list of process content requests.</returns>
-    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
+    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
         TokenInfo? tokenInfo = null;
@@ -123,7 +123,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             ContentBase content = new PurviewTextContent(message.Text);
             ProcessConversationMetadata conversationmetadata = new(content, messageId, false, $"Agent Framework Message {messageId}")
             {
-                CorrelationId = threadId ?? Guid.NewGuid().ToString()
+                CorrelationId = sessionId ?? Guid.NewGuid().ToString()
             };
             ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;
@@ -242,23 +242,16 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// </summary>
     /// <param name="pcResponse">The process content response which may contain DLP actions.</param>
     /// <param name="actionInfos">DLP actions returned from protection scopes.</param>
-    /// <returns>The process content response with the protection scopes DLP actions added. Actions are deduplicated.</returns>
+    /// <returns>The process content response with the protection scopes DLP actions added.</returns>
     private static ProcessContentResponse CombinePolicyActions(ProcessContentResponse pcResponse, List<DlpActionInfo>? actionInfos)
     {
-        if (actionInfos == null || actionInfos.Count == 0)
+        if (actionInfos?.Count > 0)
         {
-            return pcResponse;
+            pcResponse.PolicyActions = pcResponse.PolicyActions is null ?
+                actionInfos :
+                [.. pcResponse.PolicyActions, .. actionInfos];
         }
 
-        if (pcResponse.PolicyActions == null)
-        {
-            pcResponse.PolicyActions = actionInfos;
-            return pcResponse;
-        }
-
-        List<DlpActionInfo> pcActionInfos = new(pcResponse.PolicyActions);
-        pcActionInfos.AddRange(actionInfos);
-        pcResponse.PolicyActions = pcActionInfos;
         return pcResponse;
     }
 
@@ -339,20 +332,14 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <returns>The protection scopes activity.</returns>
     private static ProtectionScopeActivities TranslateActivity(Activity activity)
     {
-        switch (activity)
+        return activity switch
         {
-            case Activity.Unknown:
-                return ProtectionScopeActivities.None;
-            case Activity.UploadText:
-                return ProtectionScopeActivities.UploadText;
-            case Activity.UploadFile:
-                return ProtectionScopeActivities.UploadFile;
-            case Activity.DownloadText:
-                return ProtectionScopeActivities.DownloadText;
-            case Activity.DownloadFile:
-                return ProtectionScopeActivities.DownloadFile;
-            default:
-                return ProtectionScopeActivities.UnknownFutureValue;
-        }
+            Activity.Unknown => ProtectionScopeActivities.None,
+            Activity.UploadText => ProtectionScopeActivities.UploadText,
+            Activity.UploadFile => ProtectionScopeActivities.UploadFile,
+            Activity.DownloadText => ProtectionScopeActivities.DownloadText,
+            Activity.DownloadFile => ProtectionScopeActivities.DownloadFile,
+            _ => ProtectionScopeActivities.UnknownFutureValue,
+        };
     }
 }

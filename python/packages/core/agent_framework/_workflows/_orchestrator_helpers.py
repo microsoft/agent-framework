@@ -7,12 +7,8 @@ No inheritance required - just import and call.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
 
 from .._types import ChatMessage, Role
-
-if TYPE_CHECKING:
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +37,6 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
     Returns:
         Cleaned conversation safe for handoff routing
     """
-    from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
-
     cleaned: list[ChatMessage] = []
     for msg in conversation:
         # Skip tool response messages entirely
@@ -53,7 +47,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
         has_tool_content = False
         if msg.contents:
             has_tool_content = any(
-                isinstance(content, (FunctionApprovalRequestContent, FunctionCallContent)) for content in msg.contents
+                content.type in ("function_approval_request", "function_call") for content in msg.contents
             )
 
         # If no tool content, keep original
@@ -99,97 +93,3 @@ def create_completion_message(
         text=message_text,
         author_name=author_name,
     )
-
-
-def prepare_participant_request(
-    *,
-    participant_name: str,
-    conversation: list[ChatMessage],
-    instruction: str | None = None,
-    task: ChatMessage | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> "_GroupChatRequestMessage":
-    """Create a standardized participant request message.
-
-    Simple helper to avoid duplicating request construction.
-
-    Args:
-        participant_name: Name of the target participant
-        conversation: Conversation history to send
-        instruction: Optional instruction from manager/orchestrator
-        task: Optional task context
-        metadata: Optional metadata dict
-
-    Returns:
-        GroupChatRequestMessage ready to send
-    """
-    # Import here to avoid circular dependency
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
-
-    return _GroupChatRequestMessage(
-        agent_name=participant_name,
-        conversation=list(conversation),
-        instruction=instruction or "",
-        task=task,
-        metadata=metadata,
-    )
-
-
-class ParticipantRegistry:
-    """Simple registry for tracking participant executor IDs and routing info.
-
-    Provides a clean interface for the common pattern of mapping participant names
-    to executor IDs and tracking which are agents vs custom executors.
-    """
-
-    def __init__(self) -> None:
-        self._participant_entry_ids: dict[str, str] = {}
-        self._agent_executor_ids: dict[str, str] = {}
-        self._executor_id_to_participant: dict[str, str] = {}
-        self._non_agent_participants: set[str] = set()
-
-    def register(
-        self,
-        name: str,
-        *,
-        entry_id: str,
-        is_agent: bool,
-    ) -> None:
-        """Register a participant's routing information.
-
-        Args:
-            name: Participant name
-            entry_id: Executor ID for this participant's entry point
-            is_agent: Whether this is an AgentExecutor (True) or custom Executor (False)
-        """
-        self._participant_entry_ids[name] = entry_id
-
-        if is_agent:
-            self._agent_executor_ids[name] = entry_id
-            self._executor_id_to_participant[entry_id] = name
-        else:
-            self._non_agent_participants.add(name)
-
-    def get_entry_id(self, name: str) -> str | None:
-        """Get the entry executor ID for a participant name."""
-        return self._participant_entry_ids.get(name)
-
-    def get_participant_name(self, executor_id: str) -> str | None:
-        """Get the participant name for an executor ID (agents only)."""
-        return self._executor_id_to_participant.get(executor_id)
-
-    def is_agent(self, name: str) -> bool:
-        """Check if a participant is an agent (vs custom executor)."""
-        return name in self._agent_executor_ids
-
-    def is_registered(self, name: str) -> bool:
-        """Check if a participant is registered."""
-        return name in self._participant_entry_ids
-
-    def is_participant_registered(self, name: str) -> bool:
-        """Check if a participant is registered (alias for is_registered for compatibility)."""
-        return self.is_registered(name)
-
-    def all_participants(self) -> set[str]:
-        """Get all registered participant names."""
-        return set(self._participant_entry_ids.keys())

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+from ._assistant_provider import *  # noqa: F403
 from ._assistants_client import *  # noqa: F403
 from ._chat_client import *  # noqa: F403
 from ._exceptions import *  # noqa: F403

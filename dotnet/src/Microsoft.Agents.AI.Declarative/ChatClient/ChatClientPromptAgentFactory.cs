@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -38,7 +38,6 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         {
             Name = promptAgent.Name,
             Description = promptAgent.Description,
-            Instructions = promptAgent.Instructions?.ToTemplateString(),
             ChatOptions = promptAgent.GetChatOptions(this.Engine, this._functions),
         };
 

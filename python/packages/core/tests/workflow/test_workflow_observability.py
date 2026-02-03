@@ -151,8 +151,8 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
     event_names = [event.name for event in workflow_span.events]
     assert "workflow.started" in event_names
 
-    # Check processing span
-    processing_span = next(s for s in spans if s.name == "executor.process")
+    # Check processing span - span name uses format "executor.process {executor_id}"
+    processing_span = next(s for s in spans if s.name == "executor.process executor-456")
     assert processing_span.kind == trace.SpanKind.INTERNAL
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "executor-456"
@@ -210,7 +210,8 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Check that spans were created with proper attributes
     spans = span_exporter.get_finished_spans()
-    processing_spans = [s for s in spans if s.name == "executor.process"]
+    # Processing spans now use executor_id as the span name
+    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") == "test-executor"]
     sending_spans = [s for s in spans if s.name == "message.send"]
 
     assert len(processing_spans) >= 1
@@ -218,6 +219,9 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Verify processing span attributes
     processing_span = processing_spans[0]
+    assert (
+        processing_span.name == "executor.process test-executor"
+    )  # Span name uses format "executor.process {executor_id}"
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "test-executor"
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
@@ -225,8 +229,10 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert processing_span.attributes.get("message.payload_type") == "str"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
-async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
+async def test_trace_context_disabled_when_tracing_disabled(
+    enable_instrumentation, span_exporter: InMemorySpanExporter
+) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     executor = MockExecutor("test-executor")
@@ -329,8 +335,9 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     spans = span_exporter.get_finished_spans()
 
     # Should have workflow span, processing spans, and sending spans
+    # Processing spans now use executor_id as the span name, filter by executor.id attribute
     workflow_spans = [s for s in spans if s.name == "workflow.run"]
-    processing_spans = [s for s in spans if s.name == "executor.process"]
+    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") is not None]
     sending_spans = [s for s in spans if s.name == "message.send"]
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
 
@@ -428,7 +435,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
     ctx = InProcRunnerContext(InMemoryCheckpointStorage())

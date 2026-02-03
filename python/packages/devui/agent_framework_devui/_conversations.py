@@ -134,8 +134,11 @@ class ConversationStore(ABC):
         pass
 
     @abstractmethod
-    def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
+    async def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
         """Get a specific conversation item by ID.
+
+        Supports checkpoint items - will load full checkpoint state from storage.
+        For checkpoints, the full state is included in metadata.full_checkpoint.
 
         Args:
             conversation_id: Conversation ID
@@ -162,7 +165,7 @@ class ConversationStore(ABC):
         pass
 
     @abstractmethod
-    def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
+    async def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
         """Filter conversations by metadata (e.g., agent_id).
 
         Args:
@@ -170,6 +173,31 @@ class ConversationStore(ABC):
 
         Returns:
             List of matching Conversation objects
+        """
+        pass
+
+    @abstractmethod
+    def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
+        """Add a trace event to the conversation for context inspection.
+
+        Traces capture execution metadata like token usage, timing, and LLM context
+        that isn't stored in the AgentThread but is useful for debugging.
+
+        Args:
+            conversation_id: Conversation ID
+            trace_event: Trace event data (from ResponseTraceEvent.data)
+        """
+        pass
+
+    @abstractmethod
+    def get_traces(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Get all trace events for a conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            List of trace event dicts, or empty list if not found
         """
         pass
 
@@ -212,6 +240,7 @@ class InMemoryConversationStore(ConversationStore):
             "metadata": metadata or {},
             "created_at": created_at,
             "items": [],
+            "traces": [],  # Trace events for context inspection (token usage, timing, etc.)
         }
 
         # Initialize item index for this conversation
@@ -292,7 +321,7 @@ class InMemoryConversationStore(ConversationStore):
             # Convert ChatMessage contents to OpenAI TextContent format
             message_content = []
             for content_item in msg.contents:
-                if hasattr(content_item, "type") and content_item.type == "text":
+                if content_item.type == "text":
                     # Extract text from TextContent object
                     text_value = getattr(content_item, "text", "")
                     message_content.append(TextContent(type="text", text=text_value))
@@ -404,10 +433,20 @@ class InMemoryConversationStore(ConversationStore):
                     elif content_type == "function_result":
                         # Function result - create separate ConversationItem
                         call_id = getattr(content, "call_id", None)
-                        # Output is stored in additional_properties
-                        output = ""
-                        if hasattr(content, "additional_properties"):
-                            output = content.additional_properties.get("output", "")
+                        # Output is stored in the 'result' field of FunctionResultContent
+                        result_value = getattr(content, "result", None)
+                        # Convert result to string (it could be dict, list, or other types)
+                        if result_value is None:
+                            output = ""
+                        elif isinstance(result_value, str):
+                            output = result_value
+                        else:
+                            import json
+
+                            try:
+                                output = json.dumps(result_value)
+                            except (TypeError, ValueError):
+                                output = str(result_value)
 
                         if call_id:
                             function_results.append(
@@ -444,7 +483,15 @@ class InMemoryConversationStore(ConversationStore):
             # Get all checkpoints for this conversation
             checkpoints = await checkpoint_storage.list_checkpoints()
             for checkpoint in checkpoints:
-                # Create a conversation item for each checkpoint
+                # Create a conversation item for each checkpoint with summary metadata
+                # Full checkpoint state is NOT included here (too large for list view)
+                # Use get_item() to retrieve full checkpoint details
+                # Calculate approximate size of checkpoint
+                import json
+
+                checkpoint_json = json.dumps(checkpoint.to_dict())
+                checkpoint_size = len(checkpoint_json.encode("utf-8"))
+
                 checkpoint_item = {
                     "id": f"checkpoint_{checkpoint.checkpoint_id}",
                     "type": "checkpoint",
@@ -452,6 +499,15 @@ class InMemoryConversationStore(ConversationStore):
                     "workflow_id": checkpoint.workflow_id,
                     "timestamp": checkpoint.timestamp,
                     "status": "completed",
+                    "metadata": {
+                        # Summary metrics for list view
+                        "iteration_count": checkpoint.iteration_count,
+                        "pending_hil_count": len(checkpoint.pending_request_info_events),
+                        "has_pending_hil": len(checkpoint.pending_request_info_events) > 0,
+                        "message_count": sum(len(msgs) for msgs in checkpoint.messages.values()),
+                        "size_bytes": checkpoint_size,
+                        "version": checkpoint.version,
+                    },
                 }
                 items.append(cast(ConversationItem, checkpoint_item))
 
@@ -472,24 +528,119 @@ class InMemoryConversationStore(ConversationStore):
 
         return paginated_items, has_more
 
-    def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
-        """Get a specific conversation item by ID."""
-        # Use the item index for O(1) lookup
+    async def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
+        """Get a specific conversation item by ID.
+
+        Supports checkpoint items - will load full checkpoint state from storage.
+        For checkpoints, the full state is included in metadata.full_checkpoint.
+        """
+        # First check item index for messages, function calls, etc. (O(1) lookup)
         conv_items = self._item_index.get(conversation_id, {})
-        return conv_items.get(item_id)
+        item = conv_items.get(item_id)
+        if item:
+            return item
+
+        # If not found and ID is a checkpoint, load from checkpoint storage
+        if item_id.startswith("checkpoint_"):
+            checkpoint_id = item_id[len("checkpoint_") :]  # Remove "checkpoint_" prefix
+            conv_data = self._conversations.get(conversation_id)
+            if not conv_data:
+                return None
+
+            checkpoint_storage = conv_data.get("checkpoint_storage")
+            if not checkpoint_storage:
+                return None
+
+            # Load full checkpoint from storage
+            checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+            if not checkpoint:
+                return None
+
+            # Calculate size of checkpoint
+            import json
+
+            checkpoint_json = json.dumps(checkpoint.to_dict())
+            checkpoint_size = len(checkpoint_json.encode("utf-8"))
+
+            # Build checkpoint item with FULL state in metadata
+            checkpoint_item = {
+                "id": item_id,
+                "type": "checkpoint",
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "workflow_id": checkpoint.workflow_id,
+                "timestamp": checkpoint.timestamp,
+                "status": "completed",
+                "metadata": {
+                    # Summary metrics (same as list view)
+                    "iteration_count": checkpoint.iteration_count,
+                    "pending_hil_count": len(checkpoint.pending_request_info_events),
+                    "has_pending_hil": len(checkpoint.pending_request_info_events) > 0,
+                    "message_count": sum(len(msgs) for msgs in checkpoint.messages.values()),
+                    "size_bytes": checkpoint_size,
+                    "version": checkpoint.version,
+                    # 🔥 FULL checkpoint state (lazy loaded)
+                    "full_checkpoint": checkpoint.to_dict(),
+                },
+            }
+
+            return cast(ConversationItem, checkpoint_item)
+
+        return None
 
     def get_thread(self, conversation_id: str) -> AgentThread | None:
         """Get AgentThread for execution - CRITICAL for agent.run_stream()."""
         conv_data = self._conversations.get(conversation_id)
         return conv_data["thread"] if conv_data else None
 
-    def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
+    def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
+        """Add a trace event to the conversation for context inspection.
+
+        Traces capture execution metadata like token usage, timing, and LLM context
+        that isn't stored in the AgentThread but is useful for debugging.
+
+        Args:
+            conversation_id: Conversation ID
+            trace_event: Trace event data (from ResponseTraceEvent.data)
+        """
+        conv_data = self._conversations.get(conversation_id)
+        if conv_data:
+            traces = conv_data.get("traces", [])
+            traces.append(trace_event)
+            conv_data["traces"] = traces
+
+    def get_traces(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Get all trace events for a conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            List of trace event dicts, or empty list if not found
+        """
+        conv_data = self._conversations.get(conversation_id)
+        return conv_data.get("traces", []) if conv_data else []
+
+    async def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
         """Filter conversations by metadata (e.g., agent_id)."""
         results = []
         for conv_data in self._conversations.values():
-            conv_meta = conv_data.get("metadata", {})
+            conv_meta = conv_data.get("metadata", {}).copy()  # Copy to avoid mutating original
+
             # Check if all filter items match
             if all(conv_meta.get(k) == v for k, v in metadata_filter.items()):
+                # Enrich workflow sessions with checkpoint summary
+                if conv_meta.get("type") == "workflow_session":
+                    checkpoint_storage = conv_data.get("checkpoint_storage")
+                    if checkpoint_storage:
+                        checkpoints = await checkpoint_storage.list_checkpoints()
+                        latest = checkpoints[0] if checkpoints else None
+                        conv_meta["checkpoint_summary"] = {
+                            "count": len(checkpoints),
+                            "latest_iteration": latest.iteration_count if latest else 0,
+                            "has_pending_hil": len(latest.pending_request_info_events) > 0 if latest else False,
+                            "pending_hil_count": len(latest.pending_request_info_events) if latest else 0,
+                        }
+
                 results.append(
                     Conversation(
                         id=conv_data["id"],
@@ -498,6 +649,10 @@ class InMemoryConversationStore(ConversationStore):
                         metadata=conv_meta,
                     )
                 )
+
+        # Sort by created_at descending (most recent first)
+        results.sort(key=lambda c: c.created_at, reverse=True)
+
         return results
 
 

@@ -1,10 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
@@ -303,10 +304,10 @@ public sealed class ChatMessageExtensionsTests
             new NamedValue(
                 TypeSchema.Message.Fields.Content,
                 FormulaValue.NewTable(
-                    TypeSchema.Message.ContentRecordType,
+                    TypeSchema.MessageContent.RecordType,
                      FormulaValue.NewRecordFromFields(
-                        new NamedValue(TypeSchema.Message.Fields.ContentType, TypeSchema.Message.ContentTypes.Text.ToFormula()),
-                        new NamedValue(TypeSchema.Message.Fields.ContentValue, FormulaValue.New("Test"))))));
+                        new NamedValue(TypeSchema.MessageContent.Fields.Type, TypeSchema.MessageContent.ContentTypes.Text.ToFormula()),
+                        new NamedValue(TypeSchema.MessageContent.Fields.Value, FormulaValue.New("Test"))))));
         RecordDataValue record = source.ToRecord();
 
         // Act
@@ -375,8 +376,8 @@ public sealed class ChatMessageExtensionsTests
         DataValue contentValue = record.Properties[TypeSchema.Message.Fields.Content];
         TableDataValue contentValues = Assert.IsType<TableDataValue>(contentValue, exactMatch: false);
         RecordDataValue badContent = DataValue.RecordFromFields(
-            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.ContentType, StringDataValue.Create(TypeSchema.Message.ContentTypes.Text)),
-            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.ContentValue, BooleanDataValue.Create(true)));
+            new KeyValuePair<string, DataValue>(TypeSchema.MessageContent.Fields.Type, StringDataValue.Create(TypeSchema.MessageContent.ContentTypes.Text)),
+            new KeyValuePair<string, DataValue>(TypeSchema.MessageContent.Fields.Value, BooleanDataValue.Create(true)));
         contentValues.Values.Add(badContent);
 
         // Act
@@ -665,5 +666,108 @@ public sealed class ChatMessageExtensionsTests
         FormulaValue metadataField = result.GetField(TypeSchema.Message.Fields.Metadata);
         RecordValue metadataRecord = Assert.IsType<RecordValue>(metadataField, exactMatch: false);
         Assert.Equal(2, metadataRecord.Fields.Count());
+    }
+
+    [Fact]
+    public void RoundTripChatMessageAsRecord()
+    {
+        // Arrange
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new TextContent("Test message"),
+                    new UriContent("https://example.com/image.jpg", "image/jpeg"),
+                    new HostedFileContent("file_123abc"),
+                    new DataContent(new byte[] { 1, 2, 3, 4, 5 }, "application/pdf"),
+                ])
+            {
+                MessageId = "msg-001"
+            };
+
+        // Act
+        RecordValue result = message.ToRecord();
+        DataValue resultValue = result.ToDataValue();
+        ChatMessage? messageCopy = resultValue.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(messageCopy);
+        Assert.Equal(message.Role, messageCopy.Role);
+        Assert.Equal(message.MessageId, messageCopy.MessageId);
+        Assert.Equal(message.Contents.Count, messageCopy.Contents.Count);
+        foreach (AIContent contentCopy in messageCopy.Contents)
+        {
+            AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
+            AssertAIContentEquivalent(sourceContent, contentCopy);
+        }
+    }
+
+    [Fact]
+    public void RoundTripChatMessageAsTable()
+    {
+        // Arrange
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new TextContent("Test message"),
+                    new UriContent("https://example.com/image.jpg", "image/jpeg"),
+                    new HostedFileContent("file_123abc"),
+                    new DataContent(new byte[] { 1, 2, 3, 4, 5 }, "application/pdf"),
+                ])
+            {
+                MessageId = "msg-001"
+            };
+
+        IEnumerable<ChatMessage> messages = [message];
+
+        // Act
+        TableValue result = messages.ToTable();
+        TableDataValue resultValue = result.ToTable();
+        ChatMessage[] messagesCopy = resultValue.ToChatMessages().ToArray();
+
+        // Assert
+        Assert.NotNull(messagesCopy);
+        ChatMessage messageCopy = Assert.Single(messagesCopy);
+        Assert.Equal(message.Role, messageCopy.Role);
+        Assert.Equal(message.MessageId, messageCopy.MessageId);
+        Assert.Equal(message.Contents.Count, messageCopy.Contents.Count);
+        foreach (AIContent contentCopy in messageCopy.Contents)
+        {
+            AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
+            AssertAIContentEquivalent(sourceContent, contentCopy);
+        }
+    }
+
+    /// <summary>
+    /// Compares two AIContent instances for equivalence without using Assert.Equivalent,
+    /// which fails on .NET Framework 4.7.2 due to ReadOnlySpan.GetHashCode() not being supported.
+    /// </summary>
+    private static void AssertAIContentEquivalent(AIContent expected, AIContent actual)
+    {
+        Assert.Equal(expected.GetType(), actual.GetType());
+
+        switch (expected)
+        {
+            case TextContent expectedText:
+                TextContent actualText = Assert.IsType<TextContent>(actual);
+                Assert.Equal(expectedText.Text, actualText.Text);
+                break;
+            case UriContent expectedUri:
+                UriContent actualUri = Assert.IsType<UriContent>(actual);
+                Assert.Equal(expectedUri.Uri, actualUri.Uri);
+                Assert.Equal(expectedUri.MediaType, actualUri.MediaType);
+                break;
+            case HostedFileContent expectedFile:
+                HostedFileContent actualFile = Assert.IsType<HostedFileContent>(actual);
+                Assert.Equal(expectedFile.FileId, actualFile.FileId);
+                break;
+            case DataContent expectedData:
+                DataContent actualData = Assert.IsType<DataContent>(actual);
+                Assert.Equal(expectedData.MediaType, actualData.MediaType);
+                Assert.Equal(expectedData.Data.ToArray(), actualData.Data.ToArray());
+                break;
+            default:
+                Assert.Fail($"Unexpected AIContent type: {expected.GetType().Name}");
+                break;
+        }
     }
 }

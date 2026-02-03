@@ -67,7 +67,7 @@ async def main() -> None:
         AzureAIAgentClient(
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment,
-            async_credential=AzureCliCredential(),
+            credential=AzureCliCredential(),
         ) as client,
         ChatAgent(
             chat_client=client,
@@ -76,7 +76,7 @@ async def main() -> None:
                 "You are a helpful assistant. Use the provided context from the "
                 "knowledge base to answer questions accurately."
             ),
-            context_providers=[search_provider],
+            context_provider=search_provider,
         ) as agent,
     ):
         print("=== Azure AI Agent with Search Context (Semantic Mode) ===\n")

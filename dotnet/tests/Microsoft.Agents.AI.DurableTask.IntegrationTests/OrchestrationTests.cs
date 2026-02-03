@@ -6,7 +6,7 @@ using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using OpenAI;
+using OpenAI.Chat;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
@@ -57,7 +57,7 @@ public sealed class OrchestrationTests(ITestOutputHelper outputHelper) : IDispos
                 // Register a different agent, but not "NonExistentAgent"
                 agents.AddAIAgentFactory(
                     "OtherAgent",
-                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
                         name: "OtherAgent",
                         instructions: "You are a test agent."));
             },

@@ -10,7 +10,6 @@ from typing import Any, override
 # `agent_framework.builtin` chat client or mock the writer executor. We keep the
 # concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
-    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
@@ -27,6 +26,7 @@ from agent_framework import (
     get_checkpoint_summary,
     handler,
     response_handler,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -128,7 +128,7 @@ class ReviewGateway(Executor):
         await ctx.request_info(
             request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
-                draft=response.agent_run_response.text,
+                draft=response.agent_response.text,
                 iteration=self._iteration,
             ),
             response_type=str,
@@ -173,25 +173,25 @@ class ReviewGateway(Executor):
 
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     """Assemble the workflow graph used by both the initial run and resume."""
-
-    # The Azure client is created once so our agent executor can issue calls to the hosted
-    # model. The agent id is stable across runs which keeps checkpoints deterministic.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    agent = chat_client.create_agent(instructions="Write concise, warm release notes that sound human and helpful.")
-
-    writer = AgentExecutor(agent, id="writer")
-    gateway = ReviewGateway(id="review_gateway", writer_id=writer.id)
-    prepare = BriefPreparer(id="prepare_brief", agent_id=writer.id)
-
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
     workflow_builder = (
         WorkflowBuilder(max_iterations=6)
-        .set_start_executor(prepare)
-        .add_edge(prepare, writer)
-        .add_edge(writer, gateway)
-        .add_edge(gateway, writer)  # revisions loop
+        .register_agent(
+            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+                instructions="Write concise, warm release notes that sound human and helpful.",
+                # The agent name is stable across runs which keeps checkpoints deterministic.
+                name="writer",
+            ),
+            name="writer",
+        )
+        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
+        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
+        .set_start_executor("prepare_brief")
+        .add_edge("prepare_brief", "writer")
+        .add_edge("writer", "review_gateway")
+        .add_edge("review_gateway", "writer")  # revisions loop
         .with_checkpointing(checkpoint_storage=checkpoint_storage)
     )
 

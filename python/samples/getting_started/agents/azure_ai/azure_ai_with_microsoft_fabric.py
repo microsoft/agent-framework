@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Microsoft Fabric Example
 
-This sample demonstrates usage of AzureAIClient with Microsoft Fabric
+This sample demonstrates usage of AzureAIProjectAgentProvider with Microsoft Fabric
 to query Fabric data sources and provide responses based on data analysis.
 
 Prerequisites:
@@ -21,7 +21,9 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyFabricAgent",
             instructions="You are a helpful assistant.",
             tools={
@@ -34,8 +36,8 @@ async def main() -> None:
                     ]
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = "Tell me about sales records"
         print(f"User: {query}")
         result = await agent.run(query)

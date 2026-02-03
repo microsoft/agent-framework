@@ -4,11 +4,12 @@ from typing import Annotated, Any
 
 import anyio
 from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import tool
 
 """
 This sample demonstrates how to expose an Agent as an MCP server.
 
-To run this sample, set up your MCP host (like Claude Desktop or VSCode Github Copilot Agents)
+To run this sample, set up your MCP host (like Claude Desktop or VSCode GitHub Copilot Agents)
 with the following configuration:
 ```json
 {
@@ -30,7 +31,8 @@ with the following configuration:
 ```
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_specials() -> Annotated[str, "Returns the specials from the menu."]:
     return """
         Special Soup: Clam Chowder
@@ -38,7 +40,7 @@ def get_specials() -> Annotated[str, "Returns the specials from the menu."]:
         Special Drink: Chai Tea
         """
 
-
+@tool(approval_mode="never_require")
 def get_item_price(
     menu_item: Annotated[str, "The name of the menu item."],
 ) -> Annotated[str, "Returns the price of the menu item."]:
@@ -48,7 +50,7 @@ def get_item_price(
 async def run() -> None:
     # Define an agent
     # Agent's name and description provide better context for AI model
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="RestaurantAgent",
         description="Answer questions about the menu.",
         tools=[get_specials, get_item_price],

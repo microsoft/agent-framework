@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -25,6 +26,15 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Generators.UnitTests" />
+  </ItemGroup>
+
+  <!-- Include source generator -->
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows.Generators\Microsoft.Agents.AI.Workflows.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="TargetFramework" />
   </ItemGroup>
 
   <ItemGroup>

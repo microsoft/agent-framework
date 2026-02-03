@@ -22,7 +22,7 @@ async def suspend_resume_service_managed_thread() -> None:
     # AzureAIAgentClient supports service-managed threads.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
         ) as agent,
     ):
@@ -55,7 +55,7 @@ async def suspend_resume_in_memory_thread() -> None:
 
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
     )
 

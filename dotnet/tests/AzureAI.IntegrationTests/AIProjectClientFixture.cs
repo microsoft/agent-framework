@@ -33,22 +33,27 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return response.Value.Id;
     }
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
     {
-        var chatClientThread = (ChatClientAgentThread)thread;
+        var chatClientSession = (ChatClientAgentSession)session;
 
-        if (chatClientThread.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
+        if (chatClientSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            // Conversation threads do not persist message history.
-            return await this.GetChatHistoryFromConversationAsync(chatClientThread.ConversationId);
+            // Conversation sessions do not persist message history.
+            return await this.GetChatHistoryFromConversationAsync(chatClientSession.ConversationId);
         }
 
-        if (chatClientThread.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
+        if (chatClientSession.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            return await this.GetChatHistoryFromResponsesChainAsync(chatClientThread.ConversationId);
+            return await this.GetChatHistoryFromResponsesChainAsync(chatClientSession.ConversationId);
         }
 
-        return chatClientThread.MessageStore is null ? [] : (await chatClientThread.MessageStore.GetMessagesAsync()).ToList();
+        if (chatClientSession.ChatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await chatClientSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
@@ -89,7 +94,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         List<ChatMessage> messages = [];
         await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
-            var openAIItem = item.AsOpenAIResponseItem();
+            var openAIItem = item.AsResponseResultItem();
             if (openAIItem is MessageResponseItem messageItem)
             {
                 messages.Add(new ChatMessage
@@ -120,16 +125,16 @@ public class AIProjectClientFixture : IChatClientAgentFixture
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
         this._client.Agents.DeleteAgentAsync(agent.Name);
 
-    public async Task DeleteThreadAsync(AgentThread thread)
+    public async Task DeleteSessionAsync(AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
-        if (typedThread.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
+        var typedSession = (ChatClientAgentSession)session;
+        if (typedSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedThread.ConversationId);
+            await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedSession.ConversationId);
         }
-        else if (typedThread.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
+        else if (typedSession.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            await this.DeleteResponseChainAsync(typedThread.ConversationId!);
+            await this.DeleteResponseChainAsync(typedSession.ConversationId!);
         }
     }
 

@@ -2,13 +2,13 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent with Bing Custom Search Example
 
-This sample demonstrates usage of AzureAIClient with Bing Custom Search
+This sample demonstrates usage of AzureAIProjectAgentProvider with Bing Custom Search
 to search custom search instances and provide responses with relevant results.
 
 Prerequisites:
@@ -21,7 +21,9 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIProjectAgentProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
             name="MyCustomSearchAgent",
             instructions="""You are a helpful agent that can use Bing Custom Search tools to assist users.
             Use the available Bing Custom Search tools to answer questions and perform tasks.""",
@@ -36,8 +38,8 @@ async def main() -> None:
                     ]
                 },
             },
-        ) as agent,
-    ):
+        )
+
         query = "Tell me more about foundry agent service"
         print(f"User: {query}")
         result = await agent.run(query)

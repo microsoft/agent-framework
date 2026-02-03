@@ -5,11 +5,13 @@ from typing import Never
 
 from agent_framework import (
     AgentExecutorResponse,
+    ChatAgent,
     Executor,
     HostedCodeInterpreterTool,
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -65,26 +67,44 @@ class Evaluator(Executor):
             ctx: Workflow context for yielding the final output string
         """
         target_text = "1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89"
-        correctness = target_text in message.agent_run_response.text
-        consumption = message.agent_run_response.usage_details
+        correctness = target_text in message.agent_response.text
+        consumption = message.agent_response.usage_details
         await ctx.yield_output(f"Correctness: {correctness}, Consumption: {consumption}")
+
+
+def create_coding_agent(client: AzureAIAgentClient) -> ChatAgent:
+    """Create an AI agent with code interpretation capabilities.
+
+    This agent can generate and execute Python code to solve problems.
+
+    Args:
+        client: The AzureAIAgentClient used to create the agent
+
+    Returns:
+        A ChatAgent configured with coding instructions and tools
+    """
+    return client.as_agent(
+        name="CodingAgent",
+        instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
+        tools=HostedCodeInterpreterTool(),
+    )
 
 
 async def main():
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential) as chat_client,
+        AzureAIAgentClient(credential=credential) as chat_client,
     ):
-        # Create an agent with code interpretation capabilities
-        agent = chat_client.create_agent(
-            name="CodingAgent",
-            instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
-            tools=HostedCodeInterpreterTool(),
-        )
-
         # Build a workflow: Agent generates code -> Evaluator assesses results
         # The agent will be wrapped in a special agent executor which produces AgentExecutorResponse
-        workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, Evaluator(id="evaluator")).build()
+        workflow = (
+            WorkflowBuilder()
+            .register_agent(lambda: create_coding_agent(chat_client), name="coding_agent")
+            .register_executor(lambda: Evaluator(id="evaluator"), name="evaluator")
+            .set_start_executor("coding_agent")
+            .add_edge("coding_agent", "evaluator")
+            .build()
+        )
 
         # Execute the workflow with a specific coding task
         results = await workflow.run(

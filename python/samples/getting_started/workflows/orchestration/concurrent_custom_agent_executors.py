@@ -12,6 +12,7 @@ from agent_framework import (
     Executor,
     WorkflowContext,
     handler,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -40,7 +41,7 @@ class ResearcherExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "researcher"):
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
@@ -60,7 +61,7 @@ class MarketerExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "marketer"):
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
@@ -80,7 +81,7 @@ class LegalExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "legal"):
-        self.agent = chat_client.create_agent(
+        self.agent = chat_client.as_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."

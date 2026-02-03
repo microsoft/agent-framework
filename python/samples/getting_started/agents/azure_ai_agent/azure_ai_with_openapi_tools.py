@@ -5,8 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_framework import ChatAgent
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.models import OpenApiAnonymousAuthDetails, OpenApiTool
 from azure.identity.aio import AzureCliCredential
 
@@ -40,8 +39,11 @@ async def main() -> None:
     # 1. Load OpenAPI specifications (synchronous operation)
     weather_openapi_spec, countries_openapi_spec = load_openapi_specs()
 
-    # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as client:
+    # 2. Use AzureAIAgentsProvider for agent creation and management
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
         # 3. Create OpenAPI tools using Azure AI's OpenApiTool
         auth = OpenApiAnonymousAuthDetails()
 
@@ -62,8 +64,7 @@ async def main() -> None:
         # 4. Create an agent with OpenAPI tools
         # Note: We need to pass the Azure AI native OpenApiTool definitions directly
         # since the agent framework doesn't have a HostedOpenApiTool wrapper yet
-        async with ChatAgent(
-            chat_client=client,
+        agent = await provider.create_agent(
             name="OpenAPIAgent",
             instructions=(
                 "You are a helpful assistant that can search for country information "
@@ -73,18 +74,19 @@ async def main() -> None:
             ),
             # Pass the raw tool definitions from Azure AI's OpenApiTool
             tools=[*openapi_countries.definitions, *openapi_weather.definitions],
-        ) as agent:
-            # 5. Simulate conversation with the agent maintaining thread context
-            print("=== Azure AI Agent with OpenAPI Tools ===\n")
+        )
 
-            # Create a thread to maintain conversation context across multiple runs
-            thread = agent.get_new_thread()
+        # 5. Simulate conversation with the agent maintaining thread context
+        print("=== Azure AI Agent with OpenAPI Tools ===\n")
 
-            for user_input in USER_INPUTS:
-                print(f"User: {user_input}")
-                # Pass the thread to maintain context across multiple agent.run() calls
-                response = await agent.run(user_input, thread=thread)
-                print(f"Agent: {response.text}\n")
+        # Create a thread to maintain conversation context across multiple runs
+        thread = agent.get_new_thread()
+
+        for user_input in USER_INPUTS:
+            print(f"User: {user_input}")
+            # Pass the thread to maintain context across multiple agent.run() calls
+            response = await agent.run(user_input, thread=thread)
+            print(f"Agent: {response.text}\n")
 
 
 if __name__ == "__main__":

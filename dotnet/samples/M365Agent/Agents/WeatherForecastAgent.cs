@@ -33,9 +33,9 @@ public class WeatherForecastAgent : DelegatingAIAgent
             new ChatClientAgentOptions()
             {
                 Name = AgentName,
-                Instructions = AgentInstructions,
                 ChatOptions = new ChatOptions()
                 {
+                    Instructions = AgentInstructions,
                     Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))],
                     // We want the agent to return structured output in a known format
                     // so that we can easily create adaptive cards from the response.
@@ -48,9 +48,9 @@ public class WeatherForecastAgent : DelegatingAIAgent
     {
     }
 
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var response = await base.RunAsync(messages, thread, options, cancellationToken);
+        var response = await base.RunCoreAsync(messages, session, options, cancellationToken);
 
         // If the agent returned a valid structured output response
         // we might be able to enhance the response with an adaptive card.

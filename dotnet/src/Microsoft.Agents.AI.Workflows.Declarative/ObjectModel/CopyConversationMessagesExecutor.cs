@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -33,7 +33,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
 
             if (isWorkflowConversation)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentRunResponse([.. inputMessages])), cancellationToken).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, new AgentResponse([.. inputMessages])), cancellationToken).ConfigureAwait(false);
             }
         }
 
