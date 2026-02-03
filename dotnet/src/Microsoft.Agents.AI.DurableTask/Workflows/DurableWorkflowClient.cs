@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask;
@@ -40,9 +40,11 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
             throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
         }
 
+        DurableWorkflowInput<TInput> workflowInput = new() { Input = input };
+
         string instanceId = await this._client.ScheduleNewOrchestrationInstanceAsync(
             orchestratorName: WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name),
-            input: input,
+            input: workflowInput,
             options: runId is not null ? new StartOrchestrationOptions(runId) : null,
             cancellation: cancellationToken).ConfigureAwait(false);
 

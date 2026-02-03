@@ -10,6 +10,9 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// <summary>
 /// A workflow context for durable activity execution.
 /// </summary>
+/// <remarks>
+/// Some of the methods are returning default for this version. Those method will be updated with real implementations in follow up PRs.
+/// </remarks>
 [DebuggerDisplay("Executor = {_executor.Id}, StateEntries = {_initialState.Count}")]
 internal sealed class DurableActivityContext : IWorkflowContext
 {

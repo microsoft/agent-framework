@@ -48,36 +48,38 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
                 object? messageObj = DeserializeForCondition(envelope.Message, this._sourceOutputType);
                 if (!this._condition(messageObj))
                 {
-                    if (logger.IsEnabled(LogLevel.Debug))
-                    {
-                        logger.LogDebug(
-                            "Edge {Source} -> {Sink}: condition returned false, skipping",
-                            this._sourceId,
-                            this._sinkId);
-                    }
-
+                    logger.LogEdgeConditionFalse(this._sourceId, this._sinkId);
                     return;
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(
-                    ex,
-                    "Failed to evaluate condition for edge {Source} -> {Sink}, skipping",
-                    this._sourceId,
-                    this._sinkId);
+                logger.LogEdgeConditionEvaluationFailed(ex, this._sourceId, this._sinkId);
                 return;
             }
         }
 
-        if (logger.IsEnabled(LogLevel.Debug))
-        {
-            logger.LogDebug("Edge {Source} -> {Sink}: routing message", this._sourceId, this._sinkId);
-        }
-
+        logger.LogEdgeRoutingMessage(this._sourceId, this._sinkId);
         EnqueueMessage(messageQueues, this._sinkId, envelope);
     }
 
+    /// <summary>
+    /// Deserializes a JSON message to an object for condition evaluation.
+    /// </summary>
+    /// <remarks>
+    /// Messages travel through the durable workflow as serialized JSON strings, but condition
+    /// delegates need typed objects to evaluate (e.g., order => order.Status == "Approved").
+    /// This method converts the JSON back to an object the condition delegate can evaluate.
+    /// </remarks>
+    /// <param name="json">The JSON string representation of the message.</param>
+    /// <param name="targetType">
+    /// The expected type of the message. When provided, enables strongly-typed deserialization
+    /// so the condition function receives the correct type to evaluate against.
+    /// </param>
+    /// <returns>
+    /// The deserialized object, null if the JSON is empty, or the raw JSON string if deserialization fails.
+    /// Returning the raw string on failure allows conditions that work with strings to still function.
+    /// </returns>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static object? DeserializeForCondition(string json, Type? targetType)
@@ -89,12 +91,17 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
 
         try
         {
+            // If we know the source executor's output type, deserialize to that specific type
+            // so the condition function can access strongly-typed properties.
+            // Otherwise, deserialize as a generic object for basic inspection.
             return targetType is null
                 ? JsonSerializer.Deserialize<object>(json)
                 : JsonSerializer.Deserialize(json, targetType);
         }
         catch (JsonException)
         {
+            // If deserialization fails (e.g., the message is plain text, not JSON),
+            // return the raw string so string-based conditions can still evaluate it.
             return json;
         }
     }

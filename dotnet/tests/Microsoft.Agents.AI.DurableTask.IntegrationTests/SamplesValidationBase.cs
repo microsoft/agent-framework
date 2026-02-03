@@ -25,6 +25,13 @@ public abstract class SamplesValidationBase : IAsyncLifetime
             .AddEnvironmentVariables()
             .Build();
 
+    // Semaphores for thread-safe initialization of shared infrastructure.
+    // xUnit may run tests in parallel, so we need to ensure that DTS emulator and Redis
+    // are started only once across all test instances. Using SemaphoreSlim allows async-safe
+    // locking, and the double-check pattern (check flag, acquire lock, check flag again)
+    // minimizes lock contention after initialization is complete.
+    private static readonly SemaphoreSlim s_dtsInitLock = new(1, 1);
+    private static readonly SemaphoreSlim s_redisInitLock = new(1, 1);
     private static bool s_dtsInfrastructureStarted;
     private static bool s_redisInfrastructureStarted;
 
@@ -58,21 +65,68 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     /// <inheritdoc />
     public async Task InitializeAsync()
     {
-        if (!s_dtsInfrastructureStarted)
-        {
-            this._outputHelper.WriteLine("Starting shared DTS infrastructure...");
-            await this.StartDtsEmulatorAsync();
-            s_dtsInfrastructureStarted = true;
-        }
+        await EnsureDtsInfrastructureStartedAsync(this._outputHelper, this.StartDtsEmulatorAsync);
 
-        if (this.RequiresRedis && !s_redisInfrastructureStarted)
+        if (this.RequiresRedis)
         {
-            this._outputHelper.WriteLine("Starting shared Redis infrastructure...");
-            await this.StartRedisAsync();
-            s_redisInfrastructureStarted = true;
+            await EnsureRedisInfrastructureStartedAsync(this._outputHelper, this.StartRedisAsync);
         }
 
         await Task.Delay(TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// Ensures DTS infrastructure is started exactly once across all test instances.
+    /// Static method writes to static field to avoid the code smell of instance methods modifying shared state.
+    /// </summary>
+    private static async Task EnsureDtsInfrastructureStartedAsync(ITestOutputHelper outputHelper, Func<Task> startAction)
+    {
+        if (s_dtsInfrastructureStarted)
+        {
+            return;
+        }
+
+        await s_dtsInitLock.WaitAsync();
+        try
+        {
+            if (!s_dtsInfrastructureStarted)
+            {
+                outputHelper.WriteLine("Starting shared DTS infrastructure...");
+                await startAction();
+                s_dtsInfrastructureStarted = true;
+            }
+        }
+        finally
+        {
+            s_dtsInitLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Ensures Redis infrastructure is started exactly once across all test instances.
+    /// Static method writes to static field to avoid the code smell of instance methods modifying shared state.
+    /// </summary>
+    private static async Task EnsureRedisInfrastructureStartedAsync(ITestOutputHelper outputHelper, Func<Task> startAction)
+    {
+        if (s_redisInfrastructureStarted)
+        {
+            return;
+        }
+
+        await s_redisInitLock.WaitAsync();
+        try
+        {
+            if (!s_redisInfrastructureStarted)
+            {
+                outputHelper.WriteLine("Starting shared Redis infrastructure...");
+                await startAction();
+                s_redisInfrastructureStarted = true;
+            }
+        }
+        finally
+        {
+            s_redisInitLock.Release();
+        }
     }
 
     /// <inheritdoc />

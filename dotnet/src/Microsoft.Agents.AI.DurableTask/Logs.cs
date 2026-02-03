@@ -139,6 +139,16 @@ internal static partial class Logs
 
     [LoggerMessage(
         EventId = 104,
+        Level = LogLevel.Warning,
+        Message = "Workflow '{InstanceId}' terminated early: reached maximum superstep limit ({MaxSupersteps}) with {RemainingExecutors} executor(s) still queued")]
+    public static partial void LogWorkflowMaxSuperstepsExceeded(
+        this ILogger logger,
+        string instanceId,
+        int maxSupersteps,
+        int remainingExecutors);
+
+    [LoggerMessage(
+        EventId = 105,
         Level = LogLevel.Debug,
         Message = "Fan-In executor {ExecutorId}: aggregated {Count} messages from [{Sources}]")]
     public static partial void LogFanInAggregated(
@@ -148,7 +158,7 @@ internal static partial class Logs
         string sources);
 
     [LoggerMessage(
-        EventId = 105,
+        EventId = 106,
         Level = LogLevel.Debug,
         Message = "Executor '{ExecutorId}' returned result (length: {Length}, messages: {MessageCount})")]
     public static partial void LogExecutorResultReceived(
@@ -158,7 +168,7 @@ internal static partial class Logs
         int messageCount);
 
     [LoggerMessage(
-        EventId = 106,
+        EventId = 107,
         Level = LogLevel.Debug,
         Message = "Dispatching executor '{ExecutorId}' (agentic: {IsAgentic})")]
     public static partial void LogDispatchingExecutor(
@@ -167,10 +177,38 @@ internal static partial class Logs
         bool isAgentic);
 
     [LoggerMessage(
-        EventId = 107,
+        EventId = 108,
         Level = LogLevel.Warning,
         Message = "Agent '{AgentName}' not found")]
     public static partial void LogAgentNotFound(
         this ILogger logger,
         string agentName);
+
+    [LoggerMessage(
+        EventId = 109,
+        Level = LogLevel.Debug,
+        Message = "Edge {Source} -> {Sink}: condition returned false, skipping")]
+    public static partial void LogEdgeConditionFalse(
+        this ILogger logger,
+        string source,
+        string sink);
+
+    [LoggerMessage(
+        EventId = 110,
+        Level = LogLevel.Warning,
+        Message = "Failed to evaluate condition for edge {Source} -> {Sink}, skipping")]
+    public static partial void LogEdgeConditionEvaluationFailed(
+        this ILogger logger,
+        Exception ex,
+        string source,
+        string sink);
+
+    [LoggerMessage(
+        EventId = 111,
+        Level = LogLevel.Debug,
+        Message = "Edge {Source} -> {Sink}: routing message")]
+    public static partial void LogEdgeRoutingMessage(
+        this ILogger logger,
+        string source,
+        string sink);
 }

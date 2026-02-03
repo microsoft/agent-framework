@@ -62,7 +62,7 @@ public sealed class DurableWorkflowOptions
     /// </summary>
     /// <param name="workflows">The collection of <see cref="Workflow"/> objects to add.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="workflows"/> is null.</exception>
-    public void AddWorkflows(IEnumerable<Workflow> workflows)
+    public void AddWorkflows(params Workflow[] workflows)
     {
         ArgumentNullException.ThrowIfNull(workflows);
 
@@ -81,23 +81,11 @@ public sealed class DurableWorkflowOptions
 
         foreach ((string executorId, ExecutorBinding binding) in workflow.ReflectExecutors())
         {
-            string executorName = ExtractExecutorName(executorId);
+            string executorName = WorkflowNamingHelper.GetExecutorName(executorId);
             this.Executors.Register(executorName, executorId, workflow);
 
             TryRegisterAgent(binding, agentOptions);
         }
-    }
-
-    /// <summary>
-    /// Extracts the executor name from an executor ID by removing the instance suffix.
-    /// </summary>
-    /// <remarks>
-    /// Executor IDs have the format "ExecutorName_InstanceId". This method extracts just the name portion.
-    /// </remarks>
-    private static string ExtractExecutorName(string executorId)
-    {
-        int underscoreIndex = executorId.IndexOf('_');
-        return underscoreIndex > 0 ? executorId[..underscoreIndex] : executorId;
     }
 
     /// <summary>

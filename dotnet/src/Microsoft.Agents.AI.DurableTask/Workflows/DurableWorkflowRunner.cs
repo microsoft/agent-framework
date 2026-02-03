@@ -1,5 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// ConfigureAwait Usage in Orchestration Code:
+// This file uses ConfigureAwait(true) because it runs within orchestration context.
+// Durable Task orchestrations require deterministic replay - the same code must execute
+// identically across replays. ConfigureAwait(true) ensures continuations run on the
+// orchestration's synchronization context, which is essential for replay correctness.
+// Using ConfigureAwait(false) here could cause non-deterministic behavior during replay.
+
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
@@ -36,17 +43,17 @@ internal sealed class DurableWorkflowRunner
     /// Runs a workflow orchestration.
     /// </summary>
     /// <param name="context">The task orchestration context.</param>
-    /// <param name="input">The workflow run input containing workflow name and input.</param>
+    /// <param name="workflowInput">The workflow input envelope containing workflow input and metadata.</param>
     /// <param name="logger">The replay-safe logger for orchestration logging.</param>
     /// <returns>The result of the workflow execution.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the specified workflow is not found.</exception>
     internal async Task<string> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
-        string input,
+        DurableWorkflowInput<string> workflowInput,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(workflowInput);
 
         Workflow workflow = this.GetWorkflowOrThrow(context.Name);
 
@@ -57,7 +64,7 @@ internal sealed class DurableWorkflowRunner
         WorkflowGraphInfo graphInfo = WorkflowAnalyzer.BuildGraphInfo(workflow);
         DurableEdgeMap edgeMap = new(graphInfo);
 
-        return await RunSuperstepLoopAsync(context, workflow, edgeMap, input, logger).ConfigureAwait(true);
+        return await RunSuperstepLoopAsync(context, workflow, edgeMap, workflowInput.Input, logger).ConfigureAwait(true);
     }
 
     private Workflow GetWorkflowOrThrow(string orchestrationName)
@@ -102,12 +109,30 @@ internal sealed class DurableWorkflowRunner
             string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, logger).ConfigureAwait(true);
 
             ProcessSuperstepResults(executorInputs, results, state, logger);
+
+            // Check if we've reached the limit and still have work remaining
+            if (superstep == MaxSupersteps)
+            {
+                int remainingExecutors = CountRemainingExecutors(state.MessageQueues);
+                if (remainingExecutors > 0)
+                {
+                    logger.LogWorkflowMaxSuperstepsExceeded(context.InstanceId, MaxSupersteps, remainingExecutors);
+                }
+            }
         }
 
         string finalResult = GetFinalResult(state.LastResults);
         logger.LogWorkflowCompleted();
 
         return finalResult;
+    }
+
+    /// <summary>
+    /// Counts the number of executors with pending messages in their queues.
+    /// </summary>
+    private static int CountRemainingExecutors(Dictionary<string, Queue<DurableMessageEnvelope>> messageQueues)
+    {
+        return messageQueues.Count(kvp => kvp.Value.Count > 0);
     }
 
     private static async Task<string[]> DispatchExecutorsInParallelAsync(
@@ -156,13 +181,10 @@ internal sealed class DurableWorkflowRunner
     {
         List<ExecutorInput> inputs = [];
 
-        foreach ((string executorId, Queue<DurableMessageEnvelope> queue) in state.MessageQueues)
+        // Only process queues that have pending messages
+        foreach ((string executorId, Queue<DurableMessageEnvelope> queue) in state.MessageQueues
+            .Where(kvp => kvp.Value.Count > 0))
         {
-            if (queue.Count == 0)
-            {
-                continue;
-            }
-
             DurableMessageEnvelope envelope = GetNextEnvelope(executorId, queue, state.EdgeMap, logger);
             WorkflowExecutorInfo executorInfo = CreateExecutorInfo(executorId, state.ExecutorBindings);
 
@@ -253,12 +275,10 @@ internal sealed class DurableWorkflowRunner
     {
         if (sentMessages.Count > 0)
         {
-            foreach (SentMessageInfo message in sentMessages)
+            // Only route messages that have content
+            foreach (SentMessageInfo message in sentMessages.Where(m => !string.IsNullOrEmpty(m.Message)))
             {
-                if (!string.IsNullOrEmpty(message.Message))
-                {
-                    state.EdgeMap.RouteMessage(executorId, message.Message, message.TypeName, state.MessageQueues, logger);
-                }
+                state.EdgeMap.RouteMessage(executorId, message.Message!, message.TypeName, state.MessageQueues, logger);
             }
 
             return;

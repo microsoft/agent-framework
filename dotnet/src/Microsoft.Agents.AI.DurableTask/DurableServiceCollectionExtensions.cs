@@ -94,7 +94,7 @@ public static class DurableServiceCollectionExtensions
             {
                 foreach (WorkflowRegistrationInfo registration in registrations)
                 {
-                    registry.AddOrchestratorFunc<string, string>(
+                    registry.AddOrchestratorFunc<DurableWorkflowInput<string>, string>(
                         registration.OrchestrationName,
                         (context, input) => RunWorkflowOrchestrationAsync(context, input, durableOptions));
 
@@ -171,20 +171,20 @@ public static class DurableServiceCollectionExtensions
 
         registrations.Add(BuildWorkflowRegistration(workflow, registeredActivities));
 
-        foreach (KeyValuePair<string, ExecutorBinding> entry in workflow.ReflectExecutors())
+        // Process subworkflows recursively to register them as separate orchestrations
+        foreach (SubworkflowBinding subworkflowBinding in workflow.ReflectExecutors()
+            .Select(e => e.Value)
+            .OfType<SubworkflowBinding>())
         {
-            if (entry.Value is SubworkflowBinding subworkflowBinding)
-            {
-                Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
-                workflowOptions.AddWorkflow(subWorkflow);
+            Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
+            workflowOptions.AddWorkflow(subWorkflow);
 
-                BuildWorkflowRegistrationRecursive(
-                    subWorkflow,
-                    workflowOptions,
-                    registrations,
-                    registeredActivities,
-                    registeredOrchestrations);
-            }
+            BuildWorkflowRegistrationRecursive(
+                subWorkflow,
+                workflowOptions,
+                registrations,
+                registeredActivities,
+                registeredOrchestrations);
         }
     }
 
@@ -196,13 +196,12 @@ public static class DurableServiceCollectionExtensions
         Dictionary<string, ExecutorBinding> executorBindings = workflow.ReflectExecutors();
         List<ActivityRegistrationInfo> activities = [];
 
-        foreach (KeyValuePair<string, ExecutorBinding> entry in executorBindings)
+        // Filter out AI agents and subworkflows - they are not registered as activities.
+        // AI agents use Durable Entities for stateful execution, and subworkflows are
+        // registered as separate orchestrations via BuildWorkflowRegistrationRecursive.
+        foreach (KeyValuePair<string, ExecutorBinding> entry in executorBindings
+            .Where(e => e.Value is not AIAgentBinding and not SubworkflowBinding))
         {
-            if (entry.Value is AIAgentBinding or SubworkflowBinding)
-            {
-                continue;
-            }
-
             string executorName = WorkflowNamingHelper.GetExecutorName(entry.Key);
             string activityName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
 
@@ -217,13 +216,14 @@ public static class DurableServiceCollectionExtensions
 
     private static async Task<string> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
-        string input,
+        DurableWorkflowInput<string> workflowInput,
         DurableOptions durableOptions)
     {
         ILogger logger = context.CreateReplaySafeLogger("DurableWorkflow");
         DurableWorkflowRunner runner = new(durableOptions);
 
-        return await runner.RunWorkflowOrchestrationAsync(context, input, logger).ConfigureAwait(true);
+        // ConfigureAwait(true) is required in orchestration code for deterministic replay.
+        return await runner.RunWorkflowOrchestrationAsync(context, workflowInput, logger).ConfigureAwait(true);
     }
 
     private sealed record WorkflowRegistrationInfo(string OrchestrationName, List<ActivityRegistrationInfo> Activities);

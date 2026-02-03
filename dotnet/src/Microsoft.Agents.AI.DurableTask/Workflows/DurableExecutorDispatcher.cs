@@ -1,5 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// ConfigureAwait Usage in Orchestration Code:
+// This file uses ConfigureAwait(true) because it runs within orchestration context.
+// Durable Task orchestrations require deterministic replay - the same code must execute
+// identically across replays. ConfigureAwait(true) ensures continuations run on the
+// orchestration's synchronization context, which is essential for replay correctness.
+// Using ConfigureAwait(false) here could cause non-deterministic behavior during replay.
+
 using System.Text.Json;
 using Microsoft.DurableTask;
 using Microsoft.Extensions.Logging;
