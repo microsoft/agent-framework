@@ -1458,10 +1458,11 @@ async def _auto_invoke_function(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
-        Function result content or other content for approval/hosted tool scenarios.
+        The function result content.
 
     Raises:
         KeyError: If the requested function is not found in the tool map.
+        MiddlewareTermination: If middleware requests loop termination.
     """
     from ._types import Content
 
@@ -1536,7 +1537,7 @@ async def _auto_invoke_function(
                 exception=str(exc),
             )
     # Execute through middleware pipeline if available
-    from ._middleware import FunctionInvocationContext, MiddlewareTermination
+    from ._middleware import FunctionInvocationContext
 
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -1551,18 +1552,25 @@ async def _auto_invoke_function(
             **context_obj.kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
         )
 
+    # MiddlewareTermination bubbles up to signal loop termination
     try:
         function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
         return Content.from_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=function_result,
         )
-    except MiddlewareTermination:
-        return Content.from_function_result(
-            call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            result=None,
-        )
     except Exception as exc:
+        from ._middleware import MiddlewareTermination
+
+        if isinstance(exc, MiddlewareTermination):
+            # Re-raise to signal loop termination, but first capture any result set by middleware
+            if middleware_context.result is not None:
+                # Store result in exception for caller to extract
+                exc.result = Content.from_function_result(
+                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                    result=middleware_context.result,
+                )
+            raise
         message = "Error: Function failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
@@ -1668,22 +1676,47 @@ async def _try_execute_function_calls(
         # return the declaration only tools to the user, since we cannot execute them.
         return ([fcc for fcc in function_calls if fcc.type == "function_call"], False)
 
-    # Run all function calls concurrently
+    # Run all function calls concurrently, handling MiddlewareTermination
+    from ._middleware import MiddlewareTermination
+
+    async def invoke_with_termination_handling(
+        function_call: Content,
+        seq_idx: int,
+    ) -> tuple[Content, bool]:
+        """Invoke function and catch MiddlewareTermination, returning (result, should_terminate)."""
+        try:
+            result = await _auto_invoke_function(
+                function_call_content=function_call,  # type: ignore[arg-type]
+                custom_args=custom_args,
+                tool_map=tool_map,
+                sequence_index=seq_idx,
+                request_index=attempt_idx,
+                middleware_pipeline=middleware_pipeline,
+                config=config,
+            )
+            return (result, False)
+        except MiddlewareTermination as exc:
+            # Middleware requested termination - return any result it set
+            if exc.result is not None:
+                return (exc.result, True)
+            # No result set - return empty result
+            return (
+                Content.from_function_result(
+                    call_id=function_call.call_id,  # type: ignore[arg-type]
+                    result=None,
+                ),
+                True,
+            )
+
     execution_results = await asyncio.gather(*[
-        _auto_invoke_function(
-            function_call_content=function_call,  # type: ignore[arg-type]
-            custom_args=custom_args,
-            tool_map=tool_map,
-            sequence_index=seq_idx,
-            request_index=attempt_idx,
-            middleware_pipeline=middleware_pipeline,
-            config=config,
-        )
-        for seq_idx, function_call in enumerate(function_calls)
+        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
     ])
 
-    contents: list[Content] = list(execution_results)
-    return (contents, False)
+    # Unpack results - each is (Content, terminate_flag)
+    contents: list[Content] = [result[0] for result in execution_results]
+    # If any function requested termination, terminate the loop
+    should_terminate = any(result[1] for result in execution_results)
+    return (contents, should_terminate)
 
 
 async def _execute_function_calls(
@@ -1698,7 +1731,7 @@ async def _execute_function_calls(
     tools = _extract_tools(tool_options)
     if not tools:
         return [], False, False
-    results, _ = await _try_execute_function_calls(
+    results, should_terminate = await _try_execute_function_calls(
         custom_args=custom_args,
         attempt_idx=attempt_idx,
         function_calls=function_calls,
@@ -1707,7 +1740,7 @@ async def _execute_function_calls(
         config=config,
     )
     had_errors = any(fcr.exception is not None for fcr in results if fcr.type == "function_result")
-    return list(results), False, had_errors
+    return list(results), should_terminate, had_errors
 
 
 def _update_conversation_id(
@@ -1945,8 +1978,9 @@ async def _process_function_requests(
         if fcc_todo:
             approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
             approved_function_results: list[Content] = []
+            should_terminate = False
             if approved_responses:
-                results, _, had_errors = await execute_function_calls(
+                results, should_terminate, had_errors = await execute_function_calls(
                     attempt_idx=attempt_idx,
                     function_calls=approved_responses,
                     tool_options=tool_options,
@@ -1962,7 +1996,7 @@ async def _process_function_requests(
                         )
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
             return {
-                "action": "stop",
+                "action": "return" if should_terminate else "stop",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
                 "update_role": None,
@@ -1990,7 +2024,7 @@ async def _process_function_requests(
             "function_call_results": None,
         }
 
-    function_call_results, _, had_errors = await execute_function_calls(
+    function_call_results, should_terminate, had_errors = await execute_function_calls(
         attempt_idx=attempt_idx,
         function_calls=function_calls,
         tool_options=tool_options,
@@ -2004,6 +2038,9 @@ async def _process_function_requests(
         max_errors=max_errors,
     )
     result["function_call_results"] = list(function_call_results)
+    # If middleware requested termination, change action to return
+    if should_terminate:
+        result["action"] = "return"
     return result
 
 
@@ -2067,6 +2104,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         *,
         stream: bool = False,
         options: TOptions_co | ChatOptions[Any] | None = None,
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import FunctionMiddlewarePipeline
@@ -2080,9 +2118,8 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         super_get_response = super().get_response  # type: ignore[misc]
 
         # ChatMiddleware adds this kwarg
-        run_function_middleware = kwargs.get("_function_middleware")
         function_middleware_pipeline = FunctionMiddlewarePipeline(
-            *(self.function_middleware), *(run_function_middleware or [])
+            *(self.function_middleware), *(function_middleware or [])
         )
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}

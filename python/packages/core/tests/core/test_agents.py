@@ -904,7 +904,8 @@ def test_chat_agent_calls_update_agent_name_on_client():
         description="Test description",
     )
 
-    assert mock_client._update_agent_name_and_description.call_count == 2
+    assert mock_client._update_agent_name_and_description.call_count == 1
+    mock_client._update_agent_name_and_description.assert_called_with("TestAgent", "Test description")
 
 
 @pytest.mark.asyncio

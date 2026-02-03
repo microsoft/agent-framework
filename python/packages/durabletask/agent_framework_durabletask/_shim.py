@@ -10,10 +10,9 @@ The actual execution is delegated to the context-specific providers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from agent_framework import AgentProtocol, AgentThread, ChatMessage
-from typing import Literal
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread

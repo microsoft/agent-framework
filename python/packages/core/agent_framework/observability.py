@@ -1401,15 +1401,16 @@ class AgentTelemetryLayer:
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     raise
-                response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
-                _capture_response(span=span, attributes=response_attributes)
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
-                    _capture_messages(
-                        span=span,
-                        provider_name=provider_name,
-                        messages=response.messages,
-                        output=True,
-                    )
+                if response:
+                    response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
+                    _capture_response(span=span, attributes=response_attributes)
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                        _capture_messages(
+                            span=span,
+                            provider_name=provider_name,
+                            messages=response.messages,
+                            output=True,
+                        )
                 return response  # type: ignore[return-value,no-any-return]
 
         return _run()

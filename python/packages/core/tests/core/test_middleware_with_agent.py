@@ -20,7 +20,9 @@ from agent_framework import (
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
+    MiddlewareException,
     MiddlewareTermination,
+    MiddlewareType,
     Role,
     agent_middleware,
     chat_middleware,
@@ -126,7 +128,7 @@ class TestChatAgentFunctionBasedMiddleware:
             ) -> None:
                 execution_order.append("middleware_before")
                 raise MiddlewareTermination
-                # We call next() but since terminate=True, subsequent middleware and handler should not execute
+                # Code after raise is unreachable
                 await next(context)
                 execution_order.append("middleware_after")
 
@@ -141,10 +143,10 @@ class TestChatAgentFunctionBasedMiddleware:
         ]
         response = await agent.run(messages)
 
-        # Verify response
-        assert response is not None
-        assert not response.messages  # No messages should be in response due to pre-termination
-        assert execution_order == ["middleware_before", "middleware_after"]  # MiddlewareTypes still completes
+        # Verify response - MiddlewareTermination before next() returns None
+        assert response is None
+        # Only middleware_before runs - middleware_after is unreachable after raise
+        assert execution_order == ["middleware_before"]
         assert chat_client.call_count == 0  # No calls should be made due to termination
 
     async def test_agent_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
@@ -1187,7 +1189,9 @@ class TestRunLevelMiddleware:
             "agent_level_agent_start",
             "run_level_agent_start",
             "agent_level_function_start",
+            "run_level_function_start",
             "tool_executed",
+            "run_level_function_end",
             "agent_level_function_end",
             "run_level_agent_end",
             "agent_level_agent_end",
@@ -1719,7 +1723,6 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[StreamingTrackingChatMiddleware()])
 
         # Set up mock streaming responses
-
         # TODO: refactor to return a ResponseStream object
         chat_client.streaming_responses = [
             [

@@ -6,6 +6,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
+from functools import partial
 from itertools import chain
 from typing import (
     TYPE_CHECKING,
@@ -44,6 +45,7 @@ from ._types import (
     ChatResponse,
     ChatResponseUpdate,
     ResponseStream,
+    map_chat_to_agent_update,
     normalize_messages,
 )
 from .exceptions import AgentInitializationError, AgentRunException
@@ -862,138 +864,64 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             When stream=True: A ResponseStream of AgentResponseUpdate items with
                 ``get_final_response()`` for the final AgentResponse.
         """
-        if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, tools=tools, options=options, **kwargs)
-        return self._run_impl(messages=messages, thread=thread, tools=tools, options=options, **kwargs)
+        if not stream:
 
-    async def _run_impl(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        options: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse:
-        """Non-streaming implementation of run."""
-        ctx = await self._prepare_run_context(
-            messages=messages,
-            thread=thread,
-            tools=tools,
-            options=options,
-            kwargs=kwargs,
-        )
+            async def _run_non_streaming() -> AgentResponse[Any]:
+                ctx = await self._prepare_run_context(
+                    messages=messages,
+                    thread=thread,
+                    tools=tools,
+                    options=options,
+                    kwargs=kwargs,
+                )
+                response = await self.chat_client.get_response(
+                    messages=ctx["thread_messages"],
+                    stream=False,
+                    options=ctx["chat_options"],
+                    **ctx["filtered_kwargs"],
+                )
 
-        response = await self.chat_client.get_response(
-            messages=ctx["thread_messages"],
-            stream=False,
-            options=ctx["chat_options"],
-            **ctx["filtered_kwargs"],
-        )  # type: ignore[call-overload]
+                if not response:
+                    raise AgentRunException("Chat client did not return a response.")
 
-        if not response:
-            raise AgentRunException("Chat client did not return a response.")
+                await self._finalize_response_and_update_thread(
+                    response=response,
+                    agent_name=ctx["agent_name"],
+                    thread=ctx["thread"],
+                    input_messages=ctx["input_messages"],
+                    kwargs=ctx["finalize_kwargs"],
+                )
+                response_format = ctx["chat_options"].get("response_format")
+                if not (
+                    response_format is not None
+                    and isinstance(response_format, type)
+                    and issubclass(response_format, BaseModel)
+                ):
+                    response_format = None
 
-        await self._finalize_response_and_update_thread(
-            response=response,
-            agent_name=ctx["agent_name"],
-            thread=ctx["thread"],
-            input_messages=ctx["input_messages"],
-            kwargs=ctx["finalize_kwargs"],
-        )
-        response_format = ctx.get("chat_options", {}).get("response_format")
-        if not (
-            response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
-        ):
-            response_format = None
+                return AgentResponse(
+                    messages=response.messages,
+                    response_id=response.response_id,
+                    created_at=response.created_at,
+                    usage_details=response.usage_details,
+                    value=response.value,
+                    response_format=response_format,
+                    raw_representation=response,
+                    additional_properties=response.additional_properties,
+                )
 
-        return AgentResponse(
-            messages=response.messages,
-            response_id=response.response_id,
-            created_at=response.created_at,
-            usage_details=response.usage_details,
-            value=response.value,
-            response_format=response_format,
-            raw_representation=response,
-            additional_properties=response.additional_properties,
-        )
+            return _run_non_streaming()
 
-    def _run_stream_impl(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        options: TOptions_co | Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-        """Streaming implementation of run."""
-        ctx: _RunContext | None = None
+        # Use a holder to capture the context created during stream initialization
+        ctx_holder: dict[str, _RunContext | None] = {"ctx": None}
 
-        async def _get_chat_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
-            nonlocal ctx
-            ctx = await self._prepare_run_context(
-                messages=messages,
-                thread=thread,
-                tools=tools,
-                options=options,
-                kwargs=kwargs,
-            )
-            stream = self.chat_client.get_response(
-                messages=ctx["thread_messages"],
-                stream=True,
-                options=ctx["chat_options"],
-                **ctx["filtered_kwargs"],
-            )  # type: ignore[call-overload]
-            if not isinstance(stream, ResponseStream):
-                raise AgentRunException("Chat client did not return a ResponseStream.")
-            return stream
-
-        def _to_agent_update(update: ChatResponseUpdate) -> AgentResponseUpdate:
+        async def _post_hook(response: AgentResponse) -> None:
+            ctx = ctx_holder["ctx"]
             if ctx is None:
-                raise AgentRunException("Chat client did not return a response.")
-
-            if update.author_name is None:
-                update.author_name = ctx["agent_name"]
-
-            return AgentResponseUpdate(
-                contents=update.contents,
-                role=update.role,
-                author_name=update.author_name,
-                response_id=update.response_id,
-                message_id=update.message_id,
-                created_at=update.created_at,
-                additional_properties=update.additional_properties,
-                raw_representation=update,
-            )
-
-        async def _finalize_to_agent_response(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-            if ctx is None:
-                raise AgentRunException("Chat client did not return a response.")
-
-            if not updates:
-                raise AgentRunException("Chat client did not return a response.")
-
-            # Create AgentResponse from updates
-            response = AgentResponse.from_agent_run_response_updates(updates)
-
-            # Extract conversation_id from the first update's raw_representation (ChatResponseUpdate)
-            conversation_id: str | None = None
-            if updates and updates[0].raw_representation is not None:
-                raw_update = updates[0].raw_representation
-                if isinstance(raw_update, ChatResponseUpdate):
-                    conversation_id = raw_update.conversation_id
+                return  # No context available (shouldn't happen in normal flow)
 
             # Update thread with conversation_id
-            await self._update_thread_with_type_and_conversation_id(ctx["thread"], conversation_id)
+            await self._update_thread_with_type_and_conversation_id(ctx["thread"], response.response_id)
 
             # Ensure author names are set for all messages
             for message in response.messages:
@@ -1008,9 +936,46 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 **{k: v for k, v in ctx["finalize_kwargs"].items() if k != "thread"},
             )
 
-            return response
+        async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            ctx_holder["ctx"] = await self._prepare_run_context(
+                messages=messages,
+                thread=thread,
+                tools=tools,
+                options=options,
+                kwargs=kwargs,
+            )
+            ctx = ctx_holder["ctx"]
+            return self.chat_client.get_response(
+                messages=ctx["thread_messages"],
+                stream=True,
+                options=ctx["chat_options"],
+                **ctx["filtered_kwargs"],
+            )
 
-        return ResponseStream(_get_chat_stream()).map(_to_agent_update, _finalize_to_agent_response)
+        return (
+            ResponseStream
+            .from_awaitable(_get_stream())
+            .map(
+                transform=partial(
+                    map_chat_to_agent_update,
+                    agent_name=self.name,
+                ),
+                finalizer=partial(
+                    self._finalize_response_updates, response_format=options.get("response_format") if options else None
+                ),
+            )
+            .with_result_hook(_post_hook)
+        )
+
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> AgentResponse:
+        """Finalize response updates into a single AgentResponse."""
+        output_format_type = response_format if isinstance(response_format, type) else None
+        return AgentResponse.from_agent_run_response_updates(updates, output_format_type=output_format_type)
 
     async def _prepare_run_context(
         self,
@@ -1036,7 +1001,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         )
 
         # Normalize tools
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
+        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()

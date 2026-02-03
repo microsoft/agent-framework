@@ -188,11 +188,12 @@ class TestResultOverrideMiddleware:
             async def process(
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
-                # Always call next() first to allow execution
-                await next(context)
-                # Then conditionally override based on content
+                # Check if we want to override BEFORE calling next to avoid creating unused streams
                 if any("custom stream" in msg.text for msg in context.messages if msg.text):
                     context.result = ResponseStream(custom_stream())
+                    return  # Don't call next() - we're overriding the entire result
+                # Normal case - let the agent handle it
+                await next(context)
 
         # Create ChatAgent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()

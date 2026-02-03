@@ -15,7 +15,7 @@ from agent_framework import (
     Content,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
+from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 
 
 async def test_base_client_with_function_calling(chat_client_base: ChatClientProtocol):
@@ -2295,14 +2295,14 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: ChatCli
 
 
 class TerminateLoopMiddleware(FunctionMiddleware):
-    """MiddlewareTypes that sets terminate=True to exit the function calling loop."""
+    """Middleware that raises MiddlewareTermination to exit the function calling loop."""
 
     async def process(
         self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
     ) -> None:
         # Set result to a simple value - the framework will wrap it in FunctionResultContent
         context.result = "terminated by middleware"
-        context.terminate = True
+        raise MiddlewareTermination
 
 
 async def test_terminate_loop_single_function_call(chat_client_base: ChatClientProtocol):
@@ -2360,9 +2360,8 @@ class SelectiveTerminateMiddleware(FunctionMiddleware):
         if context.function.name == "terminating_function":
             # Set result to a simple value - the framework will wrap it in FunctionResultContent
             context.result = "terminated by middleware"
-            context.terminate = True
-        else:
-            await next_handler(context)
+            raise MiddlewareTermination
+        await next_handler(context)
 
 
 async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client_base: ChatClientProtocol):

@@ -137,12 +137,12 @@ class TestAgentMiddlewarePipeline:
 
     class PreNextTerminateMiddleware(AgentMiddleware):
         async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     class PostNextTerminateMiddleware(AgentMiddleware):
         async def process(self, context: AgentRunContext, next: Any) -> None:
             await next(context)
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
         """Test AgentMiddlewarePipeline initialization with no middleware."""
@@ -422,15 +422,15 @@ class TestFunctionMiddlewarePipeline:
 
     class PreNextTerminateFunctionMiddleware(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, next: Any) -> None:
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     class PostNextTerminateFunctionMiddleware(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, next: Any) -> None:
             await next(context)
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
-        """Test pipeline execution with termination before next()."""
+        """Test pipeline execution with termination before next() raises MiddlewareTermination."""
         middleware = self.PreNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
@@ -442,13 +442,14 @@ class TestFunctionMiddlewarePipeline:
             execution_order.append("handler")
             return "test result"
 
-        result = await pipeline.execute(context, final_handler)
-        assert result is None
+        # MiddlewareTermination should propagate from FunctionMiddlewarePipeline
+        with pytest.raises(MiddlewareTermination):
+            await pipeline.execute(context, final_handler)
         # Handler should not be called when terminated before next()
         assert execution_order == []
 
     async def test_execute_with_post_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
-        """Test pipeline execution with termination after next()."""
+        """Test pipeline execution with termination after next() raises MiddlewareTermination."""
         middleware = self.PostNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
         arguments = FunctionTestArgs(name="test")
@@ -457,11 +458,16 @@ class TestFunctionMiddlewarePipeline:
 
         async def final_handler(ctx: FunctionInvocationContext) -> str:
             execution_order.append("handler")
+            ctx.result = "test result"
             return "test result"
 
-        result = await pipeline.execute(context, final_handler)
-        assert result == "test result"
+        # MiddlewareTermination should propagate from FunctionMiddlewarePipeline
+        with pytest.raises(MiddlewareTermination):
+            await pipeline.execute(context, final_handler)
+        # Handler should still be called (termination after next())
         assert execution_order == ["handler"]
+        # Result should be set on context
+        assert context.result == "test result"
 
     def test_init_empty(self) -> None:
         """Test FunctionMiddlewarePipeline initialization with no middleware."""
@@ -537,12 +543,12 @@ class TestChatMiddlewarePipeline:
 
     class PreNextTerminateChatMiddleware(ChatMiddleware):
         async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     class PostNextTerminateChatMiddleware(ChatMiddleware):
         async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
             await next(context)
-            raise MiddlewareTermination()
+            raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
         """Test ChatMiddlewarePipeline initialization with no middleware."""
@@ -715,7 +721,6 @@ class TestChatMiddlewarePipeline:
         chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
         execution_order: list[str] = []
-        updates: list[ChatResponseUpdate] = []
 
         def final_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -728,12 +733,10 @@ class TestChatMiddlewarePipeline:
             return ResponseStream(_stream())
 
         stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
-            updates.append(update)
-
+        # When terminated before next(), result is None
+        assert stream is None
         # Handler should not be called when terminated
         assert execution_order == []
-        assert not updates
 
     async def test_execute_stream_with_post_next_termination(self, mock_chat_client: Any) -> None:
         """Test pipeline streaming execution with termination after next()."""
@@ -1019,7 +1022,7 @@ class TestMultipleMiddlewareOrdering:
                 execution_order.append("third_after")
 
         middleware = [FirstMiddleware(), SecondMiddleware(), ThirdMiddleware()]
-        pipeline = AgentMiddlewarePipeline(middleware)  # type: ignore
+        pipeline = AgentMiddlewarePipeline(*middleware)
         messages = [ChatMessage(role=Role.USER, text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
 
@@ -1487,10 +1490,8 @@ class TestMiddlewareExecutionControl:
 
         result = await pipeline.execute(context, final_handler)
 
-        # Verify no execution happened - should return empty AgentResponse
-        assert result is not None
-        assert isinstance(result, AgentResponse)
-        assert result.messages == []  # Empty response
+        # Verify no execution happened - result is None since middleware didn't set it
+        assert result is None
         assert not handler_called
         assert context.result is None
 
@@ -1519,14 +1520,11 @@ class TestMiddlewareExecutionControl:
 
             return ResponseStream(_stream())
 
-        # When middleware doesn't call next(), streaming should yield no updates
-        updates: list[AgentResponseUpdate] = []
+        # When middleware doesn't call next(), result is None
         stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
-            updates.append(update)
 
-        # Verify no execution happened and no updates were yielded
-        assert len(updates) == 0
+        # Verify no execution happened - result is None since middleware didn't set it
+        assert stream is None
         assert not handler_called
         assert context.result is None
 
@@ -1595,11 +1593,9 @@ class TestMiddlewareExecutionControl:
 
         result = await pipeline.execute(context, final_handler)
 
-        # Verify only first middleware was called and empty response returned
+        # Verify only first middleware was called and result is None (no context.result set)
         assert execution_order == ["first"]
-        assert result is not None
-        assert isinstance(result, AgentResponse)
-        assert result.messages == []  # Empty response
+        assert result is None
         assert not handler_called
 
     async def test_chat_middleware_no_next_no_execution(self, mock_chat_client: Any) -> None:

@@ -31,7 +31,7 @@ from agent_framework import (
     Content,
     prepare_function_call_results,
 )
-from agent_framework._middleware import create_function_middleware_pipeline
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
@@ -607,7 +607,7 @@ async def _resolve_approval_responses(
         config = normalize_function_invocation_configuration(
             getattr(chat_client, "function_invocation_configuration", None)
         )
-        middleware_pipeline = create_function_middleware_pipeline(
+        middleware_pipeline = FunctionMiddlewarePipeline(
             *getattr(chat_client, "function_middleware", ()),
             *run_kwargs.get("middleware", ()),
         )

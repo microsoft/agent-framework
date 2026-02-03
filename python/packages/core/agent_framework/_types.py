@@ -3116,6 +3116,19 @@ class AgentResponseUpdate(SerializationMixin):
         return self.text
 
 
+def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
+    return AgentResponseUpdate(
+        contents=update.contents,
+        role=update.role,
+        author_name=update.author_name or agent_name,
+        response_id=update.response_id,
+        message_id=update.message_id,
+        created_at=update.created_at,
+        additional_properties=update.additional_properties,
+        raw_representation=update,
+    )
+
+
 # region ChatOptions
 
 
