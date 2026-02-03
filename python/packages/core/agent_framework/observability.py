@@ -1067,7 +1067,7 @@ def _get_token_usage_histogram() -> "metrics.Histogram":
 
 def _get_time_to_first_chunk_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
-        name="gen_ai.client.operation.time_to_first_chunk",
+        name="gen_ai.client.operation.time_to_first_chunk",  # TODO(Brian Henson): Match semantic conventions
         unit=OtelAttr.DURATION_UNIT,
         description="Time from request start to first content chunk arrival",
         explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_BUCKET_BOUNDARIES,
@@ -1076,7 +1076,7 @@ def _get_time_to_first_chunk_histogram() -> "metrics.Histogram":
 
 def _get_time_per_output_chunk_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
-        name="gen_ai.client.operation.time_per_output_chunk",
+        name="gen_ai.client.operation.time_per_output_chunk",  # TODO(Brian Henson): Match semantic conventions
         unit=OtelAttr.DURATION_UNIT,
         description="Average time between chunks after the first chunk",
         explicit_bucket_boundaries_advisory=TIME_PER_OUTPUT_CHUNK_BUCKET_BOUNDARIES,
@@ -1270,6 +1270,7 @@ def _trace_get_streaming_response(
                             # First chunk arrived
                             first_chunk_time = current_time
                             previous_chunk_time = current_time
+                            chunk_count = 1
                         else:
                             # Subsequent chunk - track inter-chunk timing
                             if previous_chunk_time is not None:
@@ -1285,22 +1286,25 @@ def _trace_get_streaming_response(
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     # Record metrics even if exception occurred (if we got at least one chunk)
                     if first_chunk_time is not None:
-                        _record_streaming_metrics(
-                            span=span,
-                            attributes=attributes,
-                            start_time=start_time_stamp,
-                            first_chunk_time=first_chunk_time,
-                            end_time=end_time_stamp,
-                            chunk_count=chunk_count,
-                            total_inter_chunk_time=total_inter_chunk_time,
-                            time_to_first_chunk_histogram=self.additional_properties["time_to_first_chunk_histogram"],
-                            time_per_output_chunk_histogram=self.additional_properties[
-                                "time_per_output_chunk_histogram"
-                            ],
-                            client_operation_duration_histogram=self.additional_properties[
-                                "client_operation_duration_histogram"
-                            ],
-                        )
+                        with contextlib.suppress(Exception):
+                            _record_streaming_metrics(
+                                span=span,
+                                attributes=attributes,
+                                start_time=start_time_stamp,
+                                first_chunk_time=first_chunk_time,
+                                end_time=end_time_stamp,
+                                chunk_count=chunk_count,
+                                total_inter_chunk_time=total_inter_chunk_time,
+                                time_to_first_chunk_histogram=self.additional_properties[
+                                    "time_to_first_chunk_histogram"
+                                ],
+                                time_per_output_chunk_histogram=self.additional_properties[
+                                    "time_per_output_chunk_histogram"
+                                ],
+                                client_operation_duration_histogram=self.additional_properties[
+                                    "client_operation_duration_histogram"
+                                ],
+                            )
                     raise
                 else:
                     duration = (end_time_stamp or perf_counter()) - start_time_stamp

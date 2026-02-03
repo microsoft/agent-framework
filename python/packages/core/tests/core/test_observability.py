@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import MutableSequence
+from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from unittest.mock import Mock
 
@@ -2301,3 +2301,46 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     # Verify attributes were set on the span
     assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
     assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+
+
+class ErrorChatClient(BaseChatClient):
+    """A chat client that raises an error during streaming."""
+
+    OTEL_PROVIDER_NAME = "error_provider"
+
+    def service_url(self):
+        return "https://error.example.com"
+
+    async def _inner_get_response(self, messages, options, **kwargs):
+        raise NotImplementedError
+
+    async def _inner_get_streaming_response(
+        self, *, messages: list[ChatMessage], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        # Yield one chunk so metrics recording is triggered
+        yield ChatResponseUpdate(text="Chunk 1", role=Role.ASSISTANT)
+        # Then raise an exception
+        raise ValueError("Original Application Error")
+
+
+async def test_streaming_error_with_metric_recording_failure(span_exporter: InMemorySpanExporter):
+    """
+    Test that an exception during metric recording does not mask the original application error.
+    """
+    from unittest.mock import patch
+
+    client = use_instrumentation(ErrorChatClient)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    span_exporter.clear()
+
+    # Mock _record_streaming_metrics to raise an exception
+    with patch("agent_framework.observability._record_streaming_metrics") as mock_metrics:
+        mock_metrics.side_effect = Exception("Metric Recording Failed")
+
+        # We expect the ORIGINAL ValueError, not the "Metric Recording Failed" exception
+        with pytest.raises(ValueError, match="Original Application Error"):
+            async for _ in client.get_streaming_response(messages=messages):
+                pass
+
+        # Verify that _record_streaming_metrics was actually called
+        assert mock_metrics.called
