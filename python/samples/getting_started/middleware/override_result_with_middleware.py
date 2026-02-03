@@ -10,8 +10,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentRunContext,
     ChatMessage,
+    Content,
     Role,
-    TextContent,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -69,7 +69,7 @@ async def weather_override_middleware(
             # For streaming: create an async generator that yields chunks
             async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
                 for chunk in chunks:
-                    yield AgentResponseUpdate(contents=[TextContent(text=chunk)])
+                    yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)])
 
             context.result = override_stream()
         else:

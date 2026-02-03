@@ -96,7 +96,7 @@ public class GitHubCopilotAgentTests
             client,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
 
         // Act - First turn
         AgentResponse response1 = await agent.RunAsync("My name is Alice.", session);
@@ -123,7 +123,7 @@ public class GitHubCopilotAgentTests
             client1,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
-        AgentSession session1 = await agent1.GetNewSessionAsync();
+        AgentSession session1 = await agent1.CreateSessionAsync();
         await agent1.RunAsync("Remember this number: 42.", session1);
 
         sessionId = ((GitHubCopilotAgentSession)session1).SessionId;
@@ -137,7 +137,7 @@ public class GitHubCopilotAgentTests
             client2,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
-        AgentSession session2 = await agent2.GetNewSessionAsync(sessionId);
+        AgentSession session2 = await agent2.CreateSessionAsync(sessionId);
         AgentResponse response = await agent2.RunAsync("What number did I ask you to remember?", session2);
 
         // Assert

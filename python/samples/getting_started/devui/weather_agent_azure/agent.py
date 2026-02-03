@@ -12,9 +12,9 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     Role,
-    TextContent,
     tool,
     chat_middleware,
     function_middleware,
@@ -57,7 +57,7 @@ async def security_filter_middleware(
                     # Streaming mode: return async generator
                     async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[TextContent(text=error_message)],
+                            contents=[Content.from_text(text=error_message)],
                             role=Role.ASSISTANT,
                         )
 

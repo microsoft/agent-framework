@@ -45,7 +45,7 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
 
         return sessionContent switch
         {
-            null => await agent.GetNewSessionAsync(cancellationToken).ConfigureAwait(false),
+            null => await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false),
             _ => await agent.DeserializeSessionAsync(sessionContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
         };
     }

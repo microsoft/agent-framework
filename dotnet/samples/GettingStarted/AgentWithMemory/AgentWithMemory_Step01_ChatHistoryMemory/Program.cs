@@ -47,14 +47,14 @@ AIAgent agent = new AzureOpenAIClient(
     });
 
 // Start a new session for the agent conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Run the agent with the session that stores conversation history in the vector store.
 Console.WriteLine(await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", session));
 
 // Start a second session. Since we configured the search scope to be across all sessions for the user,
 // the agent should remember that the user likes pirate jokes.
-AgentSession? session2 = await agent.GetNewSessionAsync();
+AgentSession? session2 = await agent.CreateSessionAsync();
 
 // Run the agent with the second session.
 Console.WriteLine(await agent.RunAsync("Tell me a joke that I might like.", session2));

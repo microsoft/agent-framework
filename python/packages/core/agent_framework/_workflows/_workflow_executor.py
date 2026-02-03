@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import types
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -302,13 +303,13 @@ class WorkflowExecutor(Executor):
         self._propagate_request = propagate_request
 
     @property
-    def input_types(self) -> list[type[Any]]:
+    def input_types(self) -> list[type[Any] | types.UnionType]:
         """Get the input types based on the underlying workflow's input types plus WorkflowExecutor-specific types.
 
         Returns:
             A list of input types that the WorkflowExecutor can accept.
         """
-        input_types = list(self.workflow.input_types)
+        input_types: list[type[Any] | types.UnionType] = list(self.workflow.input_types)
 
         # WorkflowExecutor can also handle SubWorkflowResponseMessage for sub-workflow responses
         if SubWorkflowResponseMessage not in input_types:
@@ -317,7 +318,7 @@ class WorkflowExecutor(Executor):
         return input_types
 
     @property
-    def output_types(self) -> list[type[Any]]:
+    def output_types(self) -> list[type[Any] | types.UnionType]:
         """Get the output types based on the underlying workflow's output types.
 
         Returns:
@@ -325,7 +326,7 @@ class WorkflowExecutor(Executor):
             Includes the SubWorkflowRequestMessage type if any executor in the
             sub-workflow is request-response capable.
         """
-        output_types = list(self.workflow.output_types)
+        output_types: list[type[Any] | types.UnionType] = list(self.workflow.output_types)
 
         is_request_response_capable = any(
             executor.is_request_response_capable for executor in self.workflow.executors.values()

@@ -23,7 +23,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
     This creates a cleaned copy removing ALL tool-related content.
 
     Removes:
-    - FunctionApprovalRequestContent and FunctionCallContent from assistant messages
+    - function_approval_request and function_call from assistant messages
     - Tool response messages (Role.TOOL)
     - Messages with only tool calls and no text
 

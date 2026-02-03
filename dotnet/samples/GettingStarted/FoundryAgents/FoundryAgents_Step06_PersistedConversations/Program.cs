@@ -19,7 +19,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // Start a new session for the agent conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Run the agent with a new session.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
