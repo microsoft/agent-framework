@@ -90,7 +90,7 @@ class MockChatClient:
             for update in self.streaming_responses.pop(0):
                 yield update
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="test streaming response"), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response")], role="assistant")
 
 
 @use_chat_middleware
@@ -138,10 +138,10 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
                 yield update
         else:
             # Simulate realistic streaming chunks
-            yield ChatResponseUpdate(text=Content.from_text(text="Mock "), role="assistant")
-            yield ChatResponseUpdate(text=Content.from_text(text="streaming "), role="assistant")
-            yield ChatResponseUpdate(text=Content.from_text(text="response "), role="assistant")
-            yield ChatResponseUpdate(text=Content.from_text(text="from ChatAgent"), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Mock ")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="streaming ")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="response ")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="from ChatAgent")], role="assistant")
 
 
 # =============================================================================

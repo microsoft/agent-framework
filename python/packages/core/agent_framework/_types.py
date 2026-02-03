@@ -1954,12 +1954,12 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
                 # Create some response updates
                 updates = [
-                    ChatResponseUpdate(role="assistant", text="Hello"),
-                    ChatResponseUpdate(text=" How can I help you?"),
+                    ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant"),
+                    ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")]),
                 ]
 
                 # Combine updates into a single ChatResponse
-                response = ChatResponse.from_chat_response_updates(updates)
+                response = ChatResponse.from_updates(updates)
                 print(response.text)  # "Hello How can I help you?"
 
         Args:
@@ -2122,9 +2122,9 @@ class ChatResponseUpdate(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponseUpdate, TextContent
+            from agent_framework import ChatResponseUpdate, Content
 
-            # Create a response update
+            # Create a response update with text content
             update = ChatResponseUpdate(
                 contents=[Content.from_text(text="Hello")],
                 role="assistant",
@@ -2132,13 +2132,10 @@ class ChatResponseUpdate(SerializationMixin):
             )
             print(update.text)  # "Hello"
 
-            # Create update with text shorthand
-            update = ChatResponseUpdate(text="World!", role="assistant")
-
             # Serialization - to_dict and from_dict
             update_dict = update.to_dict()
             # {'type': 'chat_response_update', 'contents': [{'type': 'text', 'text': 'Hello'}],
-            #  'role': {'type': 'role', 'value': 'assistant'}, 'message_id': 'msg_123'}
+            #  'role': 'assistant', 'message_id': 'msg_123'}
             restored_update = ChatResponseUpdate.from_dict(update_dict)
             print(restored_update.text)  # "Hello"
 
@@ -2155,8 +2152,7 @@ class ChatResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: Sequence[Content | dict[str, Any]] | None = None,
-        text: Content | str | None = None,
+        contents: Sequence[Content] | None = None,
         role: RoleLiteral | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
@@ -2167,13 +2163,11 @@ class ChatResponseUpdate(SerializationMixin):
         finish_reason: FinishReasonLiteral | str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters.
 
         Keyword Args:
-            contents: Optional list of BaseContent items or dicts to include in the update.
-            text: Optional text content to include in the update.
+            contents: Optional list of Content items to include in the update.
             role: Optional role of the author of the response update (e.g., "user", "assistant").
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
@@ -2185,16 +2179,21 @@ class ChatResponseUpdate(SerializationMixin):
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update
                 from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
 
         """
-        # Handle contents conversion
-        contents = [] if contents is None else _parse_content_list(contents)
-
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            contents.append(text)
+        # Handle contents - support dict conversion for from_dict
+        if contents is None:
+            self.contents: list[Content] = []
+        else:
+            processed_contents: list[Content] = []
+            for c in contents:
+                if isinstance(c, Content):
+                    processed_contents.append(c)
+                elif isinstance(c, dict):
+                    processed_contents.append(Content.from_dict(c))
+                else:
+                    processed_contents.append(c)
+            self.contents = processed_contents
 
         # Handle legacy dict formats for role and finish_reason
         if isinstance(role, dict) and "value" in role:
@@ -2202,7 +2201,6 @@ class ChatResponseUpdate(SerializationMixin):
         if isinstance(finish_reason, dict) and "value" in finish_reason:
             finish_reason = finish_reason["value"]
 
-        self.contents = list(contents)
         self.role: str | None = role
         self.author_name = author_name
         self.response_id = response_id
@@ -2519,22 +2517,19 @@ class AgentResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: Sequence[Content | MutableMapping[str, Any]] | None = None,
-        text: Content | str | None = None,
+        contents: Sequence[Content] | None = None,
         role: RoleLiteral | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an AgentResponseUpdate.
 
         Keyword Args:
-            contents: Optional list of BaseContent items or dicts to include in the update.
-            text: Optional text content of the update.
+            contents: Optional list of Content items to include in the update.
             role: The role of the author of the response update (e.g., "user", "assistant").
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
@@ -2542,21 +2537,26 @@ class AgentResponseUpdate(SerializationMixin):
             created_at: Optional timestamp for the chat response update.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update.
-            kwargs: will be combined with additional_properties if provided.
 
         """
-        parsed_contents: list[Content] = [] if contents is None else _parse_content_list(contents)
-
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            parsed_contents.append(text)
+        # Handle contents - support dict conversion for from_dict
+        if contents is None:
+            self.contents: list[Content] = []
+        else:
+            processed_contents: list[Content] = []
+            for c in contents:
+                if isinstance(c, Content):
+                    processed_contents.append(c)
+                elif isinstance(c, dict):
+                    processed_contents.append(Content.from_dict(c))
+                else:
+                    processed_contents.append(c)
+            self.contents = processed_contents
 
         # Handle legacy dict format for role
         if isinstance(role, dict) and "value" in role:
             role = role["value"]
 
-        self.contents = parsed_contents
         self.role: str | None = role
         self.author_name = author_name
         self.response_id = response_id

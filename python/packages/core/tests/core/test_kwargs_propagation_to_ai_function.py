@@ -196,13 +196,10 @@ class TestKwargsPropagationToFunctionTool:
                             arguments='{"value": "streaming-test"}',
                         )
                     ],
-                    is_finished=True,
                 )
             else:
                 # Second call: return final response
-                yield ChatResponseUpdate(
-                    text=Content.from_text(text="Stream complete!"), role="assistant", is_finished=True
-                )
+                yield ChatResponseUpdate(contents=[Content.from_text(text="Stream complete!")], role="assistant")
 
         wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
 

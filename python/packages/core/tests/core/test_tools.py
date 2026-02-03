@@ -973,7 +973,7 @@ def mock_chat_client():
                         yield ChatResponseUpdate(contents=[content], role=msg.role)
             else:
                 # Default response
-                yield ChatResponseUpdate(text="Default response", role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text(text="Default response")], role="assistant")
 
     return MockChatClient()
 
@@ -1227,7 +1227,7 @@ async def test_streaming_single_function_no_approval():
             role="assistant",
         )
     ]
-    final_updates = [ChatResponseUpdate(text="The result is 10", role="assistant")]
+    final_updates = [ChatResponseUpdate(contents=[Content.from_text(text="The result is 10")], role="assistant")]
 
     call_count = [0]
     updates_list = [initial_updates, final_updates]
@@ -1317,7 +1317,9 @@ async def test_streaming_two_functions_both_no_approval():
             role="assistant",
         ),
     ]
-    final_updates = [ChatResponseUpdate(text="Both tools executed successfully", role="assistant")]
+    final_updates = [
+        ChatResponseUpdate(contents=[Content.from_text(text="Both tools executed successfully")], role="assistant")
+    ]
 
     call_count = [0]
     updates_list = [initial_updates, final_updates]

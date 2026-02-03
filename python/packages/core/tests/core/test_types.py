@@ -795,8 +795,8 @@ def test_chat_response_updates_to_chat_response_one():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
@@ -818,8 +818,8 @@ def test_chat_response_updates_to_chat_response_two():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="2"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="2"),
     ]
 
     # Convert to ChatResponse
@@ -842,9 +842,9 @@ def test_chat_response_updates_to_chat_response_multiple():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
@@ -866,11 +866,11 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text(text="More context")], message_id="1"),
-        ChatResponseUpdate(text="Final part", message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text(text="Final part")], message_id="1"),
     ]
 
     # Convert to ChatResponse
@@ -895,8 +895,8 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
 async def test_chat_response_from_async_generator():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text="Hello", message_id="1")
-        yield ChatResponseUpdate(text=" world", message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=" world")], message_id="1")
 
     resp = await ChatResponse.from_chat_response_generator(gen())
     assert resp.text == "Hello world"
@@ -904,8 +904,8 @@ async def test_chat_response_from_async_generator():
 
 async def test_chat_response_from_async_generator_output_format():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
 
     resp = await ChatResponse.from_chat_response_generator(gen())
     assert resp.text == '{ "response": "Hello" }'
@@ -917,8 +917,8 @@ async def test_chat_response_from_async_generator_output_format():
 
 async def test_chat_response_from_async_generator_output_format_in_method():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
 
     resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
@@ -1309,7 +1309,7 @@ def test_chat_finish_reason_is_string():
 
 def test_response_update_propagates_fields_and_metadata():
     upd = ChatResponseUpdate(
-        text="hello",
+        contents=[Content.from_text(text="hello")],
         role="assistant",
         author_name="bot",
         response_id="rid",
@@ -1335,8 +1335,8 @@ def test_response_update_propagates_fields_and_metadata():
 def test_text_coalescing_preserves_first_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
-    upd1 = ChatResponseUpdate(text=t1, message_id="x")
-    upd2 = ChatResponseUpdate(text=t2, message_id="x")
+    upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
+    upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
     resp = ChatResponse.from_chat_response_updates([upd1, upd2])
     # After coalescing there should be a single TextContent with merged text and preserved props from first
     items = [c for c in resp.messages[0].contents if c.type == "text"]

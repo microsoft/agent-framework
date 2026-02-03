@@ -107,7 +107,7 @@ class MockChatClient:
             for update in self.streaming_responses.pop(0):
                 yield update
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="test streaming response "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="another update")], role="assistant")
 
 
@@ -167,10 +167,14 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     ) -> AsyncIterable[ChatResponseUpdate]:
         logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
         if not self.streaming_responses:
-            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"update - {messages[0].text}")], role="assistant"
+            )
             return
         if options.get("tool_choice") == "none":
-            yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text="I broke out of the function invocation loop...")], role="assistant"
+            )
             return
         response = self.streaming_responses.pop(0)
         for update in response:

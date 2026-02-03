@@ -211,7 +211,7 @@ class MockChatClient:
                     role="assistant",
                 )
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1

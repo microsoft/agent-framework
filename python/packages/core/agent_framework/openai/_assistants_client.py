@@ -490,7 +490,7 @@ class OpenAIAssistantsClient(
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             yield ChatResponseUpdate(
                                 role=role,
-                                text=delta_block.text.value,
+                                contents=[Content.from_text(text=delta_block.text.value)],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,

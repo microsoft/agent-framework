@@ -222,8 +222,8 @@ class TestAgentEntityRunAgent:
     async def test_run_agent_streaming_callbacks_invoked(self) -> None:
         """Ensure streaming updates trigger callbacks and run() is not used."""
         updates = [
-            AgentResponseUpdate(text="Hello"),
-            AgentResponseUpdate(text=" world"),
+            AgentResponseUpdate(contents=[Content.from_text(text="Hello")]),
+            AgentResponseUpdate(contents=[Content.from_text(text=" world")]),
         ]
 
         async def update_generator() -> AsyncIterator[AgentResponseUpdate]:

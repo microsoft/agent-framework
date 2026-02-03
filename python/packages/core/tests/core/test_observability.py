@@ -14,11 +14,13 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
     AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     UsageDetails,
     prepend_agent_framework_to_user_agent,
     tool,
@@ -224,8 +226,8 @@ def mock_chat_client():
         async def _inner_get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
-            yield ChatResponseUpdate(text="Hello", role="assistant")
-            yield ChatResponseUpdate(text=" world", role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text=" world")], role="assistant")
 
     return MockChatClient
 
@@ -541,10 +543,9 @@ def mock_chat_agent():
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="Hello", role="assistant")
-            yield AgentResponseUpdate(text=" from agent", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text=" from agent")], role="assistant")
 
     return MockChatClientAgent
 
@@ -1355,7 +1356,7 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
 
     class FailingStreamingChatClient(mock_chat_client):
         async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
-            yield ChatResponseUpdate(text="Hello", role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant")
             raise ValueError("Streaming error")
 
     client = use_instrumentation(FailingStreamingChatClient)()
@@ -1675,9 +1676,8 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             thread=None,
             **kwargs,
         ):
-            from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="Test", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Test")], role="assistant")
 
     decorated_agent = use_agent_instrumentation(MockAgent)
     agent = decorated_agent()
@@ -1693,7 +1693,6 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent instrumentation captures exceptions."""
-    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class FailingAgent(AgentProtocol):
@@ -1726,7 +1725,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             # yield before raise to make this an async generator
-            yield AgentResponseUpdate(text="", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="")], role="assistant")
             raise RuntimeError("Agent failed")
 
     decorated_agent = use_agent_instrumentation(FailingAgent)
@@ -1747,7 +1746,6 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent streaming instrumentation."""
-    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class StreamingAgent(AgentProtocol):
@@ -1781,8 +1779,8 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="Hello ", role="assistant")
-            yield AgentResponseUpdate(text="World", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Hello ")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="World")], role="assistant")
 
     decorated_agent = use_agent_instrumentation(StreamingAgent)
     agent = decorated_agent()
@@ -1862,7 +1860,6 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent streaming captures exceptions."""
-    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class FailingStreamingAgent(AgentProtocol):
@@ -1894,7 +1891,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
             return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="Starting", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="Starting")], role="assistant")
             raise RuntimeError("Stream failed")
 
     decorated_agent = use_agent_instrumentation(FailingStreamingAgent)
@@ -1978,9 +1975,8 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
             return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="test", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="test")], role="assistant")
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()
@@ -1995,7 +1991,6 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter):
     """Test agent streaming creates no spans when disabled."""
-    from agent_framework import AgentResponseUpdate
     from agent_framework.observability import use_agent_instrumentation
 
     class TestAgent(AgentProtocol):
@@ -2027,7 +2022,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
             return AgentResponse(messages=[])
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="test", role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text(text="test")], role="assistant")
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()

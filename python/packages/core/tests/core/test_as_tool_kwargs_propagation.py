@@ -173,7 +173,7 @@ class TestAsToolKwargsPropagation:
         from agent_framework import ChatResponseUpdate
 
         chat_client.streaming_responses = [
-            [ChatResponseUpdate(text=Content.from_text(text="Streaming response"), role="assistant")],
+            [ChatResponseUpdate(contents=[Content.from_text(text="Streaming response")], role="assistant")],
         ]
 
         sub_agent = ChatAgent(
