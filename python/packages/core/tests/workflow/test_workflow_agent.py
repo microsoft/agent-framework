@@ -31,15 +31,16 @@ from agent_framework import (
 class SimpleExecutor(Executor):
     """Simple executor that emits AgentRunEvent or AgentRunStreamingEvent."""
 
-    def __init__(self, id: str, response_text: str):
+    def __init__(self, id: str, response_text: str, streaming: bool = False):
         super().__init__(id=id)
         self.response_text = response_text
+        self.streaming = streaming
 
     @handler
     async def handle_message(
         self,
         message: list[ChatMessage],
-        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate],
+        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate | AgentResponse],
     ) -> None:
         input_text = message[0].contents[0].text if message and message[0].contents[0].type == "text" else "no input"
         response_text = f"{self.response_text}: {input_text}"
@@ -47,11 +48,15 @@ class SimpleExecutor(Executor):
         # Create response message for both streaming and non-streaming cases
         response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
 
-        # Emit update event.
-        streaming_update = AgentResponseUpdate(
-            contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
-        )
-        await ctx.yield_output(streaming_update)
+        if self.streaming:
+            # Emit update event.
+            streaming_update = AgentResponseUpdate(
+                contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
+            )
+            await ctx.yield_output(streaming_update)
+        else:
+            response = AgentResponse(messages=[response_message])
+            await ctx.yield_output(response)
 
         # Pass message to next executor if any (for both streaming and non-streaming)
         await ctx.send_message([response_message])
@@ -59,6 +64,10 @@ class SimpleExecutor(Executor):
 
 class RequestingExecutor(Executor):
     """Executor that requests info."""
+
+    def __init__(self, id: str, streaming: bool = False):
+        super().__init__(id=id)
+        self.streaming = streaming
 
     @handler
     async def handle_message(self, _: list[ChatMessage], ctx: WorkflowContext) -> None:
@@ -70,29 +79,45 @@ class RequestingExecutor(Executor):
         self,
         original_request: str,
         response: str,
-        ctx: WorkflowContext[ChatMessage, AgentResponseUpdate],
+        ctx: WorkflowContext[ChatMessage, AgentResponseUpdate | AgentResponse],
     ) -> None:
         # Handle the response and emit completion response
-        update = AgentResponseUpdate(
-            contents=[Content.from_text(text="Request completed successfully")],
-            role=Role.ASSISTANT,
-            message_id=str(uuid.uuid4()),
+        content = Content.from_text(text=f"Request completed with response: {response}")
+        if self.streaming:
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[content],
+                    role=Role.ASSISTANT,
+                    message_id=str(uuid.uuid4()),
+                )
+            )
+            return
+
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    ChatMessage(
+                        role=Role.ASSISTANT,
+                        contents=[content],
+                    )
+                ],
+            )
         )
-        await ctx.yield_output(update)
 
 
 class ConversationHistoryCapturingExecutor(Executor):
     """Executor that captures the received conversation history for verification."""
 
-    def __init__(self, id: str):
+    def __init__(self, id: str, streaming: bool = False):
         super().__init__(id=id)
         self.received_messages: list[ChatMessage] = []
+        self.streaming = streaming
 
     @handler
     async def handle_message(
         self,
         messages: list[ChatMessage],
-        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate],
+        ctx: WorkflowContext[list[ChatMessage], AgentResponseUpdate | AgentResponse],
     ) -> None:
         # Capture all received messages
         self.received_messages = list(messages)
@@ -103,10 +128,15 @@ class ConversationHistoryCapturingExecutor(Executor):
 
         response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
 
-        streaming_update = AgentResponseUpdate(
-            contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
-        )
-        await ctx.yield_output(streaming_update)
+        if self.streaming:
+            # Emit streaming update
+            streaming_update = AgentResponseUpdate(
+                contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
+            )
+            await ctx.yield_output(streaming_update)
+        else:
+            response = AgentResponse(messages=[response_message])
+            await ctx.yield_output(response)
         await ctx.send_message([response_message])
 
 
@@ -116,8 +146,8 @@ class TestWorkflowAgent:
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
         # Create workflow with two executors
-        executor1 = SimpleExecutor(id="executor1", response_text="Step1")
-        executor2 = SimpleExecutor(id="executor2", response_text="Step2")
+        executor1 = SimpleExecutor(id="executor1", response_text="Step1", streaming=False)
+        executor2 = SimpleExecutor(id="executor2", response_text="Step2", streaming=False)
 
         workflow = WorkflowBuilder().set_start_executor(executor1).add_edge(executor1, executor2).build()
 
@@ -189,8 +219,8 @@ class TestWorkflowAgent:
     async def test_end_to_end_request_info_handling(self):
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
-        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse")
-        requesting_executor = RequestingExecutor(id="requester")
+        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", streaming=False)
+        requesting_executor = RequestingExecutor(id="requester", streaming=False)
 
         workflow = (
             WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requesting_executor).build()
@@ -478,8 +508,9 @@ class TestWorkflowAgent:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         # Content items are coalesced into one
-        assert len(result.messages[0].contents) == 1
-        assert result.messages[0].text == "first messagesecond messagethirdfourth"
+        assert len(result.messages[0].contents) == 4
+        texts = [c.text for c in result.messages[0].contents if c.type == "text"]
+        assert texts == ["first message", "second message", "third", "fourth"]
 
     async def test_thread_conversation_history_included_in_workflow_run(self) -> None:
         """Test that conversation history from thread is included when running WorkflowAgent.
@@ -488,7 +519,7 @@ class TestWorkflowAgent:
         the workflow receives the complete conversation history (thread history + new messages).
         """
         # Create an executor that captures all received messages
-        capturing_executor = ConversationHistoryCapturingExecutor(id="capturing")
+        capturing_executor = ConversationHistoryCapturingExecutor(id="capturing", streaming=False)
         workflow = WorkflowBuilder().set_start_executor(capturing_executor).build()
         agent = WorkflowAgent(workflow=workflow, name="Thread History Test Agent")
 

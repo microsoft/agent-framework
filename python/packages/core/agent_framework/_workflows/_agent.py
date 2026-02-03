@@ -115,9 +115,6 @@ class WorkflowAgent(BaseAgent):
         self._workflow: "Workflow" = workflow
         self._pending_requests: dict[str, RequestInfoEvent] = {}
 
-        # Output related members
-        self._output_executors: set[str] = {executor.id for executor in workflow.get_output_executors()}
-
     @property
     def workflow(self) -> "Workflow":
         return self._workflow
@@ -156,24 +153,178 @@ class WorkflowAgent(BaseAgent):
         Returns:
             The final workflow response as an AgentResponse.
         """
-        # Collect all streaming updates
-        response_updates: list[AgentResponseUpdate] = []
         input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_stream_impl(
+        response = await self._run_impl(
             input_messages, response_id, thread, checkpoint_id, checkpoint_storage, **kwargs
-        ):
-            response_updates.append(update)
-
-        # Convert updates to final response.
-        response = self.merge_updates(response_updates, response_id)
+        )
 
         # Notify thread of new messages (both input and response messages)
         await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
         return response
+
+    async def _run_impl(
+        self,
+        input_messages: list[ChatMessage],
+        response_id: str,
+        thread: AgentThread,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> list[AgentResponse]:
+        """Internal implementation of non-streaming execution.
+
+        Args:
+            input_messages: Normalized input messages to process.
+            response_id: The unique response ID for this workflow execution.
+            thread: The conversation thread containing message history.
+            checkpoint_id: ID of checkpoint to restore from.
+            checkpoint_storage: Runtime checkpoint storage.
+            **kwargs: Additional keyword arguments passed through to the underlying
+                workflow and tool functions.
+
+        Returns:
+            A list of AgentResponse objects representing the workflow execution results.
+        """
+        # Determine the event stream based on whether we have function responses
+        if bool(self.pending_requests):
+            # This is a continuation - use send_responses_streaming to send function responses back
+            logger.info(f"Continuing workflow to address {len(self.pending_requests)} requests")
+
+            # Extract function responses from input messages, and ensure that
+            # only function responses are present in messages if there is any
+            # pending request.
+            function_responses = self._extract_function_responses(input_messages)
+
+            # Pop pending requests if fulfilled.
+            for request_id in list(self.pending_requests.keys()):
+                if request_id in function_responses:
+                    self.pending_requests.pop(request_id)
+
+            # NOTE: It is possible that some pending requests are not fulfilled,
+            # and we will let the workflow to handle this -- the agent does not
+            # have an opinion on this.
+            workflow_result = await self.workflow.send_responses(function_responses)
+        elif checkpoint_id is not None:
+            # Resume from checkpoint - don't prepend thread history since workflow state
+            # is being restored from the checkpoint
+            workflow_result = await self.workflow.run(
+                message=None,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
+        else:
+            # Execute workflow with streaming (initial run or no function responses)
+            # Build the complete conversation by prepending thread history to input messages
+            conversation_messages: list[ChatMessage] = []
+            if thread.message_store:
+                history = await thread.message_store.list_messages()
+                if history:
+                    conversation_messages.extend(history)
+            conversation_messages.extend(input_messages)
+            workflow_result = await self.workflow.run(
+                message=conversation_messages,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
+
+        # Process output events from the workflow result
+        output_events = [event for event in workflow_result if isinstance(event, WorkflowOutputEvent)]
+        return self._convert_workflow_events_to_agent_response(response_id, output_events)
+
+    def _convert_workflow_events_to_agent_response(
+        self,
+        response_id: str,
+        event: list[WorkflowOutputEvent],
+    ) -> AgentResponse:
+        """Convert a list of workflow output events to an AgentResponse."""
+        messages: list[ChatMessage] = []
+        raw_representations: list[object] = []
+        merged_usage: UsageDetails | None = None
+        latest_created_at: str | None = None
+
+        for output_event in event:
+            data = output_event.data
+            executor_id = output_event.executor_id
+
+            if isinstance(data, AgentResponseUpdate):
+                # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
+                # sequence cannot be guaranteed when there are streaming updates in between non-streaming
+                # responses.
+                raise AgentExecutionException(
+                    "WorkflowOutputEvent with AgentResponseUpdate data cannot be emitted in non-streaming mode."
+                    "Please ensure executors emit AgentResponse for non-streaming workflows."
+                )
+
+            if isinstance(data, AgentResponse):
+                # Enrich with executor identity if author_name is not already set
+                for msg in data.messages:
+                    if not msg.author_name:
+                        msg.author_name = executor_id
+                messages.extend(data.messages)
+                raw_representations.append(data.raw_representation)
+                merged_usage = add_usage_details(merged_usage, data.usage_details)
+                latest_created_at = (
+                    data.created_at if not latest_created_at else max(latest_created_at, data.created_at)
+                )
+            elif isinstance(data, RequestInfoEvent):
+                # Store the pending request for later correlation
+                self.pending_requests[data.request_id] = event
+
+                args = self.RequestInfoFunctionArgs(request_id=data.request_id, data=event.data).to_dict()
+
+                function_call = Content.from_function_call(
+                    call_id=data.request_id,
+                    name=self.REQUEST_INFO_FUNCTION_NAME,
+                    arguments=args,
+                )
+                approval_request = Content.from_function_approval_request(
+                    id=data.request_id,
+                    function_call=function_call,
+                    additional_properties={"request_id": data.request_id},
+                )
+                messages.append(
+                    ChatMessage(
+                        contents=[function_call, approval_request],
+                        role=Role.ASSISTANT,
+                        author_name=executor_id,
+                        message_id=str(uuid.uuid4()),
+                        raw_representation=data,
+                    )
+                )
+                raw_representations.append(data)
+            elif isinstance(data, ChatMessage):
+                if not data.author_name:
+                    data.author_name = executor_id
+                messages.append(data)
+                raw_representations.append(data.raw_representation)
+            else:
+                contents = self._extract_contents(data)
+                if not contents:
+                    continue
+
+                messages.append(
+                    ChatMessage(
+                        contents=contents,
+                        role=Role.ASSISTANT,
+                        author_name=executor_id,
+                        message_id=str(uuid.uuid4()),
+                        raw_representation=data,
+                    )
+                )
+                raw_representations.append(data)
+
+        return AgentResponse(
+            messages=messages,
+            response_id=response_id,
+            created_at=latest_created_at,
+            usage_details=merged_usage,
+            raw_representation=raw_representations,
+        )
 
     async def run_stream(
         self,
@@ -289,11 +440,11 @@ class WorkflowAgent(BaseAgent):
         # Process events from the stream
         async for event in event_stream:
             # Convert workflow event to agent update
-            update = self._convert_workflow_event_to_agent_update(response_id, event)
+            update = self._convert_workflow_event_to_agent_response_update(response_id, event)
             if update:
                 yield update
 
-    def _convert_workflow_event_to_agent_update(
+    def _convert_workflow_event_to_agent_response_update(
         self,
         response_id: str,
         event: WorkflowEvent,
@@ -310,11 +461,18 @@ class WorkflowAgent(BaseAgent):
         through since they explicitly chose to emit the event.
         """
         match event:
+            # Convert workflow output to an agent response update.
             case WorkflowOutputEvent(data=data, executor_id=executor_id):
-                # Convert workflow output to an agent response update.
                 # Handle different data types appropriately.
-                if executor_id not in self._output_executors:
-                    return None
+                if isinstance(data, AgentResponse):
+                    return AgentResponseUpdate(
+                        contents=[content for message in data.messages for content in message.contents],
+                        role=Role.ASSISTANT,
+                        author_name=executor_id,
+                        response_id=response_id,
+                        created_at=data.created_at,
+                        raw_representation=data,
+                    )
 
                 if isinstance(data, AgentResponseUpdate):
                     # Enrich with executor identity if author_name is not already set
@@ -332,9 +490,11 @@ class WorkflowAgent(BaseAgent):
                         created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         raw_representation=data,
                     )
+
                 contents = self._extract_contents(data)
                 if not contents:
                     return None
+
                 return AgentResponseUpdate(
                     contents=contents,
                     role=Role.ASSISTANT,
@@ -372,6 +532,7 @@ class WorkflowAgent(BaseAgent):
             case _:
                 # Ignore workflow-internal events
                 pass
+
         return None
 
     def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:

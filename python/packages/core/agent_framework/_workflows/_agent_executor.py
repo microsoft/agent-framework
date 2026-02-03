@@ -53,7 +53,7 @@ class AgentExecutorResponse:
         agent_response: The underlying agent run response (unaltered from client).
         full_conversation: The full conversation context (prior inputs + all assistant/tool outputs) that
             should be used when chaining to another AgentExecutor. This prevents downstream agents losing
-            user prompts while keeping the emitted AgentRunEvent text faithful to the raw agent output.
+            user prompts.
     """
 
     executor_id: str
@@ -310,7 +310,6 @@ class AgentExecutor(Executor):
         # Always extend full conversation with cached messages plus agent outputs
         # (agent_response.messages) after each run. This is to avoid losing context
         # when agent did not complete and the cache is cleared when responses come back.
-        # Do not mutate response.messages so AgentRunEvent remains faithful to the raw output.
         self._full_conversation.extend(list(self._cache) + (list(response.messages) if response else []))
 
         if response is None:
