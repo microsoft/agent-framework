@@ -1,1051 +1,869 @@
-# Microsoft Agent Framework - Declarative YAML Schema
+# Declarative Agent YAML Specification
 
-Complete YAML schema documentation for defining agents declaratively in Microsoft Agent Framework.
+This document provides a comprehensive guide for defining agents using YAML configuration files in the Declarative Agents framework. Declarative agents allow you to configure AI agents through human-readable YAML files rather than code, making agent creation more accessible and maintainable.
 
-**Based on official source code:**
-- [`_models.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_models.py) - Pydantic models
-- [`_loader.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_loader.py) - AgentFactory and provider mappings
+## Table of Contents
 
----
-
-## Get Started with Microsoft Agent Framework Declarative
-
-Please install this package via pip:
-
-```bash
-pip install agent-framework-declarative --pre
-```
-
----
-
-## 📑 Table of Contents
-
-- [Main Structure](#main-structure)
-- [PromptAgent Definition](#promptagent-definition)
-  - [Main Fields](#main-fields)
-  - [Example](#example)
-- [Model Section](#model-section)
-  - [Complete Structure](#complete-structure)
+- [Basic Structure](#basic-structure)
+- [Model Configuration](#model-configuration)
   - [Supported Providers](#supported-providers)
-  - [Example with Provider](#example-with-provider)
-- [Connection Types](#connection-types)
-  - [1. RemoteConnection](#1-remoteconnection)
-  - [2. ApiKeyConnection](#2-apikeyconnection)
-  - [3. ReferenceConnection](#3-referenceconnection)
-  - [4. AnonymousConnection](#4-anonymousconnection)
-- [ModelOptions](#modeloptions)
-  - [Complete Structure](#complete-structure-1)
-  - [Example](#example-1)
-- [Tools Section](#tools-section)
-  - [1. FunctionTool](#1-functiontool)
-  - [2. WebSearchTool](#2-websearchtool)
-  - [3. FileSearchTool](#3-filesearchtool)
-  - [4. CodeInterpreterTool](#4-codeinterpretertool)
-  - [5. McpTool (Model Context Protocol)](#5-mcptool-model-context-protocol)
-  - [6. OpenApiTool](#6-openapitool)
-  - [7. CustomTool](#7-customtool)
-- [Input/Output Schemas](#inputoutput-schemas)
-  - [PropertySchema](#propertyschema)
-  - [Property Types](#property-types)
-  - [Complete Example](#complete-example)
+  - [Connection Types](#connection-types)
+- [Tools](#tools)
+  - [Tool Types](#tool-types)
+  - [MCP Tools](#mcp-tools)
+- [Instructions](#instructions)
+- [Handoff Configuration](#handoff-configuration)
 - [PowerFx Expressions](#powerfx-expressions)
-  - [Syntax](#syntax)
-  - [Environment Variables](#environment-variables)
-  - [Supported PowerFx Functions](#supported-powerfx-functions)
+- [Using AgentFactory](#using-agentfactory)
 - [Complete Examples](#complete-examples)
-  - [Example 1: Simple Agent with Azure OpenAI](#example-1-simple-agent-with-azure-openai)
-  - [Example 2: Agent with Azure AI Client](#example-2-agent-with-azure-ai-client)
-  - [Example 3: Agent with MCP Tool](#example-3-agent-with-mcp-tool)
-  - [Example 4: Agent with Multiple Tools](#example-4-agent-with-multiple-tools)
-  - [Example 5: Agent with Input/Output Schema](#example-5-agent-with-inputoutput-schema)
-- [Python Usage](#python-usage)
-  - [Create Agent from YAML](#create-agent-from-yaml)
-  - [With Bindings (Python Functions)](#with-bindings-python-functions)
-  - [With Connections](#with-connections)
-  - [AgentFactory Parameters](#agentfactory-parameters)
-- [Validation and Errors](#validation-and-errors)
-  - [Common Errors](#common-errors)
-  - [Required Fields](#required-fields)
 - [References](#references)
 
----
+## Basic Structure
 
-## Main Structure
-
-Every YAML file must start with a `kind` field that defines the agent type:
+A declarative agent YAML file defines an agent's configuration in a structured format:
 
 ```yaml
-kind: Prompt  # or "Agent" - both create a PromptAgent
-```
+# Required: Agent name
+name: my_agent
 
-[↑ Back to top](#-table-of-contents)
-
----
-
-## PromptAgent Definition
-
-### Main Fields
-
-```yaml
-kind: Prompt                    # REQUIRED: "Prompt" or "Agent"
-name: string                    # REQUIRED: Agent name
-description: string             # OPTIONAL: Agent description
-instructions: string            # OPTIONAL: System instructions (system prompt)
-additionalInstructions: string  # OPTIONAL: Additional instructions
-model: Model                    # OPTIONAL: Model configuration
-tools: list[Tool]               # OPTIONAL: List of tools
-template: Template              # OPTIONAL: Template configuration
-outputSchema: PropertySchema    # OPTIONAL: Output schema
-```
-
-### Example
-
-```yaml
-kind: Prompt
-name: MyAssistant
-description: A helpful AI assistant
-instructions: You are a helpful assistant that answers questions concisely.
+# Required: Model configuration
 model:
-  id: gpt-4
-  connection:
-    kind: remote
-    endpoint: https://myendpoint.com
+  provider: OpenAI.Chat
+  model_id: gpt-4o
+  # ... additional provider-specific settings
+
+# Optional: Agent instructions
+instructions: |
+  You are a helpful assistant...
+
+# Optional: Tools the agent can use
+tools:
+  - type: code_interpreter
+  - type: mcp
+    # ... tool configuration
+
+# Optional: Handoff configuration for multi-agent scenarios
+handoff:
+  - agent: other_agent
+    description: Transfer to specialist
 ```
 
-[↑ Back to top](#-table-of-contents)
-
----
-
-## Model Section
-
-Defines the LLM model to use and how to connect to it.
-
-### Complete Structure
-
-```yaml
-model:
-  id: string                    # REQUIRED: Model ID/deployment name
-  provider: string              # OPTIONAL: Provider (default: "AzureAIClient")
-  apiType: string               # OPTIONAL: API type
-  connection: Connection        # OPTIONAL: Connection configuration
-  options: ModelOptions         # OPTIONAL: Model options
-```
+## Model Configuration
 
 ### Supported Providers
 
-The loader looks up providers in `PROVIDER_TYPE_OBJECT_MAPPING` ([source](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_loader.py)):
+The declarative agents framework supports multiple model providers. Each provider has specific configuration requirements:
 
-| Provider | Package | Class | Model ID Field |
-|----------|---------|-------|----------------|
-| `AzureOpenAI.Chat` | `agent_framework.azure` | `AzureOpenAIChatClient` | `deployment_name` |
-| `AzureOpenAI.Assistants` | `agent_framework.azure` | `AzureOpenAIAssistantsClient` | `deployment_name` |
-| `AzureOpenAI.Responses` | `agent_framework.azure` | `AzureOpenAIResponsesClient` | `deployment_name` |
-| `OpenAI.Chat` | `agent_framework.openai` | `OpenAIChatClient` | `model_id` |
-| `OpenAI.Assistants` | `agent_framework.openai` | `OpenAIAssistantsClient` | `model_id` |
-| `OpenAI.Responses` | `agent_framework.openai` | `OpenAIResponsesClient` | `model_id` |
-| `AzureAIAgentClient` | `agent_framework.azure` | `AzureAIAgentClient` | `model_deployment_name` |
-| `AzureAIClient` | `agent_framework.azure` | `AzureAIClient` | `model_deployment_name` |
-| `AzureAI.ProjectProvider` | `agent_framework.azure` | `AzureAIProjectAgentProvider` | `model` |
-| `Anthropic.Chat` | `agent_framework.anthropic` | `AnthropicChatClient` | `model_id` |
-
-> **Default:** If `provider` is not specified, uses `"AzureAIClient"`.
-
-### Example with Provider
+#### OpenAI.Chat
+Direct OpenAI API integration for chat models.
 
 ```yaml
 model:
-  id: gpt-4
-  provider: AzureOpenAI.Chat
-  connection:
-    kind: remote
-    endpoint: https://myresource.openai.azure.com
-```
-
-[↑ Back to top](#-table-of-contents)
-
----
-
-## Connection Types
-
-Defines how to authenticate and connect to the model service.
-
-### 1. RemoteConnection
-
-Connection to a remote endpoint (most common with Azure AI).
-
-```yaml
-connection:
-  kind: remote                  # REQUIRED
-  endpoint: string              # OPTIONAL: Endpoint URL
-  name: string                  # OPTIONAL: Connection name
-  authenticationMode: string    # OPTIONAL
-  usageDescription: string      # OPTIONAL
-```
-
-**Example:**
-```yaml
-model:
-  id: gpt-4.1
-  connection:
-    kind: remote
-    endpoint: =Env.AZURE_PROJECT_ENDPOINT
-```
-
-[↑ Back to Connections](#connection-types)
-
-### 2. ApiKeyConnection
-
-Connection with API Key.
-
-```yaml
-connection:
-  kind: key                     # REQUIRED
-  apiKey: string                # OPTIONAL (or use 'key')
-  key: string                   # OPTIONAL: Alternative to 'apiKey' (takes precedence)
-  endpoint: string              # OPTIONAL
-  authenticationMode: string    # OPTIONAL
-  usageDescription: string      # OPTIONAL
-```
-
-> **Note:** If both `apiKey` and `key` are provided, `key` takes precedence.
-
-**Example:**
-```yaml
-model:
-  id: gpt-4
   provider: OpenAI.Chat
+  model_id: gpt-4o
   connection:
-    kind: key
-    apiKey: =Env.OPENAI_API_KEY
-    endpoint: https://api.openai.com/v1
+    type: key
+    key: ${env:OPENAI_API_KEY}
+  # Optional parameters
+  temperature: 0.7
+  top_p: 1.0
+  max_tokens: 4096
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+  stop: ["\n\n"]
+  seed: 42
 ```
 
-[↑ Back to Connections](#connection-types)
+#### OpenAI.Responses
+OpenAI's Responses API for structured outputs.
 
-### 3. ReferenceConnection
+```yaml
+model:
+  provider: OpenAI.Responses
+  model_id: gpt-4o
+  connection:
+    type: key
+    key: ${env:OPENAI_API_KEY}
+```
 
-Reference to an externally defined connection.
+#### AzureOpenAI.Chat
+Azure-hosted OpenAI models for chat.
+
+```yaml
+model:
+  provider: AzureOpenAI.Chat
+  deployment_name: my-gpt4-deployment
+  connection:
+    type: key
+    endpoint: https://my-resource.openai.azure.com
+    key: ${env:AZURE_OPENAI_API_KEY}
+    api_version: "2024-02-15-preview"
+```
+
+#### AzureOpenAI.Responses
+Azure-hosted OpenAI with Responses API.
+
+```yaml
+model:
+  provider: AzureOpenAI.Responses
+  deployment_name: my-gpt4-deployment
+  connection:
+    type: key
+    endpoint: https://my-resource.openai.azure.com
+    key: ${env:AZURE_OPENAI_API_KEY}
+    api_version: "2024-02-15-preview"
+```
+
+#### AzureAIInference.Chat
+Azure AI Model Inference for chat models.
+
+```yaml
+model:
+  provider: AzureAIInference.Chat
+  model_id: DeepSeek-R1
+  connection:
+    type: key
+    endpoint: https://my-endpoint.services.ai.azure.com/models
+    key: ${env:AZURE_AI_API_KEY}
+```
+
+#### AzureAIFoundry.Chat
+Azure AI Foundry (formerly Azure AI Studio) integration.
+
+```yaml
+model:
+  provider: AzureAIFoundry.Chat
+  model_id: gpt-4o
+  connection:
+    type: key
+    endpoint: https://my-project.services.ai.azure.com
+    key: ${env:AZURE_AI_FOUNDRY_KEY}
+```
+
+#### AzureAIAgent
+Azure AI Agent Service for managed agent deployments.
+
+```yaml
+model:
+  provider: AzureAIAgent
+  agent_id: my-agent-id
+  connection:
+    type: key
+    endpoint: https://my-project.services.ai.azure.com
+    key: ${env:AZURE_AI_AGENT_KEY}
+```
+
+#### Anthropic.Chat
+Anthropic Claude models integration.
+
+```yaml
+model:
+  provider: Anthropic.Chat
+  model_id: claude-sonnet-4-20250514
+  connection:
+    type: key
+    key: ${env:ANTHROPIC_API_KEY}
+  # Optional parameters
+  temperature: 0.7
+  max_tokens: 4096
+  top_p: 1.0
+  top_k: 40
+```
+
+#### Ollama.Chat
+Local Ollama models for self-hosted inference.
+
+```yaml
+model:
+  provider: Ollama.Chat
+  model_id: llama3.2
+  connection:
+    type: anonymous
+    host: http://localhost:11434
+```
+
+#### GitHub.Chat
+GitHub Models integration.
+
+```yaml
+model:
+  provider: GitHub.Chat
+  model_id: openai/gpt-4o
+  connection:
+    type: key
+    key: ${env:GITHUB_TOKEN}
+```
+
+### Connection Types
+
+Connections define how to authenticate with model providers:
+
+#### Remote Connection
+For server-to-server connections with explicit configuration:
 
 ```yaml
 connection:
-  kind: reference               # REQUIRED
-  name: string                  # OPTIONAL: Connection name
-  target: string                # OPTIONAL
-  authenticationMode: string    # OPTIONAL
-  usageDescription: string      # OPTIONAL
+  type: remote
+  endpoint: https://api.example.com
+  # Additional provider-specific settings
 ```
 
-**Usage in Python:**
-```python
-factory = AgentFactory(
-    connections={"my_connection": credential_object}
-)
-```
-
-**Example:**
-```yaml
-model:
-  id: gpt-4
-  connection:
-    kind: reference
-    name: my_azure_connection
-```
-
-[↑ Back to Connections](#connection-types)
-
-### 4. AnonymousConnection
-
-Anonymous connection without authentication.
+#### Key-based Connection
+API key authentication:
 
 ```yaml
 connection:
-  kind: anonymous               # REQUIRED
-  endpoint: string              # OPTIONAL
-  authenticationMode: string    # OPTIONAL
-  usageDescription: string      # OPTIONAL
+  type: key
+  key: ${env:API_KEY}
+  # Optional: endpoint for Azure services
+  endpoint: https://my-resource.openai.azure.com
+  api_version: "2024-02-15-preview"
 ```
 
-**Example:**
-```yaml
-model:
-  id: llama-2
-  connection:
-    kind: anonymous
-    endpoint: https://public-llm-api.com/v1
-```
-
-[↑ Back to Connections](#connection-types) | [↑ Back to top](#-table-of-contents)
-
----
-
-## ModelOptions
-
-LLM model configuration options.
-
-### Complete Structure
+#### Reference Connection
+Reference to a pre-configured connection by name:
 
 ```yaml
-model:
-  options:
-    temperature: float                # OPTIONAL: 0.0 to 2.0
-    topP: float                       # OPTIONAL: 0.0 to 1.0
-    maxTokens: int                    # OPTIONAL: Maximum output tokens
-    # Additional options supported by the model
+connection:
+  type: reference
+  name: my-preconfigured-connection
 ```
 
-### Example
+#### Anonymous Connection
+No authentication required (for local services):
 
 ```yaml
-model:
-  id: gpt-4
-  options:
-    temperature: 0.7
-    maxTokens: 2000
-    topP: 0.95
+connection:
+  type: anonymous
+  host: http://localhost:11434
 ```
 
-[↑ Back to top](#-table-of-contents)
+### Environment Variable Substitution
 
----
+Use `${env:VARIABLE_NAME}` syntax to reference environment variables:
 
-## Tools Section
+```yaml
+connection:
+  type: key
+  key: ${env:OPENAI_API_KEY}
+  endpoint: ${env:AZURE_ENDPOINT}
+```
 
-List of tools available to the agent.
+## Tools
 
-**Available Tool Types:**
-1. [FunctionTool](#1-functiontool) - Custom functions
-2. [WebSearchTool](#2-websearchtool) - Web search
-3. [FileSearchTool](#3-filesearchtool) - File/vector search
-4. [CodeInterpreterTool](#4-codeinterpretertool) - Code interpreter
-5. [McpTool](#5-mcptool-model-context-protocol) - Model Context Protocol
-6. [OpenApiTool](#6-openapitool) - OpenAPI-based APIs
-7. [CustomTool](#7-customtool) - Custom tools
+Tools extend agent capabilities beyond conversation. The framework supports various tool types for different use cases.
 
-### 1. FunctionTool
+### Tool Types
 
-Defines a function that the agent can call.
+#### Code Interpreter
+Enables the agent to execute Python code:
 
 ```yaml
 tools:
-  - kind: function              # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    parameters: PropertySchema  # OPTIONAL: Parameter schema
-    strict: bool                # OPTIONAL: Strict mode (default: false)
-    bindings: list[Binding]     # OPTIONAL: Bindings to Python functions
+  - type: code_interpreter
 ```
 
-**Example:**
-```yaml
-tools:
-  - kind: function
-    name: get_weather
-    description: Get current weather for a location
-    parameters:
-      properties:
-        - name: location
-          kind: string
-          description: City name
-          required: true
-        - name: units
-          kind: string
-          description: Temperature units
-          enum: [celsius, fahrenheit]
-          default: celsius
-    bindings:
-      - name: get_weather_func
-        input: location
-```
-
-**Usage with bindings in Python:**
-```python
-def my_weather_function(location: str, units: str = "celsius") -> str:
-    return f"Weather in {location}: 25°{units[0].upper()}"
-
-factory = AgentFactory(
-    bindings={"get_weather_func": my_weather_function}
-)
-```
-
-[↑ Back to Tools](#tools-section)
-
-### 2. WebSearchTool
-
-Hosted web search tool.
+#### File Search
+Enables searching through uploaded files:
 
 ```yaml
 tools:
-  - kind: web_search            # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    connection: Connection      # OPTIONAL
-    options: dict               # OPTIONAL: Additional properties
-```
-
-**Example:**
-```yaml
-tools:
-  - kind: web_search
-    description: Search the web for current information
-```
-
-[↑ Back to Tools](#tools-section)
-
-### 3. FileSearchTool
-
-Search in stored vectors/files.
-
-```yaml
-tools:
-  - kind: file_search           # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    connection: Connection      # OPTIONAL
-    vectorStoreIds: list[string] # OPTIONAL: Vector store IDs
-    maximumResultCount: int     # OPTIONAL: Maximum results
-    ranker: string              # OPTIONAL: Ranker type
-    scoreThreshold: float       # OPTIONAL: Score threshold
-    filters: dict               # OPTIONAL: Search filters
-```
-
-**Example:**
-```yaml
-tools:
-  - kind: file_search
-    description: Search company documentation
-    vectorStoreIds:
+  - type: file_search
+    vector_store_ids:
       - vs_abc123
-      - vs_def456
-    maximumResultCount: 10
-    scoreThreshold: 0.75
-    ranker: semantic
 ```
 
-[↑ Back to Tools](#tools-section)
-
-### 4. CodeInterpreterTool
-
-Hosted Python code interpreter.
+#### Bing Grounding
+Enables web search via Bing (Azure AI Agent only):
 
 ```yaml
 tools:
-  - kind: code_interpreter      # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    fileIds: list[string]       # OPTIONAL: Available file IDs
-```
-
-**Example:**
-```yaml
-tools:
-  - kind: code_interpreter
-    description: Execute Python code to analyze data
-    fileIds:
-      - file_abc123
-      - file_def456
-```
-
-[↑ Back to Tools](#tools-section)
-
-### 5. McpTool (Model Context Protocol)
-
-MCP server for external tools.
-
-```yaml
-tools:
-  - kind: mcp                   # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    connection: Connection      # OPTIONAL
-    serverName: string          # OPTIONAL
-    serverDescription: string   # OPTIONAL
-    url: string                 # OPTIONAL: MCP server URL
-    approvalMode: ApprovalMode  # OPTIONAL: Approval mode
-    allowedTools: list[string]  # OPTIONAL: List of allowed tools
-```
-
-#### ApprovalMode Types
-
-**Always Require Approval:**
-```yaml
-approvalMode:
-  kind: always
-```
-
-**Never Require Approval:**
-```yaml
-approvalMode:
-  kind: never
-```
-
-**Specify Per Tool:**
-```yaml
-approvalMode:
-  kind: specify
-  alwaysRequireApprovalTools:   # Tools that ALWAYS require approval
-    - delete_records
-    - truncate_table
-  neverRequireApprovalTools:    # Tools that NEVER require approval
-    - select_query
-    - count_records
-```
-
-**Example 1: Microsoft Learn MCP**
-```yaml
-tools:
-  - kind: mcp
-    name: microsoft_learn
-    description: Search Microsoft Learn documentation
-    url: https://learn.microsoft.com/api/mcp
-    approvalMode:
-      kind: never
-    allowedTools:
-      - microsoft_docs_search
-      - microsoft_docs_fetch
-      - microsoft_code_sample_search
-```
-
-**Example 2: Selective Approval**
-```yaml
-tools:
-  - kind: mcp
-    name: database_tools
-    description: Database operations
-    url: https://myserver.com/mcp
-    approvalMode:
-      kind: specify
-      alwaysRequireApprovalTools:
-        - delete_records
-        - truncate_table
-      neverRequireApprovalTools:
-        - select_query
-        - count_records
-```
-
-[↑ Back to Tools](#tools-section)
-
-### 6. OpenApiTool
-
-Tool based on OpenAPI specification.
-
-```yaml
-tools:
-  - kind: openapi               # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    specification: string       # OPTIONAL: URL or path to OpenAPI spec
-    connection: Connection      # OPTIONAL: Connection configuration
-```
-
-**Example:**
-```yaml
-tools:
-  - kind: openapi
-    name: petstore_api
-    description: Interact with the Pet Store API
-    specification: https://petstore.swagger.io/v2/swagger.json
+  - type: bing_grounding
     connection:
-      kind: key
-      apiKey: =Env.PETSTORE_API_KEY
-      endpoint: https://petstore.swagger.io/v2
+      type: key
+      key: ${env:BING_API_KEY}
 ```
 
-[↑ Back to Tools](#tools-section)
-
-### 7. CustomTool
-
-Custom tool with free configuration.
+#### Microsoft Fabric
+Enables data integration with Microsoft Fabric (Azure AI Agent only):
 
 ```yaml
 tools:
-  - kind: custom                # REQUIRED
-    name: string                # OPTIONAL
-    description: string         # OPTIONAL
-    connection: Connection      # OPTIONAL
-    options: dict               # OPTIONAL: Custom configuration
-```
-
-**Example:**
-```yaml
-tools:
-  - kind: custom
-    name: my_special_tool
-    description: Custom integration with internal system
+  - type: microsoft_fabric
     connection:
-      kind: reference
-      name: internal_api
-    options:
-      timeout: 30
-      retry_count: 3
-      custom_header: special-value
+      type: key
+      key: ${env:FABRIC_API_KEY}
 ```
 
-[↑ Back to Tools](#tools-section) | [↑ Back to top](#-table-of-contents)
-
----
-
-## Input/Output Schemas
-
-Define the structure of agent input and output.
-
-### PropertySchema
+#### SharePoint Grounding
+Enables searching SharePoint content (Azure AI Agent only):
 
 ```yaml
-outputSchema:  # or use in tool parameters
-  strict: bool                  # OPTIONAL: Strict mode (default: false)
-  examples: list[dict]          # OPTIONAL: Example values
-  properties:
-    - name: string              # OPTIONAL
-      kind: string              # OPTIONAL: field type
-      description: string       # OPTIONAL
-      required: bool            # OPTIONAL
-      default: any              # OPTIONAL
-      example: any              # OPTIONAL
-      enum: list[any]           # OPTIONAL: allowed values
+tools:
+  - type: sharepoint_grounding
+    connection:
+      type: key
+      key: ${env:SHAREPOINT_API_KEY}
 ```
 
-### Property Types
-
-#### 1. Simple Property
-
-**Supported kinds:** `string`, `number`, `boolean`
+#### Azure AI Search
+Enables Azure AI Search integration (Azure AI Agent only):
 
 ```yaml
-- name: user_name
-  kind: string
-  description: Name of the user
-  required: true
+tools:
+  - type: azure_ai_search
+    connection:
+      type: key
+      endpoint: ${env:SEARCH_ENDPOINT}
+      key: ${env:SEARCH_API_KEY}
+    index_name: my-search-index
+    # Optional settings
+    query_type: semantic  # simple, full, semantic, vector, hybrid
+    top_k: 5
 ```
 
-#### 2. ArrayProperty
+#### Azure Functions
+Enables calling Azure Functions:
 
 ```yaml
-- name: tags
-  kind: array
-  description: List of tags
-  items:
-    name: tag
-    kind: string
+tools:
+  - type: azure_function
+    name: my_function
+    description: Processes data
+    input_queue:
+      storage_service_endpoint: ${env:STORAGE_ENDPOINT}
+      queue_name: input-queue
+    output_queue:
+      storage_service_endpoint: ${env:STORAGE_ENDPOINT}
+      queue_name: output-queue
+    parameters:
+      type: object
+      properties:
+        input:
+          type: string
+          description: Input data
 ```
 
-#### 3. ObjectProperty
+#### OpenAPI
+Enables calling external APIs via OpenAPI specification:
 
 ```yaml
-- name: address
-  kind: object
-  description: User address
-  properties:
-    - name: street
-      kind: string
-    - name: city
-      kind: string
-    - name: zip
-      kind: string
+tools:
+  - type: openapi
+    name: weather_api
+    description: Get weather information
+    spec_url: https://api.weather.com/openapi.json
+    # Or inline spec
+    spec:
+      openapi: "3.0.0"
+      info:
+        title: Weather API
+        version: "1.0"
+      paths:
+        /weather:
+          get:
+            operationId: getWeather
+            parameters:
+              - name: city
+                in: query
+                required: true
+                schema:
+                  type: string
 ```
 
-### Complete Example
+### MCP Tools
+
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) tools provide a standardized way to extend agent capabilities:
+
+#### Basic MCP Configuration
 
 ```yaml
-outputSchema:
-  properties:
-    - name: results
-      kind: array
-      description: Search results
-      items:
-        kind: object
-        properties:
-          - name: title
-            kind: string
-          - name: url
-            kind: string
-          - name: snippet
-            kind: string
-    - name: total_count
-      kind: number
+tools:
+  - type: mcp
+    name: filesystem
+    description: File system operations
+    command: npx
+    args:
+      - "-y"
+      - "@anthropic/mcp-filesystem"
+      - "/allowed/path"
 ```
 
-[↑ Back to top](#-table-of-contents)
+#### MCP with Environment Variables
 
----
+```yaml
+tools:
+  - type: mcp
+    name: github
+    description: GitHub operations
+    command: npx
+    args:
+      - "-y"
+      - "@anthropic/mcp-github"
+    env:
+      GITHUB_TOKEN: ${env:GITHUB_TOKEN}
+```
+
+#### MCP Tool Approval Modes
+
+Control how tools are executed with different approval modes:
+
+##### Automatic Approval
+Tools execute without user confirmation:
+
+```yaml
+tools:
+  - type: mcp
+    name: calculator
+    approval_mode: automatic
+    command: python
+    args: ["-m", "mcp_calculator"]
+```
+
+##### Manual Approval
+Requires explicit user approval for each tool call:
+
+```yaml
+tools:
+  - type: mcp
+    name: file_writer
+    approval_mode: manual
+    command: npx
+    args: ["-y", "@anthropic/mcp-filesystem"]
+```
+
+##### Accept List Approval
+Automatically approve only specific tools, require manual approval for others:
+
+```yaml
+tools:
+  - type: mcp
+    name: mixed_tools
+    approval_mode:
+      mode: accept_list
+      tools:
+        - safe_read_operation
+        - another_safe_tool
+    command: python
+    args: ["-m", "mcp_server"]
+```
+
+##### Deny List Approval
+Automatically approve all tools except specific ones:
+
+```yaml
+tools:
+  - type: mcp
+    name: mostly_safe
+    approval_mode:
+      mode: deny_list
+      tools:
+        - dangerous_delete_operation
+        - risky_write_operation
+    command: python
+    args: ["-m", "mcp_server"]
+```
+
+#### Remote MCP Server (SSE)
+
+Connect to remote MCP servers over Server-Sent Events (SSE):
+
+```yaml
+tools:
+  - type: mcp
+    name: remote_tools
+    description: Remote MCP server tools
+    url: https://mcp-server.example.com/sse
+    headers:
+      Authorization: Bearer ${env:MCP_TOKEN}
+```
+
+## Instructions
+
+Instructions define the agent's behavior and personality. They can be provided inline or loaded from external files.
+
+### Inline Instructions
+
+```yaml
+instructions: |
+  You are a helpful customer service agent for Acme Corporation.
+  
+  ## Guidelines
+  - Always be polite and professional
+  - If you don't know the answer, say so
+  - Escalate complex issues to human agents
+  
+  ## Knowledge
+  - Our return policy is 30 days
+  - Business hours are 9 AM - 5 PM EST
+```
+
+### File-based Instructions
+
+```yaml
+instructions: ${file:prompts/customer_service.md}
+```
+
+### Dynamic Instructions with PowerFx
+
+```yaml
+instructions: |
+  You are assisting ${context.user_name}.
+  Current date: ${Now()}
+  User tier: ${context.subscription_tier}
+```
+
+## Handoff Configuration
+
+Handoffs enable multi-agent orchestration by allowing agents to transfer control to other agents.
+
+### Basic Handoff
+
+```yaml
+handoff:
+  - agent: specialist_agent
+    description: Transfer to technical specialist for complex issues
+```
+
+### Handoff with Conditions
+
+```yaml
+handoff:
+  - agent: billing_agent
+    description: Transfer to billing department
+  - agent: technical_agent
+    description: Transfer to technical support
+  - agent: sales_agent
+    description: Transfer to sales team
+```
+
+### Handoff with Agent References
+
+```yaml
+# main_agent.yaml
+name: main_agent
+model:
+  provider: OpenAI.Chat
+  model_id: gpt-4o
+  connection:
+    type: key
+    key: ${env:OPENAI_API_KEY}
+instructions: Route customer inquiries to appropriate specialists.
+handoff:
+  - agent: ${file:agents/billing_agent.yaml}
+    description: Handle billing inquiries
+  - agent: ${file:agents/tech_agent.yaml}
+    description: Handle technical issues
+```
 
 ## PowerFx Expressions
 
-Any string in YAML can use PowerFx expressions prefixed with `=`.
+The framework supports [PowerFx](https://learn.microsoft.com/en-us/power-platform/power-fx/overview) expressions for dynamic configuration values.
 
-### Syntax
-
-```yaml
-field: =PowerFxExpression
-```
-
-### Environment Variables
-
-Access environment variables with `Env.VARIABLE_NAME`:
+### Basic Expressions
 
 ```yaml
-model:
-  id: =Env.MODEL_DEPLOYMENT_NAME
-  connection:
-    kind: remote
-    endpoint: =Env.AZURE_ENDPOINT
+instructions: |
+  Current timestamp: ${Now()}
+  Today's date: ${Today()}
+  Formatted date: ${Text(Today(), "yyyy-mm-dd")}
 ```
 
-### Supported PowerFx Functions
+### Context Variables
 
-- `Concatenate()`: Concatenate strings
-- Arithmetic operators: `+`, `-`, `*`, `/`
-- Logical operators: `And()`, `Or()`, `Not()`
-- And more according to [PowerFx specification](https://learn.microsoft.com/en-us/power-platform/power-fx/overview)
-
-**Example:**
-```yaml
-model:
-  id: =Concatenate("gpt-", Env.MODEL_VERSION)
-  connection:
-    kind: remote
-    endpoint: =Concatenate("https://", Env.REGION, ".openai.azure.com")
-```
-
-> **Note:** PowerFx evaluation requires Python ≤ 3.13 and the `powerfx` package. If not available, expressions are returned as literal strings.
-
-[↑ Back to top](#-table-of-contents)
-
----
-
-## Complete Examples
-
-### Example 1: Simple Agent with Azure OpenAI
+Access context data passed at runtime:
 
 ```yaml
-kind: Prompt
-name: SimpleAssistant
-description: A simple AI assistant
-instructions: You are a helpful assistant that answers questions concisely.
-
-model:
-  id: gpt-4
-  provider: AzureOpenAI.Chat
-  connection:
-    kind: remote
-    endpoint: https://myresource.openai.azure.com
-  options:
-    temperature: 0.7
-    maxTokens: 1000
+instructions: |
+  User: ${context.user_name}
+  Session ID: ${context.session_id}
+  Priority: ${context.priority_level}
 ```
 
-[↑ Back to Examples](#complete-examples)
-
-### Example 2: Agent with Azure AI Client
+### Conditional Logic
 
 ```yaml
-kind: Prompt
-name: AzureAIAgent
-description: Agent using Azure AI Foundry
-instructions: You are an expert assistant.
-
-model:
-  id: =Env.AZURE_MODEL_ID
-  provider: AzureAIClient
-  connection:
-    kind: remote
-    endpoint: =Env.AZURE_PROJECT_ENDPOINT
-  options:
-    temperature: 0.8
-    maxTokens: 2000
+instructions: |
+  ${If(context.is_premium, "You are a premium customer with priority support.", "Welcome! Consider upgrading to premium for faster support.")}
 ```
 
-[↑ Back to Examples](#complete-examples)
-
-### Example 3: Agent with MCP Tool
+### String Operations
 
 ```yaml
-kind: Prompt
-name: MicrosoftLearnAgent
-description: Search and retrieve Microsoft Learn documentation
-instructions: You answer questions by searching the Microsoft Learn content only.
-
-model:
-  id: =Env.AZURE_MODEL_ID
-  connection:
-    kind: remote
-    endpoint: =Env.AZURE_PROJECT_ENDPOINT
-
-tools:
-  - kind: mcp
-    name: microsoft_learn
-    description: Get information from Microsoft Learn
-    url: https://learn.microsoft.com/api/mcp
-    approvalMode:
-      kind: never
-    allowedTools:
-      - microsoft_docs_search
-      - microsoft_docs_fetch
-      - microsoft_code_sample_search
+instructions: |
+  Greeting: ${Concatenate("Hello, ", context.user_name, "!")}
+  Uppercase name: ${Upper(context.user_name)}
+  Name length: ${Len(context.user_name)}
 ```
 
-[↑ Back to Examples](#complete-examples)
+## Using AgentFactory
 
-### Example 4: Agent with Multiple Tools
+The `AgentFactory` class provides the primary interface for loading and instantiating declarative agents.
 
-```yaml
-kind: Prompt
-name: MultiToolAgent
-description: Agent with multiple capabilities
-instructions: You can search the web, analyze code, and call custom functions.
-
-model:
-  id: gpt-4
-  provider: AzureOpenAI.Chat
-  connection:
-    kind: key
-    apiKey: =Env.AZURE_OPENAI_KEY
-    endpoint: =Env.AZURE_OPENAI_ENDPOINT
-  options:
-    temperature: 0.5
-
-tools:
-  - kind: web_search
-    description: Search the web for current information
-
-  - kind: code_interpreter
-    description: Execute Python code for analysis
-
-  - kind: function
-    name: calculate_discount
-    description: Calculate discount price
-    parameters:
-      properties:
-        - name: price
-          kind: number
-          description: Original price
-          required: true
-        - name: discount_percent
-          kind: number
-          description: Discount percentage
-          required: true
-    bindings:
-      - name: discount_calculator
-```
-
-[↑ Back to Examples](#complete-examples)
-
-### Example 5: Agent with Input/Output Schema
-
-```yaml
-kind: Prompt
-name: StructuredAgent
-description: Agent with structured output
-instructions: Process user requests and return structured data.
-
-model:
-  id: gpt-4-turbo
-  provider: OpenAI.Chat
-  connection:
-    kind: key
-    apiKey: =Env.OPENAI_API_KEY
-
-outputSchema:
-  properties:
-    - name: result
-      kind: string
-      description: Processed result
-    - name: confidence
-      kind: number
-      description: Confidence score 0-1
-    - name: metadata
-      kind: object
-      properties:
-        - name: processing_time
-          kind: number
-        - name: word_count
-          kind: number
-```
-
-[↑ Back to Examples](#complete-examples) | [↑ Back to top](#-table-of-contents)
-
----
-
-## Python Usage
-
-### Create Agent from YAML
+### Basic Usage
 
 ```python
-from agent_framework_declarative import AgentFactory
-from azure.identity.aio import DefaultAzureCredential
-from pathlib import Path
+from declarative_agents import AgentFactory
 import asyncio
-import os
 
 async def main():
-    from dotenv import load_dotenv
-    load_dotenv()
+    # Load agent from YAML file
+    agent = await AgentFactory.create_agent("path/to/agent.yaml")
     
-    yaml_path = Path(__file__).parent / "agent.yaml"
-    project_endpoint = os.getenv("AZURE_PROJECT_ENDPOINT")
-    credential = DefaultAzureCredential()
+    # Use the agent
+    response = await agent.run("Hello, how can you help me?")
+    print(response)
+
+asyncio.run(main())
+```
+
+### With Runtime Context
+
+```python
+from declarative_agents import AgentFactory
+import asyncio
+
+async def main():
+    context = {
+        "user_name": "John",
+        "session_id": "abc123",
+        "subscription_tier": "premium"
+    }
     
-    factory = AgentFactory(
-        client_kwargs={
-            "async_credential": credential,
-            "project_endpoint": project_endpoint
-        }
+    agent = await AgentFactory.create_agent(
+        "path/to/agent.yaml",
+        context=context
     )
     
-    agent = factory.create_agent_from_yaml_path(yaml_path)
-    
-    async with agent:
-        response = await agent.run("Your question here")
-        print(response.text)
+    response = await agent.run("What services do I have access to?")
+    print(response)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
-
-[↑ Back to Python Usage](#python-usage)
-
-### With Bindings (Python Functions)
-
-```python
-def calculate_discount(price: float, discount_percent: float) -> float:
-    """Calculate discounted price."""
-    return price * (1 - discount_percent / 100)
-
-def get_weather(location: str) -> str:
-    """Get weather for location."""
-    return f"Weather in {location}: Sunny, 25°C"
-
-factory = AgentFactory(
-    bindings={
-        "discount_calculator": calculate_discount,
-        "weather_func": get_weather
-    },
-    client_kwargs={
-        "async_credential": credential,
-        "project_endpoint": project_endpoint
-    }
-)
-
-agent = factory.create_agent_from_yaml_path("agent.yaml")
-```
-
-[↑ Back to Python Usage](#python-usage)
-
-### With Connections
-
-```python
-from azure.identity import DefaultAzureCredential
-
-my_credential = DefaultAzureCredential()
-
-factory = AgentFactory(
-    connections={
-        "azure_connection": my_credential,
-        "custom_api": {"api_key": "secret123"}
-    }
-)
-```
-
-[↑ Back to Python Usage](#python-usage)
 
 ### AgentFactory Parameters
 
+The `AgentFactory.create_agent()` method accepts the following parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | `str` | Path to the YAML agent definition file |
+| `context` | `dict` | Runtime context variables for PowerFx expressions |
+| `tool_approval_handler` | `callable` | Custom handler for MCP tool approval |
+| `connections` | `dict` | Pre-configured connection references |
+
+### Custom Tool Approval Handler
+
 ```python
-AgentFactory(
-    chat_client=None,              # Optional: Pre-configured chat client
-    bindings=None,                 # Optional: Dict of function bindings
-    connections=None,              # Optional: Dict of connection objects
-    client_kwargs=None,            # Optional: Kwargs for client creation
-    additional_mappings=None,      # Optional: Additional provider mappings
-    default_provider="AzureAIClient",  # Default provider type
-    safe_mode=True,                # Enable safe mode
-    env_file_path=None,            # Path to .env file
-    env_file_encoding=None,        # Encoding for .env file
-)
+from declarative_agents import AgentFactory
+import asyncio
+
+async def approval_handler(tool_name: str, tool_args: dict) -> bool:
+    """Custom approval logic for tool execution."""
+    dangerous_tools = ["delete_file", "execute_command"]
+    if tool_name in dangerous_tools:
+        user_input = input(f"Allow {tool_name} with args {tool_args}? (y/n): ")
+        return user_input.lower() == 'y'
+    return True
+
+async def main():
+    agent = await AgentFactory.create_agent(
+        "path/to/agent.yaml",
+        tool_approval_handler=approval_handler
+    )
+    
+    response = await agent.run("Delete the temporary files")
+    print(response)
+
+asyncio.run(main())
 ```
 
-**Available Methods:**
-- `create_agent_from_yaml_path(yaml_path)` - Create agent from YAML file
-- `create_agent_from_yaml(yaml_str)` - Create agent from YAML string
-- `create_agent_from_dict(agent_def)` - Create agent from dictionary
-- `create_agent_from_yaml_path_async(yaml_path)` - Async version
-- `create_agent_from_yaml_async(yaml_str)` - Async version
-- `create_agent_from_dict_async(agent_def)` - Async version
+## Complete Examples
 
-[↑ Back to Python Usage](#python-usage) | [↑ Back to top](#-table-of-contents)
+### Customer Service Agent
 
----
+```yaml
+name: customer_service_agent
+description: Handles customer inquiries and support requests
 
-## Validation and Errors
+model:
+  provider: OpenAI.Chat
+  model_id: gpt-4o
+  connection:
+    type: key
+    key: ${env:OPENAI_API_KEY}
+  temperature: 0.7
 
-### Common Errors
+instructions: |
+  You are a customer service representative for TechCorp.
+  
+  ## Your Role
+  - Answer product questions
+  - Help with order status inquiries
+  - Process simple returns and exchanges
+  - Escalate complex issues to specialists
+  
+  ## Guidelines
+  - Be friendly and professional
+  - Ask clarifying questions when needed
+  - Always verify customer identity before discussing orders
+  
+  Current time: ${Now()}
+  Customer name: ${context.customer_name}
 
-#### 1. DeclarativeLoaderError
-YAML doesn't represent a `PromptAgent`
+tools:
+  - type: openapi
+    name: order_api
+    description: Look up order information
+    spec_url: https://api.techcorp.com/orders/openapi.json
+
+handoff:
+  - agent: billing_specialist
+    description: Transfer to billing for payment issues
+  - agent: technical_support
+    description: Transfer to tech support for product issues
 ```
-Only yaml definitions for a PromptAgent are supported for agent creation.
+
+### Research Assistant with MCP
+
+```yaml
+name: research_assistant
+description: Helps with research tasks using various tools
+
+model:
+  provider: Anthropic.Chat
+  model_id: claude-sonnet-4-20250514
+  connection:
+    type: key
+    key: ${env:ANTHROPIC_API_KEY}
+  max_tokens: 4096
+
+instructions: |
+  You are a research assistant with access to file system and web search tools.
+  
+  ## Capabilities
+  - Search the web for information
+  - Read and analyze local documents
+  - Summarize findings
+  - Create reports
+  
+  ## Guidelines
+  - Cite your sources
+  - Be thorough but concise
+  - Ask for clarification on ambiguous queries
+
+tools:
+  - type: mcp
+    name: filesystem
+    description: Read local documents
+    approval_mode: automatic
+    command: npx
+    args:
+      - "-y"
+      - "@anthropic/mcp-filesystem"
+      - "${context.allowed_path}"
+  
+  - type: mcp
+    name: web_search
+    description: Search the web
+    approval_mode:
+      mode: accept_list
+      tools:
+        - search
+        - fetch_page
+    command: npx
+    args:
+      - "-y"
+      - "@anthropic/mcp-web-search"
+    env:
+      SEARCH_API_KEY: ${env:SEARCH_API_KEY}
 ```
 
-#### 2. ProviderLookupError
-Unknown provider
+### Multi-Agent Orchestrator
+
+```yaml
+name: orchestrator
+description: Routes requests to specialized agents
+
+model:
+  provider: AzureOpenAI.Chat
+  deployment_name: gpt-4o
+  connection:
+    type: key
+    endpoint: ${env:AZURE_OPENAI_ENDPOINT}
+    key: ${env:AZURE_OPENAI_KEY}
+    api_version: "2024-02-15-preview"
+
+instructions: |
+  You are an orchestrator agent. Your job is to understand user requests
+  and route them to the appropriate specialist agent.
+  
+  ## Available Specialists
+  - **Data Analyst**: For data analysis, charts, and statistics
+  - **Code Assistant**: For programming help and code review
+  - **Writer**: For content creation and editing
+  
+  Analyze each request and transfer to the most appropriate specialist.
+
+handoff:
+  - agent: ${file:agents/data_analyst.yaml}
+    description: Handles data analysis, visualization, and statistical questions
+  - agent: ${file:agents/code_assistant.yaml}
+    description: Helps with coding, debugging, and code review
+  - agent: ${file:agents/writer.yaml}
+    description: Assists with writing, editing, and content creation
 ```
-Unsupported provider type: UnknownProvider
+
+### Azure AI Agent with Tools
+
+```yaml
+name: azure_enterprise_agent
+description: Enterprise agent with Azure AI capabilities
+
+model:
+  provider: AzureAIAgent
+  agent_id: ${env:AZURE_AGENT_ID}
+  connection:
+    type: key
+    endpoint: ${env:AZURE_AI_ENDPOINT}
+    key: ${env:AZURE_AI_KEY}
+
+instructions: |
+  You are an enterprise assistant with access to company data.
+  Use available tools to answer questions about company information.
+
+tools:
+  - type: azure_ai_search
+    connection:
+      type: key
+      endpoint: ${env:SEARCH_ENDPOINT}
+      key: ${env:SEARCH_KEY}
+    index_name: company-knowledge-base
+    query_type: semantic
+    top_k: 10
+
+  - type: bing_grounding
+    connection:
+      type: key
+      key: ${env:BING_KEY}
+
+  - type: code_interpreter
 ```
-
-#### 3. ValueError
-Missing required fields
-```
-Missing required field: model.id
-Missing required field: kind
-```
-
-[↑ Back to Validation](#validation-and-errors)
-
-### Required Fields
-
-**Agent Level:**
-- `kind` - Must be "Prompt" or "Agent"
-- `name` - Agent name
-
-**Model Level:**
-- `model.id` - Model ID or deployment name
-
-**Connection Level (depends on kind):**
-- `remote`: No required fields (endpoint optional)
-- `key`: No required fields (apiKey/key optional)
-- `reference`: No required fields (name optional)
-- `anonymous`: No required fields (endpoint optional)
-
-**Tool Level:**
-- All tools: `kind` is required
-- Other fields are optional per tool type
-
-[↑ Back to Validation](#validation-and-errors) | [↑ Back to top](#-table-of-contents)
-
----
 
 ## References
 
-### Official Documentation
-- [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
-- [Azure AI Foundry Documentation](https://learn.microsoft.com/azure/ai-services/)
-- [PowerFx Documentation](https://learn.microsoft.com/en-us/power-platform/power-fx/overview)
-
-### Source Code
-- [`_models.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_models.py) - Pydantic models for YAML schema
-- [`_loader.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_loader.py) - AgentFactory and provider mappings
-
-### Related Packages
-- `agent-framework` - Core framework
-- `agent-framework-core` - Core models and agents
-- `agent-framework-azure-ai` - Azure AI integration
-- `agent-framework-declarative` - Declarative YAML support
-- `agent-framework-devui` - Development UI for testing agents
-- `powerfx` - PowerFx expression evaluation
-
-### Model Context Protocol (MCP)
-- [MCP Specification](https://modelcontextprotocol.io/)
-- [Microsoft Learn MCP Server](https://learn.microsoft.com/api/mcp)
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) - Standard protocol for extending AI model capabilities
+- [Microsoft Learn MCP Server](https://learn.microsoft.com/en-us/training/support/mcp) - Information about Microsoft Learn's MCP server implementation
+- [PowerFx Documentation](https://learn.microsoft.com/en-us/power-platform/power-fx/overview) - PowerFx expression language reference
+- [Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-services/openai/) - Azure OpenAI documentation
+- [Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-studio/) - Azure AI Foundry (formerly AI Studio) documentation
+- [Anthropic Claude](https://docs.anthropic.com/) - Anthropic Claude model documentation
+- [OpenAI API](https://platform.openai.com/docs/) - OpenAI API documentation
 
 ---
 
-[↑ Back to top](#-table-of-contents)
+## Schema Version
+
+This specification is for declarative agents schema version 1.0.
+
+For the latest updates and additional examples, see the [agent-framework repository](https://github.com/microsoft/agent-framework).
