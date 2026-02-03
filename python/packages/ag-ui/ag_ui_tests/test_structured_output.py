@@ -9,7 +9,7 @@ from typing import Any
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
 from pydantic import BaseModel
 
-from agent_framework_ag_ui._test_utils import StreamingChatClientStub, stream_from_updates
+from ._test_utils import StreamingChatClientStub, stream_from_updates
 
 
 class RecipeOutput(BaseModel):

@@ -10,7 +10,7 @@ import pytest
 from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpdate, Content
 from pydantic import BaseModel
 
-from agent_framework_ag_ui._test_utils import StreamingChatClientStub
+from ._test_utils import StreamingChatClientStub
 
 
 async def test_agent_initialization_basic():
