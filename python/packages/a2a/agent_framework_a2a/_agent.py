@@ -186,7 +186,7 @@ class A2AAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -213,7 +213,7 @@ class A2AAgent(BaseAgent):
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
