@@ -45,8 +45,9 @@ from agent_framework._workflows._edge import (
 from agent_framework_durabletask import AgentSessionId, DurableAgentThread, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
 
+from ._context import CapturingRunnerContext
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._utils import deserialize_value, serialize_message
+from ._serialization import _reconstruct_typed_value, deserialize_value, serialize_message
 
 logger = logging.getLogger(__name__)
 
@@ -886,3 +887,120 @@ def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
                         message_content = last_msg.get("text") or last_msg.get("_text") or ""
 
     return message_content
+
+
+# ============================================================================
+# HITL Response Handler Execution
+# ============================================================================
+
+
+async def execute_hitl_response_handler(
+    executor: Any,
+    hitl_message: dict[str, Any],
+    shared_state: Any,
+    runner_context: CapturingRunnerContext,
+) -> None:
+    """Execute a HITL response handler on an executor.
+
+    This function handles the delivery of a HITL response to the executor's
+    @response_handler method. It:
+    1. Deserializes the original request and response
+    2. Finds the matching response handler based on types
+    3. Creates a WorkflowContext and invokes the handler
+
+    Args:
+        executor: The executor instance that has a @response_handler
+        hitl_message: The HITL response message containing original_request and response
+        shared_state: The shared state for the workflow context
+        runner_context: The runner context for capturing outputs
+    """
+    from agent_framework._workflows._workflow_context import WorkflowContext
+
+    # Extract the response data
+    original_request_data = hitl_message.get("original_request")
+    response_data = hitl_message.get("response")
+    response_type_str = hitl_message.get("response_type")
+
+    # Deserialize the original request
+    original_request = deserialize_value(original_request_data)
+
+    # Deserialize the response - try to match expected type
+    response = _deserialize_hitl_response(response_data, response_type_str)
+
+    # Find the matching response handler
+    handler = executor._find_response_handler(original_request, response)
+
+    if handler is None:
+        logger.warning(
+            "No response handler found for HITL response in executor %s. Request type: %s, Response type: %s",
+            executor.id,
+            type(original_request).__name__,
+            type(response).__name__,
+        )
+        return
+
+    # Create a WorkflowContext for the handler
+    # Use a special source ID to indicate this is a HITL response
+    ctx = WorkflowContext(
+        executor=executor,
+        source_executor_ids=["__hitl_response__"],
+        runner_context=runner_context,
+        shared_state=shared_state,
+    )
+
+    # Call the response handler
+    # Note: handler is already a partial with original_request bound
+    logger.debug(
+        "Invoking response handler for HITL request in executor %s",
+        executor.id,
+    )
+    await handler(response, ctx)
+
+
+def _deserialize_hitl_response(response_data: Any, response_type_str: str | None) -> Any:
+    """Deserialize a HITL response to its expected type.
+
+    Args:
+        response_data: The raw response data (typically a dict from JSON)
+        response_type_str: The fully qualified type name (module:classname)
+
+    Returns:
+        The deserialized response, or the original data if deserialization fails
+    """
+    logger.debug(
+        "Deserializing HITL response. response_type_str=%s, response_data type=%s",
+        response_type_str,
+        type(response_data).__name__,
+    )
+
+    if response_data is None:
+        return None
+
+    # If already a primitive, return as-is
+    if not isinstance(response_data, dict):
+        logger.debug("Response data is not a dict, returning as-is: %s", type(response_data).__name__)
+        return response_data
+
+    # Try to deserialize using the type hint
+    if response_type_str:
+        try:
+            module_name, class_name = response_type_str.rsplit(":", 1)
+            import importlib
+
+            module = importlib.import_module(module_name)
+            response_type = getattr(module, class_name, None)
+
+            if response_type:
+                logger.debug("Found response type %s, attempting reconstruction", response_type)
+                # Use the shared reconstruction logic which handles nested objects
+                result = _reconstruct_typed_value(response_data, response_type)
+                logger.debug("Reconstructed response type: %s", type(result).__name__)
+                return result
+            logger.warning("Could not find class %s in module %s", class_name, module_name)
+
+        except Exception as e:
+            logger.warning("Could not deserialize HITL response to %s: %s", response_type_str, e)
+
+    # Fall back to generic deserialization
+    logger.debug("Falling back to generic deserialization")
+    return deserialize_value(response_data)

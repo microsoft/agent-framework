@@ -16,8 +16,8 @@ from agent_framework import (
 )
 from pydantic import BaseModel
 
-from agent_framework_azurefunctions._utils import (
-    CapturingRunnerContext,
+from agent_framework_azurefunctions._context import CapturingRunnerContext
+from agent_framework_azurefunctions._serialization import (
     deserialize_value,
     reconstruct_agent_executor_request,
     reconstruct_agent_executor_response,

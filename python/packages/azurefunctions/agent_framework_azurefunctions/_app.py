@@ -40,17 +40,16 @@ from agent_framework_durabletask import (
     RunRequest,
 )
 
+from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._utils import (
-    CapturingRunnerContext,
-    _execute_hitl_response_handler,
+from ._serialization import (
     deserialize_value,
     reconstruct_message_for_handler,
     serialize_message,
 )
-from ._workflow import run_workflow_orchestrator
+from ._workflow import execute_hitl_response_handler, run_workflow_orchestrator
 
 logger = logging.getLogger("agent_framework.azurefunctions")
 
@@ -306,7 +305,7 @@ class AgentFunctionApp(DFAppBase):
 
                 if is_hitl_response:
                     # Handle HITL response by calling the executor's @response_handler
-                    await _execute_hitl_response_handler(
+                    await execute_hitl_response_handler(
                         executor=executor,
                         hitl_message=message_data,
                         shared_state=shared_state,
