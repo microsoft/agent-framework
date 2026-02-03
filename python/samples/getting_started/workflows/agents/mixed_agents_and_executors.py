@@ -7,7 +7,6 @@ from agent_framework import (
     AgentExecutorResponse,
     ChatAgent,
     Executor,
-    HostedCodeInterpreterTool,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -25,7 +24,7 @@ The workflow consists of two stages:
 2. An evaluator executor that reviews the agent's output and provides a final assessment
 
 Key concepts demonstrated:
-- Creating an AI agent with tool capabilities (HostedCodeInterpreterTool)
+- Creating an AI agent with tool capabilities (code interpreter)
 - Building workflows using WorkflowBuilder with an agent and a custom executor
 - Using the @handler decorator in the executor to process AgentExecutorResponse from the agent
 - Connecting workflow executors with edges to create a processing pipeline
@@ -83,10 +82,13 @@ def create_coding_agent(client: AzureAIAgentClient) -> ChatAgent:
     Returns:
         A ChatAgent configured with coding instructions and tools
     """
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
+
     return client.as_agent(
         name="CodingAgent",
         instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
-        tools=HostedCodeInterpreterTool(),
+        tools=code_interpreter_tool,
     )
 
 

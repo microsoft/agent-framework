@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponseUpdate,
     Content,
-    HostedWebSearchTool,
     chat_middleware,
     tool,
 )
@@ -358,7 +357,7 @@ async def test_cmc_with_hosted_tool_call(
         await ollama_client.get_response(
             messages=chat_history,
             options={
-                "tools": HostedWebSearchTool(additional_properties=additional_properties),
+                "tools": {"type": "web_search", "additional_properties": additional_properties},
             },
         )
 

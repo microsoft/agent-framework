@@ -3,18 +3,12 @@
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import yaml
 from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
-    Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPSpecificApproval,
-    HostedMCPTool,
-    HostedWebSearchTool,
     ToolProtocol,
 )
 from agent_framework import (
@@ -734,88 +728,81 @@ class AgentFactory:
                     func=func,
                 )
             case WebSearchTool():
-                return HostedWebSearchTool(
-                    description=tool_resource.description, additional_properties=tool_resource.options
-                )
+                result: dict[str, Any] = {"type": "web_search_preview"}
+                if tool_resource.description:
+                    result["description"] = tool_resource.description
+                if tool_resource.options:
+                    result.update(tool_resource.options)
+                return result
             case FileSearchTool():
-                add_props: dict[str, Any] = {}
+                result = {
+                    "type": "file_search",
+                    "vector_store_ids": tool_resource.vectorStoreIds or [],
+                }
+                if tool_resource.maximumResultCount is not None:
+                    result["max_num_results"] = tool_resource.maximumResultCount
+                if tool_resource.description:
+                    result["description"] = tool_resource.description
                 if tool_resource.ranker is not None:
-                    add_props["ranker"] = tool_resource.ranker
+                    result["ranker"] = tool_resource.ranker
                 if tool_resource.scoreThreshold is not None:
-                    add_props["score_threshold"] = tool_resource.scoreThreshold
+                    result["score_threshold"] = tool_resource.scoreThreshold
                 if tool_resource.filters:
-                    add_props["filters"] = tool_resource.filters
-                return HostedFileSearchTool(
-                    inputs=[Content.from_hosted_vector_store(id) for id in tool_resource.vectorStoreIds or []],
-                    description=tool_resource.description,
-                    max_results=tool_resource.maximumResultCount,
-                    additional_properties=add_props,
-                )
+                    result["filters"] = tool_resource.filters
+                return result
             case CodeInterpreterTool():
-                return HostedCodeInterpreterTool(
-                    inputs=[Content.from_hosted_file(file_id=file) for file in tool_resource.fileIds or []],
-                    description=tool_resource.description,
-                )
+                result = {"type": "code_interpreter"}
+                if tool_resource.fileIds:
+                    result["file_ids"] = tool_resource.fileIds
+                if tool_resource.description:
+                    result["description"] = tool_resource.description
+                return result
             case McpTool():
-                approval_mode: HostedMCPSpecificApproval | Literal["always_require", "never_require"] | None = None
+                result = {
+                    "type": "mcp",
+                    "server_label": tool_resource.name.replace(" ", "_") if tool_resource.name else "",
+                    "server_url": str(tool_resource.url) if tool_resource.url else "",
+                }
+                if tool_resource.description:
+                    result["server_description"] = tool_resource.description
+                if tool_resource.allowedTools:
+                    result["allowed_tools"] = list(tool_resource.allowedTools)
+
+                # Handle approval mode
                 if tool_resource.approvalMode is not None:
                     if tool_resource.approvalMode.kind == "always":
-                        approval_mode = "always_require"
+                        result["require_approval"] = "always"
                     elif tool_resource.approvalMode.kind == "never":
-                        approval_mode = "never_require"
+                        result["require_approval"] = "never"
                     elif isinstance(tool_resource.approvalMode, McpServerToolSpecifyApprovalMode):
-                        approval_mode = {}
+                        approval_config: dict[str, Any] = {}
                         if tool_resource.approvalMode.alwaysRequireApprovalTools:
-                            approval_mode["always_require_approval"] = (
-                                tool_resource.approvalMode.alwaysRequireApprovalTools
-                            )
+                            approval_config["always"] = {
+                                "tool_names": list(tool_resource.approvalMode.alwaysRequireApprovalTools)
+                            }
                         if tool_resource.approvalMode.neverRequireApprovalTools:
-                            approval_mode["never_require_approval"] = (
-                                tool_resource.approvalMode.neverRequireApprovalTools
-                            )
-                        if not approval_mode:
-                            approval_mode = None
+                            approval_config["never"] = {
+                                "tool_names": list(tool_resource.approvalMode.neverRequireApprovalTools)
+                            }
+                        if approval_config:
+                            result["require_approval"] = approval_config
 
                 # Handle connection settings
-                headers: dict[str, str] | None = None
-                additional_properties: dict[str, Any] | None = None
-
                 if tool_resource.connection is not None:
                     match tool_resource.connection:
                         case ApiKeyConnection():
                             if tool_resource.connection.apiKey:
-                                headers = {"Authorization": f"Bearer {tool_resource.connection.apiKey}"}
+                                result["headers"] = {"Authorization": f"Bearer {tool_resource.connection.apiKey}"}
                         case RemoteConnection():
-                            additional_properties = {
-                                "connection": {
-                                    "kind": tool_resource.connection.kind,
-                                    "name": tool_resource.connection.name,
-                                    "authenticationMode": tool_resource.connection.authenticationMode,
-                                    "endpoint": tool_resource.connection.endpoint,
-                                }
-                            }
+                            result["project_connection_id"] = tool_resource.connection.name
                         case ReferenceConnection():
-                            additional_properties = {
-                                "connection": {
-                                    "kind": tool_resource.connection.kind,
-                                    "name": tool_resource.connection.name,
-                                    "authenticationMode": tool_resource.connection.authenticationMode,
-                                }
-                            }
+                            result["project_connection_id"] = tool_resource.connection.name
                         case AnonymousConnection():
                             pass
                         case _:
                             raise ValueError(f"Unsupported connection kind: {tool_resource.connection.kind}")
 
-                return HostedMCPTool(
-                    name=tool_resource.name,  # type: ignore
-                    description=tool_resource.description,
-                    url=tool_resource.url,  # type: ignore
-                    allowed_tools=tool_resource.allowedTools,
-                    approval_mode=approval_mode,
-                    headers=headers,
-                    additional_properties=additional_properties,
-                )
+                return result
             case _:
                 raise ValueError(f"Unsupported tool kind: {tool_resource.kind}")
 

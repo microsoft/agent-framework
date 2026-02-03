@@ -8,7 +8,6 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
-    Collection,
     Mapping,
     MutableMapping,
     Sequence,
@@ -33,7 +32,7 @@ from typing import (
 )
 
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -67,9 +66,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    pass  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    pass  # type: ignore # pragma: no cover
 
 
 logger = get_logger()
@@ -78,12 +77,6 @@ __all__ = [
     "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
     "FunctionInvocationConfiguration",
     "FunctionTool",
-    "HostedCodeInterpreterTool",
-    "HostedFileSearchTool",
-    "HostedImageGenerationTool",
-    "HostedMCPSpecificApproval",
-    "HostedMCPTool",
-    "HostedWebSearchTool",
     "ToolProtocol",
     "tool",
     "use_function_invocation",
@@ -162,8 +155,8 @@ class ToolProtocol(Protocol):
     """Represents a generic tool.
 
     This protocol defines the interface that all tools must implement to be compatible
-    with the agent framework. It is implemented by various tool classes such as HostedMCPTool,
-    HostedWebSearchTool, and FunctionTool's. A FunctionTool is usually created by the `tool` decorator.
+    with the agent framework. It is implemented by FunctionTool and dict-based tools
+    from client factory methods (e.g., OpenAIResponsesClient.get_code_interpreter_tool()).
 
     Since each connector needs to parse tools differently, users can pass a dict to
     specify a service-specific tool when no abstraction is available.
@@ -189,8 +182,7 @@ class ToolProtocol(Protocol):
 class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
-    Used as the base class for the various tools in the agent framework, such as HostedMCPTool,
-    HostedWebSearchTool, and FunctionTool.
+    Used as the base class for FunctionTool.
 
     Since each connector needs to parse tools differently, this class is not exposed directly to end users.
     In most cases, users can pass a dict to specify a service-specific tool when no abstraction is available.
@@ -225,312 +217,6 @@ class BaseTool(SerializationMixin):
         if self.description:
             return f"{self.__class__.__name__}(name={self.name}, description={self.description})"
         return f"{self.__class__.__name__}(name={self.name})"
-
-
-class HostedCodeInterpreterTool(BaseTool):
-    """Represents a hosted tool that can be specified to an AI service to enable it to execute generated code.
-
-    This tool does not implement code interpretation itself. It serves as a marker to inform a service
-    that it is allowed to execute generated code if the service is capable of doing so.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import HostedCodeInterpreterTool
-
-            # Create a code interpreter tool
-            code_tool = HostedCodeInterpreterTool()
-
-            # With file inputs
-            code_tool_with_files = HostedCodeInterpreterTool(inputs=[{"file_id": "file-123"}, {"file_id": "file-456"}])
-    """
-
-    def __init__(
-        self,
-        *,
-        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the HostedCodeInterpreterTool.
-
-        Keyword Args:
-            inputs: A list of contents that the tool can accept as input. Defaults to None.
-                This should mostly be HostedFileContent or HostedVectorStoreContent.
-                Can also be DataContent, depending on the service used.
-                When supplying a list, it can contain:
-                - Content instances
-                - dicts with properties for Content (e.g., {"uri": "http://example.com", "media_type": "text/html"})
-                - strings (which will be converted to UriContent with media_type "text/plain").
-                If None, defaults to an empty list.
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool.
-            **kwargs: Additional keyword arguments to pass to the base class.
-        """
-        if "name" in kwargs:
-            raise ValueError("The 'name' argument is reserved for the HostedCodeInterpreterTool and cannot be set.")
-
-        self.inputs = _parse_inputs(inputs) if inputs else []
-
-        super().__init__(
-            name="code_interpreter",
-            description=description or "",
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-
-class HostedWebSearchTool(BaseTool):
-    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import HostedWebSearchTool
-
-            # Create a basic web search tool
-            search_tool = HostedWebSearchTool()
-
-            # With location context
-            search_tool_with_location = HostedWebSearchTool(
-                description="Search the web for information",
-                additional_properties={"user_location": {"city": "Seattle", "country": "US"}},
-            )
-    """
-
-    def __init__(
-        self,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        """Initialize a HostedWebSearchTool.
-
-        Keyword Args:
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool
-                (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
-            **kwargs: Additional keyword arguments to pass to the base class.
-                if additional_properties is not provided, any kwargs will be added to additional_properties.
-        """
-        args: dict[str, Any] = {
-            "name": "web_search",
-        }
-        if additional_properties is not None:
-            args["additional_properties"] = additional_properties
-        elif kwargs:
-            args["additional_properties"] = kwargs
-        if description is not None:
-            args["description"] = description
-        super().__init__(**args)
-
-
-class HostedImageGenerationToolOptions(TypedDict, total=False):
-    """Options for HostedImageGenerationTool."""
-
-    count: int
-    image_size: str
-    media_type: str
-    model_id: str
-    response_format: Literal["uri", "data", "hosted"]
-    streaming_count: int
-
-
-class HostedImageGenerationTool(BaseTool):
-    """Represents a hosted tool that can be specified to an AI service to enable it to perform image generation."""
-
-    def __init__(
-        self,
-        *,
-        options: HostedImageGenerationToolOptions | None = None,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        """Initialize a HostedImageGenerationTool."""
-        if "name" in kwargs:
-            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
-
-        self.options = options
-        super().__init__(
-            name="image_generation",
-            description=description or "",
-            additional_properties=additional_properties,
-            **kwargs,
-        )
-
-
-class HostedMCPSpecificApproval(TypedDict, total=False):
-    """Represents the specific mode for a hosted tool.
-
-    When using this mode, the user must specify which tools always or never require approval.
-    This is represented as a dictionary with two optional keys:
-
-    Attributes:
-        always_require_approval: A sequence of tool names that always require approval.
-        never_require_approval: A sequence of tool names that never require approval.
-    """
-
-    always_require_approval: Collection[str] | None
-    never_require_approval: Collection[str] | None
-
-
-class HostedMCPTool(BaseTool):
-    """Represents a MCP tool that is managed and executed by the service.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import HostedMCPTool
-
-            # Create a basic MCP tool
-            mcp_tool = HostedMCPTool(
-                name="my_mcp_tool",
-                url="https://example.com/mcp",
-            )
-
-            # With approval mode and allowed tools
-            mcp_tool_with_approval = HostedMCPTool(
-                name="my_mcp_tool",
-                description="My MCP tool",
-                url="https://example.com/mcp",
-                approval_mode="always_require",
-                allowed_tools=["tool1", "tool2"],
-                headers={"Authorization": "Bearer token"},
-            )
-
-            # With specific approval mode
-            mcp_tool_specific = HostedMCPTool(
-                name="my_mcp_tool",
-                url="https://example.com/mcp",
-                approval_mode={
-                    "always_require_approval": ["dangerous_tool"],
-                    "never_require_approval": ["safe_tool"],
-                },
-            )
-    """
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        description: str | None = None,
-        url: AnyUrl | str,
-        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
-        allowed_tools: Collection[str] | None = None,
-        headers: dict[str, str] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Create a hosted MCP tool.
-
-        Keyword Args:
-            name: The name of the tool.
-            description: A description of the tool.
-            url: The URL of the tool.
-            approval_mode: The approval mode for the tool. This can be:
-                - "always_require": The tool always requires approval before use.
-                - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-            allowed_tools: A list of tools that are allowed to use this tool.
-            headers: Headers to include in requests to the tool.
-            additional_properties: Additional properties to include in the tool definition.
-            **kwargs: Additional keyword arguments to pass to the base class.
-        """
-        try:
-            # Validate approval_mode
-            if approval_mode is not None:
-                if isinstance(approval_mode, str):
-                    if approval_mode not in ("always_require", "never_require"):
-                        raise ValueError(
-                            f"Invalid approval_mode: {approval_mode}. "
-                            "Must be 'always_require', 'never_require', or a dict with 'always_require_approval' "
-                            "or 'never_require_approval' keys."
-                        )
-                elif isinstance(approval_mode, dict):
-                    # Validate that the dict has sets
-                    for key, value in approval_mode.items():
-                        if not isinstance(value, set):
-                            approval_mode[key] = set(value)  # type: ignore
-
-            # Validate allowed_tools
-            if allowed_tools is not None and isinstance(allowed_tools, dict):
-                raise TypeError(
-                    f"allowed_tools must be a sequence of strings, not a dict. Got: {type(allowed_tools).__name__}"
-                )
-
-            super().__init__(
-                name=name,
-                description=description or "",
-                additional_properties=additional_properties,
-                **kwargs,
-            )
-            self.url = url if isinstance(url, AnyUrl) else AnyUrl(url)
-            self.approval_mode = approval_mode
-            self.allowed_tools = set(allowed_tools) if allowed_tools else None
-            self.headers = headers
-        except (ValidationError, ValueError, TypeError) as err:
-            raise ToolException(f"Error initializing HostedMCPTool: {err}", inner_exception=err) from err
-
-
-class HostedFileSearchTool(BaseTool):
-    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import HostedFileSearchTool
-
-            # Create a basic file search tool
-            file_search = HostedFileSearchTool()
-
-            # With vector store inputs and max results
-            file_search_with_inputs = HostedFileSearchTool(
-                inputs=[{"vector_store_id": "vs_123"}],
-                max_results=10,
-                description="Search files in vector store",
-            )
-    """
-
-    def __init__(
-        self,
-        *,
-        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
-        max_results: int | None = None,
-        description: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        """Initialize a FileSearchTool.
-
-        Keyword Args:
-            inputs: A list of contents that the tool can accept as input. Defaults to None.
-                This should be one or more HostedVectorStoreContents.
-                When supplying a list, it can contain:
-                - Content instances
-                - dicts with properties for Content (e.g., {"uri": "http://example.com", "media_type": "text/html"})
-                - strings (which will be converted to UriContent with media_type "text/plain").
-                If None, defaults to an empty list.
-            max_results: The maximum number of results to return from the file search.
-                If None, max limit is applied.
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool.
-            **kwargs: Additional keyword arguments to pass to the base class.
-        """
-        if "name" in kwargs:
-            raise ValueError("The 'name' argument is reserved for the HostedFileSearchTool and cannot be set.")
-
-        self.inputs = _parse_inputs(inputs) if inputs else None
-        self.max_results = max_results
-
-        super().__init__(
-            name="file_search",
-            description=description or "",
-            additional_properties=additional_properties,
-            **kwargs,
-        )
 
 
 def _default_histogram() -> Histogram:

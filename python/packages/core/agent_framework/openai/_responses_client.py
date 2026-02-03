@@ -28,6 +28,7 @@ from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
     CodeInterpreterContainerCodeInterpreterToolAuto,
+    ImageGeneration,
     Mcp,
     ToolParam,
 )
@@ -39,11 +40,6 @@ from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import (
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     ToolProtocol,
     use_function_invocation,
 )
@@ -369,134 +365,332 @@ class OpenAIBaseResponsesClient(
     def _prepare_tools_for_openai(
         self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None
     ) -> list[ToolParam | dict[str, Any]]:
+        """Prepare tools for the OpenAI Responses API.
+
+        Handles FunctionTool instances and passes through dict-based tools directly.
+        Dict-based tools are returned from static factory methods like get_code_interpreter_tool().
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            List of tool parameters ready for the OpenAI API.
+        """
         response_tools: list[ToolParam | dict[str, Any]] = []
         if not tools:
             return response_tools
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case HostedMCPTool():
-                        response_tools.append(self._prepare_mcp_tool(tool))
-                    case HostedCodeInterpreterTool():
-                        tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
-                        if tool.inputs:
-                            tool_args["file_ids"] = []
-                            for tool_input in tool.inputs:
-                                if tool_input.type == "hosted_file":
-                                    tool_args["file_ids"].append(tool_input.file_id)  # type: ignore[attr-defined]
-                            if not tool_args["file_ids"]:
-                                tool_args.pop("file_ids")
-                        response_tools.append(
-                            CodeInterpreter(
-                                type="code_interpreter",
-                                container=tool_args,
-                            )
-                        )
-                    case FunctionTool():
-                        params = tool.parameters()
-                        params["additionalProperties"] = False
-                        response_tools.append(
-                            FunctionToolParam(
-                                name=tool.name,
-                                parameters=params,
-                                strict=False,
-                                type="function",
-                                description=tool.description,
-                            )
-                        )
-                    case HostedFileSearchTool():
-                        if not tool.inputs:
-                            raise ValueError("HostedFileSearchTool requires inputs to be specified.")
-                        inputs: list[str] = [
-                            inp.vector_store_id  # type: ignore[misc]
-                            for inp in tool.inputs
-                            if inp.type == "hosted_vector_store"  # type: ignore[attr-defined]
-                        ]
-                        if not inputs:
-                            raise ValueError(
-                                "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
-                            )
-
-                        response_tools.append(
-                            FileSearchToolParam(
-                                type="file_search",
-                                vector_store_ids=inputs,
-                                max_num_results=tool.max_results
-                                or self.FILE_SEARCH_MAX_RESULTS,  # default to max results  if not specified
-                            )
-                        )
-                    case HostedWebSearchTool():
-                        web_search_tool = WebSearchToolParam(type="web_search")
-                        if location := (
-                            tool.additional_properties.get("user_location", None)
-                            if tool.additional_properties
-                            else None
-                        ):
-                            web_search_tool["user_location"] = {
-                                "type": "approximate",
-                                "city": location.get("city", None),
-                                "country": location.get("country", None),
-                                "region": location.get("region", None),
-                                "timezone": location.get("timezone", None),
-                            }
-                        if filters := (
-                            tool.additional_properties.get("filters", None) if tool.additional_properties else None
-                        ):
-                            web_search_tool["filters"] = filters
-                        if search_context_size := (
-                            tool.additional_properties.get("search_context_size", None)
-                            if tool.additional_properties
-                            else None
-                        ):
-                            web_search_tool["search_context_size"] = search_context_size
-                        response_tools.append(web_search_tool)
-                    case HostedImageGenerationTool():
-                        mapped_tool: dict[str, Any] = {"type": "image_generation"}
-                        if tool.options:
-                            option_mapping = {
-                                "image_size": "size",
-                                "media_type": "output_format",
-                                "model_id": "model",
-                                "streaming_count": "partial_images",
-                            }
-                            # count and response_format are not supported by Responses API
-                            for key, value in tool.options.items():
-                                mapped_key = option_mapping.get(key, key)
-                                mapped_tool[mapped_key] = value
-                        if tool.additional_properties:
-                            mapped_tool.update(tool.additional_properties)
-                        response_tools.append(mapped_tool)
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s)", type(tool))
-            else:
-                # Handle raw dictionary tools
+            if isinstance(tool, FunctionTool):
+                # Handle FunctionTool instances
+                params = tool.parameters()
+                params["additionalProperties"] = False
+                response_tools.append(
+                    FunctionToolParam(
+                        name=tool.name,
+                        parameters=params,
+                        strict=False,
+                        type="function",
+                        description=tool.description,
+                    )
+                )
+            elif isinstance(tool, (dict, MutableMapping)):
+                # Pass through dict-based tools directly (from static factory methods)
                 tool_dict = tool if isinstance(tool, dict) else dict(tool)
                 response_tools.append(tool_dict)
+            else:
+                # Log unsupported tool types
+                logger.debug("Unsupported tool passed (type: %s), skipping", type(tool))
         return response_tools
 
+    # region Hosted Tool Factory Methods
+
     @staticmethod
-    def _prepare_mcp_tool(tool: HostedMCPTool) -> Mcp:
-        """Get MCP tool from HostedMCPTool."""
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str] | None = None,
+        container: Literal["auto"] | dict[str, Any] = "auto",
+    ) -> Any:
+        """Create a code interpreter tool configuration for the Responses API.
+
+        Keyword Args:
+            file_ids: List of file IDs to make available to the code interpreter.
+            container: Container configuration. Use "auto" for automatic container management,
+                or provide a dict with custom container settings.
+
+        Returns:
+            A CodeInterpreter tool parameter dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic code interpreter
+                tool = OpenAIResponsesClient.get_code_interpreter_tool()
+
+                # With file access
+                tool = OpenAIResponsesClient.get_code_interpreter_tool(file_ids=["file-abc123"])
+
+                # Use with agent
+                agent = ChatAgent(client, tools=[tool])
+        """
+        container_config: CodeInterpreterContainerCodeInterpreterToolAuto
+        if isinstance(container, dict):
+            container_config = cast(CodeInterpreterContainerCodeInterpreterToolAuto, container)
+        else:
+            container_config = {"type": "auto"}
+
+        if file_ids:
+            container_config["file_ids"] = file_ids
+
+        return CodeInterpreter(type="code_interpreter", container=container_config)
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        user_location: dict[str, str] | None = None,
+        search_context_size: Literal["low", "medium", "high"] | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> Any:
+        """Create a web search tool configuration for the Responses API.
+
+        Keyword Args:
+            user_location: Location context for search results. Dict with keys like
+                "city", "country", "region", "timezone".
+            search_context_size: Amount of context to include from search results.
+                One of "low", "medium", or "high".
+            filters: Additional search filters.
+
+        Returns:
+            A WebSearchToolParam dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic web search
+                tool = OpenAIResponsesClient.get_web_search_tool()
+
+                # With location context
+                tool = OpenAIResponsesClient.get_web_search_tool(
+                    user_location={"city": "Seattle", "country": "US"},
+                    search_context_size="medium",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        web_search_tool = WebSearchToolParam(type="web_search")
+
+        if user_location:
+            web_search_tool["user_location"] = {
+                "type": "approximate",
+                "city": user_location.get("city"),
+                "country": user_location.get("country"),
+                "region": user_location.get("region"),
+                "timezone": user_location.get("timezone"),
+            }
+
+        if search_context_size:
+            web_search_tool["search_context_size"] = search_context_size
+
+        if filters:
+            web_search_tool["filters"] = filters
+
+        return web_search_tool
+
+    @staticmethod
+    def get_image_generation_tool(
+        *,
+        size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
+        output_format: Literal["png", "jpeg", "webp"] | None = None,
+        model: Literal["gpt-image-1", "gpt-image-1-mini"] | str | None = None,
+        quality: Literal["low", "medium", "high", "auto"] | None = None,
+        partial_images: int | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        moderation: Literal["auto", "low"] | None = None,
+        output_compression: int | None = None,
+    ) -> Any:
+        """Create an image generation tool configuration for the Responses API.
+
+        Keyword Args:
+            size: Image dimensions. One of "1024x1024", "1024x1536", "1536x1024", or "auto".
+            output_format: Output image format. One of "png", "jpeg", or "webp".
+            model: Model to use for image generation. One of "gpt-image-1" or "gpt-image-1-mini".
+            quality: Image quality level. One of "low", "medium", "high", or "auto".
+            partial_images: Number of partial images to stream during generation.
+            background: Background type. One of "transparent", "opaque", or "auto".
+            moderation: Moderation level. One of "auto" or "low".
+            output_compression: Compression level for output (0-100).
+
+        Returns:
+            An ImageGeneration tool parameter dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic image generation
+                tool = OpenAIResponsesClient.get_image_generation_tool()
+
+                # High quality large image
+                tool = OpenAIResponsesClient.get_image_generation_tool(
+                    size="1536x1024",
+                    quality="high",
+                    output_format="png",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: ImageGeneration = {"type": "image_generation"}
+
+        if size:
+            tool["size"] = size
+        if output_format:
+            tool["output_format"] = output_format
+        if model:
+            tool["model"] = model
+        if quality:
+            tool["quality"] = quality
+        if partial_images is not None:
+            tool["partial_images"] = partial_images
+        if background:
+            tool["background"] = background
+        if moderation:
+            tool["moderation"] = moderation
+        if output_compression is not None:
+            tool["output_compression"] = output_compression
+
+        return tool
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str,
+        description: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | dict[str, list[str]] | None = None,
+        allowed_tools: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Create an MCP (Model Context Protocol) tool configuration for the Responses API.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server.
+            description: A description of what the MCP server provides.
+            approval_mode: Tool approval mode. Use "always_require" or "never_require" for all tools,
+                or provide a dict with "always_require_approval" and/or "never_require_approval"
+                keys mapping to lists of tool names.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            headers: HTTP headers to include in requests to the MCP server.
+
+        Returns:
+            An Mcp tool parameter dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic MCP tool
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="my_mcp",
+                    url="https://mcp.example.com",
+                )
+
+                # With approval settings
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="github_mcp",
+                    url="https://mcp.github.com",
+                    description="GitHub MCP server",
+                    approval_mode="always_require",
+                    headers={"Authorization": "Bearer token"},
+                )
+
+                # With specific tool approvals
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="tools_mcp",
+                    url="https://tools.example.com",
+                    approval_mode={
+                        "always_require_approval": ["dangerous_tool"],
+                        "never_require_approval": ["safe_tool"],
+                    },
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
         mcp: Mcp = {
             "type": "mcp",
-            "server_label": tool.name.replace(" ", "_"),
-            "server_url": str(tool.url),
-            "server_description": tool.description,
-            "headers": tool.headers,
+            "server_label": name.replace(" ", "_"),
+            "server_url": url,
         }
-        if tool.allowed_tools:
-            mcp["allowed_tools"] = list(tool.allowed_tools)
-        if tool.approval_mode:
-            match tool.approval_mode:
-                case str():
-                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
-                case _:
-                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
-                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+
+        if description:
+            mcp["server_description"] = description
+
+        if headers:
+            mcp["headers"] = headers
+
+        if allowed_tools:
+            mcp["allowed_tools"] = allowed_tools
+
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
+            else:
+                if always_require := approval_mode.get("always_require_approval"):
+                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                if never_require := approval_mode.get("never_require_approval"):
+                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        vector_store_ids: list[str],
+        max_num_results: int | None = None,
+    ) -> Any:
+        """Create a file search tool configuration for the Responses API.
+
+        Keyword Args:
+            vector_store_ids: List of vector store IDs to search within.
+            max_num_results: Maximum number of results to return. Defaults to 50 if not specified.
+
+        Returns:
+            A FileSearchToolParam dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic file search
+                tool = OpenAIResponsesClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123"],
+                )
+
+                # With result limit
+                tool = OpenAIResponsesClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123", "vs_def456"],
+                    max_num_results=10,
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool = FileSearchToolParam(
+            type="file_search",
+            vector_store_ids=vector_store_ids,
+        )
+
+        if max_num_results is not None:
+            tool["max_num_results"] = max_num_results
+
+        return tool
+
+    # endregion
 
     async def _prepare_options(
         self,

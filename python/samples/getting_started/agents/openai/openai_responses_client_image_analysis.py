@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, TextContent, UriContent
+from agent_framework import ChatMessage, Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -26,9 +26,9 @@ async def main():
     user_message = ChatMessage(
         role="user",
         contents=[
-            TextContent(text="What do you see in this image?"),
-            UriContent(
-                uri="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+            Content.from_text(text="What do you see in this image?"),
+            Content.from_uri(
+                uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
                 media_type="image/jpeg",
             ),
         ],

@@ -6,8 +6,7 @@ from pathlib import Path
 from urllib import request as urllib_request
 
 import aiofiles
-from agent_framework import HostedImageGenerationTool
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -23,6 +22,15 @@ Pre-requisites:
 
 
 async def main() -> None:
+    # Create image generation tool using static method
+    image_gen_tool = AzureAIClient.get_image_generation_tool(
+        model="gpt-image-1",
+        size="1024x1024",
+        output_format="png",
+        quality="low",
+        background="opaque",
+    )
+
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
@@ -32,19 +40,7 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="ImageGenAgent",
             instructions="Generate images based on user requirements.",
-            tools=[
-                HostedImageGenerationTool(
-                    options={
-                        "model_id": "gpt-image-1",
-                        "image_size": "1024x1024",
-                        "media_type": "png",
-                    },
-                    additional_properties={
-                        "quality": "low",
-                        "background": "opaque",
-                    },
-                )
-            ],
+            tools=[image_gen_tool],
         )
 
         query = "Generate an image of Microsoft logo."

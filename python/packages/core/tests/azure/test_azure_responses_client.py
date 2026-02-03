@@ -16,10 +16,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -289,7 +285,7 @@ async def test_integration_web_search() -> None:
             "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool()],
+                "tools": [AzureOpenAIResponsesClient.get_web_search_tool()],
             },
         }
         if streaming:
@@ -304,17 +300,13 @@ async def test_integration_web_search() -> None:
         assert "Zoey" in response.text
 
         # Test that the client will use the web search tool with location
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-            }
-        }
         content = {
             "messages": "What is the current weather? Do not ask for my current location.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+                "tools": [
+                    AzureOpenAIResponsesClient.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})
+                ],
             },
         }
         if streaming:
@@ -339,7 +331,12 @@ async def test_integration_client_file_search() -> None:
                     text="What is the weather today? Do a file search to find the answer.",
                 )
             ],
-            options={"tools": [HostedFileSearchTool(inputs=vector_store)], "tool_choice": "auto"},
+            options={
+                "tools": [
+                    AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+                ],
+                "tool_choice": "auto",
+            },
         )
 
         assert "sunny" in response.text.lower()
@@ -363,7 +360,12 @@ async def test_integration_client_file_search_streaming() -> None:
                     text="What is the weather today? Do a file search to find the answer.",
                 )
             ],
-            options={"tools": [HostedFileSearchTool(inputs=vector_store)], "tool_choice": "auto"},
+            options={
+                "tools": [
+                    AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+                ],
+                "tool_choice": "auto",
+            },
         )
 
         assert response is not None
@@ -377,18 +379,16 @@ async def test_integration_client_file_search_streaming() -> None:
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
-    """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
+    """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     response = await client.get_response(
         "How to create an Azure storage account using az cli?",
         options={
             # this needs to be high enough to handle the full MCP tool response.
             "max_tokens": 5000,
-            "tools": HostedMCPTool(
+            "tools": AzureOpenAIResponsesClient.get_mcp_tool(
                 name="Microsoft Learn MCP",
                 url="https://learn.microsoft.com/api/mcp",
-                description="A Microsoft Learn MCP server for documentation questions",
-                approval_mode="never_require",
             ),
         },
     )
@@ -401,13 +401,13 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_code_interpreter_tool():
-    """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureOpenAIResponsesClient."""
+    """Test Azure Responses Client agent with code interpreter tool."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     response = await client.get_response(
         "Calculate the sum of numbers from 1 to 10 using Python code.",
         options={
-            "tools": [HostedCodeInterpreterTool()],
+            "tools": [AzureOpenAIResponsesClient.get_code_interpreter_tool()],
         },
     )
     # Should contain calculation result (sum of 1-10 = 55) or code execution content

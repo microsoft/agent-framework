@@ -4,10 +4,8 @@ import asyncio
 
 from agent_framework import (
     AgentResponseUpdate,
-    HostedCodeInterpreterTool,
-    tool,
 )
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -28,14 +26,17 @@ async def non_streaming_example() -> None:
     """Example of extracting file annotations from non-streaming response."""
     print("=== Non-Streaming Response Example ===")
 
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
+
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
         agent = await provider.create_agent(
-            name="V2CodeInterpreterFileAgent",
+            name="CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
@@ -50,9 +51,10 @@ async def non_streaming_example() -> None:
             for content in message.contents:
                 if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
-                        if annotation.file_id:
-                            annotations_found.append(annotation.file_id)
-                            print(f"Found file annotation: file_id={annotation.file_id}")
+                        file_id = annotation.get("file_id")
+                        if file_id:
+                            annotations_found.append(file_id)
+                            print(f"Found file annotation: file_id={file_id}")
 
         if annotations_found:
             print(f"SUCCESS: Found {len(annotations_found)} file annotation(s)")
@@ -64,6 +66,9 @@ async def streaming_example() -> None:
     """Example of extracting file annotations from streaming response."""
     print("\n=== Streaming Response Example ===")
 
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
+
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
@@ -71,7 +76,7 @@ async def streaming_example() -> None:
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
@@ -87,9 +92,10 @@ async def streaming_example() -> None:
                             text_chunks.append(content.text)
                         if content.annotations:
                             for annotation in content.annotations:
-                                if annotation.file_id:
-                                    annotations_found.append(annotation.file_id)
-                                    print(f"Found streaming annotation: file_id={annotation.file_id}")
+                                file_id = annotation.get("file_id")
+                                if file_id:
+                                    annotations_found.append(file_id)
+                                    print(f"Found streaming annotation: file_id={file_id}")
                     elif content.type == "hosted_file":
                         file_ids_found.append(content.file_id)
                         print(f"Found streaming HostedFileContent: file_id={content.file_id}")

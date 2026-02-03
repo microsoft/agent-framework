@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
+from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from openai import AsyncAzureOpenAI
@@ -12,7 +12,7 @@ from openai import AsyncAzureOpenAI
 """
 Azure OpenAI Responses Client with Code Interpreter and Files Example
 
-This sample demonstrates using HostedCodeInterpreterTool with Azure OpenAI Responses
+This sample demonstrates using get_code_interpreter_tool() with Azure OpenAI Responses
 for Python code execution and data analysis with uploaded files.
 """
 
@@ -75,11 +75,14 @@ async def main() -> None:
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
+    # Create code interpreter tool with file access
+    code_interpreter_tool = AzureOpenAIResponsesClient.get_code_interpreter_tool(file_ids=[file_id])
+
     # Create agent using Azure OpenAI Responses client
     agent = ChatAgent(
         chat_client=AzureOpenAIResponsesClient(credential=credential),
         instructions="You are a helpful assistant that can analyze data files using Python code.",
-        tools=HostedCodeInterpreterTool(inputs=[{"file_id": file_id}]),
+        tools=[code_interpreter_tool],
     )
 
     # Test the code interpreter with the uploaded file

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent_framework import HostedCodeInterpreterTool, HostedFileContent
+from agent_framework import Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 
 logger = logging.getLogger(__name__)
@@ -29,12 +29,15 @@ async def main() -> None:
     for skill in skills.data:
         print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
 
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AnthropicClient.get_code_interpreter_tool()
+
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
     agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
-        tools=HostedCodeInterpreterTool(),
+        tools=code_interpreter_tool,
         default_options={
             "max_tokens": 20000,
             "thinking": {"type": "enabled", "budget_tokens": 10000},
@@ -52,7 +55,7 @@ async def main() -> None:
     query = "Create a presentation about renewable energy with 5 slides"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
-    files: list[HostedFileContent] = []
+    files: list[Content] = []
     async for chunk in agent.run_stream(query):
         for content in chunk.contents:
             match content.type:

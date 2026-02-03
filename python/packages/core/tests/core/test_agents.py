@@ -23,7 +23,6 @@ from agent_framework import (
     Content,
     Context,
     ContextProvider,
-    HostedCodeInterpreterTool,
     Role,
     ToolProtocol,
     tool,
@@ -118,7 +117,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
 
 
 async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: ChatClientProtocol) -> None:
-    tool = HostedCodeInterpreterTool()
+    tool = {"type": "code_interpreter"}
     agent = ChatAgent(chat_client=chat_client, tools=[tool])
 
     assert agent.default_options.get("tools") is not None
@@ -133,7 +132,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
     assert prepared_chat_options.get("tools") is not None
     assert base_tools is not prepared_chat_options["tools"]
 
-    prepared_chat_options["tools"].append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
+    prepared_chat_options["tools"].append({"type": "code_interpreter"})  # type: ignore[arg-type]
     assert len(agent.default_options["tools"]) == 1
 
 
@@ -145,7 +144,7 @@ async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientPr
     chat_client_base.run_responses = [mock_response]
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=HostedCodeInterpreterTool(),
+        tools={"type": "code_interpreter"},
     )
     thread = agent.get_new_thread()
 
@@ -210,7 +209,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
         )
     ]
 
-    agent = ChatAgent(chat_client=chat_client_base, tools=HostedCodeInterpreterTool())
+    agent = ChatAgent(chat_client=chat_client_base, tools={"type": "code_interpreter"})
 
     result = await agent.run("Hello")
     assert result.text == "test response"

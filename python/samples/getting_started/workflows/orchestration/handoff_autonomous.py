@@ -10,7 +10,6 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     HandoffBuilder,
-    HostedWebSearchTool,
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
@@ -53,6 +52,11 @@ def create_agents(
         name="coordinator",
     )
 
+    # Create web search tool using static method
+    # Note: AzureOpenAIChatClient uses the gpt-4o-search-preview model for web search
+    # For other Azure clients, use AzureAIAgentClient.get_web_search_tool() with Bing connection
+    web_search_tool = {"type": "web_search"}
+
     research_agent = chat_client.as_agent(
         instructions=(
             "You are a research specialist that explores topics thoroughly using web search. "
@@ -63,7 +67,7 @@ def create_agents(
             "coordinator. Keep each individual response focused on one aspect."
         ),
         name="research_agent",
-        tools=[HostedWebSearchTool()],
+        tools=[web_search_tool],
     )
 
     summary_agent = chat_client.as_agent(

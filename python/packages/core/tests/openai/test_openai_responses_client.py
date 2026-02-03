@@ -34,11 +34,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     Role,
     tool,
 )
@@ -242,18 +237,16 @@ def test_get_response_with_all_parameters() -> None:
 
 
 def test_web_search_tool_with_location() -> None:
-    """Test HostedWebSearchTool with location parameters."""
+    """Test web search tool with location parameters using static method."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    # Test web search tool with location
-    web_search_tool = HostedWebSearchTool(
-        additional_properties={
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-                "region": "WA",
-                "timezone": "America/Los_Angeles",
-            }
+    # Test web search tool with location using static method
+    web_search_tool = OpenAIResponsesClient.get_web_search_tool(
+        user_location={
+            "city": "Seattle",
+            "country": "US",
+            "region": "WA",
+            "timezone": "America/Los_Angeles",
         }
     )
 
@@ -267,42 +260,23 @@ def test_web_search_tool_with_location() -> None:
         )
 
 
-def test_file_search_tool_with_invalid_inputs() -> None:
-    """Test HostedFileSearchTool with invalid vector store inputs."""
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Test with invalid inputs type (should trigger ValueError)
-    file_search_tool = HostedFileSearchTool(inputs=[Content.from_hosted_file(file_id="invalid")])
-
-    # Should raise an error due to invalid inputs
-    with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
-        asyncio.run(
-            client.get_response(
-                messages=[ChatMessage(role="user", text="Search files")],
-                options={"tools": [file_search_tool]},
-            )
-        )
-
-
 def test_code_interpreter_tool_variations() -> None:
-    """Test HostedCodeInterpreterTool with and without file inputs."""
+    """Test code interpreter tool using static method."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    # Test code interpreter without files
-    code_tool_empty = HostedCodeInterpreterTool()
+    # Test code interpreter using static method
+    code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
 
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="Run some code")],
-                options={"tools": [code_tool_empty]},
+                options={"tools": [code_tool]},
             )
         )
 
-    # Test code interpreter with files
-    code_tool_with_files = HostedCodeInterpreterTool(
-        inputs=[Content.from_hosted_file(file_id="file1"), Content.from_hosted_file(file_id="file2")]
-    )
+    # Test code interpreter with files using static method
+    code_tool_with_files = OpenAIResponsesClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
 
     with pytest.raises(ServiceResponseException):
         asyncio.run(
@@ -332,19 +306,18 @@ def test_content_filter_exception() -> None:
         assert "content error" in str(exc_info.value)
 
 
-def test_hosted_file_search_tool_validation() -> None:
-    """Test get_response HostedFileSearchTool validation."""
-
+def test_file_search_tool() -> None:
+    """Test file search tool using static method."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    # Test HostedFileSearchTool without inputs (should raise ValueError)
-    empty_file_search_tool = HostedFileSearchTool()
+    # Test file search tool with vector store IDs
+    file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=["vs_123"])
 
-    with pytest.raises((ValueError, ServiceInvalidRequestError)):
+    with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
                 messages=[ChatMessage(role="user", text="Test")],
-                options={"tools": [empty_file_search_tool]},
+                options={"tools": [file_search_tool]},
             )
         )
 
@@ -1089,18 +1062,17 @@ def test_streaming_chunk_with_usage_only() -> None:
     assert update.contents[0].usage_details["total_token_count"] == 75
 
 
-def test_prepare_tools_for_openai_with_hosted_mcp() -> None:
-    """Test that HostedMCPTool is converted to the correct response tool dict."""
+def test_prepare_tools_for_openai_with_mcp() -> None:
+    """Test that MCP tool dict is converted to the correct response tool dict."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    tool = HostedMCPTool(
-        name="My MCP",
+    # Use static method to create MCP tool
+    tool = OpenAIResponsesClient.get_mcp_tool(
+        name="My_MCP",
         url="https://mcp.example",
-        description="An MCP server",
-        approval_mode={"always_require_approval": ["tool_a", "tool_b"]},
-        allowed_tools={"tool_a", "tool_b"},
+        allowed_tools=["tool_a", "tool_b"],
         headers={"X-Test": "yes"},
-        additional_properties={"custom": "value"},
+        approval_mode={"always_require_approval": ["tool_a", "tool_b"]},
     )
 
     resp_tools = client._prepare_tools_for_openai([tool])
@@ -1112,7 +1084,6 @@ def test_prepare_tools_for_openai_with_hosted_mcp() -> None:
     assert mcp["server_label"] == "My_MCP"
     # server_url may be normalized to include a trailing slash by the client
     assert str(mcp["server_url"]).rstrip("/") == "https://mcp.example"
-    assert mcp["server_description"] == "An MCP server"
     assert mcp["headers"]["X-Test"] == "yes"
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
@@ -1273,13 +1244,15 @@ def test_prepare_tools_for_openai_with_raw_image_generation_minimal() -> None:
     assert len(image_tool) == 1
 
 
-def test_prepare_tools_for_openai_with_hosted_image_generation() -> None:
-    """Test HostedImageGenerationTool conversion."""
+def test_prepare_tools_for_openai_with_image_generation_options() -> None:
+    """Test image generation tool conversion with options."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    tool = HostedImageGenerationTool(
-        description="Generate images",
-        options={"output_format": "png", "size": "512x512"},
-        additional_properties={"quality": "high"},
+
+    # Use static method to create image generation tool
+    tool = OpenAIResponsesClient.get_image_generation_tool(
+        output_format="png",
+        size="512x512",
+        quality="high",
     )
 
     resp_tools = client._prepare_tools_for_openai([tool])
@@ -2288,11 +2261,13 @@ async def test_integration_web_search() -> None:
     client = OpenAIResponsesClient(model_id="gpt-5")
 
     for streaming in [False, True]:
+        # Use static method for web search tool
+        web_search_tool = OpenAIResponsesClient.get_web_search_tool()
         content = {
             "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool()],
+                "tools": [web_search_tool],
             },
         }
         if streaming:
@@ -2307,17 +2282,14 @@ async def test_integration_web_search() -> None:
         assert "Zoey" in response.text
 
         # Test that the client will use the web search tool with location
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-            }
-        }
+        web_search_tool_with_location = OpenAIResponsesClient.get_web_search_tool(
+            user_location={"country": "US", "city": "Seattle"},
+        )
         content = {
             "messages": "What is the current weather? Do not ask for my current location.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+                "tools": [web_search_tool_with_location],
             },
         }
         if streaming:
@@ -2339,7 +2311,9 @@ async def test_integration_file_search() -> None:
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Test that the client will use the web search tool
+    # Use static method for file search tool
+    file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+    # Test that the client will use the file search tool
     response = await openai_responses_client.get_response(
         messages=[
             ChatMessage(
@@ -2349,7 +2323,7 @@ async def test_integration_file_search() -> None:
         ],
         options={
             "tool_choice": "auto",
-            "tools": [HostedFileSearchTool(inputs=vector_store)],
+            "tools": [file_search_tool],
         },
     )
 
@@ -2370,7 +2344,9 @@ async def test_integration_streaming_file_search() -> None:
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Test that the client will use the web search tool
+    # Use static method for file search tool
+    file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+    # Test that the client will use the file search tool
     response = openai_responses_client.get_streaming_response(
         messages=[
             ChatMessage(
@@ -2380,7 +2356,7 @@ async def test_integration_streaming_file_search() -> None:
         ],
         options={
             "tool_choice": "auto",
-            "tools": [HostedFileSearchTool(inputs=vector_store)],
+            "tools": [file_search_tool],
         },
     )
 

@@ -17,7 +17,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     Content,
-    HostedWebSearchTool,
     ToolProtocol,
     prepare_function_call_results,
     tool,
@@ -772,8 +771,8 @@ def test_prepare_tools_with_web_search_no_location(openai_unit_test_env: dict[st
     """Test preparing web search tool without user location."""
     client = OpenAIChatClient()
 
-    # Web search tool without additional_properties
-    web_search_tool = HostedWebSearchTool()
+    # Web search tool using static method
+    web_search_tool = OpenAIChatClient.get_web_search_tool()
 
     result = client._prepare_tools_for_openai([web_search_tool])
 
@@ -1072,11 +1071,13 @@ async def test_integration_web_search() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     for streaming in [False, True]:
+        # Use static method for web search tool
+        web_search_tool = OpenAIChatClient.get_web_search_tool()
         content = {
             "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool()],
+                "tools": [web_search_tool],
             },
         }
         if streaming:
@@ -1091,17 +1092,14 @@ async def test_integration_web_search() -> None:
         assert "Zoey" in response.text
 
         # Test that the client will use the web search tool with location
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-            }
-        }
+        web_search_tool_with_location = OpenAIChatClient.get_web_search_tool(
+            user_location={"country": "US", "city": "Seattle"}
+        )
         content = {
             "messages": "What is the current weather? Do not ask for my current location.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+                "tools": [web_search_tool_with_location],
             },
         }
         if streaming:

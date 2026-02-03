@@ -219,8 +219,8 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
             description: A description of the assistant.
             tools: Tools available to the assistant. Can include:
                 - FunctionTool instances or callables decorated with @tool
-                - HostedCodeInterpreterTool for code execution
-                - HostedFileSearchTool for vector store search
+                - Dict-based tools from OpenAIAssistantsClient.get_code_interpreter_tool()
+                - Dict-based tools from OpenAIAssistantsClient.get_file_search_tool()
                 - Raw tool dictionaries
             metadata: Metadata to attach to the assistant (max 16 key-value pairs).
             default_options: A TypedDict containing default chat options for the agent.

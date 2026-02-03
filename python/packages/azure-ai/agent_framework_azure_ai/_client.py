@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, Literal, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStoreProtocol,
     ContextProvider,
-    HostedMCPTool,
     Middleware,
     ToolProtocol,
     get_logger,
@@ -27,7 +26,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-from ._shared import AzureAISettings, _extract_project_connection_id, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -507,36 +506,84 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         if description and not self.agent_description:
             self.agent_description = description
 
+    # region Hosted Tool Factory Methods (Azure-specific overrides)
+
     @staticmethod
-    def _prepare_mcp_tool(tool: HostedMCPTool) -> MCPTool:  # type: ignore[override]
-        """Get MCP tool from HostedMCPTool."""
-        mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str | None = None,
+        description: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | dict[str, list[str]] | None = None,
+        allowed_tools: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        project_connection_id: str | None = None,
+    ) -> Any:
+        """Create an MCP tool configuration for Azure AI.
 
-        if tool.description:
-            mcp["server_description"] = tool.description
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server. Required if project_connection_id is not provided.
+            description: A description of what the MCP server provides.
+            approval_mode: Tool approval mode. Use "always_require" or "never_require" for all tools,
+                or provide a dict with "always_require_approval" and/or "never_require_approval"
+                keys mapping to lists of tool names.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            headers: HTTP headers to include in requests to the MCP server.
+            project_connection_id: Azure AI Foundry connection ID for managed MCP connections.
+                If provided, url and headers are not required.
 
-        # Check for project_connection_id in additional_properties (for Azure AI Foundry connections)
-        project_connection_id = _extract_project_connection_id(tool.additional_properties)
+        Returns:
+            An MCPTool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                # With URL
+                tool = AzureAIClient.get_mcp_tool(
+                    name="my_mcp",
+                    url="https://mcp.example.com",
+                )
+
+                # With Azure AI Foundry connection
+                tool = AzureAIClient.get_mcp_tool(
+                    name="github_mcp",
+                    project_connection_id="conn_abc123",
+                    description="GitHub MCP via Azure AI Foundry",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        mcp = MCPTool(server_label=name.replace(" ", "_"))
+
+        if url:
+            mcp["server_url"] = url
+
+        if description:
+            mcp["server_description"] = description
+
         if project_connection_id:
             mcp["project_connection_id"] = project_connection_id
-        elif tool.headers:
-            # Only use headers if no project_connection_id is available
-            mcp["headers"] = tool.headers
+        elif headers:
+            mcp["headers"] = headers
 
-        if tool.allowed_tools:
-            mcp["allowed_tools"] = list(tool.allowed_tools)
+        if allowed_tools:
+            mcp["allowed_tools"] = allowed_tools
 
-        if tool.approval_mode:
-            match tool.approval_mode:
-                case str():
-                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
-                case _:
-                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
-                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
+            else:
+                if always_require := approval_mode.get("always_require_approval"):
+                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                if never_require := approval_mode.get("never_require_approval"):
+                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    # endregion
 
     @override
     def as_agent(

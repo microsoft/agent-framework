@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentProtocol, AgentResponse, AgentThread, HostedMCPTool
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework import AgentProtocol, AgentResponse, AgentThread
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -40,6 +40,13 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
 
 async def main() -> None:
     """Example showing Hosted MCP tools for a Azure AI Agent."""
+
+    # Create MCP tool using static method
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    )
+
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -47,10 +54,7 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-            tools=HostedMCPTool(
-                name="Microsoft Learn MCP",
-                url="https://learn.microsoft.com/api/mcp",
-            ),
+            tools=[mcp_tool],
         )
         thread = agent.get_new_thread()
         # First query

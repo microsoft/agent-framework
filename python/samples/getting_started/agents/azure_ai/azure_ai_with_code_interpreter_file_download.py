@@ -2,18 +2,17 @@
 
 import asyncio
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from agent_framework import (
     AgentResponseUpdate,
+    Annotation,
     ChatAgent,
-    CitationAnnotation,
-    HostedCodeInterpreterTool,
-    HostedFileContent,
-    TextContent,
-    tool,
+    Content,
 )
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -35,20 +34,17 @@ QUERY = (
 )
 
 
-async def download_container_files(
-    file_contents: list[CitationAnnotation | HostedFileContent], agent: ChatAgent
-) -> list[Path]:
+async def download_container_files(file_contents: Sequence[Annotation | Content], agent: ChatAgent) -> list[Path]:
     """Download container files using the OpenAI containers API.
 
     Code interpreter generates files in containers, which require both file_id
     and container_id to download. The container_id is stored in additional_properties.
 
-    This function works for both streaming (HostedFileContent) and non-streaming
-    (CitationAnnotation) responses.
+    This function works for both streaming (Content with type='hosted_file') and non-streaming
+    (Annotation) responses.
 
     Args:
-        file_contents: List of CitationAnnotation or HostedFileContent objects
-                      containing file_id and container_id.
+        file_contents: List of Annotation or Content objects containing file_id and container_id.
         agent: The ChatAgent instance with access to the AzureAIClient.
 
     Returns:
@@ -65,28 +61,45 @@ async def download_container_files(
     print(f"\nDownloading {len(file_contents)} container file(s) to {output_dir.absolute()}...")
 
     # Access the OpenAI client from AzureAIClient
-    openai_client = agent.chat_client.client
+    # type: ignore is needed because chat_client is typed as protocol
+    openai_client: Any = agent.chat_client.client  # type: ignore[attr-defined]
 
     downloaded_files: list[Path] = []
 
-    for content in file_contents:
-        file_id = content.file_id
+    for item in file_contents:
+        # Handle both Annotation (dict-like) and Content objects
+        if isinstance(item, dict):
+            # Annotation TypedDict
+            file_id = item.get("file_id")
+            additional_props = item.get("additional_properties", {})
+            url = item.get("url")
+        else:
+            # Content object
+            file_id = item.file_id
+            additional_props = item.additional_properties or {}
+            url = None
+
+        if not file_id:
+            print("  Skipping item without file_id")
+            continue
 
         # Extract container_id from additional_properties
-        if not content.additional_properties or "container_id" not in content.additional_properties:
+        if not additional_props or "container_id" not in additional_props:
             print(f"  File {file_id}: ✗ Missing container_id")
             continue
 
-        container_id = content.additional_properties["container_id"]
+        container_id = additional_props["container_id"]
 
         # Extract filename based on content type
-        if isinstance(content, CitationAnnotation):
-            filename = content.url or f"{file_id}.txt"
+        if isinstance(item, dict):
+            # Annotation - use url field
+            filename = url or f"{file_id}.txt"
             # Extract filename from sandbox URL if present (e.g., sandbox:/mnt/data/sample.txt)
             if filename.startswith("sandbox:"):
                 filename = filename.split("/")[-1]
-        else:  # HostedFileContent
-            filename = content.additional_properties.get("filename") or f"{file_id}.txt"
+        else:
+            # Content (hosted_file) - use filename from additional_properties
+            filename = additional_props.get("filename") or f"{file_id}.txt"
 
         output_path = output_dir / filename
 
@@ -115,8 +128,11 @@ async def download_container_files(
 
 
 async def non_streaming_example() -> None:
-    """Example of downloading files from non-streaming response using CitationAnnotation."""
+    """Example of downloading files from non-streaming response using Annotation."""
     print("=== Non-Streaming Response Example ===")
+
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
 
     async with (
         AzureCliCredential() as credential,
@@ -125,7 +141,7 @@ async def non_streaming_example() -> None:
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
@@ -134,23 +150,25 @@ async def non_streaming_example() -> None:
         print(f"Agent: {result.text}\n")
 
         # Check for annotations in the response
-        annotations_found: list[CitationAnnotation] = []
+        annotations_found: list[Annotation] = []
         # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
-                if isinstance(content, TextContent) and content.annotations:
+                if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
-                        if isinstance(annotation, CitationAnnotation) and annotation.file_id:
+                        file_id = annotation.get("file_id")
+                        if file_id:
                             annotations_found.append(annotation)
-                            print(f"Found file annotation: file_id={annotation.file_id}")
-                            if annotation.additional_properties and "container_id" in annotation.additional_properties:
-                                print(f"  container_id={annotation.additional_properties['container_id']}")
+                            print(f"Found file annotation: file_id={file_id}")
+                            additional_props = annotation.get("additional_properties", {})
+                            if additional_props and "container_id" in additional_props:
+                                print(f"  container_id={additional_props['container_id']}")
 
         if annotations_found:
             print(f"SUCCESS: Found {len(annotations_found)} file annotation(s)")
 
-            # Download the container files
-            downloaded_paths = await download_container_files(annotations_found, agent)
+            # Download the container files (cast to Sequence for type compatibility)
+            downloaded_paths = await download_container_files(list(annotations_found), agent)
 
             if downloaded_paths:
                 print("\nDownloaded files available at:")
@@ -161,8 +179,11 @@ async def non_streaming_example() -> None:
 
 
 async def streaming_example() -> None:
-    """Example of downloading files from streaming response using HostedFileContent."""
+    """Example of downloading files from streaming response using Content with type='hosted_file'."""
     print("\n=== Streaming Response Example ===")
+
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
 
     async with (
         AzureCliCredential() as credential,
@@ -171,26 +192,27 @@ async def streaming_example() -> None:
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
-        file_contents_found: list[HostedFileContent] = []
+        file_contents_found: list[Content] = []
         text_chunks: list[str] = []
 
         async for update in agent.run_stream(QUERY):
             if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
-                    if isinstance(content, TextContent):
+                    if content.type == "text":
                         if content.text:
                             text_chunks.append(content.text)
                         if content.annotations:
                             for annotation in content.annotations:
-                                if isinstance(annotation, CitationAnnotation) and annotation.file_id:
-                                    print(f"Found streaming CitationAnnotation: file_id={annotation.file_id}")
-                    elif isinstance(content, HostedFileContent):
+                                file_id = annotation.get("file_id")
+                                if file_id:
+                                    print(f"Found streaming annotation: file_id={file_id}")
+                    elif content.type == "hosted_file":
                         file_contents_found.append(content)
-                        print(f"Found streaming HostedFileContent: file_id={content.file_id}")
+                        print(f"Found streaming hosted_file: file_id={content.file_id}")
                         if content.additional_properties and "container_id" in content.additional_properties:
                             print(f"  container_id={content.additional_properties['container_id']}")
 

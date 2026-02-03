@@ -69,6 +69,11 @@ logger = get_logger()
 __all__ = [
     "BaseChatClient",
     "ChatClientProtocol",
+    "SupportsCodeInterpreterTool",
+    "SupportsFileSearchTool",
+    "SupportsImageGenerationTool",
+    "SupportsMCPTool",
+    "SupportsWebSearchTool",
 ]
 
 
@@ -491,3 +496,163 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             middleware=middleware,
             **kwargs,
         )
+
+
+# endregion
+
+
+# region Tool Support Protocols
+
+
+@runtime_checkable
+class SupportsCodeInterpreterTool(Protocol):
+    """Protocol for clients that support code interpreter tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports code interpreter functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsCodeInterpreterTool
+
+            if isinstance(client, SupportsCodeInterpreterTool):
+                tool = client.get_code_interpreter_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_code_interpreter_tool(**kwargs: Any) -> dict[str, Any]:
+        """Create a code interpreter tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration dict ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsWebSearchTool(Protocol):
+    """Protocol for clients that support web search tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports web search functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsWebSearchTool
+
+            if isinstance(client, SupportsWebSearchTool):
+                tool = client.get_web_search_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_web_search_tool(**kwargs: Any) -> dict[str, Any]:
+        """Create a web search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration dict ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsImageGenerationTool(Protocol):
+    """Protocol for clients that support image generation tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports image generation functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsImageGenerationTool
+
+            if isinstance(client, SupportsImageGenerationTool):
+                tool = client.get_image_generation_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_image_generation_tool(**kwargs: Any) -> dict[str, Any]:
+        """Create an image generation tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration dict ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsMCPTool(Protocol):
+    """Protocol for clients that support MCP (Model Context Protocol) tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports MCP server connections.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsMCPTool
+
+            if isinstance(client, SupportsMCPTool):
+                tool = client.get_mcp_tool(name="my_mcp", url="https://...")
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_mcp_tool(**kwargs: Any) -> dict[str, Any]:
+        """Create an MCP tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options including
+                name and url for the MCP server.
+
+        Returns:
+            A tool configuration dict ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsFileSearchTool(Protocol):
+    """Protocol for clients that support file search tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports file search functionality with vector stores.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsFileSearchTool
+
+            if isinstance(client, SupportsFileSearchTool):
+                tool = client.get_file_search_tool(vector_store_ids=["vs_123"])
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_file_search_tool(**kwargs: Any) -> dict[str, Any]:
+        """Create a file search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration dict ready to pass to ChatAgent.
+        """
+        ...
+
+
+# endregion

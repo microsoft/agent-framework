@@ -15,9 +15,6 @@ from agent_framework import (
     Content,
     FinishReason,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     Role,
     TextSpanRegion,
     UsageDetails,
@@ -333,6 +330,89 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         # streaming requires tracking the last function call ID and name
         self._last_call_id_name: tuple[str, str] | None = None
 
+    # region Static factory methods for hosted tools
+
+    @staticmethod
+    def get_code_interpreter_tool() -> dict[str, Any]:
+        """Create a code interpreter tool configuration for Anthropic.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_code_interpreter_tool()
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        return {"type": "code_execution_20250825"}
+
+    @staticmethod
+    def get_web_search_tool() -> dict[str, Any]:
+        """Create a web search tool configuration for Anthropic.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_web_search_tool()
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        return {"type": "web_search_20250305"}
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str,
+        allowed_tools: list[str] | None = None,
+        authorization_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an MCP tool configuration for Anthropic.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            authorization_token: Authorization token for the MCP server (e.g., Bearer token).
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_mcp_tool(
+                    name="GitHub",
+                    url="https://api.githubcopilot.com/mcp/",
+                    authorization_token="Bearer ghp_xxx",
+                )
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        result: dict[str, Any] = {
+            "type": "mcp",
+            "server_label": name.replace(" ", "_"),
+            "server_url": url,
+        }
+
+        if allowed_tools:
+            result["allowed_tools"] = allowed_tools
+
+        if authorization_token:
+            result["headers"] = {"authorization": authorization_token}
+
+        return result
+
+    # endregion
+
     # region Get response methods
 
     @override
@@ -585,43 +665,42 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             tool_list: list[MutableMapping[str, Any]] = []
             mcp_server_list: list[MutableMapping[str, Any]] = []
             for tool in tools:
-                match tool:
-                    case MutableMapping():
-                        tool_list.append(tool)
-                    case FunctionTool():
-                        tool_list.append({
-                            "type": "custom",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.parameters(),
-                        })
-                    case HostedWebSearchTool():
-                        search_tool: dict[str, Any] = {
-                            "type": "web_search_20250305",
-                            "name": "web_search",
-                        }
-                        if tool.additional_properties:
-                            search_tool.update(tool.additional_properties)
-                        tool_list.append(search_tool)
-                    case HostedCodeInterpreterTool():
-                        code_tool: dict[str, Any] = {
-                            "type": "code_execution_20250825",
-                            "name": "code_execution",
-                        }
-                        tool_list.append(code_tool)
-                    case HostedMCPTool():
+                if isinstance(tool, FunctionTool):
+                    tool_list.append({
+                        "type": "custom",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.parameters(),
+                    })
+                elif isinstance(tool, MutableMapping):
+                    # Handle dict-based tools from static factory methods
+                    tool_dict = tool if isinstance(tool, dict) else dict(tool)
+                    tool_type = tool_dict.get("type")
+
+                    if tool_type == "web_search_20250305":
+                        # Pass through Anthropic web search tool directly
+                        tool_list.append(tool_dict)
+                    elif tool_type == "code_execution_20250825":
+                        # Pass through Anthropic code execution tool directly
+                        tool_list.append(tool_dict)
+                    elif tool_type == "mcp":
+                        # Convert to Anthropic MCP server format
                         server_def: dict[str, Any] = {
                             "type": "url",
-                            "name": tool.name,
-                            "url": str(tool.url),
+                            "name": tool_dict.get("server_label", ""),
+                            "url": tool_dict.get("server_url", ""),
                         }
-                        if tool.allowed_tools:
-                            server_def["tool_configuration"] = {"allowed_tools": list(tool.allowed_tools)}
-                        if tool.headers and (auth := tool.headers.get("authorization")):
+                        if allowed_tools := tool_dict.get("allowed_tools"):
+                            server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
+                        headers = tool_dict.get("headers")
+                        if isinstance(headers, dict) and (auth := headers.get("authorization")):
                             server_def["authorization_token"] = auth
                         mcp_server_list.append(server_def)
-                    case _:
-                        logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
+                    else:
+                        # Pass through other dict-based tools directly
+                        tool_list.append(tool_dict)
+                else:
+                    logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
 
             if tool_list:
                 result["tools"] = tool_list

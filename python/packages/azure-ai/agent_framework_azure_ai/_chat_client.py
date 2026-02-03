@@ -21,10 +21,6 @@ from agent_framework import (
     Content,
     ContextProvider,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     Middleware,
     Role,
     TextSpanRegion,
@@ -206,6 +202,193 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_code_interpreter_tool() -> dict[str, Any]:
+        """Create a code interpreter tool configuration for Azure AI Agents.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIAgentClient
+
+                tool = AzureAIAgentClient.get_code_interpreter_tool()
+                agent = ChatAgent(client, tools=[tool])
+        """
+        return {"type": "code_interpreter"}
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        vector_store_ids: list[str],
+    ) -> dict[str, Any]:
+        """Create a file search tool configuration for Azure AI Agents.
+
+        Keyword Args:
+            vector_store_ids: List of vector store IDs to search within.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIAgentClient
+
+                tool = AzureAIAgentClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123"],
+                )
+                agent = ChatAgent(client, tools=[tool])
+        """
+        return {"type": "file_search", "vector_store_ids": vector_store_ids}
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        bing_connection_id: str | None = None,
+        bing_custom_connection_id: str | None = None,
+        bing_custom_instance_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a web search tool configuration for Azure AI Agents.
+
+        For Azure AI Agents, web search uses Bing Grounding or Bing Custom Search.
+        If no arguments are provided, attempts to read from environment variables.
+        If no connection IDs are found, returns a basic web search tool configuration.
+
+        Keyword Args:
+            bing_connection_id: The Bing Grounding connection ID for standard web search.
+                Falls back to BING_CONNECTION_ID environment variable.
+            bing_custom_connection_id: The Bing Custom Search connection ID.
+                Falls back to BING_CUSTOM_CONNECTION_ID environment variable.
+            bing_custom_instance_id: The Bing Custom Search instance ID.
+                Falls back to BING_CUSTOM_INSTANCE_NAME environment variable.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIAgentClient
+
+                # Bing Grounding (explicit)
+                tool = AzureAIAgentClient.get_web_search_tool(
+                    bing_connection_id="conn_bing_123",
+                )
+
+                # Bing Grounding (from environment variable)
+                tool = AzureAIAgentClient.get_web_search_tool()
+
+                # Bing Custom Search (explicit)
+                tool = AzureAIAgentClient.get_web_search_tool(
+                    bing_custom_connection_id="conn_custom_123",
+                    bing_custom_instance_id="instance_456",
+                )
+
+                # Bing Custom Search (from environment variables)
+                # Set BING_CUSTOM_CONNECTION_ID and BING_CUSTOM_INSTANCE_NAME
+                tool = AzureAIAgentClient.get_web_search_tool()
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        # Try explicit Bing Custom Search parameters first, then environment variables
+        resolved_custom_connection = bing_custom_connection_id or os.environ.get("BING_CUSTOM_CONNECTION_ID")
+        resolved_custom_instance = bing_custom_instance_id or os.environ.get("BING_CUSTOM_INSTANCE_NAME")
+
+        if resolved_custom_connection and resolved_custom_instance:
+            return {
+                "type": "bing_custom_search",
+                "connection_id": resolved_custom_connection,
+                "instance_name": resolved_custom_instance,
+            }
+
+        # Try explicit Bing Grounding parameter first, then environment variable
+        resolved_connection_id = bing_connection_id or os.environ.get("BING_CONNECTION_ID")
+        if resolved_connection_id:
+            return {
+                "type": "bing_grounding",
+                "connection_id": resolved_connection_id,
+            }
+
+        # Azure AI Agents requires Bing connection for web search
+        raise ValueError(
+            "Azure AI Agents requires a Bing connection for web search. "
+            "Provide bing_connection_id (or set BING_CONNECTION_ID env var) for Bing Grounding, "
+            "or provide both bing_custom_connection_id and bing_custom_instance_id "
+            "(or set BING_CUSTOM_CONNECTION_ID and BING_CUSTOM_INSTANCE_NAME env vars) for Bing Custom Search."
+        )
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str | None = None,
+        description: str | None = None,
+        approval_mode: str | dict[str, list[str]] | None = None,
+        allowed_tools: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Create an MCP tool configuration for Azure AI Agents.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server.
+            description: A description of what the MCP server provides.
+            approval_mode: Tool approval mode. Use "always_require" or "never_require" for all tools,
+                or provide a dict with "always_require_approval" and/or "never_require_approval"
+                keys mapping to lists of tool names.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            headers: HTTP headers to include in requests to the MCP server.
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIAgentClient
+
+                tool = AzureAIAgentClient.get_mcp_tool(
+                    name="my_mcp",
+                    url="https://mcp.example.com",
+                )
+                agent = ChatAgent(client, tools=[tool])
+        """
+        result: dict[str, Any] = {
+            "type": "mcp",
+            "server_label": name.replace(" ", "_"),
+            "server_url": url or "",
+        }
+
+        if description:
+            result["server_description"] = description
+
+        if headers:
+            result["headers"] = headers
+
+        if allowed_tools:
+            result["allowed_tools"] = allowed_tools
+
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                result["require_approval"] = "always" if approval_mode == "always_require" else "never"
+            else:
+                require_approval: dict[str, Any] = {}
+                if always_require := approval_mode.get("always_require_approval"):
+                    require_approval["always"] = {"tool_names": always_require}
+                if never_require := approval_mode.get("never_require_approval"):
+                    require_approval["never"] = {"tool_names": never_require}
+                if require_approval:
+                    result["require_approval"] = require_approval
+
+        return result
+
+    # endregion
 
     def __init__(
         self,
@@ -1023,36 +1206,31 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
     def _prepare_mcp_resources(
         self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
     ) -> list[dict[str, Any]]:
-        """Prepare MCP tool resources for approval mode configuration."""
-        mcp_tools = [tool for tool in tools if isinstance(tool, HostedMCPTool)]
-        if not mcp_tools:
-            return []
+        """Prepare MCP tool resources for approval mode configuration.
 
+        Handles dict-based MCP tools from get_mcp_tool() factory method.
+        """
         mcp_resources: list[dict[str, Any]] = []
-        for mcp_tool in mcp_tools:
-            server_label = mcp_tool.name.replace(" ", "_")
-            mcp_resource: dict[str, Any] = {"server_label": server_label}
 
-            if mcp_tool.headers:
-                mcp_resource["headers"] = mcp_tool.headers
+        for tool in tools:
+            if isinstance(tool, (dict, MutableMapping)):
+                tool_dict = tool if isinstance(tool, dict) else dict(tool)
+                if tool_dict.get("type") != "mcp":
+                    continue
 
-            if mcp_tool.approval_mode is not None:
-                match mcp_tool.approval_mode:
-                    case str():
-                        # Map agent framework approval modes to Azure AI approval modes
-                        approval_mode = "always" if mcp_tool.approval_mode == "always_require" else "never"
-                        mcp_resource["require_approval"] = approval_mode
-                    case _:
-                        if "always_require_approval" in mcp_tool.approval_mode:
-                            mcp_resource["require_approval"] = {
-                                "always": mcp_tool.approval_mode["always_require_approval"]
-                            }
-                        elif "never_require_approval" in mcp_tool.approval_mode:
-                            mcp_resource["require_approval"] = {
-                                "never": mcp_tool.approval_mode["never_require_approval"]
-                            }
+                server_label = tool_dict.get("server_label")
+                if not server_label:
+                    continue
 
-            mcp_resources.append(mcp_resource)
+                mcp_resource: dict[str, Any] = {"server_label": server_label}
+
+                if headers := tool_dict.get("headers"):
+                    mcp_resource["headers"] = headers
+
+                if require_approval := tool_dict.get("require_approval"):
+                    mcp_resource["require_approval"] = require_approval
+
+                mcp_resources.append(mcp_resource)
 
         return mcp_resources
 
@@ -1117,77 +1295,72 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
     async def _prepare_tools_for_azure_ai(
         self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
-        """Prepare tool definitions for the Azure AI Agents API."""
+        """Prepare tool definitions for the Azure AI Agents API.
+
+        Handles FunctionTool instances and dict-based tools from static factory methods.
+
+        Args:
+            tools: Sequence of tools to prepare.
+            run_options: Optional run options dict that may be updated with tool_resources.
+
+        Returns:
+            List of tool definitions ready for the Azure AI API.
+        """
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
         for tool in tools:
-            match tool:
-                case FunctionTool():
-                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                case HostedWebSearchTool():
-                    additional_props = tool.additional_properties or {}
-                    config_args: dict[str, Any] = {}
-                    if count := additional_props.get("count"):
-                        config_args["count"] = count
-                    if freshness := additional_props.get("freshness"):
-                        config_args["freshness"] = freshness
-                    if market := additional_props.get("market"):
-                        config_args["market"] = market
-                    if set_lang := additional_props.get("set_lang"):
-                        config_args["set_lang"] = set_lang
-                    # Bing Grounding
-                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
-                    # Custom Bing Search
-                    custom_connection_id = additional_props.get("custom_connection_id") or os.getenv(
-                        "BING_CUSTOM_CONNECTION_ID"
-                    )
-                    custom_instance_name = additional_props.get("custom_instance_name") or os.getenv(
-                        "BING_CUSTOM_INSTANCE_NAME"
-                    )
-                    bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if (connection_id) and not custom_connection_id and not custom_instance_name:
-                        if connection_id:
-                            conn_id = connection_id
-                        else:
-                            raise ServiceInitializationError("Parameter connection_id is not provided.")
-                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
-                    if custom_connection_id and custom_instance_name:
-                        bing_search = BingCustomSearchTool(
-                            connection_id=custom_connection_id,
-                            instance_name=custom_instance_name,
-                            **config_args,
-                        )
-                    if not bing_search:
-                        raise ServiceInitializationError(
-                            "Bing search tool requires either 'connection_id' for Bing Grounding "
-                            "or both 'custom_connection_id' and 'custom_instance_name' for Custom Bing Search. "
-                            "These can be provided via additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_ID', "
-                            "'BING_CUSTOM_INSTANCE_NAME'"
-                        )
-                    tool_definitions.extend(bing_search.definitions)
-                case HostedCodeInterpreterTool():
+            if isinstance(tool, FunctionTool):
+                tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+            elif isinstance(tool, ToolDefinition):
+                tool_definitions.append(tool)
+            elif isinstance(tool, (dict, MutableMapping)):
+                # Handle dict-based tools from static factory methods
+                tool_dict = tool if isinstance(tool, dict) else dict(tool)
+                tool_type = tool_dict.get("type")
+
+                if tool_type == "code_interpreter":
                     tool_definitions.append(CodeInterpreterToolDefinition())
-                case HostedMCPTool():
-                    mcp_tool = McpTool(
-                        server_label=tool.name.replace(" ", "_"),
-                        server_url=str(tool.url),
-                        allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
-                    )
-                    tool_definitions.extend(mcp_tool.definitions)
-                case HostedFileSearchTool():
-                    vector_stores = [inp for inp in tool.inputs or [] if inp.type == "hosted_vector_store"]
-                    if vector_stores:
-                        file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])  # type: ignore[misc]
+                elif tool_type == "file_search":
+                    vector_store_ids = tool_dict.get("vector_store_ids", [])
+                    if vector_store_ids:
+                        file_search = FileSearchTool(vector_store_ids=vector_store_ids)
                         tool_definitions.extend(file_search.definitions)
                         # Set tool_resources for file search to work properly with Azure AI
                         if run_options is not None and "tool_resources" not in run_options:
                             run_options["tool_resources"] = file_search.resources
-                case ToolDefinition():
-                    tool_definitions.append(tool)
-                case dict():
-                    tool_definitions.append(tool)
-                case _:
-                    raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
+                elif tool_type == "bing_grounding":
+                    connection_id = tool_dict.get("connection_id")
+                    if not connection_id:
+                        raise ServiceInitializationError("Bing grounding tool requires 'connection_id'.")
+                    config_args = {k: v for k, v in tool_dict.items() if k not in ("type", "connection_id") and v}
+                    bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    tool_definitions.extend(bing_search.definitions)
+                elif tool_type == "bing_custom_search":
+                    connection_id = tool_dict.get("connection_id")
+                    instance_name = tool_dict.get("instance_name")
+                    if not connection_id or not instance_name:
+                        raise ServiceInitializationError(
+                            "Bing custom search tool requires 'connection_id' and 'instance_name'."
+                        )
+                    config_args = {
+                        k: v for k, v in tool_dict.items() if k not in ("type", "connection_id", "instance_name") and v
+                    }
+                    bing_search = BingCustomSearchTool(
+                        connection_id=connection_id, instance_name=instance_name, **config_args
+                    )
+                    tool_definitions.extend(bing_search.definitions)
+                elif tool_type == "mcp":
+                    server_label = tool_dict.get("server_label")
+                    server_url = tool_dict.get("server_url")
+                    if not server_label or not server_url:
+                        raise ServiceInitializationError("MCP tool requires 'server_label' and 'server_url'.")
+                    allowed_tools = tool_dict.get("allowed_tools", [])
+                    mcp_tool = McpTool(server_label=server_label, server_url=server_url, allowed_tools=allowed_tools)
+                    tool_definitions.extend(mcp_tool.definitions)
+                else:
+                    # Pass through other dict-based tools directly
+                    tool_definitions.append(tool_dict)
+            else:
+                raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
         return tool_definitions
 
     def _prepare_tool_outputs_for_azure_ai(

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
-from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -129,6 +129,58 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
     """OpenAI Chat completion class."""
 
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        user_location: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a web search tool configuration for the Chat Completions API.
+
+        Note: For the Chat Completions API, web search is passed via the `web_search_options`
+        parameter rather than in the `tools` array. This method returns a dict that can be
+        passed as a tool to ChatAgent, which will handle it appropriately.
+
+        Keyword Args:
+            user_location: Location context for search results. Dict with keys like
+                "city", "country", "region", "timezone".
+
+        Returns:
+            A dict configuration that enables web search when passed to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIChatClient
+
+                # Basic web search
+                tool = OpenAIChatClient.get_web_search_tool()
+
+                # With location context
+                tool = OpenAIChatClient.get_web_search_tool(
+                    user_location={"city": "Seattle", "country": "US"},
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: dict[str, Any] = {"type": "web_search"}
+
+        if user_location:
+            tool["user_location"] = {
+                "type": "approximate",
+                "approximate": {
+                    "city": user_location.get("city"),
+                    "country": user_location.get("country"),
+                    "region": user_location.get("region"),
+                    "timezone": user_location.get("timezone"),
+                },
+            }
+
+        return tool
+
+    # endregion
+
     @override
     async def _inner_get_response(
         self,
@@ -198,28 +250,33 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
     # region content creation
 
     def _prepare_tools_for_openai(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any]:
+        """Prepare tools for the OpenAI Chat Completions API.
+
+        Handles FunctionTool instances and passes through dict-based tools directly.
+        Web search tool is handled specially via web_search_options parameter.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            Dict containing tools and optionally web_search_options.
+        """
         chat_tools: list[dict[str, Any]] = []
         web_search_options: dict[str, Any] | None = None
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case HostedWebSearchTool():
-                        web_search_options = (
-                            {
-                                "user_location": {
-                                    "approximate": tool.additional_properties.get("user_location", None),
-                                    "type": "approximate",
-                                }
-                            }
-                            if tool.additional_properties and "user_location" in tool.additional_properties
-                            else {}
-                        )
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+            if isinstance(tool, FunctionTool):
+                # Handle FunctionTool instances
+                chat_tools.append(tool.to_json_schema_spec())
+            elif isinstance(tool, (dict, MutableMapping)):
+                # Handle dict-based tools (from static factory methods)
+                tool_dict = tool if isinstance(tool, dict) else dict(tool)
+                if tool_dict.get("type") == "web_search":
+                    # Web search is handled via web_search_options, not tools array
+                    web_search_options = {k: v for k, v in tool_dict.items() if k != "type"}
+                else:
+                    chat_tools.append(tool_dict)
             else:
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
         ret_dict: dict[str, Any] = {}
         if chat_tools:
             ret_dict["tools"] = chat_tools
