@@ -695,7 +695,7 @@ model:
 - `Concatenate()`: Concatenate strings
 - Arithmetic operators: `+`, `-`, `*`, `/`
 - Logical operators: `And()`, `Or()`, `Not()`
-- And more according to PowerFx specification
+- And more according to [PowerFx specification](https://learn.microsoft.com/en-us/power-platform/power-fx/overview)
 
 **Example:**
 ```yaml
@@ -1028,7 +1028,7 @@ Missing required field: kind
 ### Official Documentation
 - [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
 - [Azure AI Foundry Documentation](https://learn.microsoft.com/azure/ai-services/)
-- [PowerFx Documentation](https://learn.microsoft.com/power-platform/power-fx/)
+- [PowerFx Documentation](https://learn.microsoft.com/en-us/power-platform/power-fx/overview)
 
 ### Source Code
 - [`_models.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/declarative/agent_framework_declarative/_models.py) - Pydantic models for YAML schema
