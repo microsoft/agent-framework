@@ -1165,12 +1165,13 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 try:
                     response = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
-                    response_attributes = _get_response_attributes(attributes, response, duration=duration)
+                    response_attributes = _get_response_attributes(attributes, response)
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
                         token_usage_histogram=self.token_usage_histogram,
                         operation_duration_histogram=self.duration_histogram,
+                        duration=duration,
                     )
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
@@ -1211,12 +1212,13 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     raise
                 duration = perf_counter() - start_time_stamp
-                response_attributes = _get_response_attributes(attributes, response, duration=duration)
+                response_attributes = _get_response_attributes(attributes, response)
                 _capture_response(
                     span=span,
                     attributes=response_attributes,
                     token_usage_histogram=self.token_usage_histogram,
                     operation_duration_histogram=self.duration_histogram,
+                    duration=duration,
                 )
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
@@ -1353,10 +1355,9 @@ class AgentTelemetryLayer:
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        duration=duration,
                         capture_usage=capture_usage,
                     )
-                    _capture_response(span=span, attributes=response_attributes)
+                    _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, AgentResponse)
@@ -1389,6 +1390,7 @@ class AgentTelemetryLayer:
                         messages=messages,
                         system_instructions=_get_instructions_from_options(options),
                     )
+                start_time_stamp = perf_counter()
                 try:
                     response = await super_run(
                         messages=messages,
@@ -1399,9 +1401,10 @@ class AgentTelemetryLayer:
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     raise
+                duration = perf_counter() - start_time_stamp
                 if response:
                     response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
-                    _capture_response(span=span, attributes=response_attributes)
+                    _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                         _capture_messages(
                             span=span,
@@ -1664,7 +1667,6 @@ def _to_otel_part(content: "Content") -> dict[str, Any] | None:
 def _get_response_attributes(
     attributes: dict[str, Any],
     response: "ChatResponse | AgentResponse",
-    duration: float | None = None,
     *,
     capture_usage: bool = True,
 ) -> dict[str, Any]:
@@ -1685,8 +1687,6 @@ def _get_response_attributes(
             attributes[OtelAttr.INPUT_TOKENS] = usage["input_token_count"]
         if usage.get("output_token_count"):
             attributes[OtelAttr.OUTPUT_TOKENS] = usage["output_token_count"]
-    if duration:
-        attributes[Meters.LLM_OPERATION_DURATION] = duration
     return attributes
 
 
@@ -1705,11 +1705,10 @@ def _capture_response(
     attributes: dict[str, Any],
     operation_duration_histogram: "metrics.Histogram | None" = None,
     token_usage_histogram: "metrics.Histogram | None" = None,
+    duration: float | None = None,
 ) -> None:
     """Set the response for a given span."""
-    # Duration is a metrics-only attribute, not a span attribute
-    span_attributes = {k: v for k, v in attributes.items() if k != Meters.LLM_OPERATION_DURATION}
-    span.set_attributes(span_attributes)
+    span.set_attributes(attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
         token_usage_histogram.record(
@@ -1717,7 +1716,7 @@ def _capture_response(
         )
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
         token_usage_histogram.record(output_tokens, {**attrs, SpanAttributes.LLM_TOKEN_TYPE: OtelAttr.T_TYPE_OUTPUT})
-    if operation_duration_histogram and (duration := attributes.get(Meters.LLM_OPERATION_DURATION)):
+    if operation_duration_histogram and duration is not None:
         if OtelAttr.ERROR_TYPE in attributes:
             attrs[OtelAttr.ERROR_TYPE] = attributes[OtelAttr.ERROR_TYPE]
         operation_duration_histogram.record(duration, attributes=attrs)

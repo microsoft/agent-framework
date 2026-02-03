@@ -1418,26 +1418,6 @@ def test_get_response_attributes_with_usage():
     assert result[OtelAttr.OUTPUT_TOKENS] == 50
 
 
-def test_get_response_attributes_with_duration():
-    """Test _get_response_attributes includes duration."""
-    from unittest.mock import Mock
-
-    from opentelemetry.semconv_ai import Meters
-
-    from agent_framework.observability import _get_response_attributes
-
-    response = Mock()
-    response.response_id = None
-    response.finish_reason = None
-    response.raw_representation = None
-    response.usage_details = None
-
-    attrs = {}
-    result = _get_response_attributes(attrs, response, duration=1.5)
-
-    assert result[Meters.LLM_OPERATION_DURATION] == 1.5
-
-
 def test_get_response_attributes_capture_usage_false():
     """Test _get_response_attributes skips usage when capture_usage is False."""
     from unittest.mock import Mock
