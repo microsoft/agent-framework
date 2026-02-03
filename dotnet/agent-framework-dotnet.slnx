@@ -50,6 +50,7 @@
   <Folder Name="/Samples/Durable/Workflows/">
     <Project Path="samples/Durable/Workflow/ConsoleApps/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
     <Project Path="samples/Durable/Workflow/ConsoleApps/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/Durable/Workflow/ConsoleApps/03_ConditionalEdges/03_ConditionalEdges.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

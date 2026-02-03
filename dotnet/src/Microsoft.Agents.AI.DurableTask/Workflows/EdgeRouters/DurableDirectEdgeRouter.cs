@@ -77,9 +77,9 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
     /// so the condition function receives the correct type to evaluate against.
     /// </param>
     /// <returns>
-    /// The deserialized object, null if the JSON is empty, or the raw JSON string if deserialization fails.
-    /// Returning the raw string on failure allows conditions that work with strings to still function.
+    /// The deserialized object, or null if the JSON is empty.
     /// </returns>
+    /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized to the target type.</exception>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
     private static object? DeserializeForCondition(string json, Type? targetType)
@@ -89,21 +89,12 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
             return null;
         }
 
-        try
-        {
-            // If we know the source executor's output type, deserialize to that specific type
-            // so the condition function can access strongly-typed properties.
-            // Otherwise, deserialize as a generic object for basic inspection.
-            return targetType is null
-                ? JsonSerializer.Deserialize<object>(json)
-                : JsonSerializer.Deserialize(json, targetType);
-        }
-        catch (JsonException)
-        {
-            // If deserialization fails (e.g., the message is plain text, not JSON),
-            // return the raw string so string-based conditions can still evaluate it.
-            return json;
-        }
+        // If we know the source executor's output type, deserialize to that specific type
+        // so the condition function can access strongly-typed properties.
+        // Otherwise, deserialize as a generic object for basic inspection.
+        return targetType is null
+            ? JsonSerializer.Deserialize<object>(json)
+            : JsonSerializer.Deserialize(json, targetType);
     }
 
     private static void EnqueueMessage(

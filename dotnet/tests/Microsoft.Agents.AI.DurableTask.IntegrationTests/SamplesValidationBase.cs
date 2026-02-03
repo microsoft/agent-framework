@@ -35,17 +35,15 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     private static bool s_dtsInfrastructureStarted;
     private static bool s_redisInfrastructureStarted;
 
-    private readonly ITestOutputHelper _outputHelper;
-
     protected SamplesValidationBase(ITestOutputHelper outputHelper)
     {
-        this._outputHelper = outputHelper;
+        this.OutputHelper = outputHelper;
     }
 
     /// <summary>
     /// Gets the test output helper for logging.
     /// </summary>
-    protected ITestOutputHelper OutputHelper => this._outputHelper;
+    protected ITestOutputHelper OutputHelper { get; }
 
     /// <summary>
     /// Gets the base path to the samples directory for this test class.
@@ -65,11 +63,11 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     /// <inheritdoc />
     public async Task InitializeAsync()
     {
-        await EnsureDtsInfrastructureStartedAsync(this._outputHelper, this.StartDtsEmulatorAsync);
+        await EnsureDtsInfrastructureStartedAsync(this.OutputHelper, this.StartDtsEmulatorAsync);
 
         if (this.RequiresRedis)
         {
-            await EnsureRedisInfrastructureStartedAsync(this._outputHelper, this.StartRedisAsync);
+            await EnsureRedisInfrastructureStartedAsync(this.OutputHelper, this.StartRedisAsync);
         }
 
         await Task.Delay(TimeSpan.FromSeconds(5));
@@ -164,7 +162,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     /// </summary>
     protected async Task WriteInputAsync(Process process, string input, CancellationToken cancellationToken)
     {
-        this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} [{process.ProcessName}(in)]: {input}");
+        this.OutputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} [{process.ProcessName}(in)]: {input}");
         await process.StandardInput.WriteLineAsync(input);
         await process.StandardInput.FlushAsync(cancellationToken);
     }
@@ -237,7 +235,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     {
         if (!await this.IsDtsEmulatorRunningAsync())
         {
-            this._outputHelper.WriteLine("Starting DTS emulator...");
+            this.OutputHelper.WriteLine("Starting DTS emulator...");
             await this.RunCommandAsync("docker", "run", "-d",
                 "--name", "dts-emulator",
                 "-p", $"{DtsPort}:8080",
@@ -250,7 +248,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     {
         if (!await this.IsRedisRunningAsync())
         {
-            this._outputHelper.WriteLine("Starting Redis...");
+            this.OutputHelper.WriteLine("Starting Redis...");
             await this.RunCommandAsync("docker", "run", "-d",
                 "--name", "redis",
                 "-p", $"{RedisPort}:6379",
@@ -260,7 +258,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
 
     private async Task<bool> IsDtsEmulatorRunningAsync()
     {
-        this._outputHelper.WriteLine($"Checking if DTS emulator is running at http://localhost:{DtsPort}/healthz...");
+        this.OutputHelper.WriteLine($"Checking if DTS emulator is running at http://localhost:{DtsPort}/healthz...");
 
         using HttpClient http2Client = new()
         {
@@ -277,23 +275,23 @@ public abstract class SamplesValidationBase : IAsyncLifetime
             if (response.Content.Headers.ContentLength > 0)
             {
                 string content = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                this._outputHelper.WriteLine($"DTS emulator health check response: {content}");
+                this.OutputHelper.WriteLine($"DTS emulator health check response: {content}");
             }
 
             bool isRunning = response.IsSuccessStatusCode;
-            this._outputHelper.WriteLine(isRunning ? "DTS emulator is running" : $"DTS emulator not running. Status: {response.StatusCode}");
+            this.OutputHelper.WriteLine(isRunning ? "DTS emulator is running" : $"DTS emulator not running. Status: {response.StatusCode}");
             return isRunning;
         }
         catch (HttpRequestException ex)
         {
-            this._outputHelper.WriteLine($"DTS emulator is not running: {ex.Message}");
+            this.OutputHelper.WriteLine($"DTS emulator is not running: {ex.Message}");
             return false;
         }
     }
 
     private async Task<bool> IsRedisRunningAsync()
     {
-        this._outputHelper.WriteLine($"Checking if Redis is running at localhost:{RedisPort}...");
+        this.OutputHelper.WriteLine($"Checking if Redis is running at localhost:{RedisPort}...");
 
         try
         {
@@ -311,7 +309,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
             using Process process = new() { StartInfo = startInfo };
             if (!process.Start())
             {
-                this._outputHelper.WriteLine("Failed to start docker exec command");
+                this.OutputHelper.WriteLine("Failed to start docker exec command");
                 return false;
             }
 
@@ -319,12 +317,12 @@ public abstract class SamplesValidationBase : IAsyncLifetime
             await process.WaitForExitAsync(timeoutCts.Token);
 
             bool isRunning = process.ExitCode == 0 && output.Contains("PONG", StringComparison.OrdinalIgnoreCase);
-            this._outputHelper.WriteLine(isRunning ? "Redis is running" : $"Redis not running. Exit: {process.ExitCode}, Output: {output}");
+            this.OutputHelper.WriteLine(isRunning ? "Redis is running" : $"Redis not running. Exit: {process.ExitCode}, Output: {output}");
             return isRunning;
         }
         catch (Exception ex)
         {
-            this._outputHelper.WriteLine($"Redis is not running: {ex.Message}");
+            this.OutputHelper.WriteLine($"Redis is not running: {ex.Message}");
             return false;
         }
     }
@@ -349,7 +347,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
 
         void SetAndLogEnvironmentVariable(string key, string value)
         {
-            this._outputHelper.WriteLine($"Setting environment variable for {startInfo.FileName} sub-process: {key}={value}");
+            this.OutputHelper.WriteLine($"Setting environment variable for {startInfo.FileName} sub-process: {key}={value}");
             startInfo.EnvironmentVariables[key] = value;
         }
 
@@ -384,7 +382,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
         }
 
         string logMessage = $"{DateTime.Now:HH:mm:ss.fff} [{processName}({stream})]: {data}";
-        this._outputHelper.WriteLine(logMessage);
+        this.OutputHelper.WriteLine(logMessage);
         Debug.WriteLine(logMessage);
 
         try
@@ -409,11 +407,11 @@ public abstract class SamplesValidationBase : IAsyncLifetime
             CreateNoWindow = true
         };
 
-        this._outputHelper.WriteLine($"Running command: {command} {string.Join(" ", args)}");
+        this.OutputHelper.WriteLine($"Running command: {command} {string.Join(" ", args)}");
 
         using Process process = new() { StartInfo = startInfo };
-        process.ErrorDataReceived += (sender, e) => this._outputHelper.WriteLine($"[{command}(err)]: {e.Data}");
-        process.OutputDataReceived += (sender, e) => this._outputHelper.WriteLine($"[{command}(out)]: {e.Data}");
+        process.ErrorDataReceived += (sender, e) => this.OutputHelper.WriteLine($"[{command}(err)]: {e.Data}");
+        process.OutputDataReceived += (sender, e) => this.OutputHelper.WriteLine($"[{command}(out)]: {e.Data}");
 
         if (!process.Start())
         {
@@ -426,7 +424,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
         using CancellationTokenSource cts = new(TimeSpan.FromMinutes(1));
         await process.WaitForExitAsync(cts.Token);
 
-        this._outputHelper.WriteLine($"Command completed with exit code: {process.ExitCode}");
+        this.OutputHelper.WriteLine($"Command completed with exit code: {process.ExitCode}");
     }
 
     private async Task StopProcessAsync(Process process)
@@ -435,17 +433,17 @@ public abstract class SamplesValidationBase : IAsyncLifetime
         {
             if (!process.HasExited)
             {
-                this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Killing process {process.ProcessName}#{process.Id}");
+                this.OutputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Killing process {process.ProcessName}#{process.Id}");
                 process.Kill(entireProcessTree: true);
 
                 using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
                 await process.WaitForExitAsync(cts.Token);
-                this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Process exited: {process.Id}");
+                this.OutputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Process exited: {process.Id}");
             }
         }
         catch (Exception ex)
         {
-            this._outputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Failed to stop process: {ex.Message}");
+            this.OutputHelper.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Failed to stop process: {ex.Message}");
         }
     }
 }

@@ -119,6 +119,59 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
+    [Fact]
+    public async Task ConditionalEdgesWorkflowSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "03_ConditionalEdges");
+
+        await this.RunSampleTestAsync(samplePath, async (process, logs) =>
+        {
+            bool validOrderSent = false;
+            bool blockedOrderSent = false;
+            bool validOrderCompleted = false;
+            bool blockedOrderCompleted = false;
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                // Send a valid order first (no 'B' in ID)
+                if (!validOrderSent && line.Contains("Enter an order ID", StringComparison.OrdinalIgnoreCase))
+                {
+                    await this.WriteInputAsync(process, "12345", testTimeoutCts.Token);
+                    validOrderSent = true;
+                }
+
+                // Check valid order completed (routed to PaymentProcessor)
+                if (validOrderSent && !validOrderCompleted &&
+                    line.Contains("PaymentReferenceNumber", StringComparison.OrdinalIgnoreCase))
+                {
+                    validOrderCompleted = true;
+
+                    // Send a blocked order (contains 'B')
+                    await this.WriteInputAsync(process, "ORDER-B-999", testTimeoutCts.Token);
+                    blockedOrderSent = true;
+                }
+
+                // Check blocked order completed (routed to NotifyFraud)
+                if (blockedOrderSent && line.Contains("flagged as fraudulent", StringComparison.OrdinalIgnoreCase))
+                {
+                    blockedOrderCompleted = true;
+                    break;
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(validOrderSent, "Valid order input was not sent.");
+            Assert.True(validOrderCompleted, "Valid order did not complete (PaymentProcessor path).");
+            Assert.True(blockedOrderSent, "Blocked order input was not sent.");
+            Assert.True(blockedOrderCompleted, "Blocked order did not complete (NotifyFraud path).");
+
+            await this.WriteInputAsync(process, "exit", testTimeoutCts.Token);
+        });
+    }
+
     private void AssertNoError(string line)
     {
         if (line.Contains("Failed:", StringComparison.OrdinalIgnoreCase) ||
