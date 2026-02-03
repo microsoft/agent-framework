@@ -162,7 +162,7 @@ async def execute_query_with_self_reflection(
             - total_groundedness_eval_time: Time spent on evaluations (seconds)
             - total_end_to_end_time: Total execution time (seconds)
     """
-    messages = [ChatMessage(role="user", text=full_user_query)]
+    messages = [ChatMessage("user", [full_user_query])]
 
     best_score = 0
     max_score = 5
@@ -215,14 +215,14 @@ async def execute_query_with_self_reflection(
             print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
 
         # Add to conversation history
-        messages.append(ChatMessage(role="assistant", text=agent_response))
+        messages.append(ChatMessage("assistant", [agent_response]))
 
         # Request improvement
         reflection_prompt = (
             f"The groundedness score of your response is {score}/{max_score}. "
             f"Reflect on your answer and improve it to get the maximum score of {max_score} "
         )
-        messages.append(ChatMessage(role="user", text=reflection_prompt))
+        messages.append(ChatMessage("user", [reflection_prompt]))
 
     end_time = time.time()
     latency = end_time - start_time

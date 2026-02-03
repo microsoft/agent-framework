@@ -62,7 +62,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 # Override the result with warning message
                 context.result = AgentResponse(
                     messages=[
-                        ChatMessage(role="assistant", text="Detected sensitive information, the request is blocked.")
+                        ChatMessage("assistant", ["Detected sensitive information, the request is blocked."])
                     ]
                 )
                 # Simply don't call next() to prevent execution

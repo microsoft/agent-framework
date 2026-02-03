@@ -143,7 +143,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        chat_message = ChatMessage(role="user", contents=[Content.from_text("test message")])
+        chat_message = ChatMessage("user", [Content.from_text("test message")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)

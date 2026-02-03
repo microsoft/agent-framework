@@ -69,7 +69,7 @@ load_dotenv()
 @executor(id="start_executor")
 async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
     """Initiates the workflow by sending the user query to all specialized agents."""
-    await ctx.send_message([ChatMessage(role="user", text=input)])
+    await ctx.send_message([ChatMessage("user", [input])])
 
 
 class ResearchLead(Executor):

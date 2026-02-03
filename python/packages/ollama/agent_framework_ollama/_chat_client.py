@@ -524,7 +524,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[ChatMessage("assistant", contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(

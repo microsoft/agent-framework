@@ -42,8 +42,8 @@ def test_get_response_invokes_bedrock_runtime() -> None:
     )
 
     messages = [
-        ChatMessage(role="system", contents=[Content.from_text(text="You are concise.")]),
-        ChatMessage(role="user", contents=[Content.from_text(text="hello")]),
+        ChatMessage("system", [Content.from_text(text="You are concise.")]),
+        ChatMessage("user", [Content.from_text(text="hello")]),
     ]
 
     response = asyncio.run(client.get_response(messages=messages, options={"max_tokens": 32}))
@@ -63,7 +63,7 @@ def test_build_request_requires_non_system_messages() -> None:
         client=_StubBedrockRuntime(),
     )
 
-    messages = [ChatMessage(role="system", contents=[Content.from_text(text="Only system text")])]
+    messages = [ChatMessage("system", [Content.from_text(text="Only system text")])]
 
     with pytest.raises(ServiceInitializationError):
         client._prepare_options(messages, {})

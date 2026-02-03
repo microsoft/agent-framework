@@ -553,7 +553,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                             arguments=arguments,
                         )
                     )
-            chat_msg = ChatMessage(role="assistant", contents=contents)
+            chat_msg = ChatMessage("assistant", contents)
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
             result.append(chat_msg)
@@ -583,14 +583,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[arg-type]
+            chat_msg = ChatMessage(role, approval_contents)  # type: ignore[arg-type]
         else:
             # Regular text message
             content = msg.get("content", "")
             if isinstance(content, str):
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])
+                chat_msg = ChatMessage(role, [Content.from_text(text=content)])
             else:
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])
+                chat_msg = ChatMessage(role, [Content.from_text(text=str(content))])
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]

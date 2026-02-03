@@ -216,7 +216,7 @@ async def main() -> None:
         function_results = [
             FunctionResultContent(call_id=req_id, result=response) for req_id, response in responses.items()
         ]
-        response = await agent.run(ChatMessage(role="tool", contents=function_results))
+        response = await agent.run(ChatMessage("tool", function_results))
         pending_requests = handle_response_and_requests(response)
 
 

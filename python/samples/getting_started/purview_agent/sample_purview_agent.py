@@ -159,7 +159,7 @@ async def run_with_agent_middleware() -> None:
 
     print("-- Agent Middleware Path --")
     first: AgentResponse = await agent.run(
-        ChatMessage(role="user", text="Tell me a joke about a pirate.", additional_properties={"user_id": user_id})
+        ChatMessage("user", ["Tell me a joke about a pirate."], additional_properties={"user_id": user_id})
     )
     print("First response (agent middleware):\n", first)
 
@@ -259,7 +259,7 @@ async def run_with_custom_cache_provider() -> None:
     print("First response (custom provider):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage(role="user", text="That's hilarious! One more?", additional_properties={"user_id": user_id})
+        ChatMessage("user", ["That's hilarious! One more?"], additional_properties={"user_id": user_id})
     )
     print("Second response (custom provider):\n", second)
 
@@ -294,12 +294,12 @@ async def run_with_custom_cache_provider() -> None:
     print("Using default InMemoryCacheProvider with settings-based configuration")
 
     first: AgentResponse = await agent.run(
-        ChatMessage(role="user", text="Tell me a joke about AI.", additional_properties={"user_id": user_id})
+        ChatMessage("user", ["Tell me a joke about AI."], additional_properties={"user_id": user_id})
     )
     print("First response (default cache):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage(role="user", text="Nice! Another AI joke please.", additional_properties={"user_id": user_id})
+        ChatMessage("user", ["Nice! Another AI joke please."], additional_properties={"user_id": user_id})
     )
     print("Second response (default cache):\n", second)
 

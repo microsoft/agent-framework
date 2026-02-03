@@ -303,7 +303,7 @@ class InMemoryConversationStore(ConversationStore):
             content = item.get("content", [])
             text = content[0].get("text", "") if content else ""
 
-            chat_msg = ChatMessage(role=role, contents=[{"type": "text", "text": text}])
+            chat_msg = ChatMessage(role, [{"type": "text", "text": text}])
             chat_messages.append(chat_msg)
 
         # Add messages to AgentThread

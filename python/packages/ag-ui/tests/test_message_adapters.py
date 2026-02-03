@@ -24,7 +24,7 @@ def sample_agui_message():
 @pytest.fixture
 def sample_agent_framework_message():
     """Create a sample Agent Framework message."""
-    return ChatMessage(role="user", contents=[Content.from_text(text="Hello")], message_id="msg-123")
+    return ChatMessage("user", [Content.from_text(text="Hello")], message_id="msg-123")
 
 
 def test_agui_to_agent_framework_basic(sample_agui_message):
@@ -476,7 +476,7 @@ def test_agent_framework_to_agui_multiple_text_contents():
 
 def test_agent_framework_to_agui_no_message_id():
     """Test message without message_id - should auto-generate ID."""
-    msg = ChatMessage(role="user", contents=[Content.from_text(text="Hello")])
+    msg = ChatMessage("user", [Content.from_text(text="Hello")])
 
     messages = agent_framework_messages_to_agui([msg])
 
@@ -488,7 +488,7 @@ def test_agent_framework_to_agui_no_message_id():
 
 def test_agent_framework_to_agui_system_role():
     """Test system role conversion."""
-    msg = ChatMessage(role="system", contents=[Content.from_text(text="System")])
+    msg = ChatMessage("system", [Content.from_text(text="System")])
 
     messages = agent_framework_messages_to_agui([msg])
 

@@ -216,7 +216,7 @@ async def test_list_items_converts_function_calls():
 
     # Simulate messages from agent execution with function calls
     messages = [
-        ChatMessage(role="user", contents=[{"type": "text", "text": "What's the weather in SF?"}]),
+        ChatMessage("user", [{"type": "text", "text": "What's the weather in SF?"}]),
         ChatMessage(
             role="assistant",
             contents=[
@@ -238,7 +238,7 @@ async def test_list_items_converts_function_calls():
                 }
             ],
         ),
-        ChatMessage(role="assistant", contents=[{"type": "text", "text": "The weather is sunny, 65°F"}]),
+        ChatMessage("assistant", [{"type": "text", "text": "The weather is sunny, 65°F"}]),
     ]
 
     # Add messages to thread

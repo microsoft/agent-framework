@@ -546,8 +546,8 @@ class AzureAISearchContextProvider(ContextProvider):
             return Context()
 
         # Create context messages: first message with prompt, then one message per result part
-        context_messages = [ChatMessage(role="user", text=self.context_prompt)]
-        context_messages.extend([ChatMessage(role="user", text=part) for part in search_result_parts])
+        context_messages = [ChatMessage("user", [self.context_prompt])]
+        context_messages.extend([ChatMessage("user", [part]) for part in search_result_parts])
 
         return Context(messages=context_messages)
 

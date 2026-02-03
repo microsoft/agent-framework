@@ -80,7 +80,7 @@ async def enrich_with_references(
         f"{external_note}\n\n"
         "Please update the prior assistant answer so it weaves this note into the guidance."
     )
-    conversation.append(ChatMessage(role="user", text=follow_up))
+    conversation.append(ChatMessage("user", [follow_up]))
 
     await ctx.send_message(AgentExecutorRequest(messages=conversation))
 

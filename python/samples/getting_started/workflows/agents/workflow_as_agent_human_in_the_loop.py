@@ -166,7 +166,7 @@ async def main() -> None:
             result=human_response,
         )
         # Send the human review result back to the agent.
-        response = await agent.run(ChatMessage(role="tool", contents=[human_review_function_result]))
+        response = await agent.run(ChatMessage("tool", [human_review_function_result]))
         print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)

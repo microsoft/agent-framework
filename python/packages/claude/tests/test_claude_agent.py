@@ -642,9 +642,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role="assistant", contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role="user", contents=[Content.from_text(text="How are you?")]),
+            ChatMessage("user", [Content.from_text(text="Hi")]),
+            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
+            ChatMessage("user", [Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

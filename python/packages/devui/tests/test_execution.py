@@ -577,7 +577,7 @@ async def test_executor_handles_non_streaming_agent():
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])],
+                messages=[ChatMessage("assistant", [Content.from_text(text=f"Processed: {messages}")])],
                 response_id="test_123",
             )
 

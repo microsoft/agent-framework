@@ -78,7 +78,7 @@ class MockChatClient:
         self.call_count += 1
         if self.responses:
             return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+        return ChatResponse(messages=ChatMessage("assistant", ["test response"]))
 
     async def get_streaming_response(
         self,
@@ -121,7 +121,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         self.received_messages.append(list(messages))
         if self.run_responses:
             return self.run_responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="Mock response from ChatAgent"))
+        return ChatResponse(messages=ChatMessage("assistant", ["Mock response from ChatAgent"]))
 
     @override
     async def _inner_get_streaming_response(
@@ -171,9 +171,7 @@ class MockAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
-        return AgentResponse(
-            messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=self.response_text)])]
-        )
+        return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=self.response_text)])])
 
     async def run_stream(
         self,
@@ -202,7 +200,7 @@ class MockToolCallingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="done")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
 
     async def run_stream(
         self,
@@ -294,7 +292,7 @@ def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> M
 
 def create_agent_run_response(text: str = "Test response") -> AgentResponse:
     """Create an AgentResponse with the given text."""
-    return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=text)])])
+    return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=text)])])
 
 
 def create_agent_executor_response(
@@ -307,8 +305,8 @@ def create_agent_executor_response(
         executor_id=executor_id,
         agent_response=agent_response,
         full_conversation=[
-            ChatMessage(role="user", contents=[Content.from_text(text="User input")]),
-            ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)]),
+            ChatMessage("user", [Content.from_text(text="User input")]),
+            ChatMessage("assistant", [Content.from_text(text=response_text)]),
         ],
     )
 
@@ -390,8 +388,8 @@ async def create_sequential_workflow() -> tuple[AgentFrameworkExecutor, str, Moc
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage(role="assistant", text="Here's the draft content about the topic.")),
-        ChatResponse(messages=ChatMessage(role="assistant", text="Review: Content is clear and well-structured.")),
+        ChatResponse(messages=ChatMessage("assistant", ["Here's the draft content about the topic."])),
+        ChatResponse(messages=ChatMessage("assistant", ["Review: Content is clear and well-structured."])),
     ]
 
     writer = ChatAgent(
@@ -433,9 +431,9 @@ async def create_concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, Moc
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage(role="assistant", text="Research findings: Key data points identified.")),
-        ChatResponse(messages=ChatMessage(role="assistant", text="Analysis: Trends indicate positive growth.")),
-        ChatResponse(messages=ChatMessage(role="assistant", text="Summary: Overall outlook is favorable.")),
+        ChatResponse(messages=ChatMessage("assistant", ["Research findings: Key data points identified."])),
+        ChatResponse(messages=ChatMessage("assistant", ["Analysis: Trends indicate positive growth."])),
+        ChatResponse(messages=ChatMessage("assistant", ["Summary: Overall outlook is favorable."])),
     ]
 
     researcher = ChatAgent(

@@ -458,7 +458,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role="user", text=f"What's the weather in {city_label}?")]
+            agent_messages = [ChatMessage("user", [f"What's the weather in {city_label}?"])]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 

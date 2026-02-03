@@ -74,7 +74,7 @@ async def weather_override_middleware(
         else:
             # For non-streaming: just replace with the string message
             custom_message = "".join(chunks)
-            context.result = AgentResponse(messages=[ChatMessage(role="assistant", text=custom_message)])
+            context.result = AgentResponse(messages=[ChatMessage("assistant", [custom_message])])
 
 
 async def main() -> None:

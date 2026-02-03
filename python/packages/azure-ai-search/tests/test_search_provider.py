@@ -39,7 +39,7 @@ def mock_index_client() -> AsyncMock:
 def sample_messages() -> list[ChatMessage]:
     """Create sample chat messages for testing."""
     return [
-        ChatMessage(role="user", text="What is in the documents?"),
+        ChatMessage("user", ["What is in the documents?"]),
     ]
 
 
@@ -318,7 +318,7 @@ class TestSemanticSearch:
         )
 
         # Empty message
-        context = await provider.invoking([ChatMessage(role="user", text="")])
+        context = await provider.invoking([ChatMessage("user", [""])])
 
         assert isinstance(context, Context)
         assert len(context.messages) == 0
@@ -520,10 +520,10 @@ class TestMessageFiltering:
 
         # Mix of message types
         messages = [
-            ChatMessage(role="system", text="System message"),
-            ChatMessage(role="user", text="User message"),
-            ChatMessage(role="assistant", text="Assistant message"),
-            ChatMessage(role="tool", text="Tool message"),
+            ChatMessage("system", ["System message"]),
+            ChatMessage("user", ["User message"]),
+            ChatMessage("assistant", ["Assistant message"]),
+            ChatMessage("tool", ["Tool message"]),
         ]
 
         context = await provider.invoking(messages)
@@ -548,9 +548,9 @@ class TestMessageFiltering:
 
         # Messages with empty/whitespace text
         messages = [
-            ChatMessage(role="user", text=""),
-            ChatMessage(role="user", text="   "),
-            ChatMessage(role="user", text=None),
+            ChatMessage("user", [""]),
+            ChatMessage("user", ["   "]),
+            ChatMessage("user", [None]),
         ]
 
         context = await provider.invoking(messages)
@@ -581,7 +581,7 @@ class TestCitations:
             mode="semantic",
         )
 
-        context = await provider.invoking([ChatMessage(role="user", text="test query")])
+        context = await provider.invoking([ChatMessage("user", ["test query"])])
 
         # Check that citation is included
         assert isinstance(context, Context)

@@ -46,12 +46,12 @@ class Summarizer(Executor):
         the output must be `list[ChatMessage]`.
         """
         if not agent_response.full_conversation:
-            await ctx.send_message([ChatMessage(role="assistant", text="No conversation to summarize.")])
+            await ctx.send_message([ChatMessage("assistant", ["No conversation to summarize."])])
             return
 
         users = sum(1 for m in agent_response.full_conversation if m.role == "user")
         assistants = sum(1 for m in agent_response.full_conversation if m.role == "assistant")
-        summary = ChatMessage(role="assistant", text=f"Summary -> users:{users} assistants:{assistants}")
+        summary = ChatMessage("assistant", [f"Summary -> users:{users} assistants:{assistants}"])
         final_conversation = list(agent_response.full_conversation) + [summary]
         await ctx.send_message(final_conversation)
 

@@ -81,9 +81,7 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = (
-        ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", contents=[])
-    )
+    message = ChatMessage("assistant", [text]) if text is not None else ChatMessage("assistant", [])
     return AgentResponse(messages=[message])
 
 
