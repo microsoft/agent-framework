@@ -42,7 +42,7 @@ async def main() -> None:
     stream = True
     print(f"User: {message}")
     if stream:
-        response = await ChatResponse.from_chat_response_generator(
+        response = await ChatResponse.from_update_generator(
             client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
             output_format_type=OutputStruct,
         )

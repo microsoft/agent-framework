@@ -344,7 +344,7 @@ class OpenAIAssistantsClient(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        return await ChatResponse.from_chat_response_generator(
+        return await ChatResponse.from_update_generator(
             updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
             output_format_type=options.get("response_format"),
         )

@@ -2160,7 +2160,7 @@ def _handle_function_calls_streaming_response(
                 # Depending on the prompt, the message may contain both function call
                 # content and others
 
-                response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
+                response: "ChatResponse" = ChatResponse.from_updates(all_updates)
                 # get the function calls (excluding ones that already have results)
                 function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
                 function_calls = [

@@ -527,7 +527,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
 
     with (
         patch.object(chat_client, "_inner_get_streaming_response", return_value=mock_streaming_response()),
-        patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
+        patch("agent_framework.ChatResponse.from_update_generator") as mock_from_generator,
     ):
         mock_response = ChatResponse(role="assistant", text="Hello back")
         mock_from_generator.return_value = mock_response

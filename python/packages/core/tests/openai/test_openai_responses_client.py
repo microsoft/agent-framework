@@ -2247,7 +2247,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name.startswith("response_format") else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await openai_responses_client.get_response(
@@ -2295,7 +2295,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
 
@@ -2320,7 +2320,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None

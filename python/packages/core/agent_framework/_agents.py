@@ -490,7 +490,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_updates(response_updates).text
 
         agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
@@ -1043,9 +1043,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_chat_response_updates(
-            response_updates, output_format_type=co.get("response_format")
-        )
+        response = ChatResponse.from_updates(response_updates, output_format_type=co.get("response_format"))
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
         await self._notify_thread_of_new_messages(

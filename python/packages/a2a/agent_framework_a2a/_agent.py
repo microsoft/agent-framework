@@ -209,7 +209,7 @@ class A2AAgent(BaseAgent):
         """
         # Collect all updates and use framework to consolidate updates into response
         updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
-        return AgentResponse.from_agent_run_response_updates(updates)
+        return AgentResponse.from_updates(updates)
 
     async def run_stream(
         self,

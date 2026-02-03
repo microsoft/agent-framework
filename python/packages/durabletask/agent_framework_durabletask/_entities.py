@@ -246,7 +246,7 @@ class AgentEntity:
             await self._notify_stream_update(update, callback_context)
 
         if updates:
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_updates(updates)
         else:
             logger.debug("[AgentEntity] No streaming updates received; creating empty response")
             response = AgentResponse(messages=[])

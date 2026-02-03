@@ -800,7 +800,7 @@ def test_chat_response_updates_to_chat_response_one():
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -823,7 +823,7 @@ def test_chat_response_updates_to_chat_response_two():
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 2
@@ -848,7 +848,7 @@ def test_chat_response_updates_to_chat_response_multiple():
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -874,7 +874,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -898,7 +898,7 @@ async def test_chat_response_from_async_generator():
         yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], message_id="1")
         yield ChatResponseUpdate(contents=[Content.from_text(text=" world")], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == "Hello world"
 
 
@@ -907,7 +907,7 @@ async def test_chat_response_from_async_generator_output_format():
         yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
         yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is None
     resp.try_parse_value(OutputModel)
@@ -920,7 +920,7 @@ async def test_chat_response_from_async_generator_output_format_in_method():
         yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
         yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
@@ -1127,7 +1127,7 @@ def test_agent_run_response_text_property_empty() -> None:
 
 def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpdate) -> None:
     updates = [agent_response_update, agent_response_update]
-    response = AgentResponse.from_agent_run_response_updates(updates)
+    response = AgentResponse.from_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
 
@@ -1269,7 +1269,7 @@ def test_function_call_merge_in_process_update_and_usage_aggregation():
     # plus usage
     u3 = ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=1, output_token_count=2))])
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2, u3])
+    resp = ChatResponse.from_updates([u1, u2, u3])
     assert len(resp.messages) == 1
     last_contents = resp.messages[0].contents
     assert any(c.type == "function_call" for c in last_contents)
@@ -1285,7 +1285,7 @@ def test_function_call_incompatible_ids_are_not_merged():
     u1 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="a", name="f", arguments="x")], message_id="m")
     u2 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="b", name="f", arguments="y")], message_id="m")
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2])
+    resp = ChatResponse.from_updates([u1, u2])
     fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
     assert len(fcs) == 2
 
@@ -1320,7 +1320,7 @@ def test_response_update_propagates_fields_and_metadata():
         finish_reason="stop",
         additional_properties={"k": "v"},
     )
-    resp = ChatResponse.from_chat_response_updates([upd])
+    resp = ChatResponse.from_updates([upd])
     assert resp.response_id == "rid"
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
@@ -1337,7 +1337,7 @@ def test_text_coalescing_preserves_first_properties():
     t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
     upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
-    resp = ChatResponse.from_chat_response_updates([upd1, upd2])
+    resp = ChatResponse.from_updates([upd1, upd2])
     # After coalescing there should be a single TextContent with merged text and preserved props from first
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
