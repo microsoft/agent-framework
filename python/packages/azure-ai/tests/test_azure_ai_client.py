@@ -695,14 +695,35 @@ async def test_agent_creation_with_instructions(
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
 
-    run_options = {"model": "test-model", "instructions": "Option instructions. "}
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Option instructions. "}
     messages_instructions = "Message instructions. "
 
-    await client._get_agent_reference_or_create(run_options, messages_instructions)  # type: ignore
+    await client._get_agent_reference_or_create(run_options, messages_instructions, chat_options)  # type: ignore
 
     # Verify agent was created with combined instructions
     call_args = mock_project_client.agents.create_version.call_args
     assert call_args[1]["definition"].instructions == "Message instructions. Option instructions. "
+
+
+async def test_agent_creation_with_instructions_from_chat_options(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with instructions passed only via chat_options."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Chat options instructions."}
+
+    await client._get_agent_reference_or_create(run_options, None, chat_options)  # type: ignore
+
+    call_args = mock_project_client.agents.create_version.call_args
+    assert call_args[1]["definition"].instructions == "Chat options instructions."
 
 
 async def test_agent_creation_with_additional_args(

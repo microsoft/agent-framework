@@ -46,7 +46,7 @@ public class WorkflowHostSmokeTests
             return new(new Session(serializedSession, jsonSerializerOptions));
         }
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         {
             return new(new Session());
         }

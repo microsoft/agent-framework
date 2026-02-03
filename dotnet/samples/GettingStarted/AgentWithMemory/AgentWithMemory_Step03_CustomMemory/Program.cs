@@ -37,7 +37,7 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 });
 
 // Create a new session for the conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Use session with blank memory\n");
 
@@ -68,7 +68,7 @@ Console.WriteLine("\n>> Use new session with previously created memories\n");
 
 // It is also possible to set the memories in a memory component on an individual session.
 // This is useful if we want to start a new session, but have it share the same memories as a previous session.
-var newSession = await agent.GetNewSessionAsync();
+var newSession = await agent.CreateSessionAsync();
 if (userInfo is not null && newSession.GetService<UserInfoMemory>() is UserInfoMemory newSessionMemory)
 {
     newSessionMemory.UserInfo = userInfo;

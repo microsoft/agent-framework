@@ -13,7 +13,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent
 from pydantic import Field
 
 
@@ -31,8 +31,8 @@ async def example_with_automatic_session_creation() -> None:
     """Each run() without thread creates a new session."""
     print("=== Automatic Session Creation Example ===")
 
-    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-        default_options={"instructions": "You are a helpful weather agent."},
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
 
@@ -55,8 +55,8 @@ async def example_with_session_persistence() -> None:
     """Reuse session via thread object for multi-turn conversations."""
     print("=== Session Persistence Example ===")
 
-    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-        default_options={"instructions": "You are a helpful weather agent."},
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
 
@@ -91,8 +91,8 @@ async def example_with_existing_session_id() -> None:
     existing_session_id = None
 
     # First agent instance - start a conversation
-    agent1: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-        default_options={"instructions": "You are a helpful weather agent."},
+    agent1 = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
 
@@ -112,8 +112,8 @@ async def example_with_existing_session_id() -> None:
         print("\n--- Continuing with the same session ID in a new agent instance ---")
 
         # Second agent instance - resume the conversation
-        agent2: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-            default_options={"instructions": "You are a helpful weather agent."},
+        agent2 = GitHubCopilotAgent(
+            instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
