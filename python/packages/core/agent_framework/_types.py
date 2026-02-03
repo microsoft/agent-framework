@@ -1830,6 +1830,11 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
 
+    Note:
+        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        not on the `ChatResponse` itself. Use `response.messages[0].author_name` to access
+        the author name of individual messages.
+
     Examples:
         .. code-block:: python
 
@@ -2065,7 +2070,10 @@ class ChatResponseUpdate(SerializationMixin):
     Attributes:
         contents: The chat response update content items.
         role: The role of the author of the response update.
-        author_name: The name of the author of the response update.
+        author_name: The name of the author of the response update. This is primarily used in
+            multi-agent scenarios to identify which agent or participant generated the response.
+            When updates are combined into a `ChatResponse`, the `author_name` is propagated
+            to the resulting `ChatMessage` objects.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
@@ -2187,6 +2195,11 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     A typical response will contain a single message, but may contain multiple
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
 
+    Note:
+        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
+        the author name of individual messages.
+
     Examples:
         .. code-block:: python
 
@@ -2226,6 +2239,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         *,
         messages: ChatMessage | Sequence[ChatMessage] | None = None,
         response_id: str | None = None,
+        agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
@@ -2238,6 +2252,8 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         Keyword Args:
             messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
             response_id: The ID of the chat response.
+            agent_id: The identifier of the agent that produced this response. Useful in multi-agent
+                scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
@@ -2261,6 +2277,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
                     processed_messages.append(msg)
             self.messages = processed_messages
         self.response_id = response_id
+        self.agent_id = agent_id
         self.created_at = created_at
         self.usage_details = usage_details
         self._value: TResponseModel | None = value
@@ -2393,6 +2410,20 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 class AgentResponseUpdate(SerializationMixin):
     """Represents a single streaming response chunk from an Agent.
 
+    Attributes:
+        contents: The content items in this update.
+        role: The role of the author of the response update.
+        author_name: The name of the author of the response update. In multi-agent scenarios,
+            this identifies which agent generated this update. When updates are combined into
+            an `AgentResponse`, the `author_name` is propagated to the resulting `ChatMessage` objects.
+        agent_id: The identifier of the agent that produced this update. Useful in multi-agent
+            scenarios to track which agent generated specific parts of the response.
+        response_id: The ID of the response of which this update is a part.
+        message_id: The ID of the message of which this update is a part.
+        created_at: A timestamp for the response update.
+        additional_properties: Any additional properties associated with the update.
+        raw_representation: The raw representation from an underlying implementation.
+
     Examples:
         .. code-block:: python
 
@@ -2431,6 +2462,7 @@ class AgentResponseUpdate(SerializationMixin):
         contents: Sequence[Content] | None = None,
         role: RoleLiteral | str | None = None,
         author_name: str | None = None,
+        agent_id: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
@@ -2442,7 +2474,9 @@ class AgentResponseUpdate(SerializationMixin):
         Keyword Args:
             contents: Optional list of Content items to include in the update.
             role: The role of the author of the response update (e.g., "user", "assistant").
-            author_name: Optional name of the author of the response update.
+            author_name: Optional name of the author of the response update. Used in multi-agent
+                scenarios to identify which agent generated this update.
+            agent_id: Optional identifier of the agent that produced this update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
@@ -2470,6 +2504,7 @@ class AgentResponseUpdate(SerializationMixin):
 
         self.role: str | None = role
         self.author_name = author_name
+        self.agent_id = agent_id
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
