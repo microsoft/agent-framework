@@ -37,12 +37,12 @@ var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, mod
 var existingAgent = await aiProjectClient.GetAIAgentAsync(name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
-AgentThread thread = await existingAgent.GetNewThreadAsync();
-Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", thread));
+AgentSession session = await existingAgent.CreateSessionAsync();
+Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Streaming agent interaction with function tools.
-thread = await existingAgent.GetNewThreadAsync();
-await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
+session = await existingAgent.CreateSessionAsync();
+await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", session))
 {
     Console.WriteLine(update);
 }

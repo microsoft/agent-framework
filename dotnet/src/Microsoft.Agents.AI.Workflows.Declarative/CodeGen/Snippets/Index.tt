@@ -1,6 +1,6 @@
 ﻿<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
 <#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.ObjectModel" #>
-<#@ import namespace="Microsoft.Bot.ObjectModel" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
 <#@ import namespace="Microsoft.Extensions.AI" #>
 <#@ import namespace="System.Collections.Generic" #>
 <#@ include file="AssignVariableTemplate.tt" once="true" #>

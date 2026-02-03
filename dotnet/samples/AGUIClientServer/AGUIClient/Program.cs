@@ -88,7 +88,7 @@ public static class Program
             description: "AG-UI Client Agent",
             tools: [changeBackground, readClientClimateSensors]);
 
-        AgentThread thread = await agent.GetNewThreadAsync(cancellationToken);
+        AgentSession session = await agent.CreateSessionAsync(cancellationToken);
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
         try
         {
@@ -112,23 +112,23 @@ public static class Program
 
                 // Call RunStreamingAsync to get streaming updates
                 bool isFirstUpdate = true;
-                string? threadId = null;
+                string? sessionId = null;
                 var updates = new List<ChatResponseUpdate>();
-                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
                     updates.Add(chatUpdate);
                     if (chatUpdate.ConversationId != null)
                     {
-                        threadId = chatUpdate.ConversationId;
+                        sessionId = chatUpdate.ConversationId;
                     }
 
                     // Display run started information from the first update
-                    if (isFirstUpdate && threadId != null && update.ResponseId != null)
+                    if (isFirstUpdate && sessionId != null && update.ResponseId != null)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"\n[Run Started - Thread: {threadId}, Run: {update.ResponseId}]");
+                        Console.WriteLine($"\n[Run Started - Session: {sessionId}, Run: {update.ResponseId}]");
                         Console.ResetColor();
                         isFirstUpdate = false;
                     }
@@ -177,7 +177,7 @@ public static class Program
                     var lastUpdate = updates[^1];
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine();
-                    Console.WriteLine($"[Run Ended - Thread: {threadId}, Run: {lastUpdate.ResponseId}]");
+                    Console.WriteLine($"[Run Ended - Session: {sessionId}, Run: {lastUpdate.ResponseId}]");
                     Console.ResetColor();
                 }
                 messages.Clear();

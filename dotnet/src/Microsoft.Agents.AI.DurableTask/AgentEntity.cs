@@ -67,7 +67,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             // Start the agent response stream
             IAsyncEnumerable<AgentResponseUpdate> responseStream = agentWrapper.RunStreamingAsync(
                 this.State.Data.ConversationHistory.SelectMany(e => e.Messages).Select(m => m.ToChatMessage()),
-                await agentWrapper.GetNewThreadAsync(cancellationToken).ConfigureAwait(false),
+                await agentWrapper.CreateSessionAsync(cancellationToken).ConfigureAwait(false),
                 options: null,
                 this._cancellationToken);
 

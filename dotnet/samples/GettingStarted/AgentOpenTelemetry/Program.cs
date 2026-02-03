@@ -128,7 +128,7 @@ var agent = new ChatClientAgent(instrumentedChatClient,
     .UseOpenTelemetry(SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();
 
-var thread = await agent.GetNewThreadAsync();
+var session = await agent.CreateSessionAsync();
 
 appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 
@@ -176,7 +176,7 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
             Console.Write("Agent: ");
 
             // Run the agent (this will create its own internal telemetry spans)
-            await foreach (var update in agent.RunStreamingAsync(userInput, thread))
+            await foreach (var update in agent.RunStreamingAsync(userInput, session))
             {
                 Console.Write(update.Text);
             }

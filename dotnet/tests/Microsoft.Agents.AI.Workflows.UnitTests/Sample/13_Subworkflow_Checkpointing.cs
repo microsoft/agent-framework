@@ -28,16 +28,16 @@ internal static class Step13EntryPoint
         }
     }
 
-    public static async ValueTask<AgentThread> RunAsAgentAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, AgentThread? thread)
+    public static async ValueTask<AgentSession> RunAsAgentAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, AgentSession? session)
     {
         AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
 
-        thread ??= await hostAgent.GetNewThreadAsync();
+        session ??= await hostAgent.CreateSessionAsync();
         AgentResponse response;
         ResponseContinuationToken? continuationToken = null;
         do
         {
-            response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });
+            response = await hostAgent.RunAsync(input, session, new AgentRunOptions { ContinuationToken = continuationToken });
         } while ((continuationToken = response.ContinuationToken) is { });
 
         foreach (ChatMessage message in response.Messages)
@@ -45,7 +45,7 @@ internal static class Step13EntryPoint
             writer.WriteLine($"{message.AuthorName}: {message.Text}");
         }
 
-        return thread;
+        return session;
     }
 
     public static async ValueTask<CheckpointInfo> RunAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, CheckpointManager checkpointManager, CheckpointInfo? resumeFrom)

@@ -20,20 +20,20 @@ public static class AIAgentExtensions
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
-    /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
+    /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
         this AIAgent agent,
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
-        AgentThreadStore? agentThreadStore = null)
+        AgentSessionStore? agentSessionStore = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
-            threadStore: agentThreadStore ?? new NoopAgentThreadStore());
+            sessionStore: agentSessionStore ?? new NoopAgentSessionStore());
 
         taskManager ??= new TaskManager();
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
@@ -42,18 +42,18 @@ public static class AIAgentExtensions
         async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
-            var thread = await hostAgent.GetOrCreateThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
             var options = messageSendParams.Metadata is not { Count: > 0 }
                 ? null
                 : new AgentRunOptions { AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
             var response = await hostAgent.RunAsync(
                 messageSendParams.ToChatMessages(),
-                thread: thread,
+                session: session,
                 options: options,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            await hostAgent.SaveThreadAsync(contextId, thread, cancellationToken).ConfigureAwait(false);
+            await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
             var parts = response.Messages.ToParts();
             return new AgentMessage
             {
@@ -73,16 +73,16 @@ public static class AIAgentExtensions
     /// <param name="agentCard">The agent card to return on query.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
-    /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
+    /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
         this AIAgent agent,
         AgentCard agentCard,
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
-        AgentThreadStore? agentThreadStore = null)
+        AgentSessionStore? agentSessionStore = null)
     {
-        taskManager = agent.MapA2A(taskManager, loggerFactory, agentThreadStore);
+        taskManager = agent.MapA2A(taskManager, loggerFactory, agentSessionStore);
 
         taskManager.OnAgentCardQuery += (context, query) =>
         {

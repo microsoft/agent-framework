@@ -4,6 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -16,6 +17,11 @@ persistent conversation capabilities using service-managed threads as well as st
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production
+# See:
+# samples/getting_started/tools/function_tool_with_approval.py
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -75,19 +81,19 @@ async def example_with_thread_persistence_in_memory() -> None:
         # First conversation
         query1 = "What's the weather like in Tokyo?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread, store=False)
+        result1 = await agent.run(query1, thread=thread, options={"store": False})
         print(f"Agent: {result1.text}")
 
         # Second conversation using the same thread - maintains context
         query2 = "How about London?"
         print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread, store=False)
+        result2 = await agent.run(query2, thread=thread, options={"store": False})
         print(f"Agent: {result2.text}")
 
         # Third conversation - agent should remember both previous cities
         query3 = "Which of the cities I asked about has better weather?"
         print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread, store=False)
+        result3 = await agent.run(query3, thread=thread, options={"store": False})
         print(f"Agent: {result3.text}")
         print("Note: The agent remembers context from previous messages in the same thread.\n")
 

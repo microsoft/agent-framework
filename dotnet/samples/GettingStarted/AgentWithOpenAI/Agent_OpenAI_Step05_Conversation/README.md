@@ -4,7 +4,7 @@ This sample demonstrates how to maintain conversation state across multiple turn
 
 ## What This Sample Shows
 
-- **Conversation State Management**: Shows how to use `ConversationClient` and `AgentThread` to maintain conversation context across multiple agent invocations
+- **Conversation State Management**: Shows how to use `ConversationClient` and `AgentSession` to maintain conversation context across multiple agent invocations
 - **Multi-turn Conversations**: Demonstrates follow-up questions that rely on context from previous messages in the conversation
 - **Server-Side Storage**: Uses OpenAI's Conversation API to manage conversation history server-side, allowing the model to access previous messages without resending them
 - **Conversation Lifecycle**: Demonstrates creating, retrieving, and deleting conversations
@@ -24,22 +24,22 @@ ConversationClient conversationClient = openAIClient.GetConversationClient();
 ClientResult createConversationResult = await conversationClient.CreateConversationAsync(BinaryContent.Create(BinaryData.FromString("{}")));
 ```
 
-### AgentThread for Conversation State
+### AgentSession for Conversation State
 
-The `AgentThread` works with `ChatClientAgentRunOptions` to link the agent to a server-side conversation:
+The `AgentSession` works with `ChatClientAgentRunOptions` to link the agent to a server-side conversation:
 
 ```csharp
 // Set up agent run options with the conversation ID
 ChatClientAgentRunOptions agentRunOptions = new() { ChatOptions = new ChatOptions() { ConversationId = conversationId } };
 
-// Create a thread for the conversation
-AgentThread thread = await agent.GetNewThreadAsync();
+// Create a session for the conversation
+AgentSession session = await agent.CreateSessionAsync();
 
-// First call links the thread to the conversation
-ChatCompletion firstResponse = await agent.RunAsync([firstMessage], thread, agentRunOptions);
+// First call links the session to the conversation
+ChatCompletion firstResponse = await agent.RunAsync([firstMessage], session, agentRunOptions);
 
-// Subsequent calls use the thread without needing to pass options again
-ChatCompletion secondResponse = await agent.RunAsync([secondMessage], thread);
+// Subsequent calls use the session without needing to pass options again
+ChatCompletion secondResponse = await agent.RunAsync([secondMessage], session);
 ```
 
 ### Retrieving Conversation History
@@ -59,9 +59,9 @@ foreach (ClientResult result in getConversationItemsResults.GetRawPages())
 1. **Create an OpenAI Client**: Initialize an `OpenAIClient` with your API key
 2. **Create a Conversation**: Use `ConversationClient` to create a server-side conversation
 3. **Create an Agent**: Initialize an `OpenAIResponseClientAgent` with the desired model and instructions
-4. **Create a Thread**: Call `agent.GetNewThreadAsync()` to create a new conversation thread
-5. **Link Thread to Conversation**: Pass `ChatClientAgentRunOptions` with the `ConversationId` on the first call
-6. **Send Messages**: Subsequent calls to `agent.RunAsync()` only need the thread - context is maintained
+4. **Create a Session**: Call `agent.CreateSessionAsync()` to create a new conversation session
+5. **Link Session to Conversation**: Pass `ChatClientAgentRunOptions` with the `ConversationId` on the first call
+6. **Send Messages**: Subsequent calls to `agent.RunAsync()` only need the session - context is maintained
 7. **Cleanup**: Delete the conversation when done using `conversationClient.DeleteConversation()`
 
 ## Running the Sample

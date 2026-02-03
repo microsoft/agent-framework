@@ -109,7 +109,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 internal sealed class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
-    private AgentThread? _thread;
+    private AgentSession? _session;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
@@ -136,9 +136,9 @@ internal sealed class SloganWriterExecutor : Executor
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._thread ??= await this._agent.GetNewThreadAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
-        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken);
+        var result = await this._agent.RunAsync(message, this._session, cancellationToken: cancellationToken);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
@@ -157,7 +157,7 @@ internal sealed class SloganWriterExecutor : Executor
             Please use this feedback to improve your slogan.
             """;
 
-        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken);
+        var result = await this._agent.RunAsync(feedbackMessage, this._session, cancellationToken: cancellationToken);
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
         await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
@@ -180,7 +180,7 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 internal sealed class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
-    private AgentThread? _thread;
+    private AgentSession? _session;
 
     public int MinimumRating { get; init; } = 8;
 
@@ -209,7 +209,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
 
     public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._thread ??= await this._agent.GetNewThreadAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':
@@ -217,7 +217,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
             Please provide feedback on this slogan, including comments, a rating from 1 to 10, and suggested actions for improvement.
             """;
 
-        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken);
+        var response = await this._agent.RunAsync(sloganMessage, this._session, cancellationToken: cancellationToken);
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
         await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken);

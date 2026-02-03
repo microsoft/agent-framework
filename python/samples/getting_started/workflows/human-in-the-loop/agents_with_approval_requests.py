@@ -9,12 +9,11 @@ from agent_framework import (
     AgentExecutorResponse,
     ChatAgent,
     ChatMessage,
+    Content,
     Executor,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
     WorkflowBuilder,
     WorkflowContext,
-    ai_function,
+    tool,
     executor,
     handler,
 )
@@ -53,14 +52,15 @@ Prerequisites:
 """
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_current_date() -> str:
     """Get the current date in YYYY-MM-DD format."""
     # For demonstration purposes, we return a fixed date.
     return "2025-11-07"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_team_members_email_addresses() -> list[dict[str, str]]:
     """Get the email addresses of team members."""
     # In a real implementation, this might query a database or directory service.
@@ -92,7 +92,7 @@ def get_team_members_email_addresses() -> list[dict[str, str]]:
     ]
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_my_information() -> dict[str, str]:
     """Get my personal information."""
     return {
@@ -103,7 +103,7 @@ def get_my_information() -> dict[str, str]:
     }
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 async def read_historical_email_data(
     email_address: Annotated[str, "The email address to read historical data from"],
     start_date: Annotated[str, "The start date in YYYY-MM-DD format"],
@@ -165,7 +165,7 @@ async def read_historical_email_data(
     return [email for email in emails if start_date <= email["date"] <= end_date]
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 async def send_email(
     to: Annotated[str, "The recipient email address"],
     subject: Annotated[str, "The email subject"],
@@ -250,7 +250,7 @@ async def main() -> None:
         body="Please provide your team's status update on the project since last week.",
     )
 
-    responses: dict[str, FunctionApprovalResponseContent] = {}
+    responses: dict[str, Content] = {}
     output: list[ChatMessage] | None = None
     while True:
         if responses:
@@ -261,8 +261,8 @@ async def main() -> None:
 
         request_info_events = events.get_request_info_events()
         for request_info_event in request_info_events:
-            # We should only expect FunctionApprovalRequestContent in this sample
-            if not isinstance(request_info_event.data, FunctionApprovalRequestContent):
+            # We should only expect function_approval_request Content in this sample
+            if not isinstance(request_info_event.data, Content) or request_info_event.data.type != "function_approval_request":
                 raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
 
             # Pretty print the function call details
@@ -273,10 +273,10 @@ async def main() -> None:
             )
 
             # For demo purposes, we automatically approve the request
-            # The expected response type of the request is `FunctionApprovalResponseContent`,
-            # which can be created via `create_response` method on the request content
+            # The expected response type of the request is `function_approval_response Content`,
+            # which can be created via `to_function_approval_response` method on the request content
             print("Performing automatic approval for demo purposes...")
-            responses[request_info_event.request_id] = request_info_event.data.create_response(approved=True)
+            responses[request_info_event.request_id] = request_info_event.data.to_function_approval_response(approved=True)
 
         # Once we get an output event, we can conclude the workflow
         # Outputs can only be produced by the conclude_workflow_executor in this sample

@@ -583,7 +583,7 @@ public static partial class AzureAIProjectChatClientExtensions
         if (options is not null)
         {
             agentOptions.AIContextProviderFactory = options.AIContextProviderFactory;
-            agentOptions.ChatMessageStoreFactory = options.ChatMessageStoreFactory;
+            agentOptions.ChatHistoryProviderFactory = options.ChatHistoryProviderFactory;
             agentOptions.UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs;
         }
 

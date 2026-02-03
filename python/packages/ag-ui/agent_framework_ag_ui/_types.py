@@ -3,22 +3,23 @@
 """Type definitions for AG-UI integration."""
 
 import sys
-from typing import Any, TypedDict
+from typing import Any, Generic
 
 from agent_framework import ChatOptions
 from pydantic import BaseModel, Field
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = [
-    "AGUIChatOptions",
-    "AgentState",
-    "PredictStateConfig",
-    "RunMetadata",
-]
+
+TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 class PredictStateConfig(TypedDict):
@@ -62,12 +63,28 @@ class AGUIRequest(BaseModel):
         None,
         description="Optional shared state for agentic generative UI",
     )
+    tools: list[dict[str, Any]] | None = Field(
+        None,
+        description="Client-side tools to advertise to the LLM",
+    )
+    context: list[dict[str, Any]] | None = Field(
+        None,
+        description="List of context objects provided to the agent",
+    )
+    forwarded_props: dict[str, Any] | None = Field(
+        None,
+        description="Additional properties forwarded to the agent",
+    )
+    parent_run_id: str | None = Field(
+        None,
+        description="ID of the run that spawned this run",
+    )
 
 
 # region AG-UI Chat Options TypedDict
 
 
-class AGUIChatOptions(ChatOptions, total=False):
+class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """AG-UI protocol-specific chat options dict.
 
     Extends base ChatOptions for the AG-UI (Agent-UI) protocol.
@@ -130,8 +147,6 @@ class AGUIChatOptions(ChatOptions, total=False):
 
 AGUI_OPTION_TRANSLATIONS: dict[str, str] = {}
 """Maps ChatOptions keys to AG-UI parameter names (protocol uses standard names)."""
-
-TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion

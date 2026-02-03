@@ -39,22 +39,22 @@ AIAgent agent = new AzureOpenAIClient(
             collectionName: "chathistory",
             vectorDimensions: 3072,
             // Configure the scope values under which chat messages will be stored.
-            // In this case, we are using a fixed user ID and a unique thread ID for each new thread.
-            storageScope: new() { UserId = "UID1", ThreadId = new Guid().ToString() },
+            // In this case, we are using a fixed user ID and a unique session ID for each new session.
+            storageScope: new() { UserId = "UID1", SessionId = Guid.NewGuid().ToString() },
             // Configure the scope which would be used to search for relevant prior messages.
-            // In this case, we are searching for any messages for the user across all threads.
+            // In this case, we are searching for any messages for the user across all sessions.
             searchScope: new() { UserId = "UID1" }))
     });
 
-// Start a new thread for the agent conversation.
-AgentThread thread = await agent.GetNewThreadAsync();
+// Start a new session for the agent conversation.
+AgentSession session = await agent.CreateSessionAsync();
 
-// Run the agent with the thread that stores conversation history in the vector store.
-Console.WriteLine(await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", thread));
+// Run the agent with the session that stores conversation history in the vector store.
+Console.WriteLine(await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", session));
 
-// Start a second thread. Since we configured the search scope to be across all threads for the user,
+// Start a second session. Since we configured the search scope to be across all sessions for the user,
 // the agent should remember that the user likes pirate jokes.
-AgentThread thread2 = await agent.GetNewThreadAsync();
+AgentSession? session2 = await agent.CreateSessionAsync();
 
-// Run the agent with the second thread.
-Console.WriteLine(await agent.RunAsync("Tell me a joke that I might like.", thread2));
+// Run the agent with the second session.
+Console.WriteLine(await agent.RunAsync("Tell me a joke that I might like.", session2));

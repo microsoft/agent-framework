@@ -33,7 +33,7 @@ AIAgent agent = chatClient.AsAIAgent(
     description: "AG-UI Client Agent",
     tools: frontendTools);
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 List<ChatMessage> messages =
 [
     new(ChatRole.System, "You are a helpful assistant.")
@@ -62,18 +62,18 @@ try
 
         // Stream the response
         bool isFirstUpdate = true;
-        string? threadId = null;
+        string? sessionId = null;
 
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 
             // First update indicates run started
             if (isFirstUpdate)
             {
-                threadId = chatUpdate.ConversationId;
+                sessionId = chatUpdate.ConversationId;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"\n[Run Started - Thread: {chatUpdate.ConversationId}, Run: {chatUpdate.ResponseId}]");
+                Console.WriteLine($"\n[Run Started - Session: {chatUpdate.ConversationId}, Run: {chatUpdate.ResponseId}]");
                 Console.ResetColor();
                 isFirstUpdate = false;
             }
@@ -109,7 +109,7 @@ try
         }
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[Run Finished - Thread: {threadId}]");
+        Console.WriteLine($"\n[Run Finished - Session: {sessionId}]");
         Console.ResetColor();
     }
 }

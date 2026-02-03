@@ -19,10 +19,10 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
-AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", session, options);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -33,19 +33,19 @@ while (response.ContinuationToken is { } token)
     // Continue with the token.
     options.ContinuationToken = token;
 
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunAsync(session, options);
 }
 
 // Display the result.
 Console.WriteLine(response.Text);
 
-// Reset options and thread for streaming.
+// Reset options and session for streaming.
 options = new() { AllowBackgroundResponses = true };
-thread = await agent.GetNewThreadAsync();
+session = await agent.CreateSessionAsync();
 
 AgentResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", session, options))
 {
     // Output each update.
     Console.Write(update.Text);
@@ -63,7 +63,7 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a ve
 // Resume from interruption point.
 options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
 
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(session, options))
 {
     // Output each update.
     Console.Write(update.Text);

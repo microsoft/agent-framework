@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import MutableSequence
 from typing import Any
 
@@ -42,6 +43,18 @@ class MockContextProvider(ContextProvider):
         context = Context()
         context.messages = self.context_messages
         return context
+
+
+class MinimalContextProvider(ContextProvider):
+    """Minimal ContextProvider that only implements the required abstract method.
+
+    Used to test the base class default implementations of thread_created,
+    invoked, __aenter__, and __aexit__.
+    """
+
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+        """Return empty context."""
+        return Context()
 
 
 class TestContext:
@@ -91,3 +104,33 @@ class TestContextProvider:
         assert context.messages is not None
         assert len(context.messages) == 1
         assert context.messages[0].text == "Context message"
+
+    async def test_base_thread_created_does_nothing(self) -> None:
+        """Test that base ContextProvider.thread_created does nothing by default."""
+        provider = MinimalContextProvider()
+        await provider.thread_created("some-thread-id")
+        await provider.thread_created(None)
+
+    async def test_base_invoked_does_nothing(self) -> None:
+        """Test that base ContextProvider.invoked does nothing by default."""
+        provider = MinimalContextProvider()
+        message = ChatMessage(role=Role.USER, text="Test")
+        await provider.invoked(message)
+        await provider.invoked(message, response_messages=message)
+        await provider.invoked(message, invoke_exception=Exception("test"))
+
+    async def test_base_aenter_returns_self(self) -> None:
+        """Test that base ContextProvider.__aenter__ returns self."""
+        provider = MinimalContextProvider()
+        async with provider as p:
+            assert p is provider
+
+    async def test_base_aexit_does_nothing(self) -> None:
+        """Test that base ContextProvider.__aexit__ handles exceptions gracefully."""
+        provider = MinimalContextProvider()
+        await provider.__aexit__(None, None, None)
+        try:
+            raise ValueError("test error")
+        except ValueError:
+            exc_info = sys.exc_info()
+            await provider.__aexit__(exc_info[0], exc_info[1], exc_info[2])

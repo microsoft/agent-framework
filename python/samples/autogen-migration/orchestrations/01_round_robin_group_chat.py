@@ -103,6 +103,7 @@ async def run_agent_framework_with_cycle() -> None:
         WorkflowContext,
         WorkflowOutputEvent,
         executor,
+        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 

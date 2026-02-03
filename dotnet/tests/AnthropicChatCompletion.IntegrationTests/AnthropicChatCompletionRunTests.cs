@@ -21,7 +21,7 @@ public abstract class SkipAllRun(Func<AnthropicChatCompletionFixture> func) : Ru
     public override Task RunWithStringReturnsExpectedResultAsync() => base.RunWithStringReturnsExpectedResultAsync();
 
     [Fact(Skip = AnthropicChatCompletionFixture.SkipReason)]
-    public override Task ThreadMaintainsHistoryAsync() => base.ThreadMaintainsHistoryAsync();
+    public override Task SessionMaintainsHistoryAsync() => base.SessionMaintainsHistoryAsync();
 }
 
 public class AnthropicBetaChatCompletionRunTests()

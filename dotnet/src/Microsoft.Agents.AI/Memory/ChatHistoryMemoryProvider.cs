@@ -164,7 +164,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 new VectorStoreDataProperty("ApplicationId", typeof(string)) { IsIndexed = true },
                 new VectorStoreDataProperty("AgentId", typeof(string)) { IsIndexed = true },
                 new VectorStoreDataProperty("UserId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("ThreadId", typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty("SessionId", typeof(string)) { IsIndexed = true },
                 new VectorStoreDataProperty("Content", typeof(string)) { IsFullTextIndexed = true },
                 new VectorStoreDataProperty("CreatedAt", typeof(string)) { IsIndexed = true },
                 new VectorStoreVectorProperty("ContentEmbedding", typeof(string), Throw.IfLessThan(vectorDimensions, 1))
@@ -216,10 +216,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             {
                 this._logger.LogError(
                     ex,
-                    "ChatHistoryMemoryProvider: Failed to search for chat history due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    "ChatHistoryMemoryProvider: Failed to search for chat history due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                     this._searchScope.ApplicationId,
                     this._searchScope.AgentId,
-                    this._searchScope.ThreadId,
+                    this._searchScope.SessionId,
                     this.SanitizeLogData(this._searchScope.UserId));
             }
 
@@ -254,7 +254,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     ["ApplicationId"] = this._storageScope?.ApplicationId,
                     ["AgentId"] = this._storageScope?.AgentId,
                     ["UserId"] = this._storageScope?.UserId,
-                    ["ThreadId"] = this._storageScope?.ThreadId,
+                    ["SessionId"] = this._storageScope?.SessionId,
                     ["Content"] = message.Text,
                     ["CreatedAt"] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
                     ["ContentEmbedding"] = message.Text,
@@ -272,10 +272,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             {
                 this._logger.LogError(
                     ex,
-                    "ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    "ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                     this._searchScope.ApplicationId,
                     this._searchScope.AgentId,
-                    this._searchScope.ThreadId,
+                    this._searchScope.SessionId,
                     this.SanitizeLogData(this._searchScope.UserId));
             }
         }
@@ -312,12 +312,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         if (this._logger?.IsEnabled(LogLevel.Trace) is true)
         {
             this._logger.LogTrace(
-                "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                 this.SanitizeLogData(userQuestion),
                 this.SanitizeLogData(formatted),
                 this._searchScope.ApplicationId,
                 this._searchScope.AgentId,
-                this._searchScope.ThreadId,
+                this._searchScope.SessionId,
                 this.SanitizeLogData(this._searchScope.UserId));
         }
 
@@ -346,7 +346,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         string? applicationId = this._searchScope.ApplicationId;
         string? agentId = this._searchScope.AgentId;
         string? userId = this._searchScope.UserId;
-        string? threadId = this._searchScope.ThreadId;
+        string? sessionId = this._searchScope.SessionId;
 
         Expression<Func<Dictionary<string, object?>, bool>>? filter = null;
         if (applicationId != null)
@@ -370,11 +370,11 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 filter.Parameters);
         }
 
-        if (threadId != null)
+        if (sessionId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> threadIdFilter = x => (string?)x["ThreadId"] == threadId;
-            filter = filter == null ? threadIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, threadIdFilter.Body),
+            Expression<Func<Dictionary<string, object?>, bool>> sessionIdFilter = x => (string?)x["SessionId"] == sessionId;
+            filter = filter == null ? sessionIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
+                Expression.AndAlso(filter.Body, sessionIdFilter.Body),
                 filter.Parameters);
         }
 
@@ -397,11 +397,11 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         if (this._logger?.IsEnabled(LogLevel.Information) is true)
         {
             this._logger.LogInformation(
-                "ChatHistoryMemoryProvider: Retrieved {Count} search results. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                "ChatHistoryMemoryProvider: Retrieved {Count} search results. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                 results.Count,
                 this._searchScope.ApplicationId,
                 this._searchScope.AgentId,
-                this._searchScope.ThreadId,
+                this._searchScope.SessionId,
                 this.SanitizeLogData(this._searchScope.UserId));
         }
 

@@ -2,11 +2,12 @@
 
 import json
 import logging
+import sys
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -31,6 +32,11 @@ from ._events import (
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_type_compatible
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -138,7 +144,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Returns:
             The final workflow response as an AgentResponse.
@@ -185,7 +191,7 @@ class WorkflowAgent(BaseAgent):
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
             **kwargs: Additional keyword arguments passed through to underlying workflow
-                and ai_function tools.
+                and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
@@ -225,7 +231,7 @@ class WorkflowAgent(BaseAgent):
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and ai_function tools.
+                workflow and tool functions.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.

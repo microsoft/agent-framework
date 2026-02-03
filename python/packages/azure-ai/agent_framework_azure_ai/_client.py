@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -22,12 +22,7 @@ from agent_framework.observability import use_instrumentation
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import (
-    MCPTool,
-    PromptAgentDefinition,
-    PromptAgentDefinitionText,
-    RaiConfig,
-)
+from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
@@ -43,19 +38,22 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
 
 
-class AzureAIProjectAgentOptions(OpenAIResponsesOptions):
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
     """Azure AI Project Agent options."""
 
     rai_config: RaiConfig
     """Configuration for Responsible AI (RAI) content filtering and safety features."""
+
+    reasoning: Reasoning  # type: ignore[misc]
+    """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
 
 
 TAzureAIClientOptions = TypeVar(
@@ -343,6 +341,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["temperature"] = run_options["temperature"]
             if "top_p" in run_options:
                 args["top_p"] = run_options["top_p"]
+            if "reasoning" in run_options:
+                args["reasoning"] = run_options["reasoning"]
+            if "rai_config" in run_options:
+                args["rai_config"] = run_options["rai_config"]
 
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
@@ -350,9 +352,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
+            # instructions is accessed from chat_options since the base class excludes it from run_options
             combined_instructions = [
                 instructions
-                for instructions in [messages_instructions, run_options.get("instructions")]
+                for instructions in [messages_instructions, chat_options.get("instructions") if chat_options else None]
                 if instructions
             ]
             if combined_instructions:
@@ -408,6 +411,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             "top_p",
             "text",
             "text_format",
+            "reasoning",
         ]
 
         for property in exclude:
@@ -548,7 +552,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | None = None,
+        default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[Middleware] | None = None,

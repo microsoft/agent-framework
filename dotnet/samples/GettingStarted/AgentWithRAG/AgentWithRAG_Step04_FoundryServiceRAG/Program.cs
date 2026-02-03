@@ -43,16 +43,16 @@ AIAgent agent = await aiProjectClient
         instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
         tools: [fileSearchTool]);
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
+Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));
 
 Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
+Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", session));
 
 Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", session));
 
 // Cleanup
 await fileClient.DeleteFileAsync(uploadResult.Value.Id);

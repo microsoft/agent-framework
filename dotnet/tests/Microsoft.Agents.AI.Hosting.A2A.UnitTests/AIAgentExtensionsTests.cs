@@ -175,15 +175,15 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
+        agentMock.Setup(x => x.CreateSessionAsync()).ReturnsAsync(new TestAgentSession());
         agentMock
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .Callback<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken>(
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>(
                 (_, _, options, _) => optionsCallback(options))
             .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
 
@@ -194,12 +194,12 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewThreadAsync()).ReturnsAsync(new TestAgentThread());
+        agentMock.Setup(x => x.CreateSessionAsync()).ReturnsAsync(new TestAgentSession());
         agentMock
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(response);
@@ -214,5 +214,5 @@ public sealed class AIAgentExtensionsTests
         return await handler.Invoke(messageSendParams, CancellationToken.None);
     }
 
-    private sealed class TestAgentThread : AgentThread;
+    private sealed class TestAgentSession : AgentSession;
 }

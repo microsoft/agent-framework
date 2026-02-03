@@ -24,9 +24,9 @@ ChatMessage message = new(ChatRole.User, [
     new DataContent(File.ReadAllBytes("assets/walkway.jpg"), "image/jpeg")
 ]);
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, thread))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, session))
 {
     Console.WriteLine(update);
 }

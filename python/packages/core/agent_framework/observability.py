@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
-    from ._tools import AIFunction
+    from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
@@ -1546,7 +1546,7 @@ def use_agent_instrumentation(
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: "AIFunction[Any, Any]", tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: "FunctionTool[Any, Any]", tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:

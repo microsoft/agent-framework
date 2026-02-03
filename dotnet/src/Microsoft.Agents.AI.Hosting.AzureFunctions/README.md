@@ -74,7 +74,7 @@ public static async Task<string> SpamDetectionOrchestration(
 
     // Get the spam detection agent
     DurableAIAgent spamDetectionAgent = context.GetAgent("SpamDetectionAgent");
-    AgentThread spamThread = await spamDetectionAgent.GetNewThreadAsync();
+    AgentSession spamSession = await spamDetectionAgent.CreateSessionAsync();
 
     // Step 1: Check if the email is spam
     AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
@@ -84,7 +84,7 @@ public static async Task<string> SpamDetectionOrchestration(
             Email ID: {email.EmailId}
             Content: {email.EmailContent}
             """,
-        thread: spamThread);
+        session: spamSession);
     DetectionResult result = spamDetectionResponse.Result;
 
     // Step 2: Conditional logic based on spam detection result
@@ -97,7 +97,7 @@ public static async Task<string> SpamDetectionOrchestration(
     {
         // Generate and send response for legitimate email
         DurableAIAgent emailAssistantAgent = context.GetAgent("EmailAssistantAgent");
-        AgentThread emailThread = await emailAssistantAgent.GetNewThreadAsync();
+        AgentSession emailSession = await emailAssistantAgent.CreateSessionAsync();
 
         AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
             message:
@@ -107,7 +107,7 @@ public static async Task<string> SpamDetectionOrchestration(
                 Email ID: {email.EmailId}
                 Content: {email.EmailContent}
                 """,
-            thread: emailThread);
+            session: emailSession);
 
         EmailResponse emailResponse = emailAssistantResponse.Result;
         return await context.CallActivityAsync<string>(nameof(SendEmail), emailResponse.Response);

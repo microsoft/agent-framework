@@ -12,7 +12,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict, cast
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -38,7 +38,7 @@ from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import (
-    AIFunction,
+    FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedImageGenerationTool,
@@ -79,8 +79,13 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = get_logger("agent_framework.openai")
+
 
 __all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
 
@@ -108,7 +113,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-class OpenAIResponsesOptions(ChatOptions, total=False):
+TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+
+
+class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -384,7 +392,7 @@ class OpenAIBaseResponsesClient(
                                 container=tool_args,
                             )
                         )
-                    case AIFunction():
+                    case FunctionTool():
                         params = tool.parameters()
                         params["additionalProperties"] = False
                         response_tools.append(
@@ -590,8 +598,12 @@ class OpenAIBaseResponsesClient(
             options["model"] = self.model_id
 
     def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID from options dict or kwargs."""
-        return options.get("conversation_id") or kwargs.get("conversation_id")
+        """Get the current conversation ID, preferring kwargs over options.
+
+        This ensures runtime-updated conversation IDs (for example, from tool execution
+        loops) take precedence over the initial configuration provided in options.
+        """
+        return kwargs.get("conversation_id") or options.get("conversation_id")
 
     def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.

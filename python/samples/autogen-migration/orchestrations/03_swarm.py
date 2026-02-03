@@ -102,6 +102,7 @@ async def run_agent_framework() -> None:
         RequestInfoEvent,
         WorkflowRunState,
         WorkflowStatusEvent,
+        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 

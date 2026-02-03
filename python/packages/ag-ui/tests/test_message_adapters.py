@@ -644,49 +644,107 @@ def test_agent_framework_to_agui_function_result_multiple_text_contents():
     assert agui_msg["content"] == '["First result", "Second result"]'
 
 
-def test_agui_tool_approval_with_dataclass_modified_args():
-    """Test that agui_messages_to_agent_framework handles dataclass in modified args.
+# Additional tests for better coverage
 
-    This tests the fix for json.dumps() serialization errors at line 274
-    when modified_args contains non-serializable objects via make_json_safe.
-    """
-    from dataclasses import dataclass
 
-    @dataclass
-    class ModifiedData:
-        field1: str
-        field2: int
+def test_extract_text_from_contents_empty():
+    """Test extracting text from empty contents."""
+    result = extract_text_from_contents([])
+    assert result == ""
 
-    # Create AG-UI format messages that simulate tool approval flow
-    # where modified args could contain a dataclass after parsing
 
-    # First, an assistant message with a tool call (string arguments)
-    assistant_msg = {
-        "id": "msg-1",
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
-            {
-                "id": "call-test",
-                "type": "function",
-                "function": {
-                    "name": "update_state",
-                    "arguments": '{"data": "original"}',  # String args
-                },
-            }
-        ],
-    }
+def test_extract_text_from_contents_multiple():
+    """Test extracting text from multiple text contents."""
+    contents = [
+        Content.from_text("Hello "),
+        Content.from_text("World"),
+    ]
+    result = extract_text_from_contents(contents)
+    assert result == "Hello World"
 
-    # Then a user approval message (the approval path will merge modified args)
-    approval_msg = {
-        "id": "msg-2",
-        "role": "user",
-        "content": '{"approved": true}',
-        "toolCallId": "call-test",
-    }
 
-    # This should NOT raise TypeError
-    result = agui_messages_to_agent_framework([assistant_msg, approval_msg])
+def test_extract_text_from_contents_non_text():
+    """Test extracting text ignores non-text contents."""
+    contents = [
+        Content.from_text("Hello"),
+        Content.from_function_call(call_id="call_1", name="tool", arguments="{}"),
+    ]
+    result = extract_text_from_contents(contents)
+    assert result == "Hello"
 
-    # Should have processed both messages without error
+
+def test_agui_to_agent_framework_with_tool_calls():
+    """Test converting AG-UI message with tool_calls."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
+                }
+            ],
+        }
+    ]
+
+    result = agui_messages_to_agent_framework(messages)
+
+    assert len(result) == 1
+    assert len(result[0].contents) == 1
+    assert result[0].contents[0].type == "function_call"
+    assert result[0].contents[0].name == "get_weather"
+
+
+def test_agui_to_agent_framework_tool_result():
+    """Test converting AG-UI tool result message."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": "Sunny",
+            "toolCallId": "call_123",
+        },
+    ]
+
+    result = agui_messages_to_agent_framework(messages)
+
     assert len(result) == 2
+    # Second message should be tool result
+    tool_msg = result[1]
+    assert tool_msg.role == Role.TOOL
+    assert tool_msg.contents[0].type == "function_result"
+    assert tool_msg.contents[0].result == "Sunny"
+
+
+def test_agui_messages_to_snapshot_format_empty():
+    """Test converting empty messages to snapshot format."""
+    result = agui_messages_to_snapshot_format([])
+    assert result == []
+
+
+def test_agui_messages_to_snapshot_format_basic():
+    """Test converting messages to snapshot format."""
+    messages = [
+        {"role": "user", "content": "Hello", "id": "msg_1"},
+        {"role": "assistant", "content": "Hi there", "id": "msg_2"},
+    ]
+
+    result = agui_messages_to_snapshot_format(messages)
+
+    assert len(result) == 2
+    assert result[0]["role"] == "user"
+    assert result[0]["content"] == "Hello"
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"] == "Hi there"

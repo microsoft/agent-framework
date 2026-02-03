@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict
+from typing import Any, Generic, Literal
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -14,12 +14,12 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -41,18 +41,23 @@ from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region OpenAI Chat Options TypedDict
@@ -72,7 +77,7 @@ class Prediction(TypedDict, total=False):
     content: str | list[PredictionTextContent]
 
 
-class OpenAIChatOptions(ChatOptions, total=False):
+class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """OpenAI-specific chat options dict.
 
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.
@@ -198,7 +203,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case HostedWebSearchTool():
                         web_search_options = (

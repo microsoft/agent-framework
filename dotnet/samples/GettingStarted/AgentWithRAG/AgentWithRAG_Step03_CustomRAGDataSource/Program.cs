@@ -32,16 +32,16 @@ AIAgent agent = new AzureOpenAIClient(
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions))
     });
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
+Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));
 
 Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
+Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", session));
 
 Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", session));
 
 static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(string query, CancellationToken cancellationToken)
 {

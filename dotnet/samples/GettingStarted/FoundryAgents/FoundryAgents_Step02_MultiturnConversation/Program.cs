@@ -22,25 +22,25 @@ AgentVersionCreationOptions options = new(new PromptAgentDefinition(model: deplo
 // Retrieve an AIAgent for the created server side agent version.
 ChatClientAgent jokerAgent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, options);
 
-// Invoke the agent with a multi-turn conversation, where the context is preserved in the thread object.
+// Invoke the agent with a multi-turn conversation, where the context is preserved in the session object.
 // Create a conversation in the server
 ProjectConversationsClient conversationsClient = aiProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient();
 ProjectConversation conversation = await conversationsClient.CreateProjectConversationAsync();
 
 // Providing the conversation Id is not strictly necessary, but by not providing it no information will show up in the Foundry Project UI as conversations.
-// Threads that doesn't have a conversation Id will work based on the `PreviousResponseId`.
-AgentThread thread = await jokerAgent.GetNewThreadAsync(conversation.Id);
+// Sessions that don't have a conversation Id will work based on the `PreviousResponseId`.
+AgentSession session = await jokerAgent.CreateSessionAsync(conversation.Id);
 
-Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", thread));
-Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread));
+Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", session));
+Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));
 
-// Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the thread object.
-thread = await jokerAgent.GetNewThreadAsync(conversation.Id);
-await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+// Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the session object.
+session = await jokerAgent.CreateSessionAsync(conversation.Id);
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", session))
 {
     Console.WriteLine(update);
 }
-await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session))
 {
     Console.WriteLine(update);
 }

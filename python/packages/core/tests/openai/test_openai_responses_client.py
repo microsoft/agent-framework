@@ -40,7 +40,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import (
     ServiceInitializationError,
@@ -96,7 +96,7 @@ async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vecto
     await client.client.files.delete(file_id=file_id)
 
 
-@ai_function
+@tool(approval_mode="never_require")
 async def get_weather(location: Annotated[str, "The location as a city name"]) -> str:
     """Get the current weather in a given location."""
     # Implementation of the tool to get weather
@@ -640,6 +640,453 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
     assert function_call.arguments == '{"location": "Seattle"}'
+
+
+def test_prepare_content_for_opentool_approval_response() -> None:
+    """Test _prepare_content_for_openai with function approval response content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Test approved response
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="send_email",
+        arguments='{"to": "user@example.com"}',
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_001",
+        function_call=function_call,
+    )
+
+    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+
+    assert result["type"] == "mcp_approval_response"
+    assert result["approval_request_id"] == "approval_001"
+    assert result["approve"] is True
+
+
+def test_prepare_content_for_openai_error_content() -> None:
+    """Test _prepare_content_for_openai with error content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    error_content = Content.from_error(
+        message="Operation failed",
+        error_code="ERR_123",
+        error_details="Invalid parameter",
+    )
+
+    result = client._prepare_content_for_openai(Role.ASSISTANT, error_content, {})
+
+    # ErrorContent should return empty dict (logged but not sent)
+    assert result == {}
+
+
+def test_prepare_content_for_openai_usage_content() -> None:
+    """Test _prepare_content_for_openai with usage content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    usage_content = Content.from_usage(
+        usage_details={
+            "input_token_count": 100,
+            "output_token_count": 50,
+            "total_token_count": 150,
+        }
+    )
+
+    result = client._prepare_content_for_openai(Role.ASSISTANT, usage_content, {})
+
+    # UsageContent should return empty dict (logged but not sent)
+    assert result == {}
+
+
+def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
+    """Test _prepare_content_for_openai with hosted vector store content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    vector_store_content = Content.from_hosted_vector_store(
+        vector_store_id="vs_123",
+    )
+
+    result = client._prepare_content_for_openai(Role.ASSISTANT, vector_store_content, {})
+
+    # HostedVectorStoreContent should return empty dict (logged but not sent)
+    assert result == {}
+
+
+def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
+    """Test _parse_response_from_openai with MCP server tool result."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    # Mock MCP call item with result
+    mock_mcp_item = MagicMock()
+    mock_mcp_item.type = "mcp_call"
+    mock_mcp_item.id = "mcp_call_123"
+    mock_mcp_item.name = "get_data"
+    mock_mcp_item.arguments = {"key": "value"}
+    mock_mcp_item.server_label = "TestServer"
+    mock_mcp_item.result = [{"content": [{"type": "text", "text": "MCP result"}]}]
+
+    mock_response.output = [mock_mcp_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    # Should have both call and result content
+    assert len(response.messages[0].contents) == 2
+    call_content, result_content = response.messages[0].contents
+
+    assert call_content.type == "mcp_server_tool_call"
+    assert call_content.call_id == "mcp_call_123"
+    assert call_content.tool_name == "get_data"
+    assert call_content.server_name == "TestServer"
+
+    assert result_content.type == "mcp_server_tool_result"
+    assert result_content.call_id == "mcp_call_123"
+    assert result_content.output is not None
+
+
+def test_parse_chunk_from_openai_with_mcp_call_result() -> None:
+    """Test _parse_chunk_from_openai with MCP call output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Mock event with MCP call that has output
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+
+    mock_item = MagicMock()
+    mock_item.type = "mcp_call"
+    mock_item.id = "mcp_call_456"
+    mock_item.call_id = "call_456"
+    mock_item.name = "fetch_resource"
+    mock_item.server_label = "ResourceServer"
+    mock_item.arguments = {"resource_id": "123"}
+    # Use proper content structure that _parse_content can handle
+    mock_item.result = [{"type": "text", "text": "test result"}]
+
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    # Should have both call and result in contents
+    assert len(update.contents) == 2
+    call_content, result_content = update.contents
+
+    assert call_content.type == "mcp_server_tool_call"
+    assert call_content.call_id in ["mcp_call_456", "call_456"]
+    assert call_content.tool_name == "fetch_resource"
+
+    assert result_content.type == "mcp_server_tool_result"
+    assert result_content.call_id in ["mcp_call_456", "call_456"]
+    # Verify the output was parsed
+    assert result_content.output is not None
+
+
+def test_prepare_message_for_openai_with_function_approval_response() -> None:
+    """Test _prepare_message_for_openai with function approval response content in messages."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    function_call = Content.from_function_call(
+        call_id="call_789",
+        name="execute_command",
+        arguments='{"command": "ls"}',
+    )
+
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_003",
+        function_call=function_call,
+    )
+
+    message = ChatMessage(role="user", contents=[approval_response])
+    call_id_to_id: dict[str, str] = {}
+
+    result = client._prepare_message_for_openai(message, call_id_to_id)
+
+    # FunctionApprovalResponseContent is added directly, not nested in args with role
+    assert len(result) == 1
+    prepared_message = result[0]
+    assert prepared_message["type"] == "mcp_approval_response"
+    assert prepared_message["approval_request_id"] == "approval_003"
+    assert prepared_message["approve"] is True
+
+
+def test_chat_message_with_error_content() -> None:
+    """Test that error content in messages is handled properly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    error_content = Content.from_error(
+        message="Test error",
+        error_code="TEST_ERR",
+    )
+
+    message = ChatMessage(role="assistant", contents=[error_content])
+    call_id_to_id: dict[str, str] = {}
+
+    result = client._prepare_message_for_openai(message, call_id_to_id)
+
+    # Message should be prepared with empty content list since ErrorContent returns {}
+    assert len(result) == 1
+    prepared_message = result[0]
+    assert prepared_message["role"] == "assistant"
+    # Content should be a list with empty dict since ErrorContent returns {}
+    assert prepared_message.get("content") == [{}]
+
+
+def test_chat_message_with_usage_content() -> None:
+    """Test that usage content in messages is handled properly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    usage_content = Content.from_usage(
+        usage_details={
+            "input_token_count": 200,
+            "output_token_count": 100,
+            "total_token_count": 300,
+        }
+    )
+
+    message = ChatMessage(role="assistant", contents=[usage_content])
+    call_id_to_id: dict[str, str] = {}
+
+    result = client._prepare_message_for_openai(message, call_id_to_id)
+
+    # Message should be prepared with empty content list since UsageContent returns {}
+    assert len(result) == 1
+    prepared_message = result[0]
+    assert prepared_message["role"] == "assistant"
+    # Content should be a list with empty dict since UsageContent returns {}
+    assert prepared_message.get("content") == [{}]
+
+
+def test_hosted_file_content_preparation() -> None:
+    """Test _prepare_content_for_openai with hosted file content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    hosted_file = Content.from_hosted_file(
+        file_id="file_abc123",
+        media_type="application/pdf",
+        name="document.pdf",
+    )
+
+    result = client._prepare_content_for_openai(Role.USER, hosted_file, {})
+
+    assert result["type"] == "input_file"
+    assert result["file_id"] == "file_abc123"
+
+
+def test_function_approval_response_with_mcp_tool_call() -> None:
+    """Test function approval response content with MCP server tool call content."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mcp_call = Content.from_mcp_server_tool_call(
+        call_id="mcp_call_999",
+        tool_name="sensitive_action",
+        server_name="SecureServer",
+        arguments={"action": "delete"},
+    )
+
+    approval_response = Content.from_function_approval_response(
+        approved=False,
+        id="approval_mcp_001",
+        function_call=mcp_call,
+    )
+
+    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+
+    assert result["type"] == "mcp_approval_response"
+    assert result["approval_request_id"] == "approval_mcp_001"
+    assert result["approve"] is False
+
+
+def test_response_format_with_conflicting_definitions() -> None:
+    """Test that conflicting response_format definitions raise an error."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Mock response_format and text_config that conflict
+    response_format = {"type": "json_schema", "format": {"type": "json_schema", "name": "Test", "schema": {}}}
+    text_config = {"format": {"type": "json_object"}}
+
+    with pytest.raises(ServiceInvalidRequestError, match="Conflicting response_format definitions"):
+        client._prepare_response_and_text_format(response_format=response_format, text_config=text_config)
+
+
+def test_response_format_json_object_type() -> None:
+    """Test response_format with json_object type."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {"type": "json_object"}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["type"] == "json_object"
+
+
+def test_response_format_text_type() -> None:
+    """Test response_format with text type."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {"type": "text"}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["type"] == "text"
+
+
+def test_response_format_with_format_key() -> None:
+    """Test response_format that already has a format key."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {"format": {"type": "json_schema", "name": "MySchema", "schema": {"type": "object"}}}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["type"] == "json_schema"
+    assert text_config["format"]["name"] == "MySchema"
+
+
+def test_response_format_json_schema_no_name_uses_title() -> None:
+    """Test json_schema response_format without name uses title from schema."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"schema": {"title": "MyTitle", "type": "object", "properties": {}}},
+    }
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["name"] == "MyTitle"
+
+
+def test_response_format_json_schema_with_strict() -> None:
+    """Test json_schema response_format with strict mode."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "StrictSchema", "schema": {"type": "object"}, "strict": True},
+    }
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["strict"] is True
+
+
+def test_response_format_json_schema_with_description() -> None:
+    """Test json_schema response_format with description."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "DescribedSchema",
+            "schema": {"type": "object"},
+            "description": "A test schema",
+        },
+    }
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["description"] == "A test schema"
+
+
+def test_response_format_json_schema_missing_schema() -> None:
+    """Test json_schema response_format without schema raises error."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {"type": "json_schema", "json_schema": {"name": "NoSchema"}}
+
+    with pytest.raises(ServiceInvalidRequestError, match="json_schema response_format requires a schema"):
+        client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+
+def test_response_format_unsupported_type() -> None:
+    """Test unsupported response_format type raises error."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = {"type": "unsupported_format"}
+
+    with pytest.raises(ServiceInvalidRequestError, match="Unsupported response_format"):
+        client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+
+def test_response_format_invalid_type() -> None:
+    """Test invalid response_format type raises error."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    response_format = "invalid"  # Not a Pydantic model or mapping
+
+    with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic model or mapping"):
+        client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
+
+
+def test_parse_response_with_store_false() -> None:
+    """Test _get_conversation_id returns None when store is False."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_123"
+    mock_response.conversation = MagicMock()
+    mock_response.conversation.id = "conv_456"
+
+    conversation_id = client._get_conversation_id(mock_response, store=False)
+
+    assert conversation_id is None
+
+
+def test_parse_response_uses_response_id_when_no_conversation() -> None:
+    """Test _get_conversation_id returns response ID when no conversation exists."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_789"
+    mock_response.conversation = None
+
+    conversation_id = client._get_conversation_id(mock_response, store=True)
+
+    assert conversation_id == "resp_789"
+
+
+def test_streaming_chunk_with_usage_only() -> None:
+    """Test streaming chunk that only contains usage info."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_usage"
+    mock_event.response.model = "test-model"
+    mock_event.response.conversation = None
+    mock_event.response.usage = MagicMock()
+    mock_event.response.usage.input_tokens = 50
+    mock_event.response.usage.output_tokens = 25
+    mock_event.response.usage.total_tokens = 75
+    mock_event.response.usage.input_tokens_details = None
+    mock_event.response.usage.output_tokens_details = None
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    # Should have usage content
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "usage"
+    assert update.contents[0].usage_details["total_token_count"] == 75
 
 
 def test_prepare_tools_for_openai_with_hosted_mcp() -> None:
@@ -1665,6 +2112,20 @@ async def test_prepare_options_store_parameter_handling() -> None:
     options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
+
+
+async def test_conversation_id_precedence_kwargs_over_options() -> None:
+    """When both kwargs and options contain conversation_id, kwargs wins."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Hello")]
+
+    # options has a stale response id, kwargs carries the freshest one
+    opts = {"conversation_id": "resp_old_123"}
+    run_opts = await client._prepare_options(messages, opts, conversation_id="resp_new_456")  # type: ignore
+
+    # Verify kwargs takes precedence and maps to previous_response_id for resp_* IDs
+    assert run_opts.get("previous_response_id") == "resp_new_456"
+    assert "conversation" not in run_opts
 
 
 def test_with_callable_api_key() -> None:
