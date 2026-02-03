@@ -38,6 +38,7 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     normalize_messages,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
@@ -209,7 +210,7 @@ class AgentProtocol(Protocol):
 
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -240,7 +241,7 @@ class AgentProtocol(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -755,7 +756,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     @overload
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -770,7 +771,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     @overload
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -784,7 +785,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -927,7 +928,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol

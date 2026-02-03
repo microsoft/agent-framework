@@ -34,6 +34,8 @@ from agent_framework._types import (
     _parse_content_list,
     _validate_uri,
     add_usage_details,
+    normalize_messages,
+    prepare_messages,
     validate_tool_mode,
 )
 from agent_framework.exceptions import ContentError
@@ -2485,6 +2487,74 @@ def test_validate_uri_data_uri():
     uri = f"data:text/plain;base64,{data}"
     result = _validate_uri(uri, None)
     assert "uri" in result
+
+
+# endregion
+
+
+# region Test normalize_messages and prepare_messages with Content
+
+
+def test_normalize_messages_with_string():
+    """Test normalize_messages converts a string to a user message."""
+    result = normalize_messages("hello")
+    assert len(result) == 1
+    assert result[0].role == "user"
+    assert result[0].text == "hello"
+
+
+def test_normalize_messages_with_content():
+    """Test normalize_messages converts a Content object to a user message."""
+    content = Content.from_text("hello")
+    result = normalize_messages(content)
+    assert len(result) == 1
+    assert result[0].role == "user"
+    assert len(result[0].contents) == 1
+    assert result[0].contents[0].text == "hello"
+
+
+def test_normalize_messages_with_sequence_including_content():
+    """Test normalize_messages handles a sequence with Content objects."""
+    content = Content.from_text("image caption")
+    msg = ChatMessage("assistant", ["response"])
+    result = normalize_messages(["query", content, msg])
+    assert len(result) == 3
+    assert result[0].role == "user"
+    assert result[0].text == "query"
+    assert result[1].role == "user"
+    assert result[1].contents[0].text == "image caption"
+    assert result[2].role == "assistant"
+    assert result[2].text == "response"
+
+
+def test_prepare_messages_with_content():
+    """Test prepare_messages converts a Content object to a user message."""
+    content = Content.from_text("hello")
+    result = prepare_messages(content)
+    assert len(result) == 1
+    assert result[0].role == "user"
+    assert result[0].contents[0].text == "hello"
+
+
+def test_prepare_messages_with_content_and_system_instructions():
+    """Test prepare_messages handles Content with system instructions."""
+    content = Content.from_text("hello")
+    result = prepare_messages(content, system_instructions="Be helpful")
+    assert len(result) == 2
+    assert result[0].role == "system"
+    assert result[0].text == "Be helpful"
+    assert result[1].role == "user"
+    assert result[1].contents[0].text == "hello"
+
+
+def test_parse_content_list_with_strings():
+    """Test _parse_content_list converts strings to TextContent."""
+    result = _parse_content_list(["hello", "world"])
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+    assert result[1].type == "text"
+    assert result[1].text == "world"
 
 
 # endregion

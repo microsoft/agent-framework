@@ -1561,12 +1561,17 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | Sequence[str | ChatMessage], system_instructions: str | Sequence[str] | None = None
+    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
+    system_instructions: str | Sequence[str] | None = None,
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
     Args:
-        messages: The input messages in various supported formats.
+        messages: The input messages in various supported formats. Can be:
+            - A string (converted to a user message)
+            - A Content object (wrapped in a user ChatMessage)
+            - A ChatMessage object
+            - A sequence containing any mix of the above
         system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
@@ -1581,31 +1586,54 @@ def prepare_messages(
 
     if isinstance(messages, str):
         return [*system_instruction_messages, ChatMessage("user", [messages])]
+    if isinstance(messages, Content):
+        return [*system_instruction_messages, ChatMessage("user", [messages])]
     if isinstance(messages, ChatMessage):
         return [*system_instruction_messages, messages]
 
     return_messages: list[ChatMessage] = system_instruction_messages
     for msg in messages:
-        if isinstance(msg, str):
+        if isinstance(msg, (str, Content)):
             msg = ChatMessage("user", [msg])
         return_messages.append(msg)
     return return_messages
 
 
 def normalize_messages(
-    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
 ) -> list[ChatMessage]:
-    """Normalize message inputs to a list of ChatMessage objects."""
+    """Normalize message inputs to a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats. Can be:
+            - None (returns empty list)
+            - A string (converted to a user message)
+            - A Content object (wrapped in a user ChatMessage)
+            - A ChatMessage object
+            - A sequence containing any mix of the above
+
+    Returns:
+        A list of ChatMessage objects.
+    """
     if messages is None:
         return []
 
     if isinstance(messages, str):
         return [ChatMessage("user", [messages])]
 
+    if isinstance(messages, Content):
+        return [ChatMessage("user", [messages])]
+
     if isinstance(messages, ChatMessage):
         return [messages]
 
-    return [ChatMessage("user", [msg]) if isinstance(msg, str) else msg for msg in messages]
+    result: list[ChatMessage] = []
+    for msg in messages:
+        if isinstance(msg, (str, Content)):
+            result.append(ChatMessage("user", [msg]))
+        else:
+            result.append(msg)
+    return result
 
 
 def prepend_instructions_to_messages(
