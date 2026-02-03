@@ -10,6 +10,60 @@ We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting
 - **Target Python version**: 3.10+
 - **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
 
+## Type Annotations
+
+### Future Annotations
+
+> **Note:** This convention is being adopted. See [#3578](https://github.com/microsoft/agent-framework/issues/3578) for progress.
+
+Use `from __future__ import annotations` at the top of files to enable postponed evaluation of annotations. This prevents the need for string-based type hints for forward references:
+
+```python
+# ✅ Preferred - use future annotations
+from __future__ import annotations
+
+class Agent:
+    def create_child(self) -> Agent:  # No quotes needed
+        ...
+
+# ❌ Avoid - string-based type hints
+class Agent:
+    def create_child(self) -> "Agent":  # Requires quotes without future annotations
+        ...
+```
+
+### TypeVar Naming Convention
+
+> **Note:** This convention is being adopted. See [#3594](https://github.com/microsoft/agent-framework/issues/3594) for progress.
+
+Use the suffix `T` for TypeVar names instead of a prefix:
+
+```python
+# ✅ Preferred - suffix T
+ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)
+AgentT = TypeVar("AgentT", bound=Agent)
+
+# ❌ Avoid - prefix T
+TChatResponse = TypeVar("TChatResponse", bound=ChatResponse)
+TAgent = TypeVar("TAgent", bound=Agent)
+```
+
+### Mapping Types
+
+> **Note:** This convention is being adopted. See [#3577](https://github.com/microsoft/agent-framework/issues/3577) for progress.
+
+Use `Mapping` instead of `MutableMapping` for input parameters when mutation is not required:
+
+```python
+# ✅ Preferred - Mapping for read-only access
+def process_config(config: Mapping[str, Any]) -> None:
+    ...
+
+# ❌ Avoid - MutableMapping when mutation isn't needed
+def process_config(config: MutableMapping[str, Any]) -> None:
+    ...
+```
+
 ## Function Parameter Guidelines
 
 To make the code easier to use and maintain:
@@ -30,6 +84,7 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
 ```
 - **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
 - **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Avoid shadowing built-ins**: Do not use parameter names that shadow Python built-ins (e.g., use `next_handler` instead of `next`). See [#3583](https://github.com/microsoft/agent-framework/issues/3583) for progress.
 
 ## Method Naming Inside Connectors
 
@@ -234,10 +289,9 @@ They should contain:
     - Type and default values do not have to be specified, they will be pulled from the definition.
 - Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
 - Keyword arguments are specified after a header called `Keyword Args:`, with each argument being specified in the same format as `Args:`.
-- A header for exceptions can be added, called `Raises:`, but should only be used for:
-  - Agent Framework specific exceptions (e.g., `ServiceInitializationError`)
-  - Base exceptions that might be unexpected in the context
-  - Obvious exceptions like `ValueError` or `TypeError` do not need to be documented
+- A header for exceptions can be added, called `Raises:`, following these guidelines:
+  - **Always document** Agent Framework specific exceptions (e.g., `AgentInitializationError`, `AgentExecutionException`)
+  - **Only document** standard Python exceptions (TypeError, ValueError, KeyError, etc.) when the condition is non-obvious or provides value to API users
   - Format: `ExceptionType`: Explanation of the exception.
   - If a longer explanation is needed, it should be placed on the next line, indented by 4 spaces.
 - Code examples can be added using the `Examples:` header followed by `.. code-block:: python` directive.
@@ -327,6 +381,26 @@ def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
 ```
 
 If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
+
+## Public API and Exports
+
+### Explicit Exports
+
+> **Note:** This convention is being adopted. See [#3605](https://github.com/microsoft/agent-framework/issues/3605) for progress.
+
+Define `__all__` in each module to explicitly declare the public API. Avoid using `from module import *` in `__init__.py` files as it can impact performance and makes the public API unclear:
+
+```python
+# ✅ Preferred - explicit __all__ and imports
+__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+
+from ._agents import ChatAgent
+from ._types import ChatMessage, ChatResponse
+
+# ❌ Avoid - star imports
+from ._agents import *
+from ._types import *
+```
 
 ## Performance considerations
 
