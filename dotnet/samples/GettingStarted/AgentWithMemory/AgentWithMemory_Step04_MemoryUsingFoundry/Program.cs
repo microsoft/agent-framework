@@ -46,7 +46,7 @@ AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
             : new FoundryMemoryProvider(projectClient, ctx.SerializedState, ctx.JsonSerializerOptions, new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName }))
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 FoundryMemoryProvider memoryProvider = session.GetService<FoundryMemoryProvider>()!;
 
@@ -80,7 +80,7 @@ Console.WriteLine("\n>> Start a new session that shares the same Foundry Memory 
 Console.WriteLine("\nWaiting for Foundry Memory to process updates...");
 await memoryProvider.WhenUpdatesCompletedAsync();
 
-AgentSession newSession = await agent.GetNewSessionAsync();
+AgentSession newSession = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));
 
 // Debug HTTP handler to log all requests (commented out by default)
