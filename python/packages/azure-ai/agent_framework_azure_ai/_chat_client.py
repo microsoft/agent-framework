@@ -948,6 +948,10 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         if additional_messages:
             run_options["additional_messages"] = additional_messages
 
+        # Add instructions from options (agent's instructions set via as_agent())
+        if options_instructions := options.get("instructions"):
+            instructions.append(options_instructions)
+
         # Add instruction from existing agent at the beginning
         if (
             agent_definition is not None

@@ -32,7 +32,7 @@ internal static class Step13EntryPoint
     {
         AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
 
-        session ??= await hostAgent.GetNewSessionAsync();
+        session ??= await hostAgent.CreateSessionAsync();
         AgentResponse response;
         ResponseContinuationToken? continuationToken = null;
         do

@@ -153,6 +153,92 @@ class TestPurviewPolicyMiddleware:
             for call in mock_process.call_args_list:
                 assert call[0][1] == Activity.UPLOAD_TEXT
 
+    async def test_middleware_streaming_skips_post_check(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that streaming results skip post-check evaluation."""
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context.is_streaming = True
+
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
+
+            async def mock_next(ctx: AgentRunContext) -> None:
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="streaming")])
+
+            await middleware.process(context, mock_next)
+
+        assert mock_proc.call_count == 1
+
+    async def test_middleware_payment_required_in_pre_check_raises_by_default(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that 402 in pre-check is raised when ignore_payment_required=False."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=PurviewPaymentRequiredError("Payment required"),
+        ):
+
+            async def mock_next(_: AgentRunContext) -> None:
+                raise AssertionError("next should not be called")
+
+            with pytest.raises(PurviewPaymentRequiredError):
+                await middleware.process(context, mock_next)
+
+    async def test_middleware_payment_required_in_post_check_raises_by_default(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that 402 in post-check is raised when ignore_payment_required=False."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (False, "user-123")
+            raise PurviewPaymentRequiredError("Payment required")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
+
+            async def mock_next(ctx: AgentRunContext) -> None:
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="OK")])
+
+            with pytest.raises(PurviewPaymentRequiredError):
+                await middleware.process(context, mock_next)
+
+    async def test_middleware_post_check_exception_raises_when_ignore_exceptions_false(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that post-check exceptions are propagated when ignore_exceptions=False."""
+        middleware._settings.ignore_exceptions = False
+
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (False, "user-123")
+            raise ValueError("Post-check blew up")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
+
+            async def mock_next(ctx: AgentRunContext) -> None:
+                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="OK")])
+
+            with pytest.raises(ValueError, match="Post-check blew up"):
+                await middleware.process(context, mock_next)
+
     async def test_middleware_handles_pre_check_exception(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:

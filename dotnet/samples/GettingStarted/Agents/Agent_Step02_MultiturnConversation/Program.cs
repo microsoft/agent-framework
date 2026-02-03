@@ -17,12 +17,12 @@ AIAgent agent = new AzureOpenAIClient(
     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent with a multi-turn conversation, where the context is preserved in the session object.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));
 
 // Invoke the agent with a multi-turn conversation and streaming, where the context is preserved in the session object.
-session = await agent.GetNewSessionAsync();
+session = await agent.CreateSessionAsync();
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate.", session))
 {
     Console.WriteLine(update);
