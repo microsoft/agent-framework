@@ -334,6 +334,7 @@ class AgentExecutor(Executor):
 
         response = await self._agent.run(
             self._cache,
+            stream=False,
             thread=self._agent_thread,
             **run_kwargs,
         )
@@ -346,7 +347,7 @@ class AgentExecutor(Executor):
                 await ctx.request_info(user_input_request, Content)
             return None
 
-        return response  # type: ignore[return-value,no-any-return]
+        return response
 
     async def _run_agent_streaming(self, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> AgentResponse | None:
         """Execute the underlying agent in streaming mode and collect the full response.

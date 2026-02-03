@@ -1707,7 +1707,9 @@ def _capture_response(
     token_usage_histogram: "metrics.Histogram | None" = None,
 ) -> None:
     """Set the response for a given span."""
-    span.set_attributes(attributes)
+    # Duration is a metrics-only attribute, not a span attribute
+    span_attributes = {k: v for k, v in attributes.items() if k != Meters.LLM_OPERATION_DURATION}
+    span.set_attributes(span_attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
         token_usage_histogram.record(
