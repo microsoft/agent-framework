@@ -11,8 +11,8 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Role,
-    TextContent,
     use_chat_middleware,
     use_function_invocation,
     tool,
@@ -77,7 +77,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
 
         return ChatResponse(
             messages=[response_message],
@@ -103,7 +103,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             # Stream character by character
             for char in response_text:
                 yield ChatResponseUpdate(
-                    contents=[TextContent(text=char)],
+                    contents=[Content.from_text(text=char)],
                     role=Role.ASSISTANT,
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
                     model_id="echo-model-v1",

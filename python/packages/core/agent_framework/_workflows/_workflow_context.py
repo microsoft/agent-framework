@@ -38,7 +38,9 @@ T_W_Out = TypeVar("T_W_Out", default=Never)
 logger = logging.getLogger(__name__)
 
 
-def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[type[Any]], list[type[Any]]]:
+def infer_output_types_from_ctx_annotation(
+    ctx_annotation: Any,
+) -> tuple[list[type[Any] | UnionType], list[type[Any] | UnionType]]:
     """Infer message types and workflow output types from the WorkflowContext generic parameters.
 
     Examples:
@@ -81,8 +83,8 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
             return [cast(type[Any], Any)], []
 
         if t_origin in (Union, UnionType):
-            message_types = [arg for arg in get_args(t) if arg is not Any and arg is not Never]
-            return message_types, []
+            msg_types: list[type[Any] | UnionType] = [arg for arg in get_args(t) if arg is not Any and arg is not Never]
+            return msg_types, []
 
         if t is Never:
             return [], []
@@ -92,7 +94,7 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     t_out, t_w_out = args[:2]  # Take first two args in case there are more
 
     # Process T_Out for message_types
-    message_types = []
+    message_types: list[type[Any] | UnionType] = []
     t_out_origin = get_origin(t_out)
     if t_out is Any:
         message_types = [cast(type[Any], Any)]
@@ -103,7 +105,7 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
             message_types = [t_out]
 
     # Process T_W_Out for workflow_output_types
-    workflow_output_types = []
+    workflow_output_types: list[type[Any] | UnionType] = []
     t_w_out_origin = get_origin(t_w_out)
     if t_w_out is Any:
         workflow_output_types = [cast(type[Any], Any)]
@@ -129,7 +131,7 @@ def validate_workflow_context_annotation(
     annotation: Any,
     parameter_name: str,
     context_description: str,
-) -> tuple[list[type[Any]], list[type[Any]]]:
+) -> tuple[list[type[Any] | UnionType], list[type[Any] | UnionType]]:
     """Validate a WorkflowContext annotation and return inferred types.
 
     Args:
