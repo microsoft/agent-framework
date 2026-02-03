@@ -446,6 +446,6 @@ Key points:
 
 ## See Also
 
-- [Middleware Samples](../middleware/) - Examples of custom middleware
-- [Function Tool Samples](./function_tools/) - Creating and using tools
-- [MCP Tools](./mcp_tools/) - Model Context Protocol tools
+- [Middleware Samples](../../getting_started/middleware/) - Examples of custom middleware
+- [Function Tool Samples](../../getting_started/tools/) - Creating and using tools
+- [MCP Tools with Azure OpenAI](../../getting_started/agents/azure_openai/azure_responses_client_with_hosted_mcp.py) - Model Context Protocol tools example
