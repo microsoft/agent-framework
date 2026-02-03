@@ -13,12 +13,10 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     TextSpanRegion,
     UsageDetails,
     get_logger,
@@ -172,14 +170,14 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Role and Finish Reason Maps
 
 
-ROLE_MAP: dict[Role, str] = {
+ROLE_MAP: dict[str, str] = {
     "user": "user",
     "assistant": "assistant",
     "system": "user",
     "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
+FINISH_REASON_MAP: dict[str, str] = {
     "stop_sequence": "stop",
     "max_tokens": "length",
     "tool_use": "tool_calls",

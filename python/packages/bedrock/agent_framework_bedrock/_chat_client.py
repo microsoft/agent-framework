@@ -16,9 +16,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     FunctionTool,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -185,14 +183,14 @@ TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="B
 # endregion
 
 
-ROLE_MAP: dict[Role, str] = {
+ROLE_MAP: dict[str, str] = {
     "user": "user",
     "assistant": "assistant",
     "system": "user",
     "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
+FINISH_REASON_MAP: dict[str, str] = {
     "end_turn": "stop",
     "stop_sequence": "stop",
     "max_tokens": "length",
@@ -642,7 +640,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
+    def _map_finish_reason(self, reason: str | None) -> str | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())
