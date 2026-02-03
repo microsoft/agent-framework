@@ -59,9 +59,11 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
+            value_repr = value
         else:
-            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
+            # Only log a small, non-sensitive snippet of the value when log_value is False
+            value_repr = value[:5]
+        logger.debug(f"PowerFx evaluation failed for value '{value_repr}': {exc}")
         return value
 
 
