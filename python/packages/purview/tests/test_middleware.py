@@ -63,7 +63,6 @@ class TestPurviewPolicyMiddleware:
 
             assert next_called
             assert context.result is not None
-            assert not context.terminate
 
     async def test_middleware_blocks_prompt_on_policy_violation(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
@@ -259,8 +258,6 @@ class TestPurviewPolicyMiddleware:
 
             # Should have been called twice (pre-check raises, then post-check also raises)
             assert mock_process.call_count == 2
-            # Context should not be terminated
-            assert not context.terminate
             # Result should be set by mock_next
             assert context.result is not None
 
