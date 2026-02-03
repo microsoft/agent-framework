@@ -333,10 +333,13 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Stream context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
-    # Collect all stream updates
+    # Collect all stream updates and get final response
+    stream = agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []
-    async for update in agent.run("Hello", stream=True):
+    async for update in stream:
         updates.append(update)
+    # Get final response to trigger post-processing hooks (including context provider notification)
+    await stream.get_final_response()
 
     # Verify context provider was called
     assert mock_provider.invoking_called
