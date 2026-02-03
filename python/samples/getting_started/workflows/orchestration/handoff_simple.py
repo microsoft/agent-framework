@@ -126,7 +126,7 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
                 if not message.text:
                     # Skip messages without text (e.g., tool calls)
                     continue
-                speaker = message.author_name or message.role.value
+                speaker = message.author_name or message.role
                 print(f"- {speaker}: {message.text}")
 
         # HandoffSentEvent: Indicates a handoff has been initiated
@@ -146,7 +146,7 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
             if isinstance(conversation, list):
                 print("\n=== Final Conversation Snapshot ===")
                 for message in conversation:
-                    speaker = message.author_name or message.role.value
+                    speaker = message.author_name or message.role
                     print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
                 print("===================================")
 
@@ -178,7 +178,7 @@ def _print_handoff_agent_user_request(response: AgentResponse) -> None:
         if not message.text:
             # Skip messages without text (e.g., tool calls)
             continue
-        speaker = message.author_name or message.role.value
+        speaker = message.author_name or message.role
         print(f"- {speaker}: {message.text}")
 
 

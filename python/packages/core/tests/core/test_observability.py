@@ -19,7 +19,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
     UsageDetails,
     prepend_agent_framework_to_user_agent,
     tool,
@@ -217,7 +216,7 @@ def mock_chat_client():
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
             return ChatResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
+                messages=[ChatMessage(role="assistant", text="Test response")],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
@@ -225,8 +224,8 @@ def mock_chat_client():
         async def _inner_get_streaming_response(
             self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
         ):
-            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield ChatResponseUpdate(text=" world", role=Role.ASSISTANT)
+            yield ChatResponseUpdate(text="Hello", role="assistant")
+            yield ChatResponseUpdate(text=" world", role="assistant")
 
     return MockChatClient
 
@@ -236,7 +235,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = use_instrumentation(mock_chat_client)()
 
-    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    messages = [ChatMessage(role="user", text="Test message")]
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
     assert response is not None
@@ -259,7 +258,7 @@ async def test_chat_client_streaming_observability(
 ):
     """Test streaming telemetry through the use_instrumentation decorator."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
@@ -288,7 +287,7 @@ async def test_chat_client_observability_with_instructions(
 
     client = use_instrumentation(mock_chat_client)()
 
-    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    messages = [ChatMessage(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -317,7 +316,7 @@ async def test_chat_client_streaming_observability_with_instructions(
     import json
 
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
 
@@ -344,7 +343,7 @@ async def test_chat_client_observability_without_instructions(
     """Test that system_instructions attribute is not set when instructions are not provided."""
     client = use_instrumentation(mock_chat_client)()
 
-    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    messages = [ChatMessage(role="user", text="Test message")]
     options = {"model_id": "Test"}  # No instructions
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -365,7 +364,7 @@ async def test_chat_client_observability_with_empty_instructions(
     """Test that system_instructions attribute is not set when instructions is an empty string."""
     client = use_instrumentation(mock_chat_client)()
 
-    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    messages = [ChatMessage(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": ""}  # Empty string
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -388,7 +387,7 @@ async def test_chat_client_observability_with_list_instructions(
 
     client = use_instrumentation(mock_chat_client)()
 
-    messages = [ChatMessage(role=Role.USER, text="Test message")]
+    messages = [ChatMessage(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -409,7 +408,7 @@ async def test_chat_client_observability_with_list_instructions(
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
     span_exporter.clear()
     response = await client.get_response(messages=messages)
 
@@ -428,7 +427,7 @@ async def test_chat_client_streaming_without_model_id_observability(
 ):
     """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
@@ -535,7 +534,7 @@ def mock_chat_agent():
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Agent response")],
+                messages=[ChatMessage(role="assistant", text="Agent response")],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
                 raw_representation=Mock(finish_reason=Mock(value="stop")),
@@ -544,8 +543,8 @@ def mock_chat_agent():
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="Hello", role=Role.ASSISTANT)
-            yield AgentResponseUpdate(text=" from agent", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Hello", role="assistant")
+            yield AgentResponseUpdate(text=" from agent", role="assistant")
 
     return MockChatClientAgent
 
@@ -1338,7 +1337,7 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
             raise ValueError("Test error")
 
     client = use_instrumentation(FailingChatClient)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Test error"):
@@ -1356,11 +1355,11 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
 
     class FailingStreamingChatClient(mock_chat_client):
         async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
-            yield ChatResponseUpdate(text="Hello", role=Role.ASSISTANT)
+            yield ChatResponseUpdate(text="Hello", role="assistant")
             raise ValueError("Streaming error")
 
     client = use_instrumentation(FailingStreamingChatClient)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Streaming error"):
@@ -1431,12 +1430,11 @@ def test_get_response_attributes_with_finish_reason():
     """Test _get_response_attributes includes finish_reason."""
     from unittest.mock import Mock
 
-    from agent_framework import FinishReason
     from agent_framework.observability import OtelAttr, _get_response_attributes
 
     response = Mock()
     response.response_id = None
-    response.finish_reason = FinishReason.STOP
+    response.finish_reason = "stop"
     response.raw_representation = None
     response.usage_details = None
 
@@ -1608,11 +1606,10 @@ def test_get_response_attributes_finish_reason_from_raw():
     """Test _get_response_attributes gets finish_reason from raw_representation."""
     from unittest.mock import Mock
 
-    from agent_framework import FinishReason
     from agent_framework.observability import OtelAttr, _get_response_attributes
 
     raw_rep = Mock()
-    raw_rep.finish_reason = FinishReason.LENGTH
+    raw_rep.finish_reason = "length"
 
     response = Mock()
     response.response_id = None
@@ -1668,7 +1665,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             **kwargs,
         ):
             return AgentResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
+                messages=[ChatMessage(role="assistant", text="Test response")],
                 thread=thread,
             )
 
@@ -1681,7 +1678,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
         ):
             from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="Test", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Test", role="assistant")
 
     decorated_agent = use_agent_instrumentation(MockAgent)
     agent = decorated_agent()
@@ -1730,7 +1727,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             # yield before raise to make this an async generator
-            yield AgentResponseUpdate(text="", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="", role="assistant")
             raise RuntimeError("Agent failed")
 
     decorated_agent = use_agent_instrumentation(FailingAgent)
@@ -1781,13 +1778,13 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Test")],
+                messages=[ChatMessage(role="assistant", text="Test")],
                 thread=thread,
             )
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="Hello ", role=Role.ASSISTANT)
-            yield AgentResponseUpdate(text="World", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Hello ", role="assistant")
+            yield AgentResponseUpdate(text="World", role="assistant")
 
     decorated_agent = use_agent_instrumentation(StreamingAgent)
     agent = decorated_agent()
@@ -1836,24 +1833,22 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     """Test that finish_reason is captured in output messages."""
     import json
 
-    from agent_framework import FinishReason
-
     class ClientWithFinishReason(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
             return ChatResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Done")],
+                messages=[ChatMessage(role="assistant", text="Done")],
                 usage_details=UsageDetails(input_token_count=5, output_token_count=10),
-                finish_reason=FinishReason.STOP,
+                finish_reason="stop",
             )
 
     client = use_instrumentation(ClientWithFinishReason)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
 
     assert response is not None
-    assert response.finish_reason == FinishReason.STOP
+    assert response.finish_reason == "stop"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -1901,7 +1896,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
             return AgentResponse(messages=[], thread=thread)
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="Starting", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="Starting", role="assistant")
             raise RuntimeError("Stream failed")
 
     decorated_agent = use_agent_instrumentation(FailingStreamingAgent)
@@ -1924,7 +1919,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
 async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test that no spans are created when instrumentation is disabled."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
@@ -1939,7 +1934,7 @@ async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test streaming creates no spans when instrumentation is disabled."""
     client = use_instrumentation(mock_chat_client)()
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage(role="user", text="Test")]
 
     span_exporter.clear()
     updates = []
@@ -1987,7 +1982,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
-            yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="test", role="assistant")
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()
@@ -2034,7 +2029,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
             return AgentResponse(messages=[], thread=thread)
 
         async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
+            yield AgentResponseUpdate(text="test", role="assistant")
 
     decorated = use_agent_instrumentation(TestAgent)
     agent = decorated()

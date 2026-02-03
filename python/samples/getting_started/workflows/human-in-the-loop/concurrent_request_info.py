@@ -29,11 +29,9 @@ from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
     RequestInfoEvent,
-    Role,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient
@@ -72,7 +70,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
             # Check for human feedback in the conversation (will be last user message if present)
             if r.full_conversation:
                 for msg in reversed(r.full_conversation):
-                    if msg.role == Role.USER and msg.text and "perspectives" not in msg.text.lower():
+                    if msg.role == "user" and msg.text and "perspectives" not in msg.text.lower():
                         human_guidance = msg.text
                         break
         except Exception:
@@ -82,14 +80,14 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
     guidance_text = f"\n\nHuman guidance: {human_guidance}" if human_guidance else ""
 
     system_msg = ChatMessage(
-        Role.SYSTEM,
+        "system",
         text=(
             "You are a synthesis expert. Consolidate the following analyst perspectives "
             "into one cohesive, balanced summary (3-4 sentences). If human guidance is provided, "
             "prioritize aspects as directed."
         ),
     )
-    user_msg = ChatMessage(Role.USER, text="\n\n".join(expert_sections) + guidance_text)
+    user_msg = ChatMessage("user", text="\n\n".join(expert_sections) + guidance_text)
 
     response = await _chat_client.get_response([system_msg, user_msg])
     return response.messages[-1].text if response.messages else ""
@@ -174,7 +172,7 @@ async def main() -> None:
                             else event.data.full_conversation
                         )
                         for msg in recent:
-                            name = msg.author_name or msg.role.value
+                            name = msg.author_name or msg.role
                             text = (msg.text or "")[:150]
                             print(f"  [{name}]: {text}...")
                         print("-" * 40)

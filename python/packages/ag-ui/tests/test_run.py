@@ -188,7 +188,6 @@ class TestCreateStateContextMessage:
 
     def test_creates_message(self):
         """Creates state context message."""
-        from agent_framework import Role
 
         state = {"document": "Hello world"}
         schema = {"properties": {"document": {"type": "string"}}}
@@ -196,7 +195,7 @@ class TestCreateStateContextMessage:
         result = _create_state_context_message(state, schema)
 
         assert result is not None
-        assert result.role == Role.SYSTEM
+        assert result.role == "system"
         assert len(result.contents) == 1
         assert "Hello world" in result.contents[0].text
         assert "Current state" in result.contents[0].text
@@ -230,7 +229,6 @@ class TestInjectStateContext:
 
     def test_injects_before_last_user_message(self):
         """Injects state context before last user message."""
-        from agent_framework import Role
 
         messages = [
             ChatMessage(role="system", contents=[Content.from_text("You are helpful")]),
@@ -243,13 +241,13 @@ class TestInjectStateContext:
 
         assert len(result) == 3
         # System message first
-        assert result[0].role == Role.SYSTEM
+        assert result[0].role == "system"
         assert "helpful" in result[0].contents[0].text
         # State context second
-        assert result[1].role == Role.SYSTEM
+        assert result[1].role == "system"
         assert "Current state" in result[1].contents[0].text
         # User message last
-        assert result[2].role == Role.USER
+        assert result[2].role == "user"
         assert "Hello" in result[2].contents[0].text
 
 

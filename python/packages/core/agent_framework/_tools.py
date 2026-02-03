@@ -1831,7 +1831,6 @@ def _replace_approval_contents_with_results(
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
         Content,
-        Role,
     )
 
     result_idx = 0
@@ -1861,7 +1860,7 @@ def _replace_approval_contents_with_results(
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
-                        msg.role = Role.TOOL
+                        msg.role = "tool"
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1869,7 +1868,7 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = Role.TOOL
+                    msg.role = "tool"
 
         # Remove approval requests that were duplicates (in reverse order to preserve indices)
         for idx in reversed(contents_to_remove):
@@ -1988,9 +1987,8 @@ def _handle_function_calls_response(
                     if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
-                        from ._types import Role
 
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                        if response.messages and response.messages[0].role == "assistant":
                             response.messages[0].contents.extend(function_call_results)
                         else:
                             # Fallback: create new assistant message (shouldn't normally happen)
@@ -2206,9 +2204,8 @@ def _handle_function_calls_streaming_response(
                     if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
-                        from ._types import Role
 
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                        if response.messages and response.messages[0].role == "assistant":
                             response.messages[0].contents.extend(function_call_results)
                             # Yield the approval requests as part of the assistant message
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")

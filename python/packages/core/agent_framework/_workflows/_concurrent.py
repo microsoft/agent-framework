@@ -117,14 +117,14 @@ class _AggregateAgentConversations(Executor):
 
             # Capture a single user prompt (first encountered across any conversation)
             if prompt_message is None:
-                found_user = next((m for m in conv if _is_role(m, Role.USER)), None)
+                found_user = next((m for m in conv if _is_role(m, "user")), None)
                 if found_user is not None:
                     prompt_message = found_user
 
             # Pick the final assistant message from the response; fallback to conversation search
-            final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, Role.ASSISTANT)), None)
+            final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, "assistant")), None)
             if final_assistant is None:
-                final_assistant = next((m for m in reversed(conv) if _is_role(m, Role.ASSISTANT)), None)
+                final_assistant = next((m for m in reversed(conv) if _is_role(m, "assistant")), None)
 
             if final_assistant is not None:
                 assistant_replies.append(final_assistant)

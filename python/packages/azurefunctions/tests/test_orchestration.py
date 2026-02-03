@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage, Role
+from agent_framework import AgentResponse, ChatMessage
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -254,7 +254,7 @@ class TestAzureFunctionsFireAndForget:
         response = result.result
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.SYSTEM
+        assert response.messages[0].role == "system"
         # Check message contains key information
         message_text = response.messages[0].text
         assert "accepted" in message_text.lower()

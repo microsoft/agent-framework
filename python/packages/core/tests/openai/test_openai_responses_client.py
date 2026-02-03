@@ -39,7 +39,6 @@ from agent_framework import (
     HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import (
@@ -658,7 +657,7 @@ def test_prepare_content_for_opentool_approval_response() -> None:
         function_call=function_call,
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response, {})
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_001"
@@ -675,7 +674,7 @@ def test_prepare_content_for_openai_error_content() -> None:
         error_details="Invalid parameter",
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, error_content, {})
+    result = client._prepare_content_for_openai("assistant", error_content, {})
 
     # ErrorContent should return empty dict (logged but not sent)
     assert result == {}
@@ -693,7 +692,7 @@ def test_prepare_content_for_openai_usage_content() -> None:
         }
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, usage_content, {})
+    result = client._prepare_content_for_openai("assistant", usage_content, {})
 
     # UsageContent should return empty dict (logged but not sent)
     assert result == {}
@@ -707,7 +706,7 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
         vector_store_id="vs_123",
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, vector_store_content, {})
+    result = client._prepare_content_for_openai("assistant", vector_store_content, {})
 
     # HostedVectorStoreContent should return empty dict (logged but not sent)
     assert result == {}
@@ -877,7 +876,7 @@ def test_hosted_file_content_preparation() -> None:
         name="document.pdf",
     )
 
-    result = client._prepare_content_for_openai(Role.USER, hosted_file, {})
+    result = client._prepare_content_for_openai("user", hosted_file, {})
 
     assert result["type"] == "input_file"
     assert result["file_id"] == "file_abc123"
@@ -900,7 +899,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
         function_call=mcp_call,
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response, {})
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_mcp_001"
@@ -1469,7 +1468,7 @@ def test_streaming_response_basic_structure() -> None:
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
-    assert response.role == Role.ASSISTANT
+    assert response.role == "assistant"
     assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
@@ -1667,7 +1666,7 @@ def test_prepare_content_for_openai_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._prepare_content_for_openai(Role.USER, image_content_with_detail, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_with_detail, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
@@ -1675,7 +1674,7 @@ def test_prepare_content_for_openai_image_content() -> None:
 
     # Test image content without additional properties (defaults)
     image_content_basic = Content.from_uri(uri="https://example.com/basic.png", media_type="image/png")
-    result = client._prepare_content_for_openai(Role.USER, image_content_basic, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_basic, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
     assert result["file_id"] is None
@@ -1687,14 +1686,14 @@ def test_prepare_content_for_openai_audio_content() -> None:
 
     # Test WAV audio content
     wav_content = Content.from_uri(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
-    result = client._prepare_content_for_openai(Role.USER, wav_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", wav_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
     mp3_content = Content.from_uri(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
-    result = client._prepare_content_for_openai(Role.USER, mp3_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", mp3_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
@@ -1705,12 +1704,12 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
 
     # Test unsupported audio format
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
-    result = client._prepare_content_for_openai(Role.USER, unsupported_audio, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", unsupported_audio, {})  # type: ignore
     assert result == {}
 
     # Test non-media content
     text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
-    result = client._prepare_content_for_openai(Role.USER, text_uri_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", text_uri_content, {})  # type: ignore
     assert result == {}
 
 
@@ -1775,7 +1774,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._prepare_content_for_openai(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
+    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
     assert result["summary"]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"

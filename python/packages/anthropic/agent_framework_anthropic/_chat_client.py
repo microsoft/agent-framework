@@ -173,19 +173,19 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
 FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "tool_use": FinishReason.TOOL_CALLS,
-    "end_turn": FinishReason.STOP,
-    "refusal": FinishReason.CONTENT_FILTER,
-    "pause_turn": FinishReason.STOP,
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "end_turn": "stop",
+    "refusal": "content_filter",
+    "pause_turn": "stop",
 }
 
 
@@ -415,7 +415,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             run_options["system"] = messages[0].text
 
         # betas
@@ -502,7 +502,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
@@ -673,7 +673,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             response_id=message.id,
             messages=[
                 ChatMessage(
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,
                 )

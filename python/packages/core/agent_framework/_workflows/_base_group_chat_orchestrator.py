@@ -14,7 +14,7 @@ from typing import Any, ClassVar, TypeAlias
 
 from typing_extensions import Never
 
-from .._types import ChatMessage, Role
+from .._types import ChatMessage
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._events import WorkflowEvent
 from ._executor import Executor, handler
@@ -214,7 +214,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Usage:
             workflow.run("Write a blog post about AI agents")
         """
-        await self._handle_messages([ChatMessage(role=Role.USER, text=task)], ctx)
+        await self._handle_messages([ChatMessage(role="user", text=task)], ctx)
 
     @handler
     async def handle_message(
@@ -231,7 +231,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
 
         Usage:
-            workflow.run(ChatMessage(role=Role.USER, text="Write a blog post about AI agents"))
+            workflow.run(ChatMessage(role="user", text="Write a blog post about AI agents"))
         """
         await self._handle_messages([task], ctx)
 
@@ -250,8 +250,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
         Usage:
             workflow.run([
-                ChatMessage(role=Role.USER, text="Write a blog post about AI agents"),
-                ChatMessage(role=Role.USER, text="Make it engaging and informative.")
+                ChatMessage(role="user", text="Write a blog post about AI agents"),
+                ChatMessage(role="user", text="Make it engaging and informative.")
             ])
         """
         if not task:
@@ -401,7 +401,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             ChatMessage with completion content
         """
-        return ChatMessage(role=Role.ASSISTANT, text=message, author_name=self._name)
+        return ChatMessage(role="assistant", text=message, author_name=self._name)
 
     # Participant routing (shared across all patterns)
 
@@ -465,7 +465,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             # AgentExecutors receive simple message list
             messages: list[ChatMessage] = []
             if additional_instruction:
-                messages.append(ChatMessage(role=Role.USER, text=additional_instruction))
+                messages.append(ChatMessage(role="user", text=additional_instruction))
             request = AgentExecutorRequest(messages=messages, should_respond=True)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(

@@ -13,7 +13,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     tool,
 )
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
@@ -42,16 +41,16 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
     assert exec_counter == 1
     assert len(response.messages) == 3
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[0].name == "test_function"
     assert response.messages[0].contents[0].arguments == '{"arg1": "value1"}'
     assert response.messages[0].contents[0].call_id == "1"
-    assert response.messages[1].role == Role.TOOL
+    assert response.messages[1].role == "tool"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[1].contents[0].call_id == "1"
     assert response.messages[1].contents[0].result == "Processed value1"
-    assert response.messages[2].role == Role.ASSISTANT
+    assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
 
 
@@ -86,11 +85,11 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
     assert exec_counter == 2
     assert len(response.messages) == 5
-    assert response.messages[0].role == Role.ASSISTANT
-    assert response.messages[1].role == Role.TOOL
-    assert response.messages[2].role == Role.ASSISTANT
-    assert response.messages[3].role == Role.TOOL
-    assert response.messages[4].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
+    assert response.messages[1].role == "tool"
+    assert response.messages[2].role == "assistant"
+    assert response.messages[3].role == "tool"
+    assert response.messages[4].role == "assistant"
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[2].contents[0].type == "function_call"
@@ -432,7 +431,7 @@ async def test_function_invocation_scenarios(
                 assert messages[0].contents[0].type == "function_call"
                 assert messages[1].contents[0].type == "function_result"
                 assert messages[1].contents[0].result == "Processed value1"
-                assert messages[2].role == Role.ASSISTANT
+                assert messages[2].role == "assistant"
                 assert messages[2].text == "done"
                 assert exec_counter == 1
             else:
@@ -561,9 +560,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     for msg in all_messages:
         for content in msg.contents:
             if content.type == "function_result":
-                assert msg.role == Role.TOOL, (
-                    f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
-                )
+                assert msg.role == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
 
 
 async def test_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):
@@ -593,7 +590,7 @@ async def test_approval_requests_in_assistant_message(chat_client_base: ChatClie
 
     # Should have one assistant message containing both the call and approval request
     assert len(response.messages) == 1
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert len(response.messages[0].contents) == 2
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[1].type == "function_approval_request"
@@ -2339,9 +2336,9 @@ async def test_terminate_loop_single_function_call(chat_client_base: ChatClientP
     # There should be 2 messages: assistant with function call, tool result from middleware
     # The loop should NOT have continued to call the LLM again
     assert len(response.messages) == 2
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].contents[0].type == "function_call"
-    assert response.messages[1].role == Role.TOOL
+    assert response.messages[1].role == "tool"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[1].contents[0].result == "terminated by middleware"
 
@@ -2410,9 +2407,9 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     # There should be 2 messages: assistant with function calls, tool results
     # The loop should NOT have continued to call the LLM again
     assert len(response.messages) == 2
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert len(response.messages[0].contents) == 2
-    assert response.messages[1].role == Role.TOOL
+    assert response.messages[1].role == "tool"
     # Both function results should be present
     assert len(response.messages[1].contents) == 2
 

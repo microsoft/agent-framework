@@ -16,7 +16,6 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
-    Role,
     UsageDetails,
 )
 
@@ -344,7 +343,7 @@ class WorkflowAgent(BaseAgent):
                     return None
                 return AgentResponseUpdate(
                     contents=contents,
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name=executor_id,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
@@ -370,7 +369,7 @@ class WorkflowAgent(BaseAgent):
                 )
                 return AgentResponseUpdate(
                     contents=[function_call, approval_request],
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),

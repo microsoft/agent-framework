@@ -39,7 +39,7 @@ class UserInfoMemory(ContextProvider):
     ) -> None:
         """Extract user information from messages after each agent call."""
         # Check if we need to extract user info from user messages
-        user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role.value == "user"]  # type: ignore
+        user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
 
         if (self.user_info.name is None or self.user_info.age is None) and user_messages:
             try:

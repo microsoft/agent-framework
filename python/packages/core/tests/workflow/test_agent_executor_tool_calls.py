@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -45,7 +44,7 @@ class _ToolCallingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - not used in this test."""
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage(role="assistant", text="done")])
 
     async def run_stream(
         self,
@@ -58,7 +57,7 @@ class _ToolCallingAgent(BaseAgent):
         # First update: some text
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="Let me search for that...")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Second update: tool call (no text!)
@@ -70,7 +69,7 @@ class _ToolCallingAgent(BaseAgent):
                     arguments={"query": "weather"},
                 )
             ],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Third update: tool result (no text!)
@@ -81,13 +80,13 @@ class _ToolCallingAgent(BaseAgent):
                     result={"temperature": 72, "condition": "sunny"},
                 )
             ],
-            role=Role.TOOL,
+            role="tool",
         )
 
         # Fourth update: final text response
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="The weather is sunny, 72°F.")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
 

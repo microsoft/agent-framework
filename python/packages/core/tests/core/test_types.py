@@ -19,8 +19,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
-    Role,
     TextSpanRegion,
     ToolMode,
     ToolProtocol,
@@ -576,7 +574,7 @@ def test_chat_message_text():
     message = ChatMessage(role="user", text="Hello, how are you?")
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "Hello, how are you?"
@@ -594,7 +592,7 @@ def test_chat_message_contents():
     message = ChatMessage(role="user", contents=[content1, content2])
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 2
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "text"
@@ -604,8 +602,8 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage(role=Role.USER, text="hi")
-    assert m.role == Role.USER
+    m = ChatMessage(role="user", text="hi")
+    assert m.role == "user"
     assert m.text == "hi"
 
 
@@ -621,7 +619,7 @@ def test_chat_response():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "I'm doing well, thank you!"
     assert isinstance(response.messages[0], ChatMessage)
     # __str__ returns text
@@ -641,7 +639,7 @@ def test_chat_response_with_format():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -660,7 +658,7 @@ def test_chat_response_with_format_init():
     response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -1080,7 +1078,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 @fixture
 def chat_message() -> ChatMessage:
-    return ChatMessage(role=Role.USER, text="Hello")
+    return ChatMessage(role="user", text="Hello")
 
 
 @fixture
@@ -1095,7 +1093,7 @@ def agent_response(chat_message: ChatMessage) -> AgentResponse:
 
 @fixture
 def agent_response_update(text_content: Content) -> AgentResponseUpdate:
-    return AgentResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
+    return AgentResponseUpdate(role="assistant", contents=[text_content])
 
 
 # region AgentResponse
@@ -1174,7 +1172,7 @@ def test_agent_run_response_update_created_at() -> None:
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=utc_timestamp,
     )
     assert update.created_at == utc_timestamp
@@ -1185,7 +1183,7 @@ def test_agent_run_response_update_created_at() -> None:
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     update_with_now = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=formatted_utc,
     )
     assert update_with_now.created_at == formatted_utc
@@ -1197,7 +1195,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[ChatMessage(role="assistant", text="Hello")],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1207,7 +1205,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[ChatMessage(role="assistant", text="Hello")],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1295,13 +1293,18 @@ def test_function_call_incompatible_ids_are_not_merged():
 # region Role & FinishReason basics
 
 
-def test_chat_role_str_and_repr():
-    assert str(Role.USER) == "user"
-    assert "Role(value=" in repr(Role.USER)
+def test_chat_role_is_string():
+    """Role is now a NewType of str, so roles are just strings."""
+    role = "user"
+    assert role == "user"
+    assert isinstance(role, str)
 
 
-def test_chat_finish_reason_constants():
-    assert FinishReason.STOP.value == "stop"
+def test_chat_finish_reason_is_string():
+    """FinishReason is now a NewType of str, so finish reasons are just strings."""
+    finish_reason = "stop"
+    assert finish_reason == "stop"
+    assert isinstance(finish_reason, str)
 
 
 def test_response_update_propagates_fields_and_metadata():
@@ -1314,7 +1317,7 @@ def test_response_update_propagates_fields_and_metadata():
         conversation_id="cid",
         model_id="model-x",
         created_at="t0",
-        finish_reason=FinishReason.STOP,
+        finish_reason="stop",
         additional_properties={"k": "v"},
     )
     resp = ChatResponse.from_chat_response_updates([upd])
@@ -1322,9 +1325,9 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
     assert resp.model_id == "model-x"
-    assert resp.finish_reason == FinishReason.STOP
+    assert resp.finish_reason == "stop"
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
-    assert resp.messages[0].role == Role.ASSISTANT
+    assert resp.messages[0].role == "assistant"
     assert resp.messages[0].author_name == "bot"
     assert resp.messages[0].message_id == "mid"
 
@@ -1587,7 +1590,7 @@ def test_chat_message_complex_content_serialization():
         Content.from_function_result(call_id="call1", result="success"),
     ]
 
-    message = ChatMessage(role=Role.ASSISTANT, contents=contents)
+    message = ChatMessage(role="assistant", contents=contents)
 
     # Test to_dict
     message_dict = message.to_dict()
@@ -1663,7 +1666,7 @@ def test_chat_response_complex_serialization():
             {"role": "user", "contents": [{"type": "text", "text": "Hello"}]},
             {"role": "assistant", "contents": [{"type": "text", "text": "Hi there"}]},
         ],
-        "finish_reason": {"value": "stop"},
+        "finish_reason": "stop",
         "usage_details": {
             "type": "usage_details",
             "input_token_count": 5,
@@ -1676,7 +1679,7 @@ def test_chat_response_complex_serialization():
     response = ChatResponse.from_dict(response_data)
     assert len(response.messages) == 2
     assert isinstance(response.messages[0], ChatMessage)
-    assert isinstance(response.finish_reason, FinishReason)
+    assert isinstance(response.finish_reason, str)
     assert isinstance(response.usage_details, dict)
     assert response.model_id == "gpt-4"  # Should be stored as model_id
 
@@ -1684,7 +1687,7 @@ def test_chat_response_complex_serialization():
     response_dict = response.to_dict()
     assert len(response_dict["messages"]) == 2
     assert isinstance(response_dict["messages"][0], dict)
-    assert isinstance(response_dict["finish_reason"], dict)
+    assert isinstance(response_dict["finish_reason"], str)
     assert isinstance(response_dict["usage_details"], dict)
     assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
 
@@ -1794,20 +1797,20 @@ def test_agent_run_response_update_all_content_types():
 
     update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
-    assert isinstance(update.role, Role)
-    assert update.role.value == "assistant"
+    assert isinstance(update.role, str)
+    assert update.role == "assistant"
 
     # Test to_dict with role conversion
     update_dict = update.to_dict()
     assert len(update_dict["contents"]) == 12  # unknown_type was ignored during from_dict
-    assert isinstance(update_dict["role"], dict)
+    assert isinstance(update_dict["role"], str)
 
     # Test role as string conversion
     update_data_str_role = update_data.copy()
     update_data_str_role["role"] = "user"
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
-    assert isinstance(update_str.role, Role)
-    assert update_str.role.value == "user"
+    assert isinstance(update_str.role, str)
+    assert update_str.role == "user"
 
 
 # region Serialization
@@ -1936,7 +1939,7 @@ def test_agent_run_response_update_all_content_types():
         pytest.param(
             ChatMessage,
             {
-                "role": {"type": "role", "value": "user"},
+                "role": "user",
                 "contents": [
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
@@ -1953,16 +1956,16 @@ def test_agent_run_response_update_all_content_types():
                 "messages": [
                     {
                         "type": "chat_message",
-                        "role": {"type": "role", "value": "user"},
+                        "role": "user",
                         "contents": [{"type": "text", "text": "Hello"}],
                     },
                     {
                         "type": "chat_message",
-                        "role": {"type": "role", "value": "assistant"},
+                        "role": "assistant",
                         "contents": [{"type": "text", "text": "Hi there"}],
                     },
                 ],
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "finish_reason": "stop",
                 "usage_details": {
                     "type": "usage_details",
                     "input_token_count": 10,
@@ -1981,8 +1984,8 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "role": "assistant",
+                "finish_reason": "stop",
                 "message_id": "msg-123",
                 "response_id": "resp-123",
             },
@@ -1993,11 +1996,11 @@ def test_agent_run_response_update_all_content_types():
             {
                 "messages": [
                     {
-                        "role": {"type": "role", "value": "user"},
+                        "role": "user",
                         "contents": [{"type": "text", "text": "Question"}],
                     },
                     {
-                        "role": {"type": "role", "value": "assistant"},
+                        "role": "assistant",
                         "contents": [{"type": "text", "text": "Answer"}],
                     },
                 ],
@@ -2018,7 +2021,7 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Streaming"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
+                "role": "assistant",
                 "message_id": "msg-123",
                 "response_id": "run-123",
                 "author_name": "Agent",

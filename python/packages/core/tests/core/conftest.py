@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     ToolProtocol,
     tool,
     use_chat_middleware,
@@ -233,7 +232,7 @@ class MockAgent(AgentProtocol):
         **kwargs: Any,
     ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Response")])])
+        return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text("Response")])])
 
     async def run_stream(
         self,

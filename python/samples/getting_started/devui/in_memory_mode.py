@@ -10,8 +10,7 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, Executor, WorkflowBuilder, WorkflowContext, handler
-from agent_framework import tool
+from agent_framework import ChatAgent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
 from typing_extensions import Never
@@ -28,6 +27,7 @@ def get_weather(
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     temperature = 53
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
+
 
 @tool(approval_mode="never_require")
 def get_time(

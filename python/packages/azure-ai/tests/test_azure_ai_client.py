@@ -22,7 +22,6 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -299,16 +298,16 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are a helpful assistant.")]),
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="System response")]),
+        ChatMessage(role="system", contents=[Content.from_text(text="You are a helpful assistant.")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
 
     assert len(result_messages) == 2
-    assert result_messages[0].role == Role.USER
-    assert result_messages[1].role == Role.ASSISTANT
+    assert result_messages[0].role == "user"
+    assert result_messages[1].role == "assistant"
     assert instructions == "You are a helpful assistant."
 
 
@@ -319,8 +318,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -420,7 +419,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -454,7 +453,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -493,7 +492,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -969,7 +968,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (

@@ -53,7 +53,7 @@ class SerializationProtocol(Protocol):
             # Deserialize back to ChatMessage instance - automatic type reconstruction
             restored_msg = ChatMessage.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
-            print(restored_msg.role.value)  # "user"
+            print(restored_msg.role)  # "user"
 
             # Verify protocol compliance (useful for type checking and validation)
             assert isinstance(user_msg, SerializationProtocol)

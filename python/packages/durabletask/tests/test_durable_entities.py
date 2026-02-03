@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content
 from pydantic import BaseModel
 
 from agent_framework_durabletask import (
@@ -595,7 +595,7 @@ class TestRunRequestSupport:
 
         request = RunRequest(
             message="Test message",
-            role=Role.USER,
+            role="user",
             enable_tool_calls=True,
             correlation_id="corr-runreq-1",
         )
@@ -644,7 +644,7 @@ class TestRunRequestSupport:
         # Send as system role
         request = RunRequest(
             message="System message",
-            role=Role.SYSTEM,
+            role="system",
             correlation_id="corr-runreq-3",
         )
 

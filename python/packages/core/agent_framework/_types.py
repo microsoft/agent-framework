@@ -12,7 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -40,7 +40,9 @@ __all__ = [
     "ChatResponseUpdate",
     "Content",
     "FinishReason",
+    "FinishReasonLiteral",
     "Role",
+    "RoleLiteral",
     "TextSpanRegion",
     "ToolMode",
     "UsageDetails",
@@ -60,28 +62,6 @@ logger = get_logger("agent_framework")
 
 
 # region Content Parsing Utilities
-
-
-class EnumLike(type):
-    """Generic metaclass for creating enum-like classes with predefined constants.
-
-    This metaclass automatically creates class-level constants based on a _constants
-    class attribute. Each constant is defined as a tuple of (name, *args) where
-    name is the constant name and args are the constructor arguments.
-    """
-
-    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any]) -> "EnumLike":
-        cls = super().__new__(mcs, name, bases, namespace)
-
-        # Create constants if _constants is defined
-        if (const := getattr(cls, "_constants", None)) and isinstance(const, dict):
-            for const_name, const_args in const.items():
-                if isinstance(const_args, (list, tuple)):
-                    setattr(cls, const_name, cls(*const_args))
-                else:
-                    setattr(cls, const_name, cls(const_args))
-
-        return cls
 
 
 def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
@@ -1420,140 +1400,56 @@ def prepare_function_call_results(content: "Content | Any | list[Content | Any]"
 
 # region Chat Response constants
 
+RoleLiteral = Literal["system", "user", "assistant", "tool"]
+"""Literal type for known role values. Accepts any string for extensibility."""
 
-class Role(SerializationMixin, metaclass=EnumLike):
-    """Describes the intended purpose of a message within a chat interaction.
+Role = NewType("Role", str)
+"""Type for chat message roles. Use string values directly (e.g., "user", "assistant").
 
-    Attributes:
-        value: The string representation of the role.
+Known values: "system", "user", "assistant", "tool"
 
-    Properties:
-        SYSTEM: The role that instructs or sets the behavior of the AI system.
-        USER: The role that provides user input for chat interactions.
-        ASSISTANT: The role that provides responses to system-instructed, user-prompted input.
-        TOOL: The role that provides additional information and references in response to tool use requests.
+Examples:
+    .. code-block:: python
 
-    Examples:
-        .. code-block:: python
+        from agent_framework import ChatMessage
 
-            from agent_framework import Role
+        # Use string values directly
+        user_msg = ChatMessage(role="user", text="Hello")
+        assistant_msg = ChatMessage(role="assistant", text="Hi there!")
 
-            # Use predefined role constants
-            system_role = Role.SYSTEM
-            user_role = Role.USER
-            assistant_role = Role.ASSISTANT
-            tool_role = Role.TOOL
+        # Custom roles are also supported
+        custom_msg = ChatMessage(role="custom", text="Custom role message")
 
-            # Create custom role
-            custom_role = Role(value="custom")
+        # Compare roles directly as strings
+        if user_msg.role == "user":
+            print("This is a user message")
+"""
 
-            # Compare roles
-            print(system_role == Role.SYSTEM)  # True
-            print(system_role.value)  # "system"
-    """
+FinishReasonLiteral = Literal["stop", "length", "tool_calls", "content_filter"]
+"""Literal type for known finish reason values. Accepts any string for extensibility."""
 
-    # Constants configuration for EnumLike metaclass
-    _constants: ClassVar[dict[str, str]] = {
-        "SYSTEM": "system",
-        "USER": "user",
-        "ASSISTANT": "assistant",
-        "TOOL": "tool",
-    }
+FinishReason = NewType("FinishReason", str)
+"""Type for chat response finish reasons. Use string values directly.
 
-    # Type annotations for constants
-    SYSTEM: "Role"
-    USER: "Role"
-    ASSISTANT: "Role"
-    TOOL: "Role"
+Known values:
+    - "stop": Normal completion
+    - "length": Max tokens reached
+    - "tool_calls": Tool calls triggered
+    - "content_filter": Content filter triggered
 
-    def __init__(self, value: str) -> None:
-        """Initialize Role with a value.
+Examples:
+    .. code-block:: python
 
-        Args:
-            value: The string representation of the role.
-        """
-        self.value = value
+        from agent_framework import ChatResponse
 
-    def __str__(self) -> str:
-        """Returns the string representation of the role."""
-        return self.value
+        response = ChatResponse(messages=[...], finish_reason="stop")
 
-    def __repr__(self) -> str:
-        """Returns the string representation of the role."""
-        return f"Role(value={self.value!r})"
-
-    def __eq__(self, other: object) -> bool:
-        """Check if two Role instances are equal."""
-        if not isinstance(other, Role):
-            return False
-        return self.value == other.value
-
-    def __hash__(self) -> int:
-        """Return hash of the Role for use in sets and dicts."""
-        return hash(self.value)
-
-
-class FinishReason(SerializationMixin, metaclass=EnumLike):
-    """Represents the reason a chat response completed.
-
-    Attributes:
-        value: The string representation of the finish reason.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import FinishReason
-
-            # Use predefined finish reason constants
-            stop_reason = FinishReason.STOP  # Normal completion
-            length_reason = FinishReason.LENGTH  # Max tokens reached
-            tool_calls_reason = FinishReason.TOOL_CALLS  # Tool calls triggered
-            filter_reason = FinishReason.CONTENT_FILTER  # Content filter triggered
-
-            # Check finish reason
-            if stop_reason == FinishReason.STOP:
-                print("Response completed normally")
-    """
-
-    # Constants configuration for EnumLike metaclass
-    _constants: ClassVar[dict[str, str]] = {
-        "CONTENT_FILTER": "content_filter",
-        "LENGTH": "length",
-        "STOP": "stop",
-        "TOOL_CALLS": "tool_calls",
-    }
-
-    # Type annotations for constants
-    CONTENT_FILTER: "FinishReason"
-    LENGTH: "FinishReason"
-    STOP: "FinishReason"
-    TOOL_CALLS: "FinishReason"
-
-    def __init__(self, value: str) -> None:
-        """Initialize FinishReason with a value.
-
-        Args:
-            value: The string representation of the finish reason.
-        """
-        self.value = value
-
-    def __eq__(self, other: object) -> bool:
-        """Check if two FinishReason instances are equal."""
-        if not isinstance(other, FinishReason):
-            return False
-        return self.value == other.value
-
-    def __hash__(self) -> int:
-        """Return hash of the FinishReason for use in sets and dicts."""
-        return hash(self.value)
-
-    def __str__(self) -> str:
-        """Returns the string representation of the finish reason."""
-        return self.value
-
-    def __repr__(self) -> str:
-        """Returns the string representation of the finish reason."""
-        return f"FinishReason(value={self.value!r})"
+        # Check finish reason directly as string
+        if response.finish_reason == "stop":
+            print("Response completed normally")
+        elif response.finish_reason == "tool_calls":
+            print("Tool calls need to be processed")
+"""
 
 
 # region ChatMessage
@@ -1601,7 +1497,7 @@ class ChatMessage(SerializationMixin):
             msg_json = user_msg.to_json()
             # '{"type": "chat_message", "role": {"type": "role", "value": "user"}, "contents": [...], ...}'
             restored_from_json = ChatMessage.from_json(msg_json)
-            print(restored_from_json.role.value)  # "user"
+            print(restored_from_json.role)  # "user"
 
     """
 
@@ -1610,7 +1506,7 @@ class ChatMessage(SerializationMixin):
     @overload
     def __init__(
         self,
-        role: Role | Literal["system", "user", "assistant", "tool"],
+        role: RoleLiteral | str,
         *,
         text: str,
         author_name: str | None = None,
@@ -1637,7 +1533,7 @@ class ChatMessage(SerializationMixin):
     @overload
     def __init__(
         self,
-        role: Role | Literal["system", "user", "assistant", "tool"],
+        role: RoleLiteral | str,
         *,
         contents: "Sequence[Content | Mapping[str, Any]]",
         author_name: str | None = None,
@@ -1663,7 +1559,7 @@ class ChatMessage(SerializationMixin):
 
     def __init__(
         self,
-        role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any],
+        role: RoleLiteral | str,
         *,
         text: str | None = None,
         contents: "Sequence[Content | Mapping[str, Any]] | None" = None,
@@ -1676,7 +1572,7 @@ class ChatMessage(SerializationMixin):
         """Initialize ChatMessage.
 
         Args:
-            role: The role of the author of the message (Role, string, or dict).
+            role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
 
         Keyword Args:
             text: Optional text content of the message.
@@ -1688,11 +1584,9 @@ class ChatMessage(SerializationMixin):
             raw_representation: Optional raw representation of the chat message.
             kwargs: will be combined with additional_properties if provided.
         """
-        # Handle role conversion
-        if isinstance(role, dict):
-            role = Role.from_dict(role)
-        elif isinstance(role, str):
-            role = Role(value=role)
+        # Handle role conversion from legacy dict format
+        if isinstance(role, dict) and "value" in role:
+            role = role["value"]
 
         # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
@@ -1700,7 +1594,7 @@ class ChatMessage(SerializationMixin):
         if text is not None:
             parsed_contents.append(Content.from_text(text=text))
 
-        self.role = role
+        self.role: str = role
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
@@ -1758,18 +1652,18 @@ def normalize_messages(
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage(role=Role.USER, text=messages)]
+        return [ChatMessage(role="user", text=messages)]
 
     if isinstance(messages, ChatMessage):
         return [messages]
 
-    return [ChatMessage(role=Role.USER, text=msg) if isinstance(msg, str) else msg for msg in messages]
+    return [ChatMessage(role="user", text=msg) if isinstance(msg, str) else msg for msg in messages]
 
 
 def prepend_instructions_to_messages(
     messages: list[ChatMessage],
     instructions: str | Sequence[str] | None,
-    role: Role | Literal["system", "user", "assistant"] = "system",
+    role: RoleLiteral | str = "system",
 ) -> list[ChatMessage]:
     """Prepend instructions to a list of messages with a specified role.
 
@@ -1829,7 +1723,7 @@ def _process_update(
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage(role=Role.ASSISTANT, contents=[])
+        message = ChatMessage(role="assistant", contents=[])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -1983,7 +1877,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | None = None,
+        finish_reason: FinishReasonLiteral | str | None = None,
         usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
@@ -2018,7 +1912,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | None = None,
+        finish_reason: FinishReasonLiteral | str | None = None,
         usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
@@ -2053,7 +1947,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | dict[str, Any] | None = None,
+        finish_reason: FinishReasonLiteral | str | None = None,
         usage_details: UsageDetails | dict[str, Any] | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
@@ -2096,11 +1990,11 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         if text is not None:
             if isinstance(text, str):
                 text = Content.from_text(text=text)
-            messages.append(ChatMessage(role=Role.ASSISTANT, contents=[text]))
+            messages.append(ChatMessage(role="assistant", contents=[text]))
 
-        # Handle finish_reason conversion
-        if isinstance(finish_reason, dict):
-            finish_reason = FinishReason.from_dict(finish_reason)
+        # Handle finish_reason - convert legacy dict format to string
+        if isinstance(finish_reason, dict) and "value" in finish_reason:
+            finish_reason = finish_reason["value"]
 
         # Handle usage_details - UsageDetails is now a TypedDict, so dict is already the right type
         # No conversion needed
@@ -2110,7 +2004,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason = finish_reason
+        self.finish_reason: str | None = finish_reason
         self.usage_details = usage_details
         self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
@@ -2356,14 +2250,14 @@ class ChatResponseUpdate(SerializationMixin):
         *,
         contents: Sequence[Content | dict[str, Any]] | None = None,
         text: Content | str | None = None,
-        role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any] | None = None,
+        role: RoleLiteral | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | dict[str, Any] | None = None,
+        finish_reason: FinishReasonLiteral | str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -2373,7 +2267,7 @@ class ChatResponseUpdate(SerializationMixin):
         Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
             text: Optional text content to include in the update.
-            role: Optional role of the author of the response update (Role, string, or dict
+            role: Optional role of the author of the response update (e.g., "user", "assistant").
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
@@ -2395,25 +2289,21 @@ class ChatResponseUpdate(SerializationMixin):
                 text = Content.from_text(text=text)
             contents.append(text)
 
-        # Handle role conversion
-        if isinstance(role, dict):
-            role = Role.from_dict(role)
-        elif isinstance(role, str):
-            role = Role(value=role)
-
-        # Handle finish_reason conversion
-        if isinstance(finish_reason, dict):
-            finish_reason = FinishReason.from_dict(finish_reason)
+        # Handle legacy dict formats for role and finish_reason
+        if isinstance(role, dict) and "value" in role:
+            role = role["value"]
+        if isinstance(finish_reason, dict) and "value" in finish_reason:
+            finish_reason = finish_reason["value"]
 
         self.contents = list(contents)
-        self.role = role
+        self.role: str | None = role
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason = finish_reason
+        self.finish_reason: str | None = finish_reason
         self.additional_properties = additional_properties
         self.raw_representation = raw_representation
 
@@ -2717,7 +2607,7 @@ class AgentResponseUpdate(SerializationMixin):
             # Serialization - to_dict and from_dict
             update_dict = update.to_dict()
             # {'type': 'agent_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
-            #  'role': {'type': 'role', 'value': 'assistant'}, 'response_id': 'run_123'}
+            #  'role': 'assistant', 'response_id': 'run_123'}
             restored_update = AgentResponseUpdate.from_dict(update_dict)
             print(restored_update.response_id)  # "run_123"
 
@@ -2735,7 +2625,7 @@ class AgentResponseUpdate(SerializationMixin):
         *,
         contents: Sequence[Content | MutableMapping[str, Any]] | None = None,
         text: Content | str | None = None,
-        role: Role | MutableMapping[str, Any] | str | None = None,
+        role: RoleLiteral | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
@@ -2749,7 +2639,7 @@ class AgentResponseUpdate(SerializationMixin):
         Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
             text: Optional text content of the update.
-            role: The role of the author of the response update (Role, string, or dict
+            role: The role of the author of the response update (e.g., "user", "assistant").
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
@@ -2766,14 +2656,12 @@ class AgentResponseUpdate(SerializationMixin):
                 text = Content.from_text(text=text)
             parsed_contents.append(text)
 
-        # Convert role from dict if needed (for SerializationMixin support)
-        if isinstance(role, MutableMapping):
-            role = Role.from_dict(role)
-        elif isinstance(role, str):
-            role = Role(value=role)
+        # Handle legacy dict format for role
+        if isinstance(role, dict) and "value" in role:
+            role = role["value"]
 
         self.contents = parsed_contents
-        self.role = role
+        self.role: str | None = role
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id

@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentResponse, AgentThread, ChatMessage, Content, Role, get_logger
+from agent_framework import AgentResponse, AgentThread, ChatMessage, Content, get_logger
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -180,7 +180,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
             AgentResponse: Acceptance response with correlation ID
         """
         acceptance_message = ChatMessage(
-            role=Role.SYSTEM,
+            role="system",
             contents=[
                 Content.from_text(
                     f"Request accepted for processing (correlation_id: {correlation_id}). "
@@ -361,7 +361,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                     correlation_id,
                 )
                 error_message = ChatMessage(
-                    role=Role.SYSTEM,
+                    role="system",
                     contents=[
                         Content.from_error(
                             message=f"Error processing agent response: {e}",
@@ -376,7 +376,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                 correlation_id,
             )
             error_message = ChatMessage(
-                role=Role.SYSTEM,
+                role="system",
                 contents=[
                     Content.from_error(
                         message=f"Timeout waiting for agent response after {self.max_poll_retries} attempts",

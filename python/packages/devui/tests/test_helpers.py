@@ -29,7 +29,6 @@ from agent_framework import (
     ChatResponseUpdate,
     ConcurrentBuilder,
     Content,
-    Role,
     SequentialBuilder,
     use_chat_middleware,
 )
@@ -173,7 +172,7 @@ class MockAgent(BaseAgent):
     ) -> AgentResponse:
         self.call_count += 1
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=self.response_text)])]
+            messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=self.response_text)])]
         )
 
     async def run_stream(
@@ -185,7 +184,7 @@ class MockAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         self.call_count += 1
         for chunk in self.streaming_chunks:
-            yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role=Role.ASSISTANT)
+            yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role="assistant")
 
 
 class MockToolCallingAgent(BaseAgent):
@@ -203,7 +202,7 @@ class MockToolCallingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage(role="assistant", text="done")])
 
     async def run_stream(
         self,
@@ -216,7 +215,7 @@ class MockToolCallingAgent(BaseAgent):
         # First: text
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="Let me search for that...")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
         # Second: tool call
         yield AgentResponseUpdate(
@@ -227,7 +226,7 @@ class MockToolCallingAgent(BaseAgent):
                     arguments={"query": "weather"},
                 )
             ],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
         # Third: tool result
         yield AgentResponseUpdate(
@@ -237,12 +236,12 @@ class MockToolCallingAgent(BaseAgent):
                     result={"temperature": 72, "condition": "sunny"},
                 )
             ],
-            role=Role.TOOL,
+            role="tool",
         )
         # Fourth: final text
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="The weather is sunny, 72°F.")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
 
@@ -295,7 +294,7 @@ def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> M
 
 def create_agent_run_response(text: str = "Test response") -> AgentResponse:
     """Create an AgentResponse with the given text."""
-    return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=text)])])
+    return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=text)])])
 
 
 def create_agent_executor_response(
@@ -308,8 +307,8 @@ def create_agent_executor_response(
         executor_id=executor_id,
         agent_response=agent_response,
         full_conversation=[
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="User input")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)]),
+            ChatMessage(role="user", contents=[Content.from_text(text="User input")]),
+            ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)]),
         ],
     )
 
@@ -391,8 +390,8 @@ async def create_sequential_workflow() -> tuple[AgentFrameworkExecutor, str, Moc
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="Here's the draft content about the topic.")),
-        ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="Review: Content is clear and well-structured.")),
+        ChatResponse(messages=ChatMessage(role="assistant", text="Here's the draft content about the topic.")),
+        ChatResponse(messages=ChatMessage(role="assistant", text="Review: Content is clear and well-structured.")),
     ]
 
     writer = ChatAgent(
@@ -434,9 +433,9 @@ async def create_concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, Moc
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="Research findings: Key data points identified.")),
-        ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="Analysis: Trends indicate positive growth.")),
-        ChatResponse(messages=ChatMessage(role=Role.ASSISTANT, text="Summary: Overall outlook is favorable.")),
+        ChatResponse(messages=ChatMessage(role="assistant", text="Research findings: Key data points identified.")),
+        ChatResponse(messages=ChatMessage(role="assistant", text="Analysis: Trends indicate positive growth.")),
+        ChatResponse(messages=ChatMessage(role="assistant", text="Summary: Overall outlook is favorable.")),
     ]
 
     researcher = ChatAgent(

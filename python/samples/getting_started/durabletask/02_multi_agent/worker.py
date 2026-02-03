@@ -101,12 +101,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -127,43 +127,43 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Create and register both agents
     logger.debug("Creating and registering agents...")
     weather_agent = create_weather_agent()
     math_agent = create_math_agent()
-    
+
     agent_worker.add_agent(weather_agent)
     agent_worker.add_agent(math_agent)
-    
+
     logger.debug(f"✓ Registered agents: {weather_agent.name}, {math_agent.name}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Multi-Agent Worker...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agents
     setup_worker(worker)
-    
+
     logger.info("Worker is ready and listening for requests...")
     logger.info("Press Ctrl+C to stop. \n")
-    
+
     try:
         # Start the worker (this blocks until stopped)
         worker.start()
-        
+
         # Keep the worker running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
-    
+
     logger.info("Worker stopped")
 
 

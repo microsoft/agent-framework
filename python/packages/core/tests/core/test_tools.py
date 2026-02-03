@@ -1246,13 +1246,12 @@ async def test_streaming_single_function_no_approval():
         updates.append(update)
 
     # Verify: should have function call update, tool result update (injected), and final update
-    from agent_framework import Role
 
     assert len(updates) >= 3
     # First update is the function call
     assert updates[0].contents[0].type == "function_call"
     # Second update should be the tool result (injected by the wrapper)
-    assert updates[1].role == Role.TOOL
+    assert updates[1].role == "tool"
     assert updates[1].contents[0].type == "function_result"
     assert updates[1].contents[0].result == 10  # 5 * 2
     # Last update is the final message
@@ -1294,11 +1293,10 @@ async def test_streaming_single_function_requires_approval():
         updates.append(update)
 
     # Verify: should yield function call and then approval request
-    from agent_framework import Role
 
     assert len(updates) == 2
     assert updates[0].contents[0].type == "function_call"
-    assert updates[1].role == Role.ASSISTANT
+    assert updates[1].role == "assistant"
     assert updates[1].contents[0].type == "function_approval_request"
 
 
@@ -1338,7 +1336,6 @@ async def test_streaming_two_functions_both_no_approval():
         updates.append(update)
 
     # Verify: should have both function calls, one tool result update with both results, and final message
-    from agent_framework import Role
 
     assert len(updates) >= 2
     # First update has both function calls
@@ -1346,7 +1343,7 @@ async def test_streaming_two_functions_both_no_approval():
     assert updates[0].contents[0].type == "function_call"
     assert updates[0].contents[1].type == "function_call"
     # Should have a tool result update with both results
-    tool_updates = [u for u in updates if u.role == Role.TOOL]
+    tool_updates = [u for u in updates if u.role == "tool"]
     assert len(tool_updates) == 1
     assert len(tool_updates[0].contents) == 2
     assert all(c.type == "function_result" for c in tool_updates[0].contents)
@@ -1392,13 +1389,12 @@ async def test_streaming_two_functions_both_require_approval():
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests
-    from agent_framework import Role
 
     assert len(updates) == 3
     assert updates[0].contents[0].type == "function_call"
     assert updates[1].contents[0].type == "function_call"
     # Assistant update with both approval requests
-    assert updates[2].role == Role.ASSISTANT
+    assert updates[2].role == "assistant"
     assert len(updates[2].contents) == 2
     assert all(c.type == "function_approval_request" for c in updates[2].contents)
 
@@ -1443,13 +1439,12 @@ async def test_streaming_two_functions_mixed_approval():
         updates.append(update)
 
     # Verify: should yield both function calls and then approval requests (when one needs approval, all wait)
-    from agent_framework import Role
 
     assert len(updates) == 3
     assert updates[0].contents[0].type == "function_call"
     assert updates[1].contents[0].type == "function_call"
     # Assistant update with both approval requests
-    assert updates[2].role == Role.ASSISTANT
+    assert updates[2].role == "assistant"
     assert len(updates[2].contents) == 2
     assert all(c.type == "function_approval_request" for c in updates[2].contents)
 

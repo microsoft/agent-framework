@@ -12,7 +12,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     tool,
 )
 from pytest import MonkeyPatch
@@ -134,8 +133,8 @@ class TestAGUIChatClient:
         """Test message conversion to AG-UI format."""
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
-            ChatMessage(role=Role.USER, text="What is the weather?"),
-            ChatMessage(role=Role.ASSISTANT, text="Let me check.", message_id="msg_123"),
+            ChatMessage(role="user", text="What is the weather?"),
+            ChatMessage(role="assistant", text="Let me check.", message_id="msg_123"),
         ]
 
         agui_messages = client.convert_messages_to_agui_format(messages)

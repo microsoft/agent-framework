@@ -14,15 +14,15 @@ from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionToo
 
 # Role mapping constants
 AGUI_TO_FRAMEWORK_ROLE: dict[str, Role] = {
-    "user": Role.USER,
-    "assistant": Role.ASSISTANT,
-    "system": Role.SYSTEM,
+    "user": "user",
+    "assistant": "assistant",
+    "system": "system",
 }
 
-FRAMEWORK_TO_AGUI_ROLE: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "system",
+FRAMEWORK_TO_AGUI_ROLE: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "system",
 }
 
 ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool"}
