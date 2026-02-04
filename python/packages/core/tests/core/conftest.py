@@ -16,18 +16,20 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseChatClient,
+    BareChatClient,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionInvokingMixin,
+    FunctionInvocationLayer,
     ResponseStream,
     Role,
     ToolProtocol,
     tool,
 )
 from agent_framework._clients import TOptions_co
+from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -80,11 +82,12 @@ def tool_tool() -> ToolProtocol:
 class MockChatClient:
     """Simple implementation of a chat client."""
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.additional_properties: dict[str, Any] = {}
         self.call_count: int = 0
         self.responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
+        super().__init__(**kwargs)
 
     def get_response(
         self,
@@ -132,8 +135,14 @@ class MockChatClient:
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
-class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
-    """Mock implementation of the BaseChatClient."""
+class MockBaseChatClient(
+    ChatMiddlewareLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
+    FunctionInvocationLayer[TOptions_co],
+    BareChatClient[TOptions_co],
+    Generic[TOptions_co],
+):
+    """Mock implementation of a full-featured ChatClient."""
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
@@ -242,7 +251,7 @@ def max_iterations(request: Any) -> int:
 def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-            return type("FunctionInvokingMockChatClient", (FunctionInvokingMixin, MockChatClient), {})()
+            return type("FunctionInvokingMockChatClient", (FunctionInvocationLayer, MockChatClient), {})()
     return MockChatClient()
 
 

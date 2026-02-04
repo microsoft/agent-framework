@@ -12,7 +12,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
     Executor,
@@ -25,7 +25,7 @@ from agent_framework import (
 from agent_framework.orchestrations import SequentialBuilder
 
 
-class _SimpleAgent(BaseAgent):
+class _SimpleAgent(BareAgent):
     """Agent that returns a single assistant message (non-streaming path)."""
 
     def __init__(self, *, reply_text: str, **kwargs: Any) -> None:
@@ -98,7 +98,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     assert payload["roles"][1] == "assistant" and "agent-reply" in (payload["texts"][1] or "")
 
 
-class _CaptureAgent(BaseAgent):
+class _CaptureAgent(BareAgent):
     """Streaming-capable agent that records the messages it received."""
 
     _last_messages: list[ChatMessage] = PrivateAttr(default_factory=list)  # type: ignore

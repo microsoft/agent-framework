@@ -7,12 +7,17 @@ from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
+    BareChatClient,
+    ChatLevelMiddleware,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
@@ -24,9 +29,9 @@ from agent_framework import (
     get_logger,
     prepare_function_call_results,
 )
-from agent_framework._clients import BaseChatClient
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
     BetaContentBlock,
@@ -57,6 +62,7 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore # pragma: no cover
+
 
 __all__ = [
     "AnthropicChatOptions",
@@ -223,8 +229,14 @@ class AnthropicSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
-class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
-    """Anthropic Chat client."""
+class AnthropicClient(
+    ChatMiddlewareLayer[TAnthropicOptions],
+    ChatTelemetryLayer[TAnthropicOptions],
+    FunctionInvocationLayer[TAnthropicOptions],
+    BareChatClient[TAnthropicOptions],
+    Generic[TAnthropicOptions],
+):
+    """Anthropic Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -235,6 +247,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
         additional_beta_flags: list[str] | None = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -249,6 +263,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -319,7 +335,11 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             )
 
         # Initialize parent
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client

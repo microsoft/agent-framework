@@ -11,15 +11,19 @@ from typing import Any, ClassVar, Generic, TypedDict
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
-    BaseChatClient,
+    BareChatClient,
     ChatAgent,
+    ChatLevelMiddleware,
     ChatMessage,
     ChatMessageStoreProtocol,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
@@ -35,6 +39,7 @@ from agent_framework import (
     prepare_function_call_results,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
@@ -197,8 +202,14 @@ TAzureAIAgentOptions = TypeVar(
 # endregion
 
 
-class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIAgentOptions]):
-    """Azure AI Agent Chat client."""
+class AzureAIAgentClient(
+    ChatMiddlewareLayer[TAzureAIAgentOptions],
+    ChatTelemetryLayer[TAzureAIAgentOptions],
+    FunctionInvocationLayer[TAzureAIAgentOptions],
+    BareChatClient[TAzureAIAgentOptions],
+    Generic[TAzureAIAgentOptions],
+):
+    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -214,6 +225,8 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         model_deployment_name: str | None = None,
         credential: AsyncTokenCredential | None = None,
         should_cleanup_agent: bool = True,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -238,6 +251,8 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
+            middleware: Optional sequence of middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -312,7 +327,11 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
             should_close_client = True
 
         # Initialize parent
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
 
         # Initialize instance variables
         self.agents_client = agents_client

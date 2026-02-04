@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -16,9 +16,16 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import BareChatClient
 from .._logging import get_logger
-from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol
+from .._middleware import ChatMiddlewareLayer
+from .._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
+    HostedWebSearchTool,
+    ToolProtocol,
+)
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -36,6 +43,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
+from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -52,7 +60,10 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
+if TYPE_CHECKING:
+    from .._middleware import Middleware
+
+__all__ = ["BareOpenAIChatClient", "OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
@@ -125,12 +136,12 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(  # type: ignore[misc]
+class BareOpenAIChatClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIChatOptions],
+    BareChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
 ):
-    """OpenAI Chat completion class."""
+    """Bare OpenAI Chat completion class without middleware, telemetry, or function invocation."""
 
     @override
     def _inner_get_response(
@@ -570,10 +581,13 @@ class OpenAIBaseChatClient(  # type: ignore[misc]
 
 class OpenAIChatClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    OpenAIBaseChatClient[TOpenAIChatOptions],
+    ChatMiddlewareLayer[TOpenAIChatOptions],
+    ChatTelemetryLayer[TOpenAIChatOptions],
+    FunctionInvocationLayer[TOpenAIChatOptions],
+    BareOpenAIChatClient[TOpenAIChatOptions],
     Generic[TOpenAIChatOptions],
 ):
-    """OpenAI Chat completion class."""
+    """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -587,6 +601,8 @@ class OpenAIChatClient(  # type: ignore[misc]
         base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        middleware: Sequence["Middleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -667,4 +683,6 @@ class OpenAIChatClient(  # type: ignore[misc]
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )

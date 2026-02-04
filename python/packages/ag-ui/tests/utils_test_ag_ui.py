@@ -12,14 +12,17 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseChatClient,
+    BareChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
 )
 from agent_framework._clients import TOptions_co
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationLayer
 from agent_framework._types import ResponseStream
+from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -30,7 +33,13 @@ StreamFn = Callable[..., AsyncIterable[ChatResponseUpdate]]
 ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
-class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class StreamingChatClientStub(
+    ChatMiddlewareLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
+    FunctionInvocationLayer[TOptions_co],
+    BareChatClient[TOptions_co],
+    Generic[TOptions_co],
+):
     """Typed streaming stub that satisfies ChatClientProtocol."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:

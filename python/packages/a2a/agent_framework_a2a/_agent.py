@@ -4,8 +4,8 @@ import base64
 import json
 import re
 import uuid
-from collections.abc import AsyncIterable, Sequence
-from typing import Any, Final, cast
+from collections.abc import AsyncIterable, Awaitable, Sequence
+from typing import Any, Final, Literal, cast, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -29,13 +29,15 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
+    ResponseStream,
+    Role,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
-from agent_framework.observability import AgentTelemetryMixin
+from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent"]
 
@@ -56,12 +58,12 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgent(AgentTelemetryMixin, BaseAgent):
+class A2AAgent(AgentTelemetryLayer, BareAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
     via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
-    A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
+    A2A responses (Messages/Tasks) back to framework types. Inherits BareAgent capabilities
     while managing the underlying A2A protocol communication.
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
@@ -97,7 +99,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
                 10.0s write, 5.0s pool - optimized for A2A operations).
-            kwargs: any additional properties, passed to BaseAgent.
+            kwargs: any additional properties, passed to BareAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
@@ -183,44 +185,92 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
-    async def run(  # type: ignore[override]
+    @overload
+    def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[False] = ...,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentResponse object. The caller is blocked until
-        the final result is available.
+        as a single AgentResponse object when stream=False. When stream=True,
+        it returns a ResponseStream that yields AgentResponseUpdate objects.
 
         Args:
             messages: The message(s) to send to the agent.
 
         Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
         Returns:
-            An agent response item.
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
-        # Collect all updates and use framework to consolidate updates into response
-        updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
-        return AgentResponse.from_updates(updates)
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, **kwargs)
 
-    async def run_stream(
+    async def _run_impl(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        """Non-streaming implementation of run."""
+        # Collect all updates and use framework to consolidate updates into response
+        updates: list[AgentResponseUpdate] = []
+        async for update in self._stream_updates(messages, thread=thread, **kwargs):
+            updates.append(update)
+        return AgentResponse.from_agent_run_response_updates(updates)
+
+    def _run_stream_impl(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Streaming implementation of run."""
+
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            return AgentResponse.from_agent_run_response_updates(list(updates))
+
+        return ResponseStream(self._stream_updates(messages, thread=thread, **kwargs), finalizer=_finalize)
+
+    async def _stream_updates(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Run the agent as a stream.
-
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentResponseUpdate objects to the caller.
+        """Internal method to stream updates from the A2A agent.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -230,10 +280,10 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
             kwargs: Additional keyword arguments.
 
         Yields:
-            An agent response item.
+            AgentResponseUpdate items from the A2A agent.
         """
-        messages = normalize_messages(messages)
-        a2a_message = self._prepare_message_for_a2a(messages[-1])
+        normalized_messages = normalize_messages(messages)
+        a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
 
         response_stream = self.client.send_message(a2a_message)
 
@@ -243,7 +293,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
                 contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentResponseUpdate(
                     contents=contents,
-                    role="assistant" if item.role == A2ARole.agent else "user",
+                    role=Role.ASSISTANT if item.role == A2ARole.agent else Role.USER,
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
@@ -267,7 +317,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
                         # Empty task
                         yield AgentResponseUpdate(
                             contents=[],
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             response_id=task.id,
                             raw_representation=task,
                         )
@@ -419,7 +469,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
             contents = self._parse_contents_from_a2a(history_item.parts)
             messages.append(
                 ChatMessage(
-                    role="assistant" if history_item.role == A2ARole.agent else "user",
+                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
                     contents=contents,
                     raw_representation=history_item,
                 )
@@ -431,7 +481,7 @@ class A2AAgent(AgentTelemetryMixin, BaseAgent):
         """Parse A2A Artifact into ChatMessage using part contents."""
         contents = self._parse_contents_from_a2a(artifact.parts)
         return ChatMessage(
-            role="assistant",
+            role=Role.ASSISTANT,
             contents=contents,
             raw_representation=artifact,
         )

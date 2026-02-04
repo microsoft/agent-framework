@@ -14,12 +14,16 @@ from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    BaseChatClient,
+    BareChatClient,
+    ChatLevelMiddleware,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedWebSearchTool,
     ResponseStream,
@@ -34,6 +38,7 @@ from agent_framework.exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
+from agent_framework.observability import ChatTelemetryLayer
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
@@ -55,6 +60,7 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 
@@ -283,8 +289,13 @@ class OllamaSettings(AFBaseSettings):
 logger = get_logger("agent_framework.ollama")
 
 
-class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
-    """Ollama Chat completion class."""
+class OllamaChatClient(
+    ChatMiddlewareLayer[TOllamaChatOptions],
+    ChatTelemetryLayer[TOllamaChatOptions],
+    FunctionInvocationLayer[TOllamaChatOptions],
+    BareChatClient[TOllamaChatOptions],
+):
+    """Ollama Chat completion class with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
 
@@ -294,6 +305,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
         host: str | None = None,
         client: AsyncClient | None = None,
         model_id: str | None = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -305,9 +318,11 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
                 Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
             model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_MODEL_ID env variable.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
-            **kwargs: Additional keyword arguments passed to BaseChatClient.
+            **kwargs: Additional keyword arguments passed to BareChatClient.
         """
         try:
             ollama_settings = OllamaSettings(
@@ -329,7 +344,11 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions]):
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)
 
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self.middleware = list(self.chat_middleware)
 
     @override

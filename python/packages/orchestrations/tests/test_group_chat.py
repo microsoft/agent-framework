@@ -10,7 +10,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     BaseGroupChatOrchestrator,
     ChatAgent,
     ChatMessage,
@@ -34,7 +34,7 @@ from agent_framework.orchestrations import (
 )
 
 
-class StubAgent(BaseAgent):
+class StubAgent(BareAgent):
     def __init__(self, agent_name: str, reply_text: str, **kwargs: Any) -> None:
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
@@ -298,7 +298,7 @@ class TestGroupChatBuilder:
     def test_agent_without_name_raises_error(self) -> None:
         """Test that agent without name attribute raises ValueError."""
 
-        class AgentWithoutName(BaseAgent):
+        class AgentWithoutName(BareAgent):
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 

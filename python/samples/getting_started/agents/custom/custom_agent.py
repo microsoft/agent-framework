@@ -8,7 +8,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BaseAgent,
+    BareAgent,
     ChatMessage,
     Content,
 )
@@ -16,15 +16,15 @@ from agent_framework import (
 """
 Custom Agent Implementation Example
 
-This sample demonstrates implementing a custom agent by extending BaseAgent class,
+This sample demonstrates implementing a custom agent by extending BareAgent class,
 showing the minimal requirements for both streaming and non-streaming responses.
 """
 
 
-class EchoAgent(BaseAgent):
+class EchoAgent(BareAgent):
     """A simple custom agent that echoes user messages with a prefix.
 
-    This demonstrates how to create a fully custom agent by extending BaseAgent
+    This demonstrates how to create a fully custom agent by extending BareAgent
     and implementing the required run() and run_stream() methods.
     """
 
@@ -44,7 +44,7 @@ class EchoAgent(BaseAgent):
             name: The name of the agent.
             description: The description of the agent.
             echo_prefix: The prefix to add to echoed messages.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            **kwargs: Additional keyword arguments passed to BareAgent.
         """
         super().__init__(
             name=name,

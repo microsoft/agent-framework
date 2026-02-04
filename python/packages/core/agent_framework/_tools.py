@@ -80,7 +80,7 @@ logger = get_logger()
 
 __all__ = [
     "FunctionInvocationConfiguration",
-    "FunctionInvokingMixin",
+    "FunctionInvocationLayer",
     "FunctionTool",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
@@ -2073,8 +2073,8 @@ TOptions_co = TypeVar(
 )
 
 
-class FunctionInvokingMixin(Generic[TOptions_co]):
-    """Mixin for chat clients to apply function invocation around get_response."""
+class FunctionInvocationLayer(Generic[TOptions_co]):
+    """Layer for chat clients to apply function invocation around get_response."""
 
     def __init__(
         self,

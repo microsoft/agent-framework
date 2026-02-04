@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
 from agent_framework import (
-    BaseChatClient,
+    BareChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -20,6 +20,9 @@ from agent_framework import (
     FunctionTool,
     ResponseStream,
 )
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
+from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -40,6 +43,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework._middleware import ChatLevelMiddleware
+
     from ._types import AGUIChatOptions
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -52,7 +57,7 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
+TBareChatClient = TypeVar("TBareChatClient", bound=type[BareChatClient[Any]])
 
 TAGUIChatOptions = TypeVar(
     "TAGUIChatOptions",
@@ -62,7 +67,7 @@ TAGUIChatOptions = TypeVar(
 )
 
 
-def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
+def _apply_server_function_call_unwrap(chat_client: TBareChatClient) -> TBareChatClient:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
     original_get_response = chat_client.get_response
@@ -103,14 +108,21 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 
 
 @_apply_server_function_call_unwrap
-class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
+class AGUIChatClient(
+    ChatMiddlewareLayer[TAGUIChatOptions],
+    ChatTelemetryLayer[TAGUIChatOptions],
+    FunctionInvocationLayer[TAGUIChatOptions],
+    BareChatClient[TAGUIChatOptions],
+    Generic[TAGUIChatOptions],
+):
     """Chat client for communicating with AG-UI compliant servers.
 
-    This client implements the BaseChatClient interface and automatically handles:
+    This client implements the BareChatClient interface and automatically handles:
     - Thread ID management for conversation continuity
     - State synchronization between client and server
     - Server-Sent Events (SSE) streaming
     - Event conversion to Agent Framework types
+    - Middleware, telemetry, and function invocation support
 
     Important: Message History Management
         This client sends exactly the messages it receives to the server. It does NOT
@@ -204,6 +216,8 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence["ChatLevelMiddleware"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the AG-UI chat client.
@@ -213,9 +227,16 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
             http_client: Optional httpx.AsyncClient instance. If None, one will be created.
             timeout: Request timeout in seconds (default: 60.0)
             additional_properties: Additional properties to store
-            **kwargs: Additional arguments passed to BaseChatClient
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            **kwargs: Additional arguments passed to BareChatClient
         """
-        super().__init__(additional_properties=additional_properties, **kwargs)
+        super().__init__(
+            additional_properties=additional_properties,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self._http_service = AGUIHttpService(
             endpoint=endpoint,
             http_client=http_client,

@@ -4,7 +4,7 @@
 from unittest.mock import patch
 
 from agent_framework import (
-    BaseChatClient,
+    BareChatClient,
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
@@ -29,7 +29,7 @@ async def test_chat_client_get_response_streaming(chat_client: ChatClientProtoco
 
 
 def test_base_client(chat_client_base: ChatClientProtocol):
-    assert isinstance(chat_client_base, BaseChatClient)
+    assert isinstance(chat_client_base, BareChatClient)
     assert isinstance(chat_client_base, ChatClientProtocol)
 
 

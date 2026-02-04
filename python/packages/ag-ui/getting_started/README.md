@@ -350,7 +350,7 @@ if __name__ == "__main__":
 
 ### Key Concepts
 
-- **`AGUIChatClient`**: Built-in client that implements the Agent Framework's `BaseChatClient` interface
+- **`AGUIChatClient`**: Built-in client that implements the Agent Framework's `BareChatClient` interface
 - **Automatic Event Handling**: The client automatically converts AG-UI events to Agent Framework types
 - **Thread Management**: Pass `thread_id` in metadata to maintain conversation context across requests
 - **Streaming Responses**: Use `get_streaming_response()` for real-time streaming or `get_response()` for non-streaming

@@ -33,10 +33,12 @@ from openai.types.responses.tool_param import (
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import BareChatClient
 from .._logging import get_logger
+from .._middleware import ChatMiddlewareLayer
 from .._tools import (
     FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
@@ -66,6 +68,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
+from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -93,7 +96,7 @@ if TYPE_CHECKING:
 logger = get_logger("agent_framework.openai")
 
 
-__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
+__all__ = ["BareOpenAIResponsesClient", "OpenAIResponsesClient", "OpenAIResponsesOptions"]
 
 
 # region OpenAI Responses Options TypedDict
@@ -200,12 +203,12 @@ TOpenAIResponsesOptions = TypeVar(
 # region ResponsesClient
 
 
-class OpenAIBaseResponsesClient(  # type: ignore[misc]
+class BareOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIResponsesOptions],
+    BareChatClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
-    """Base class for all OpenAI Responses based API's."""
+    """Bare OpenAI Responses client without middleware, telemetry, or function invocation."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -1419,10 +1422,13 @@ class OpenAIBaseResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[TOpenAIResponsesOptions],
+    ChatTelemetryLayer[TOpenAIResponsesOptions],
+    FunctionInvocationLayer[TOpenAIResponsesOptions],
+    BareOpenAIResponsesClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
-    """OpenAI Responses client class."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,

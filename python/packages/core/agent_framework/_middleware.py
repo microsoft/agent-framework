@@ -43,12 +43,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AgentMiddleware",
-    "AgentMiddlewareMixin",
+    "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
     "AgentRunContext",
     "ChatContext",
+    "ChatLevelMiddleware",
     "ChatMiddleware",
-    "ChatMiddlewareMixin",
+    "ChatMiddlewareLayer",
     "FunctionInvocationContext",
     "FunctionMiddleware",
     "Middleware",
@@ -507,6 +508,10 @@ FunctionMiddlewareCallable = Callable[
 ]
 
 ChatMiddlewareCallable = Callable[[ChatContext, Callable[[ChatContext], Awaitable[None]]], Awaitable[None]]
+
+ChatLevelMiddleware: TypeAlias = (
+    FunctionMiddleware | FunctionMiddlewareCallable | ChatMiddleware | ChatMiddlewareCallable
+)
 
 # Type alias for all middleware types
 Middleware: TypeAlias = (
@@ -1082,15 +1087,13 @@ TOptions_co = TypeVar(
 )
 
 
-class ChatMiddlewareMixin(Generic[TOptions_co]):
-    """Mixin for chat clients to apply chat middleware around response generation."""
+class ChatMiddlewareLayer(Generic[TOptions_co]):
+    """Layer for chat clients to apply chat middleware around response generation."""
 
     def __init__(
         self,
         *,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
+        middleware: (Sequence[ChatLevelMiddleware] | None) = None,
         **kwargs: Any,
     ) -> None:
         middleware_list = categorize_middleware(middleware)
@@ -1168,7 +1171,7 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         def final_handler(
             ctx: ChatContext,
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-            return super(ChatMiddlewareMixin, self).get_response(  # type: ignore[misc,no-any-return]
+            return super(ChatMiddlewareLayer, self).get_response(  # type: ignore[misc,no-any-return]
                 messages=list(ctx.messages),
                 stream=ctx.is_streaming,
                 options=ctx.options or {},
@@ -1189,8 +1192,8 @@ class ChatMiddlewareMixin(Generic[TOptions_co]):
         return result  # type: ignore[return-value]
 
 
-class AgentMiddlewareMixin:
-    """Mixin for agents to apply agent middleware around run execution."""
+class AgentMiddlewareLayer:
+    """Layer for agents to apply agent middleware around run execution."""
 
     @overload
     def run(
@@ -1240,8 +1243,15 @@ class AgentMiddlewareMixin:
     ) -> "Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
         """Middleware-enabled unified run method."""
         return _middleware_enabled_run_impl(
-            self, super().run, messages, stream, thread, middleware, options=options, **kwargs
-        )  # type: ignore[misc]
+            self,
+            super().run,  # type: ignore
+            messages,
+            stream,
+            thread,
+            middleware,
+            options=options,
+            **kwargs,
+        )
 
 
 def _determine_middleware_type(middleware: Any) -> MiddlewareType:
