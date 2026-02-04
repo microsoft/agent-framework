@@ -35,6 +35,78 @@ This creates cognitive overhead for developers doing "Context Engineering" - the
 - **Attribution**: Enable tracking which middleware added which messages/tools
 - **Zero-config**: Simple use cases should work without configuration
 
+## Open Discussion: Context Compaction
+
+### Problem Statement
+
+A common need for long-running agents is **context compaction** - automatically summarizing or truncating conversation history when approaching token limits. This is particularly important for agents that make many tool calls in succession (10s or 100s), where the context can grow unboundedly.
+
+Currently, this is challenging because:
+- `ChatMessageStore.list_messages()` is only called once at the start of `agent.run()`, not during the tool loop
+- `ChatMiddleware` operates on a copy of messages, so modifications don't persist across tool loop iterations
+- The function calling loop happens deep within the `ChatClient`, which is below the agent level
+
+### Design Question
+
+Should `ContextMiddleware`/`ContextHooks` be invoked:
+1. **Only at agent invocation boundaries** (current proposal) - before/after each `agent.run()` call
+2. **During the tool loop** - before/after each model call within a single `agent.run()`
+
+### Boundary vs In-Run Compaction
+
+While boundary and in-run compaction could potentially use the same mechanism, they have **different goals and behaviors**:
+
+**Boundary compaction** (before/after `agent.run()`):
+- **Before run**: Keep context manageable - load a compacted view of history
+- **After run**: Keep storage compact - summarize/truncate before persisting
+- Useful for maintaining reasonable context sizes across conversation turns
+- One reason to have **multiple storage middleware**: persist compacted history for use during runs, while also storing the full uncompacted history for auditing and evaluations
+
+**In-run compaction** (during function calling loops):
+- Relevant for **function calling scenarios** where many tool calls accumulate
+- Typically **in-memory only** - no need to persist intermediate compaction and only useful when the conversation/session is _not_ managed by the service
+- Different strategies apply:
+  - Remove old function call/result pairs entirely/Keep only the most recent N tool interactions
+  - Replace call/result pairs with a single summary message (with a different role)
+  - Summarize several function call/result pairs into one larger context message
+
+### Service-Managed vs Local Storage
+
+**Important:** In-run compaction is relevant only for **non-service-managed histories**. When using service-managed storage (`service_session_id` is set):
+- The service handles history management internally
+- Only the new calls and results are sent to/from the service each turn
+- The service is responsible for its own compaction strategy, but we do not control that
+
+For local storage, a full message list is sent to the model each time, making compaction the client's responsibility.
+
+### Options
+
+**Option A: Invocation-boundary only (current proposal)**
+- Simpler mental model
+- Consistent with `AgentMiddleware` pattern
+- In-run compaction would need to happen via a separate mechanism (e.g., `ChatMiddleware` at the client level)
+- Risk: Different compaction mechanisms at different layers could be confusing
+
+**Option B: Also during tool loops**
+- Single mechanism for all context manipulation
+- More powerful but more complex
+- Requires coordination with `ChatClient` internals
+- Risk: Performance overhead if middleware/hooks are expensive
+
+**Option C: Unified approach across layers**
+- Define a single context compaction abstraction that works at both agent and client levels
+- `ContextMiddleware`/`ContextHooks` could delegate to `ChatMiddleware` for mid-loop execution
+- Requires deeper architectural thought
+
+### Potential Extension Points (for any option)
+
+Regardless of the chosen approach, these extension points could support compaction:
+- A `CompactionStrategy` that can be shared between middleware/hooks and function calling configuration
+- Hooks for `ChatClient` to notify the agent layer when context limits are approaching
+- A unified `ContextManager` that coordinates compaction across layers
+
+**This section requires further discussion.**
+
 ## Related Issues
 
 This ADR addresses the following issues from the parent issue [#3575](https://github.com/microsoft/agent-framework/issues/3575):
@@ -143,30 +215,588 @@ Keep `ContextProvider`, `ChatMessageStore`, and `AgentThread` as separate concep
 **Pros:**
 - No migration required
 - Familiar to existing users
+- Each concept has a clear, focused responsibility
+- Existing documentation and examples remain valid
 
 **Cons:**
-- Cognitive overhead remains
-- No composability for context providers
-- Inconsistent with middleware pattern used elsewhere
+- Cognitive overhead: three concepts to learn for context management
+- No composability: only one `ContextProvider` per thread
+- Inconsistent with middleware pattern used elsewhere in the framework
+- `invoking()`/`invoked()` split makes related pre/post logic harder to follow
+- No source attribution for debugging which provider added which context
+- `ChatMessageStore` and `ContextProvider` overlap conceptually but are separate APIs
 
-### Option 2: ContextMiddleware (Chosen)
+### Option 2: ContextMiddleware - Wrapper Pattern
 
 Create a unified `ContextMiddleware` that uses the onion/wrapper pattern (like existing `AgentMiddleware`, `ChatMiddleware`) to handle all context-related concerns.
 
+```python
+class ContextMiddleware(ABC):
+    def __init__(self, source_id: str, *, session_id: str | None = None):
+        self.source_id = source_id
+        self.session_id = session_id
+
+    @abstractmethod
+    async def process(self, context: SessionContext, next: ContextMiddlewareNext) -> None:
+        """Wrap the context flow - modify before next(), process after."""
+        # Pre-processing: add context, modify messages
+        context.add_messages(self.source_id, [...])
+
+        await next(context)  # Call next middleware or terminal handler
+
+        # Post-processing: log, store, react to response
+        await self.store(context.response_messages)
+```
+
 **Pros:**
 - Single concept for all context engineering
-- Familiar pattern from other middleware in the framework
-- Natural composition via pipeline
-- Pre/post processing in one method
+- Familiar pattern from other middleware in the framework (`AgentMiddleware`, `ChatMiddleware`)
+- Natural composition via pipeline with clear execution order
+- Pre/post processing in one method keeps related logic together
 - Source attribution built-in
+- Full control over the invocation chain (can short-circuit, retry, wrap with try/catch)
+- Exception handling naturally scoped to the middleware that caused it
 
 **Cons:**
-- Breaking change (acceptable in preview)
-- Migration effort for existing users
+- Forgetting `await next(context)` silently breaks the chain
+- Stack depth increases with each middleware layer
+- Harder to implement middleware that only needs pre OR post processing
+
+### Option 3: ContextHooks - Pre/Post Pattern
+
+Create a `ContextHooks` abstraction with explicit `before_run()` and `after_run()` methods, diverging from the wrapper pattern used by middleware.
+
+```python
+class ContextHooks(ABC):
+    def __init__(self, source_id: str, *, session_id: str | None = None):
+        self.source_id = source_id
+        self.session_id = session_id
+
+    async def before_run(self, context: SessionContext) -> None:
+        """Called before model invocation. Modify context here."""
+        pass
+
+    async def after_run(self, context: SessionContext) -> None:
+        """Called after model invocation. React to response here."""
+        pass
+```
+
+**Alternative naming options:**
+
+| Name | Rationale |
+|------|-----------|
+| `ContextHooks` | Emphasizes the hook-based nature, familiar from React/Git hooks |
+| `ContextHandler` | Generic term for something that handles context events |
+| `ContextInterceptor` | Common in Java/Spring, emphasizes interception points |
+| `ContextProcessor` | Emphasizes processing at defined stages |
+| `ContextPlugin` | Emphasizes extensibility, familiar from build tools |
+| `SessionHooks` | Ties to `AgentSession`, emphasizes session lifecycle |
+| `InvokeHooks` | Directly describes what's being hooked (the invoke call) |
+
+**Example usage:**
+
+```python
+class RAGHooks(ContextHooks):
+    async def before_run(self, context: SessionContext) -> None:
+        docs = await self.retrieve_documents(context.input_messages[-1].text)
+        context.add_messages(self.source_id, [ChatMessage.system(f"Context: {docs}")])
+
+    async def after_run(self, context: SessionContext) -> None:
+        await self.store_interaction(context.input_messages, context.response_messages)
+
+
+# Pipeline execution is linear, not nested:
+# 1. hook1.before_run(context)
+# 2. hook2.before_run(context)
+# 3. <model invocation>
+# 4. hook2.after_run(context)  # Reverse order for symmetry
+# 5. hook1.after_run(context)
+
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[
+        InMemoryStorageHooks("memory"),
+        RAGHooks("rag"),
+    ]
+)
+```
+
+**Pros:**
+- Simpler mental model: "before" runs before, "after" runs after - no nesting to understand
+- Clearer separation between what this does vs what Agent Middleware can do.
+- Impossible to forget calling `next()` - the framework handles sequencing
+- Easier to implement hooks that only need one phase (just override one method)
+- Lower cognitive overhead for developers new to middleware patterns
+- Clearer separation of concerns: pre-processing logic separate from post-processing
+- Easier to test: no need to mock `next` callable, just call methods directly
+- Flatter stack traces when debugging
+- More similar to the current `ContextProvider` API (`invoking`/`invoked`), easing migration
+- Explicit about what happens when: no hidden control flow
+
+**Cons:**
+- Diverges from the wrapper pattern used by `AgentMiddleware` and `ChatMiddleware`
+- Less powerful: cannot short-circuit the chain or implement retry logic
+- No "around" advice: cannot wrap invocation in try/catch or timing block
+- Exception in `before_run` may leave state inconsistent if no cleanup in `after_run`
+- Two methods to implement instead of one (though both are optional)
+- Harder to share state between before/after (need instance variables)
+- Cannot control whether subsequent hooks run (no early termination)
 
 ## Decision Outcome
 
-Chosen option: **"Option 2: ContextMiddleware"**, because it significantly reduces cognitive overhead, follows established patterns in the framework, and enables powerful composition for context engineering scenarios.
+**TBD** - This ADR presents two viable approaches:
+
+- **Option 2: ContextMiddleware (Wrapper Pattern)** - Consistent with existing middleware patterns, more powerful control flow
+- **Option 3: ContextHooks (Pre/Post Pattern)** - Simpler mental model, easier migration from current `ContextProvider`
+
+Both options share the same:
+- Agent vs Session ownership model
+- `source_id` attribution
+- Serialization/deserialization via agent methods
+- Session management methods (`create_session`, `get_session_by_id`, `serialize_session`, `restore_session`)
+- Renaming `AgentThread` → `AgentSession`
+
+The key difference is the execution model: nested wrapper vs linear phases.
+
+---
+
+## Detailed Design: Option 3 (ContextHooks - Pre/Post Pattern)
+
+### Key Design Decisions
+
+#### 1. Linear Pre/Post Pattern
+
+Unlike the wrapper pattern, hooks execute in a linear sequence with explicit phases:
+
+```python
+class ContextHooks(ABC):
+    def __init__(self, source_id: str, *, session_id: str | None = None):
+        self.source_id = source_id
+        self.session_id = session_id
+
+    async def before_run(self, context: SessionContext) -> None:
+        """Called before model invocation. Modify context here."""
+        pass
+
+    async def after_run(self, context: SessionContext) -> None:
+        """Called after model invocation. React to response here."""
+        pass
+```
+
+**Comparison to Current:**
+| Aspect | ContextProvider (Current) | ContextHooks (New) |
+|--------|--------------------------|------------------------|
+| Pre-processing | `invoking()` method | `before_run()` method |
+| Post-processing | `invoked()` method | `after_run()` method |
+| Composition | Single provider only | Pipeline of hooks |
+| Pattern | Callback hooks | Linear hooks (similar but composable) |
+
+#### 2. Agent vs Session Ownership
+
+Same ownership model as Option 2 - **Agent** owns configuration, **AgentSession** owns resolved pipeline:
+
+```python
+# Agent holds hooks configuration
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[
+        InMemoryStorageHooks("memory"),
+        RAGContextHooks("rag"),
+    ]
+)
+
+# Session holds the resolved pipeline
+session = agent.create_session()
+```
+
+#### 3. Unified Storage Hooks
+
+Storage is a type of `ContextHooks`:
+
+```python
+class StorageContextHooks(ContextHooks):
+    def __init__(
+        self,
+        source_id: str,
+        *,
+        load_messages: bool | None = None,  # None = smart mode
+        store_inputs: bool = True,
+        store_responses: bool = True,
+        store_context_messages: bool = False,
+        store_context_from: Sequence[str] | None = None,
+    ): ...
+
+    async def before_run(self, context: SessionContext) -> None:
+        # Load messages into context
+        if self._should_load(context):
+            messages = await self.get_messages(context.session_id)
+            context.add_messages(self.source_id, messages)
+
+    async def after_run(self, context: SessionContext) -> None:
+        # Store messages after invocation
+        await self.save_messages(context)
+```
+
+#### 4. Source Attribution via `source_id`
+
+Same as Option 2 - every hook has a required `source_id`:
+
+```python
+class SessionContext:
+    context_messages: dict[str, list[ChatMessage]]
+
+    def add_messages(self, source_id: str, messages: Sequence[ChatMessage]) -> None:
+        if source_id not in self.context_messages:
+            self.context_messages[source_id] = []
+        self.context_messages[source_id].extend(messages)
+```
+
+#### 5. Default Storage Behavior
+
+Zero-config works out of the box:
+
+```python
+# No hooks configured - still gets conversation history!
+agent = ChatAgent(chat_client=client, name="assistant")
+session = agent.create_session()
+response = await agent.run("Hello!", session=session)
+response = await agent.run("What did I say?", session=session)  # Remembers!
+```
+
+Default `InMemoryStorageHooks` is added at runtime **only when**:
+- No `service_session_id` (service not managing storage)
+- `options.store` is not `True` (user not expecting service storage)
+- **No hooks pipeline configured at all** (pipeline is empty or None)
+
+**Important:** If the user configures *any* hooks (even non-storage hooks), the framework does **not** automatically add storage. This is intentional:
+- Once users start customizing the pipeline, they should be considered advanced, they should explicitly configure storage
+- Automatic insertion would create ordering ambiguity (should storage be first? last?)
+- Explicit configuration is clearer than implicit behavior for non-trivial setups
+- We could consider adding a warning when no storage is present, while store=False and not service_session_id is set
+
+```python
+# This agent has NO automatic storage - user configured hooks but no storage
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[RAGContextHooks("rag")]  # No storage hook!
+)
+session = agent.create_session()
+await agent.run("Hello!", session=session)
+await agent.run("What did I say?", session=session)  # Won't remember!
+
+# To get storage, explicitly add it, in the right order:
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[
+        InMemoryStorageHooks("memory"),  # Explicit storage
+        RAGContextHooks("rag"),
+    ]
+)
+```
+
+#### 6. Hooks Instance vs Factory
+
+Same pattern as Option 2 - support both shared instances and per-session factories:
+
+```python
+# Instance (shared across sessions)
+agent = ChatAgent(
+    context_hooks=[RAGContextHooks("rag")]
+)
+
+# Factory (new instance per session)
+def create_session_cache(session_id: str | None) -> ContextHooks:
+    return SessionCacheHooks("cache", session_id=session_id)
+
+agent = ChatAgent(
+    context_hooks=[create_session_cache]
+)
+```
+
+#### 7. Renaming: Thread → Session
+
+Same as Option 2 - `AgentThread` becomes `AgentSession`.
+
+#### 8. Session Serialization/Deserialization
+
+Same agent-owned serialization pattern as Option 2:
+
+```python
+class ContextHooks(ABC):
+    async def serialize(self) -> Any:
+        """Serialize hooks state. Default returns None (no state)."""
+        return None
+
+    async def restore(self, state: Any) -> None:
+        """Restore hooks state from serialized object."""
+        pass
+
+
+class InMemoryStorageHooks(StorageContextHooks):
+    async def serialize(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "messages": [msg.to_dict() for msg in self._messages],
+        }
+
+    async def restore(self, state: dict[str, Any]) -> None:
+        self._messages = [ChatMessage.from_dict(m) for m in state.get("messages", [])]
+```
+
+#### 9. Session Management Methods
+
+Same API as Option 2:
+
+```python
+class ChatAgent:
+    def create_session(
+        self,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+    ) -> AgentSession: ...
+
+    def get_session_by_id(self, session_id: str) -> AgentSession: ...
+
+    async def serialize_session(self, session: AgentSession) -> dict[str, Any]: ...
+
+    async def restore_session(self, serialized: dict[str, Any]) -> AgentSession: ...
+```
+
+### Pipeline Execution Model
+
+The key difference from Option 2 is the execution model:
+
+```python
+class ContextHooksPipeline:
+    def __init__(self, hooks: Sequence[ContextHooks]):
+        self._hooks = list(hooks)
+
+    async def run(self, context: SessionContext, invoke: Callable) -> None:
+        # Phase 1: All before_run in order
+        for hook in self._hooks:
+            await hook.before_run(context)
+
+        # Phase 2: Model invocation
+        await invoke(context)
+
+        # Phase 3: All after_run in reverse order (symmetry)
+        for hook in reversed(self._hooks):
+            await hook.after_run(context)
+```
+
+**Execution flow comparison:**
+
+```
+Option 2 (Wrapper/Onion):          Option 3 (Hooks/Linear):
+┌─────────────────────────┐        ┌─────────────────────────┐
+│ middleware1.process()   │        │ hook1.before_run()   │
+│  ┌───────────────────┐  │        │ hook2.before_run()   │
+│  │ middleware2.process│  │        │ hook3.before_run()   │
+│  │  ┌─────────────┐  │  │        ├─────────────────────────┤
+│  │  │   invoke    │  │  │   vs   │      <invoke>           │
+│  │  └─────────────┘  │  │        ├─────────────────────────┤
+│  │ (post-processing) │  │        │ hook3.after_run()    │
+│  └───────────────────┘  │        │ hook2.after_run()    │
+│ (post-processing)       │        │ hook1.after_run()    │
+└─────────────────────────┘        └─────────────────────────┘
+```
+
+### Accessing Context from Other Hooks
+
+Non-storage hooks can read context added by other hooks via `context.context_messages`. However, hooks should operate under the assumption that **only the current input messages are available** - there is no implicit conversation history.
+
+If a hook needs historical context (e.g., a RAG hook that wants to search based on the last few messages, not just the newest), it must **maintain its own message buffer** as part of its instance state. This makes the hook self-contained and predictable, similar to how storage hooks manage their own persistence.
+
+**Key principles:**
+- `context.input_messages` contains only the new message(s) for this invocation
+- `context.context_messages` contains messages added by hooks that ran earlier in the pipeline
+- For history beyond current input, hooks must track it themselves
+- Use `serialize()`/`restore()` to persist the buffer across sessions
+
+**Example: RAG hook with conversation history buffer**
+
+```python
+class RAGWithBufferHooks(ContextHooks):
+    """RAG hook that uses recent conversation history for better retrieval."""
+
+    def __init__(
+        self,
+        source_id: str,
+        retriever: Retriever,
+        *,
+        buffer_window: int = 5,  # Number of recent exchanges to consider
+        session_id: str | None = None,
+    ):
+        super().__init__(source_id, session_id=session_id)
+        self._retriever = retriever
+        self._buffer_window = buffer_window
+        self._message_buffer: list[ChatMessage] = []  # Self-managed history
+
+    async def before_run(self, context: SessionContext) -> None:
+        # Build search query from current input + recent history
+        recent_messages = self._message_buffer[-self._buffer_window * 2:]  # pairs of user/assistant
+        search_context = recent_messages + list(context.input_messages)
+
+        # Use conversation context for better retrieval
+        query = self._build_search_query(search_context)
+        docs = await self._retriever.search(query)
+
+        # Add retrieved context
+        context.add_messages(self.source_id, [
+            ChatMessage.system(f"Relevant context:\n{self._format_docs(docs)}")
+        ])
+
+    async def after_run(self, context: SessionContext) -> None:
+        # Update our own history buffer with this exchange
+        self._message_buffer.extend(context.input_messages)
+        if context.response_messages:
+            self._message_buffer.extend(context.response_messages)
+
+        # Trim to prevent unbounded growth
+        max_messages = self._buffer_window * 4  # Keep some buffer
+        if len(self._message_buffer) > max_messages:
+            self._message_buffer = self._message_buffer[-max_messages:]
+
+    async def serialize(self) -> dict[str, Any]:
+        """Persist the history buffer."""
+        return {
+            "source_id": self.source_id,
+            "message_buffer": [msg.to_dict() for msg in self._message_buffer],
+        }
+
+    async def restore(self, state: dict[str, Any]) -> None:
+        """Restore the history buffer."""
+        self._message_buffer = [
+            ChatMessage.from_dict(m) for m in state.get("message_buffer", [])
+        ]
+
+    def _build_search_query(self, messages: list[ChatMessage]) -> str:
+        # Combine recent messages into a search query
+        return " ".join(msg.text for msg in messages if msg.text)
+
+    def _format_docs(self, docs: list[Document]) -> str:
+        return "\n\n".join(doc.content for doc in docs)
+```
+
+**Usage:**
+```python
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[
+        InMemoryStorageHooks("memory"),
+        RAGWithBufferHooks("rag", retriever=my_retriever, buffer_window=3),
+    ]
+)
+
+session = agent.create_session()
+
+# First message - RAG uses only this message
+await agent.run("What is Python?", session=session)
+
+# Second message - RAG now uses both messages for better retrieval
+await agent.run("How does it compare to JavaScript?", session=session)
+
+# The RAG hook's internal buffer now contains the conversation,
+# enabling context-aware retrieval even though it's not a storage hook
+```
+
+This pattern allows any hook to behave like a "mini storage" for its own purposes while keeping the clear separation between storage hooks (which persist the canonical conversation) and context hooks (which enhance the invocation).
+
+**Example: Simple RAG using only current input (no history)**
+
+If you want RAG that only uses the current user input (ignoring conversation history), simply use `context.input_messages` directly:
+
+```python
+class SimpleRAGHooks(ContextHooks):
+    """RAG hook that uses only the current input for retrieval."""
+
+    def __init__(self, source_id: str, retriever: Retriever):
+        super().__init__(source_id)
+        self._retriever = retriever
+
+    async def before_run(self, context: SessionContext) -> None:
+        # Use ONLY the current input - no history needed
+        query = " ".join(msg.text for msg in context.input_messages if msg.text)
+        docs = await self._retriever.search(query)
+
+        context.add_messages(self.source_id, [
+            ChatMessage.system(f"Relevant context:\n{self._format_docs(docs)}")
+        ])
+
+    def _format_docs(self, docs: list[Document]) -> str:
+        return "\n\n".join(doc.content for doc in docs)
+
+
+# Usage - storage hook provides history to the model, RAG only uses current input
+agent = ChatAgent(
+    chat_client=client,
+    context_hooks=[
+        InMemoryStorageHooks("memory"),  # Loads full history for the model
+        SimpleRAGHooks("rag", retriever=my_retriever),  # Only uses current input
+    ]
+)
+```
+
+The key distinction:
+- `context.input_messages` - only the new message(s) passed to this `agent.run()` call
+- `context.context_messages` - messages added by other hooks (e.g., history loaded by storage)
+- `context.get_all_messages()` - combines everything for the model
+
+### Example: Current vs New (Option 3)
+
+**Current:**
+```python
+class MyContextProvider(ContextProvider):
+    async def invoking(self, messages, **kwargs) -> Context:
+        docs = await self.retrieve_documents(messages[-1].text)
+        return Context(messages=[ChatMessage.system(f"Context: {docs}")])
+
+    async def invoked(self, request, response, **kwargs) -> None:
+        await self.store_interaction(request, response)
+
+async with MyContextProvider() as provider:
+    agent = ChatAgent(chat_client=client, name="assistant")
+    thread = await agent.get_new_thread(message_store=ChatMessageStore())
+    thread.context_provider = provider
+    response = await agent.run("Hello", thread=thread)
+```
+
+**New (Option 3 - Hooks):**
+```python
+class RAGHooks(ContextHooks):
+    async def before_run(self, context: SessionContext) -> None:
+        docs = await self.retrieve_documents(context.input_messages[-1].text)
+        context.add_messages(self.source_id, [ChatMessage.system(f"Context: {docs}")])
+
+    async def after_run(self, context: SessionContext) -> None:
+        await self.store_interaction(context.input_messages, context.response_messages)
+
+agent = ChatAgent(
+    chat_client=client,
+    name="assistant",
+    context_hooks=[
+        InMemoryStorageHooks("memory"),
+        RAGHooks("rag"),
+    ]
+)
+session = agent.create_session()
+response = await agent.run("Hello", session=session)
+```
+
+### Migration Impact (Option 3)
+
+| Current | New (Option 3) | Notes |
+|---------|----------------|-------|
+| `ContextProvider` | `ContextHooks` | Rename `invoking()` → `before_run()`, `invoked()` → `after_run()` |
+| `ChatMessageStore` | `StorageContextHooks` | Extend and implement storage methods |
+| `AgentThread` | `AgentSession` | Clean break, no alias |
+| `thread.message_store` | Via hooks in pipeline | Configure at agent level |
+| `thread.context_provider` | Via hooks in pipeline | Multiple hooks supported |
+
+---
+
+## Detailed Design: Option 2 (ContextMiddleware - Wrapper Pattern)
 
 ### Key Design Decisions
 
@@ -291,10 +921,35 @@ response = await agent.run("Hello!", session=session)
 response = await agent.run("What did I say?", session=session)  # Remembers!
 ```
 
-Default `InMemoryStorageMiddleware` is added at runtime when:
+Default `InMemoryStorageMiddleware` is added at runtime **only when**:
 - No `service_session_id` (service not managing storage)
 - `options.store` is not `True` (user not expecting service storage)
-- Pipeline is empty or None
+- **No middleware pipeline configured at all** (pipeline is empty or None)
+
+**Important:** If the user configures *any* middleware (even non-storage middleware), the framework does **not** automatically add storage. This is intentional:
+- Once users start customizing the pipeline, they should explicitly configure storage
+- Automatic insertion would create ordering ambiguity (should storage be first? last?)
+- Explicit configuration is clearer than implicit behavior for non-trivial setups
+
+```python
+# This agent has NO automatic storage - user configured middleware but no storage
+agent = ChatAgent(
+    chat_client=client,
+    context_middleware=[RAGContextMiddleware("rag")]  # No storage middleware!
+)
+session = agent.create_session()
+await agent.run("Hello!", session=session)
+await agent.run("What did I say?", session=session)  # Won't remember!
+
+# To get storage, explicitly add it:
+agent = ChatAgent(
+    chat_client=client,
+    context_middleware=[
+        InMemoryStorageMiddleware("memory"),  # Explicit storage
+        RAGContextMiddleware("rag"),
+    ]
+)
+```
 
 **Comparison to Current:**
 | Aspect | AgentThread (Current) | AgentSession (New) |
@@ -335,18 +990,18 @@ Sessions need to be serializable for persistence across process restarts. Serial
 ```python
 class ContextMiddleware(ABC):
     """Each middleware can optionally implement serialization."""
-    
+
     async def serialize(self) -> Any:
         """Serialize middleware state to a persistable object.
-        
+
         Returns any object that can be serialized (typically dict for JSON).
         Default returns None (no state to persist).
         """
         return None
-    
+
     async def restore(self, state: Any) -> None:
         """Restore middleware state from a previously serialized object.
-        
+
         Args:
             state: The object returned by serialize()
         """
@@ -355,29 +1010,29 @@ class ContextMiddleware(ABC):
 
 class InMemoryStorageMiddleware(StorageContextMiddleware):
     """Example: In-memory storage serializes its messages."""
-    
+
     async def serialize(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
             "messages": [msg.to_dict() for msg in self._messages],
         }
-    
+
     async def restore(self, state: dict[str, Any]) -> None:
         self._messages = [ChatMessage.from_dict(m) for m in state.get("messages", [])]
 
 
 class ChatAgent:
     """Agent handles all session serialization."""
-    
+
     async def serialize_session(self, session: AgentSession) -> dict[str, Any]:
         """Serialize a session's state for persistence.
-        
+
         The agent handles serialization because it understands the middleware
         configuration and can coordinate state capture across all middleware.
-        
+
         Args:
             session: The session to serialize
-            
+
         Returns:
             Serialized state that can be persisted (JSON-compatible dict)
         """
@@ -387,41 +1042,41 @@ class ChatAgent:
                 state = await middleware.serialize()
                 if state is not None:
                     middleware_states[middleware.source_id] = state
-        
+
         return {
             "session_id": session.session_id,
             "service_session_id": session.service_session_id,
             "middleware_states": middleware_states,
         }
-    
+
     async def restore_session(self, serialized: dict[str, Any]) -> AgentSession:
         """Restore a session from serialized state.
-        
+
         The agent must restore the session because it holds the middleware
         configuration needed to reconstruct the pipeline.
-        
+
         Args:
             serialized: Previously serialized session state
-            
+
         Returns:
             Restored AgentSession with middleware state restored
         """
         session_id = serialized.get("session_id")
         service_session_id = serialized.get("service_session_id")
         middleware_states = serialized.get("middleware_states", {})
-        
+
         # Create fresh session with new pipeline
         session = self.create_session(
             session_id=session_id,
             service_session_id=service_session_id,
         )
-        
+
         # Restore middleware state by source_id
         if session.context_pipeline:
             for middleware in session.context_pipeline:
                 if middleware.source_id in middleware_states:
                     await middleware.restore(middleware_states[middleware.source_id])
-        
+
         return session
 ```
 
@@ -468,43 +1123,43 @@ class ChatAgent:
         service_session_id: str | None = None,
     ) -> AgentSession:
         """Create a new session with a fresh middleware pipeline.
-        
+
         This is the primary way to create sessions. Middleware factories
         are called with the session_id to create session-specific instances.
-        
+
         Args:
             session_id: Optional session ID (generated if not provided)
             service_session_id: Optional service-managed session ID
-            
+
         Returns:
             New AgentSession with resolved middleware pipeline
         """
         resolved_session_id = session_id or str(uuid.uuid4())
-        
+
         pipeline = None
         if self._context_middleware:
             pipeline = ContextMiddlewarePipeline.from_config(
                 self._context_middleware,
                 session_id=resolved_session_id,
             )
-        
+
         return AgentSession(
             session_id=resolved_session_id,
             service_session_id=service_session_id,
             context_pipeline=pipeline,
         )
-    
+
     def get_session_by_id(self, session_id: str) -> AgentSession:
         """Get a session by ID with a fresh middleware pipeline.
-        
+
         Use this when you have a session ID but no persisted state.
         The middleware pipeline is freshly created (no state restored).
-        
+
         For restoring a session with state, use restore_session() instead.
-        
+
         Args:
             session_id: The session ID to use
-            
+
         Returns:
             AgentSession with the specified ID and fresh middleware
         """
@@ -529,6 +1184,151 @@ session = agent.get_session_by_id("existing-session-id")
 state = load_from_database(session_id)
 session = await agent.restore_session(state)
 ```
+
+### Accessing Context from Other Middleware
+
+Non-storage middleware can read context added by other middleware via `context.context_messages`. However, middleware should operate under the assumption that **only the current input messages are available** - there is no implicit conversation history.
+
+If a middleware needs historical context (e.g., a RAG middleware that wants to search based on the last few messages, not just the newest), it must **maintain its own message buffer** as part of its instance state. This makes the middleware self-contained and predictable, similar to how storage middleware manages its own persistence.
+
+**Key principles:**
+- `context.input_messages` contains only the new message(s) for this invocation
+- `context.context_messages` contains messages added by middleware that ran earlier in the pipeline
+- For history beyond current input, middleware must track it themselves
+- Use `serialize()`/`restore()` to persist the buffer across sessions
+
+**Example: RAG middleware with conversation history buffer**
+
+```python
+class RAGWithBufferMiddleware(ContextMiddleware):
+    """RAG middleware that uses recent conversation history for better retrieval."""
+
+    def __init__(
+        self,
+        source_id: str,
+        retriever: Retriever,
+        *,
+        buffer_window: int = 5,  # Number of recent exchanges to consider
+        session_id: str | None = None,
+    ):
+        super().__init__(source_id, session_id=session_id)
+        self._retriever = retriever
+        self._buffer_window = buffer_window
+        self._message_buffer: list[ChatMessage] = []  # Self-managed history
+
+    async def process(self, context: SessionContext, next: ContextMiddlewareNext) -> None:
+        # Build search query from current input + recent history
+        recent_messages = self._message_buffer[-self._buffer_window * 2:]  # pairs of user/assistant
+        search_context = recent_messages + list(context.input_messages)
+
+        # Use conversation context for better retrieval
+        query = self._build_search_query(search_context)
+        docs = await self._retriever.search(query)
+
+        # Add retrieved context
+        context.add_messages(self.source_id, [
+            ChatMessage.system(f"Relevant context:\n{self._format_docs(docs)}")
+        ])
+
+        # Call next middleware
+        await next(context)
+
+        # Update our own history buffer with this exchange
+        self._message_buffer.extend(context.input_messages)
+        if context.response_messages:
+            self._message_buffer.extend(context.response_messages)
+
+        # Trim to prevent unbounded growth
+        max_messages = self._buffer_window * 4  # Keep some buffer
+        if len(self._message_buffer) > max_messages:
+            self._message_buffer = self._message_buffer[-max_messages:]
+
+    async def serialize(self) -> dict[str, Any]:
+        """Persist the history buffer."""
+        return {
+            "source_id": self.source_id,
+            "message_buffer": [msg.to_dict() for msg in self._message_buffer],
+        }
+
+    async def restore(self, state: dict[str, Any]) -> None:
+        """Restore the history buffer."""
+        self._message_buffer = [
+            ChatMessage.from_dict(m) for m in state.get("message_buffer", [])
+        ]
+
+    def _build_search_query(self, messages: list[ChatMessage]) -> str:
+        # Combine recent messages into a search query
+        return " ".join(msg.text for msg in messages if msg.text)
+
+    def _format_docs(self, docs: list[Document]) -> str:
+        return "\n\n".join(doc.content for doc in docs)
+```
+
+**Usage:**
+```python
+agent = ChatAgent(
+    chat_client=client,
+    context_middleware=[
+        InMemoryStorageMiddleware("memory"),
+        RAGWithBufferMiddleware("rag", retriever=my_retriever, buffer_window=3),
+    ]
+)
+
+session = agent.create_session()
+
+# First message - RAG uses only this message
+await agent.run("What is Python?", session=session)
+
+# Second message - RAG now uses both messages for better retrieval
+await agent.run("How does it compare to JavaScript?", session=session)
+
+# The RAG middleware's internal buffer now contains the conversation,
+# enabling context-aware retrieval even though it's not a storage middleware
+```
+
+This pattern allows any middleware to behave like a "mini storage" for its own purposes while keeping the clear separation between storage middleware (which persist the canonical conversation) and context middleware (which enhance the invocation).
+
+**Example: Simple RAG using only current input (no history)**
+
+If you want RAG that only uses the current user input (ignoring conversation history), simply use `context.input_messages` directly:
+
+```python
+class SimpleRAGMiddleware(ContextMiddleware):
+    """RAG middleware that uses only the current input for retrieval."""
+
+    def __init__(self, source_id: str, retriever: Retriever):
+        super().__init__(source_id)
+        self._retriever = retriever
+
+    async def process(self, context: SessionContext, next: ContextMiddlewareNext) -> None:
+        # Use ONLY the current input - no history needed
+        query = " ".join(msg.text for msg in context.input_messages if msg.text)
+        docs = await self._retriever.search(query)
+
+        context.add_messages(self.source_id, [
+            ChatMessage.system(f"Relevant context:\n{self._format_docs(docs)}")
+        ])
+
+        await next(context)
+
+    def _format_docs(self, docs: list[Document]) -> str:
+        return "\n\n".join(doc.content for doc in docs)
+
+
+# Usage - storage middleware provides history to the model, RAG only uses current input
+agent = ChatAgent(
+    chat_client=client,
+    context_middleware=[
+        InMemoryStorageMiddleware("memory"),  # Loads full history for the model
+        SimpleRAGMiddleware("rag", retriever=my_retriever),  # Only uses current input
+    ]
+)
+```
+
+The key distinction:
+- `context.input_messages` - only the new message(s) passed to this `agent.run()` call
+- `context.context_messages` - messages added by other middleware (e.g., history loaded by storage)
+- `context.get_all_messages()` - combines everything for the model
 
 ### Migration Impact
 
@@ -624,12 +1424,14 @@ class SessionContext:
             to add messages with proper source attribution.
         instructions: Additional instructions - middleware can append here
         tools: Additional tools - middleware can append here
-        response_messages: After invocation, contains the agent's response (set by agent)
+        response_messages: After invocation, contains the agent's response (set by agent).
+            READ-ONLY - modifications are ignored. Use AgentMiddleware to modify responses.
         options: Options passed to agent.run() - READ-ONLY, for reflection only
         metadata: Shared metadata dictionary for cross-middleware communication
 
     Note:
         - `options` is read-only; changes will NOT be merged back into the agent run
+        - `response_messages` is read-only; use AgentMiddleware to modify responses
         - `instructions` and `tools` are merged by the agent into the run options
         - `context_messages` values are flattened in order when building the final input
     """
