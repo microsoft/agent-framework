@@ -1244,12 +1244,12 @@ class AgentTelemetryLayer:
         **kwargs: Any,
     ) -> None:
         """Initialize telemetry attributes and histograms."""
-        super().__init__(*args, **kwargs)
-        self.token_usage_histogram = _get_token_usage_histogram()
-        self.duration_histogram = _get_duration_histogram()
         self.otel_provider_name = (
             otel_agent_provider_name or otel_provider_name or getattr(self, "AGENT_PROVIDER_NAME", "unknown")
         )
+        super().__init__(*args, **kwargs)
+        self.token_usage_histogram = _get_token_usage_histogram()
+        self.duration_histogram = _get_duration_histogram()
 
     @overload
     def run(

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import inspect
 import json
@@ -64,7 +66,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import ChatClientProtocol
-    from ._middleware import FunctionMiddleware, FunctionMiddlewareCallable
+    from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
         ChatMessage,
         ChatOptions,
@@ -106,8 +108,8 @@ ReturnT = TypeVar("ReturnT", default=Any)
 
 
 def _parse_inputs(
-    inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None",
-) -> list["Content"]:
+    inputs: Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None,
+) -> list[Content]:
     """Parse the inputs for a tool, ensuring they are of type Content.
 
     Args:
@@ -127,7 +129,7 @@ def _parse_inputs(
         Content,
     )
 
-    parsed_inputs: list["Content"] = []
+    parsed_inputs: list[Content] = []
     if not isinstance(inputs, list):
         inputs = [inputs]
     for input_item in inputs:
@@ -252,7 +254,7 @@ class HostedCodeInterpreterTool(BaseTool):
     def __init__(
         self,
         *,
-        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
+        inputs: Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -501,7 +503,7 @@ class HostedFileSearchTool(BaseTool):
     def __init__(
         self,
         *,
-        inputs: "Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None" = None,
+        inputs: Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None = None,
         max_results: int | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -687,7 +689,7 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
             return True
         return self.func is None
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> "FunctionTool[ArgsT, ReturnT]":
+    def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool[ArgsT, ReturnT]:
         """Implement the descriptor protocol to support bound methods.
 
         When a FunctionTool is accessed as an attribute of a class instance,
@@ -1432,45 +1434,16 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
-class FunctionExecutionResult:
-    """Internal wrapper pairing function output with loop control signals.
-
-    Function execution produces two distinct concerns: the semantic result (returned to
-    the LLM as FunctionResultContent) and control flow decisions (whether middleware
-    requested early termination). This wrapper keeps control signals out of user-facing
-    content types while allowing _try_execute_function_calls to communicate both.
-
-    Not exposed to users.
-
-    Attributes:
-        content: The FunctionResultContent or other content from the function execution.
-        terminate: If True, the function invocation loop should exit immediately without
-            another LLM call. Set when middleware sets context.terminate=True.
-    """
-
-    __slots__ = ("content", "terminate")
-
-    def __init__(self, content: "Content", terminate: bool = False) -> None:
-        """Initialize FunctionExecutionResult.
-
-        Args:
-            content: The content from the function execution.
-            terminate: Whether to terminate the function calling loop.
-        """
-        self.content = content
-        self.terminate = terminate
-
-
 async def _auto_invoke_function(
-    function_call_content: "Content",
+    function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
     tool_map: dict[str, FunctionTool[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
-    middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
-) -> "FunctionExecutionResult | Content":
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,  # Optional MiddlewarePipeline
+) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
     Args:
@@ -1485,8 +1458,7 @@ async def _auto_invoke_function(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
-        A FunctionExecutionResult wrapping the content and terminate signal,
-        or a Content object for approval/hosted tool scenarios.
+        Function result content or other content for approval/hosted tool scenarios.
 
     Raises:
         KeyError: If the requested function is not found in the tool map.
@@ -1504,12 +1476,10 @@ async def _auto_invoke_function(
         # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
             exc = KeyError(f'Function "{function_call_content.name}" not found.')
-            return FunctionExecutionResult(
-                content=Content.from_function_result(
-                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                    result=f'Error: Requested function "{function_call_content.name}" not found.',
-                    exception=str(exc),  # type: ignore[arg-type]
-                )
+            return Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=f'Error: Requested function "{function_call_content.name}" not found.',
+                exception=str(exc),  # type: ignore[arg-type]
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
@@ -1538,17 +1508,13 @@ async def _auto_invoke_function(
         message = "Error: Argument parsing failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
-        return FunctionExecutionResult(
-            content=Content.from_function_result(
-                call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                result=message,
-                exception=str(exc),  # type: ignore[arg-type]
-            )
+        return Content.from_function_result(
+            call_id=function_call_content.call_id,  # type: ignore[arg-type]
+            result=message,
+            exception=str(exc),  # type: ignore[arg-type]
         )
 
-    if not middleware_pipeline or (
-        not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
-    ):
+    if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
         try:
             function_result = await tool.invoke(
@@ -1556,25 +1522,21 @@ async def _auto_invoke_function(
                 tool_call_id=function_call_content.call_id,
                 **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
             )
-            return FunctionExecutionResult(
-                content=Content.from_function_result(
-                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                    result=function_result,
-                )
+            return Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=function_result,
             )
         except Exception as exc:
             message = "Error: Function failed."
             if config["include_detailed_errors"]:
                 message = f"{message} Exception: {exc}"
-            return FunctionExecutionResult(
-                content=Content.from_function_result(
-                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                    result=message,
-                    exception=str(exc),
-                )
+            return Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=message,
+                exception=str(exc),
             )
     # Execute through middleware pipeline if available
-    from ._middleware import FunctionInvocationContext
+    from ._middleware import FunctionInvocationContext, MiddlewareTermination
 
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -1590,37 +1552,32 @@ async def _auto_invoke_function(
         )
 
     try:
-        function_result = await middleware_pipeline.execute(
-            function=tool,
-            arguments=args,
-            context=middleware_context,
-            final_handler=final_function_handler,
+        function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
+        return Content.from_function_result(
+            call_id=function_call_content.call_id,  # type: ignore[arg-type]
+            result=function_result,
         )
-        return FunctionExecutionResult(
-            content=Content.from_function_result(
-                call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                result=function_result,
-            ),
-            terminate=middleware_context.terminate,
+    except MiddlewareTermination:
+        return Content.from_function_result(
+            call_id=function_call_content.call_id,  # type: ignore[arg-type]
+            result=None,
         )
     except Exception as exc:
         message = "Error: Function failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
-        return FunctionExecutionResult(
-            content=Content.from_function_result(
-                call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                result=message,
-                exception=str(exc),  # type: ignore[arg-type]
-            )
+        return Content.from_function_result(
+            call_id=function_call_content.call_id,  # type: ignore[arg-type]
+            result=message,
+            exception=str(exc),  # type: ignore[arg-type]
         )
 
 
 def _get_tool_map(
-    tools: "ToolProtocol \
-    | Callable[..., Any] \
-    | MutableMapping[str, Any] \
-    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    tools: ToolProtocol
+    | Callable[..., Any]
+    | MutableMapping[str, Any]
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]],
 ) -> dict[str, FunctionTool[Any, Any]]:
     tool_list: dict[str, FunctionTool[Any, Any]] = {}
     for tool_item in tools if isinstance(tools, list) else [tools]:
@@ -1637,14 +1594,14 @@ def _get_tool_map(
 async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
-    function_calls: Sequence["Content"],
-    tools: "ToolProtocol \
-    | Callable[..., Any] \
-    | MutableMapping[str, Any] \
-    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    function_calls: Sequence[Content],
+    tools: ToolProtocol
+    | Callable[..., Any]
+    | MutableMapping[str, Any]
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]],
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
-) -> tuple[Sequence["Content"], bool]:
+) -> tuple[Sequence[Content], bool]:
     """Execute multiple function calls concurrently.
 
     Args:
@@ -1660,7 +1617,7 @@ async def _try_execute_function_calls(
         - A list of Content containing the results of each function call,
           or the approval requests if any function requires approval,
           or the original function calls if any are declaration only.
-        - A boolean indicating whether to terminate the function calling loop.
+        - Always False; termination via middleware is no longer supported.
     """
     from ._types import Content
 
@@ -1725,34 +1682,23 @@ async def _try_execute_function_calls(
         for seq_idx, function_call in enumerate(function_calls)
     ])
 
-    # Unpack FunctionExecutionResult wrappers and check for terminate signal
-    contents: list[Content] = []
-    should_terminate = False
-    for result in execution_results:
-        if isinstance(result, FunctionExecutionResult):
-            contents.append(result.content)
-            if result.terminate:
-                should_terminate = True
-        else:
-            # Direct Content (e.g., from hosted tools)
-            contents.append(result)
-
-    return (contents, should_terminate)
+    contents: list[Content] = list(execution_results)
+    return (contents, False)
 
 
 async def _execute_function_calls(
     *,
     custom_args: dict[str, Any],
     attempt_idx: int,
-    function_calls: list["Content"],
+    function_calls: list[Content],
     tool_options: dict[str, Any] | None,
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,
-) -> tuple[list["Content"], bool, bool]:
+) -> tuple[list[Content], bool, bool]:
     tools = _extract_tools(tool_options)
     if not tools:
         return [], False, False
-    results, should_terminate = await _try_execute_function_calls(
+    results, _ = await _try_execute_function_calls(
         custom_args=custom_args,
         attempt_idx=attempt_idx,
         function_calls=function_calls,
@@ -1761,7 +1707,7 @@ async def _execute_function_calls(
         config=config,
     )
     had_errors = any(fcr.exception is not None for fcr in results if fcr.type == "function_result")
-    return list(results), should_terminate, had_errors
+    return list(results), False, had_errors
 
 
 def _update_conversation_id(
@@ -1789,8 +1735,8 @@ def _update_conversation_id(
 
 
 async def _ensure_response_stream(
-    stream_like: "ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]]",
-) -> "ResponseStream[Any, Any]":
+    stream_like: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]],
+) -> ResponseStream[Any, Any]:
     from ._types import ResponseStream
 
     stream = await stream_like if isinstance(stream_like, Awaitable) else stream_like
@@ -1817,12 +1763,12 @@ def _extract_tools(options: dict[str, Any] | None) -> Any:
 
 
 def _collect_approval_responses(
-    messages: "list[ChatMessage]",
-) -> dict[str, "Content"]:
+    messages: list[ChatMessage],
+) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages."""
     from ._types import ChatMessage
 
-    fcc_todo: dict[str, "Content"] = {}
+    fcc_todo: dict[str, Content] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
             # Collect BOTH approved and rejected responses
@@ -1832,9 +1778,9 @@ def _collect_approval_responses(
 
 
 def _replace_approval_contents_with_results(
-    messages: "list[ChatMessage]",
-    fcc_todo: dict[str, "Content"],
-    approved_function_results: "list[Content]",
+    messages: list[ChatMessage],
+    fcc_todo: dict[str, Content],
+    approved_function_results: list[Content],
 ) -> None:
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
@@ -1895,14 +1841,14 @@ def _get_finalizers_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
     return list(getattr(inner_stream, "_finalizers", []))
 
 
-def _extract_function_calls(response: "ChatResponse") -> list["Content"]:
+def _extract_function_calls(response: ChatResponse) -> list[Content]:
     function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
     return [
         it for it in response.messages[0].contents if it.type == "function_call" and it.call_id not in function_results
     ]
 
 
-def _prepend_fcc_messages(response: "ChatResponse", fcc_messages: list["ChatMessage"]) -> None:
+def _prepend_fcc_messages(response: ChatResponse, fcc_messages: list[ChatMessage]) -> None:
     if not fcc_messages:
         return
     for msg in reversed(fcc_messages):
@@ -1922,18 +1868,17 @@ class FunctionRequestResult(TypedDict, total=False):
 
     action: Literal["return", "continue", "stop"]
     errors_in_a_row: int
-    result_message: "ChatMessage | None"
+    result_message: ChatMessage | None
     update_role: Literal["assistant", "tool"] | None
-    function_call_results: list["Content"] | None
+    function_call_results: list[Content] | None
 
 
 def _handle_function_call_results(
     *,
-    response: "ChatResponse",
-    function_call_results: list["Content"],
-    fcc_messages: list["ChatMessage"],
+    response: ChatResponse,
+    function_call_results: list[Content],
+    fcc_messages: list[ChatMessage],
     errors_in_a_row: int,
-    should_terminate: bool,
     had_errors: bool,
     max_errors: int,
 ) -> FunctionRequestResult:
@@ -1949,18 +1894,6 @@ def _handle_function_call_results(
             "errors_in_a_row": errors_in_a_row,
             "result_message": None,
             "update_role": "assistant",
-            "function_call_results": None,
-        }
-
-    if should_terminate:
-        result_message = ChatMessage(role="tool", contents=function_call_results)
-        response.messages.append(result_message)
-        _prepend_fcc_messages(response, fcc_messages)
-        return {
-            "action": "return",
-            "errors_in_a_row": errors_in_a_row,
-            "result_message": result_message,
-            "update_role": "tool",
             "function_call_results": None,
         }
 
@@ -1996,14 +1929,14 @@ def _handle_function_call_results(
 
 async def _process_function_requests(
     *,
-    response: "ChatResponse | None",
-    prepped_messages: list["ChatMessage"] | None,
+    response: ChatResponse | None,
+    prepped_messages: list[ChatMessage] | None,
     tool_options: dict[str, Any] | None,
     attempt_idx: int,
-    fcc_messages: list["ChatMessage"] | None,
+    fcc_messages: list[ChatMessage] | None,
     errors_in_a_row: int,
     max_errors: int,
-    execute_function_calls: Callable[..., Awaitable[tuple[list["Content"], bool, bool]]],
+    execute_function_calls: Callable[..., Awaitable[tuple[list[Content], bool, bool]]],
 ) -> FunctionRequestResult:
     if prepped_messages is not None:
         fcc_todo = _collect_approval_responses(prepped_messages)
@@ -2057,7 +1990,7 @@ async def _process_function_requests(
             "function_call_results": None,
         }
 
-    function_call_results, should_terminate, had_errors = await execute_function_calls(
+    function_call_results, _, had_errors = await execute_function_calls(
         attempt_idx=attempt_idx,
         function_calls=function_calls,
         tool_options=tool_options,
@@ -2067,7 +2000,6 @@ async def _process_function_requests(
         function_call_results=function_call_results,
         fcc_messages=fcc_messages,
         errors_in_a_row=errors_in_a_row,
-        should_terminate=should_terminate,
         had_errors=had_errors,
         max_errors=max_errors,
     )
@@ -2089,11 +2021,11 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     def __init__(
         self,
         *,
-        function_middleware: Sequence["FunctionMiddleware | FunctionMiddlewareCallable"] | None = None,
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
-        self.function_middleware = list(function_middleware) if function_middleware else []
+        self.function_middleware: list[FunctionMiddlewareTypes] = function_middleware or []
         self.function_invocation_configuration = normalize_function_invocation_configuration(
             function_invocation_configuration
         )
@@ -2102,43 +2034,43 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: ChatOptions[TResponseModelT],
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[TResponseModelT]]": ...
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_co | ChatOptions[None] | None" = None,
+        options: TOptions_co | ChatOptions[None] | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[Any]]": ...
+    ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        from ._middleware import FunctionMiddlewarePipeline
         from ._types import (
-            ChatMessage,
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
@@ -2146,11 +2078,12 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
-        function_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
-        if function_middleware_pipeline is None and self.function_middleware:
-            from ._middleware import FunctionMiddlewarePipeline
 
-            function_middleware_pipeline = FunctionMiddlewarePipeline(*self.function_middleware)
+        # ChatMiddleware adds this kwarg
+        run_function_middleware = kwargs.get("_function_middleware")
+        function_middleware_pipeline = FunctionMiddlewarePipeline(
+            *(self.function_middleware), *(run_function_middleware or [])
+        )
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]

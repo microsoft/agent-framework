@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatAgent,
-    ChatLevelMiddleware,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
     ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
@@ -15,7 +15,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     HostedMCPTool,
-    Middleware,
+    MiddlewareTypes,
     ToolProtocol,
     get_logger,
 )
@@ -571,7 +571,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> ChatAgent[TAzureAIClientOptions]:
         """Convert this chat client to a ChatAgent.
@@ -641,7 +641,7 @@ class AzureAIClient(
         model_deployment_name: str | None = None,
         credential: AsyncTokenCredential | None = None,
         use_latest_version: bool | None = None,
-        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,

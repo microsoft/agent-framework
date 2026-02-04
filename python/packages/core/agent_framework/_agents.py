@@ -29,7 +29,7 @@ from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import Context, ContextProvider
-from ._middleware import AgentMiddlewareLayer, Middleware
+from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import (
@@ -343,7 +343,7 @@ class BaseAgent(SerializationMixin):
         name: str | None = None,
         description: str | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -365,8 +365,8 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_provider = context_provider
-        self.middleware: list[Middleware] | None = (
-            cast(list[Middleware], middleware) if middleware is not None else None
+        self.middleware: list[MiddlewareTypes] | None = (
+            cast(list[MiddlewareTypes], middleware) if middleware is not None else None
         )
 
         # Merge kwargs into additional_properties
@@ -1436,29 +1436,13 @@ class ChatAgent(
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance."""
-        kwargs.pop("middleware", None)
-        AgentTelemetryLayer.__init__(
-            self,
-            chat_client,
-            instructions,
-            id=id,
-            name=name,
-            description=description,
-            tools=tools,
-            default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
-            middleware=middleware,
-            **kwargs,
-        )
-        RawChatAgent.__init__(
-            self,
-            chat_client,
-            instructions,
+        super().__init__(
+            chat_client=chat_client,
+            instructions=instructions,
             id=id,
             name=name,
             description=description,

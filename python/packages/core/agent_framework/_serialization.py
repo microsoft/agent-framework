@@ -473,7 +473,7 @@ class SerializationMixin:
                 weather_func = FunctionTool.from_dict(function_data, dependencies=dependencies)
                 # The function is now callable and ready for agent use
 
-            **Middleware Context Injection** - Agent execution context:
+            **MiddlewareTypes Context Injection** - Agent execution context:
 
             .. code-block:: python
 
@@ -484,7 +484,7 @@ class SerializationMixin:
                 context_data = {
                     "type": "agent_run_context",
                     "messages": [{"role": "user", "text": "Hello"}],
-                    "is_streaming": False,
+                    "stream": False,
                     "metadata": {"session_id": "abc123"},
                     # agent and result are excluded from serialization
                 }
@@ -500,7 +500,7 @@ class SerializationMixin:
 
                 # Reconstruct context with agent dependency for middleware chain
                 context = AgentRunContext.from_dict(context_data, dependencies=dependencies)
-                # Middleware can now access context.agent and process the execution
+                # MiddlewareTypes can now access context.agent and process the execution
 
             This injection system allows the agent framework to maintain clean separation
             between serializable configuration and runtime dependencies like API clients,

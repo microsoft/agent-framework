@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 from agent_framework import AgentProtocol, AgentThread, ChatMessage
-from typing_extensions import Literal
+from typing import Literal
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread

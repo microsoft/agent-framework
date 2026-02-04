@@ -43,7 +43,7 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework._middleware import ChatLevelMiddleware
+    from agent_framework._middleware import ChatAndFunctionMiddlewareTypes
 
     from ._types import AGUIChatOptions
 
@@ -122,7 +122,7 @@ class AGUIChatClient(
     - State synchronization between client and server
     - Server-Sent Events (SSE) streaming
     - Event conversion to Agent Framework types
-    - Middleware, telemetry, and function invocation support
+    - MiddlewareTypes, telemetry, and function invocation support
 
     Important: Message History Management
         This client sends exactly the messages it receives to the server. It does NOT
@@ -216,7 +216,7 @@ class AGUIChatClient(
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         additional_properties: dict[str, Any] | None = None,
-        middleware: Sequence["ChatLevelMiddleware"] | None = None,
+        middleware: Sequence["ChatAndFunctionMiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

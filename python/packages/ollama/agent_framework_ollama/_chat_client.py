@@ -15,7 +15,7 @@ from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     BaseChatClient,
-    ChatLevelMiddleware,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
@@ -305,7 +305,7 @@ class OllamaChatClient(
         host: str | None = None,
         client: AsyncClient | None = None,
         model_id: str | None = None,
-        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,

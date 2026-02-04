@@ -22,7 +22,7 @@ from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
 """
-Result Override with Middleware (Regular and Streaming)
+Result Override with MiddlewareTypes (Regular and Streaming)
 
 This sample demonstrates how to use middleware to intercept and modify function results
 after execution, supporting both regular and streaming agent responses. The example shows:
@@ -30,7 +30,7 @@ after execution, supporting both regular and streaming agent responses. The exam
 - How to execute the original function first and then modify its result
 - Replacing function outputs with custom messages or transformed data
 - Using middleware for result filtering, formatting, or enhancement
-- Detecting streaming vs non-streaming execution using context.is_streaming
+- Detecting streaming vs non-streaming execution using context.stream
 - Overriding streaming results with custom async generators
 
 The weather override middleware lets the original weather function execute normally,
@@ -65,7 +65,7 @@ async def weather_override_middleware(context: ChatContext, next: Callable[[Chat
             "Perfect day for outdoor activities!",
         ]
 
-        if context.is_streaming and isinstance(context.result, ResponseStream):
+        if context.stream and isinstance(context.result, ResponseStream):
             index = {"value": 0}
 
             def _update_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
@@ -93,7 +93,7 @@ async def validate_weather_middleware(context: ChatContext, next: Callable[[Chat
     if context.result is None:
         return
 
-    if context.is_streaming and isinstance(context.result, ResponseStream):
+    if context.stream and isinstance(context.result, ResponseStream):
 
         def _append_validation_note(response: ChatResponse) -> ChatResponse:
             response.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
@@ -160,7 +160,7 @@ async def agent_cleanup_middleware(
         response.messages = cleaned_messages
         return response
 
-    if context.is_streaming and isinstance(context.result, ResponseStream):
+    if context.stream and isinstance(context.result, ResponseStream):
 
         def _clean_update(update: AgentResponseUpdate) -> AgentResponseUpdate:
             for content in update.contents or []:
@@ -182,7 +182,7 @@ async def agent_cleanup_middleware(
 
 async def main() -> None:
     """Example demonstrating result override with middleware for both streaming and non-streaming."""
-    print("=== Result Override Middleware Example ===")
+    print("=== Result Override MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

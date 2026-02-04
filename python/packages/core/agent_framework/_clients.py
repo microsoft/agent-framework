@@ -51,7 +51,7 @@ else:
 if TYPE_CHECKING:
     from ._agents import ChatAgent
     from ._middleware import (
-        Middleware,
+        MiddlewareTypes,
     )
     from ._types import ChatOptions
 
@@ -443,7 +443,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         default_options: TOptions_co | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence["Middleware"] | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> "ChatAgent[TOptions_co]":

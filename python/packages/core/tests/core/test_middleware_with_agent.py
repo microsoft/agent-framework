@@ -6,28 +6,26 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    AgentMiddleware,
     AgentResponseUpdate,
+    AgentRunContext,
     ChatAgent,
+    ChatClientProtocol,
     ChatContext,
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     FunctionTool,
+    MiddlewareTermination,
     Role,
     agent_middleware,
     chat_middleware,
     function_middleware,
 )
-from agent_framework._middleware import (
-    AgentMiddleware,
-    AgentRunContext,
-    FunctionInvocationContext,
-    FunctionMiddleware,
-    MiddlewareType,
-)
-from agent_framework.exceptions import MiddlewareException
 
 from .conftest import MockBaseChatClient, MockChatClient
 
@@ -37,7 +35,7 @@ from .conftest import MockBaseChatClient, MockChatClient
 class TestChatAgentClassBasedMiddleware:
     """Test cases for class-based middleware integration with ChatAgent."""
 
-    async def test_class_based_agent_middleware_with_chat_agent(self, chat_client: "MockChatClient") -> None:
+    async def test_class_based_agent_middleware_with_chat_agent(self, chat_client: ChatClientProtocol) -> None:
         """Test class-based agent middleware with ChatAgent."""
         execution_order: list[str] = []
 
@@ -127,7 +125,7 @@ class TestChatAgentFunctionBasedMiddleware:
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
                 execution_order.append("middleware_before")
-                context.terminate = True
+                raise MiddlewareTermination
                 # We call next() but since terminate=True, subsequent middleware and handler should not execute
                 await next(context)
                 execution_order.append("middleware_after")
@@ -146,7 +144,7 @@ class TestChatAgentFunctionBasedMiddleware:
         # Verify response
         assert response is not None
         assert not response.messages  # No messages should be in response due to pre-termination
-        assert execution_order == ["middleware_before", "middleware_after"]  # Middleware still completes
+        assert execution_order == ["middleware_before", "middleware_after"]  # MiddlewareTypes still completes
         assert chat_client.call_count == 0  # No calls should be made due to termination
 
     async def test_agent_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
@@ -295,7 +293,7 @@ class TestChatAgentStreamingMiddleware:
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
                 execution_order.append("middleware_before")
-                streaming_flags.append(context.is_streaming)
+                streaming_flags.append(context.stream)
                 await next(context)
                 execution_order.append("middleware_after")
 
@@ -331,14 +329,14 @@ class TestChatAgentStreamingMiddleware:
         assert streaming_flags == [True]  # Context should indicate streaming
 
     async def test_non_streaming_vs_streaming_flag_validation(self, chat_client: "MockChatClient") -> None:
-        """Test that is_streaming flag is correctly set for different execution modes."""
+        """Test that stream flag is correctly set for different execution modes."""
         streaming_flags: list[bool] = []
 
         class FlagTrackingMiddleware(AgentMiddleware):
             async def process(
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
-                streaming_flags.append(context.is_streaming)
+                streaming_flags.append(context.stream)
                 await next(context)
 
         # Create ChatAgent with middleware
@@ -503,7 +501,7 @@ sample_tool_function = FunctionTool(
 )
 
 
-# region ChatAgent Function Middleware Tests with Tools
+# region ChatAgent Function MiddlewareTypes Tests with Tools
 
 
 class TestChatAgentFunctionMiddlewareWithTools:
@@ -1056,7 +1054,7 @@ class TestRunLevelMiddleware:
                 self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
             ) -> None:
                 execution_log.append(f"{self.name}_start")
-                streaming_flags.append(context.is_streaming)
+                streaming_flags.append(context.stream)
                 await next(context)
                 execution_log.append(f"{self.name}_end")
 
@@ -1276,7 +1274,7 @@ class TestMiddlewareDecoratorLogic:
 
         # This will cause a type error at decoration time, so we need to test differently
         # Should raise MiddlewareException due to mismatch during agent creation
-        with pytest.raises(MiddlewareException, match="Middleware type mismatch"):
+        with pytest.raises(MiddlewareException, match="MiddlewareTypes type mismatch"):
 
             @agent_middleware  # type: ignore[arg-type]
             async def mismatched_middleware(
@@ -1582,8 +1580,6 @@ class TestChatAgentChatMiddleware:
         assert "test response" in response.messages[0].text
         assert execution_order == [
             "chat_middleware_before",
-            "chat_middleware_before",
-            "chat_middleware_after",
             "chat_middleware_after",
         ]
 
@@ -1613,8 +1609,6 @@ class TestChatAgentChatMiddleware:
         assert "test response" in response.messages[0].text
         assert execution_order == [
             "chat_middleware_before",
-            "chat_middleware_before",
-            "chat_middleware_after",
             "chat_middleware_after",
         ]
 
@@ -1656,7 +1650,7 @@ class TestChatAgentChatMiddleware:
         ) -> None:
             # Override the response without calling next()
             context.result = ChatResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Middleware overridden response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="MiddlewareTypes overridden response")],
                 response_id="middleware-response-123",
             )
             context.terminate = True
@@ -1672,7 +1666,7 @@ class TestChatAgentChatMiddleware:
         # Verify that the response was overridden
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].text == "Middleware overridden response"
+        assert response.messages[0].text == "MiddlewareTypes overridden response"
         assert response.response_id == "middleware-response-123"
 
     async def test_multiple_chat_middleware_execution_order(self) -> None:
@@ -1704,10 +1698,6 @@ class TestChatAgentChatMiddleware:
         assert execution_order == [
             "first_before",
             "second_before",
-            "first_before",
-            "second_before",
-            "second_after",
-            "first_after",
             "second_after",
             "first_after",
         ]
@@ -1720,7 +1710,7 @@ class TestChatAgentChatMiddleware:
         class StreamingTrackingChatMiddleware(ChatMiddleware):
             async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
                 execution_order.append("streaming_chat_before")
-                streaming_flags.append(context.is_streaming)
+                streaming_flags.append(context.stream)
                 await next(context)
                 execution_order.append("streaming_chat_after")
 
@@ -1729,6 +1719,8 @@ class TestChatAgentChatMiddleware:
         agent = ChatAgent(chat_client=chat_client, middleware=[StreamingTrackingChatMiddleware()])
 
         # Set up mock streaming responses
+
+        # TODO: refactor to return a ResponseStream object
         chat_client.streaming_responses = [
             [
                 ChatResponseUpdate(contents=[Content.from_text(text="Stream")], role=Role.ASSISTANT),
@@ -1746,8 +1738,6 @@ class TestChatAgentChatMiddleware:
         assert len(updates) >= 1  # At least some updates
         assert execution_order == [
             "streaming_chat_before",
-            "streaming_chat_before",
-            "streaming_chat_after",
             "streaming_chat_after",
         ]
 
@@ -1761,11 +1751,11 @@ class TestChatAgentChatMiddleware:
         class PreTerminationChatMiddleware(ChatMiddleware):
             async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
                 execution_order.append("middleware_before")
-                context.terminate = True
                 # Set a custom response since we're terminating
                 context.result = ChatResponse(
                     messages=[ChatMessage(role=Role.ASSISTANT, text="Terminated by middleware")]
                 )
+                raise MiddlewareTermination
                 # We call next() but since terminate=True, execution should stop
                 await next(context)
                 execution_order.append("middleware_after")
@@ -1782,12 +1772,7 @@ class TestChatAgentChatMiddleware:
         assert response is not None
         assert len(response.messages) > 0
         assert response.messages[0].text == "Terminated by middleware"
-        assert execution_order == [
-            "middleware_before",
-            "middleware_before",
-            "middleware_after",
-            "middleware_after",
-        ]
+        assert execution_order == ["middleware_before"]
 
     async def test_chat_middleware_termination_after_execution(self) -> None:
         """Test that chat middleware can terminate execution after calling next()."""
@@ -1814,8 +1799,6 @@ class TestChatAgentChatMiddleware:
         assert "test response" in response.messages[0].text
         assert execution_order == [
             "middleware_before",
-            "middleware_before",
-            "middleware_after",
             "middleware_after",
         ]
 
@@ -1853,8 +1836,6 @@ class TestChatAgentChatMiddleware:
         assert execution_order == [
             "agent_middleware_before",
             "chat_middleware_before",
-            "chat_middleware_before",
-            "chat_middleware_after",
             "chat_middleware_after",
             "agent_middleware_after",
         ]
@@ -1905,53 +1886,53 @@ class TestChatAgentChatMiddleware:
         assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
 
 
-class TestMiddlewareWithProtocolOnlyAgent:
-    """Test use_agent_middleware with agents implementing only AgentProtocol."""
+# class TestMiddlewareWithProtocolOnlyAgent:
+#     """Test use_agent_middleware with agents implementing only AgentProtocol."""
 
-    async def test_middleware_with_protocol_only_agent(self) -> None:
-        """Verify middleware works without BaseAgent inheritance for both run."""
-        from collections.abc import AsyncIterable
+# async def test_middleware_with_protocol_only_agent(self) -> None:
+#     """Verify middleware works without BaseAgent inheritance for both run."""
+#     from collections.abc import AsyncIterable
 
-        from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
+#     from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate
 
-        execution_order: list[str] = []
+#     execution_order: list[str] = []
 
-        class TrackingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
-                execution_order.append("before")
-                await next(context)
-                execution_order.append("after")
+#     class TrackingMiddleware(AgentMiddleware):
+#         async def process(
+#             self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+#         ) -> None:
+#             execution_order.append("before")
+#             await next(context)
+#             execution_order.append("after")
 
-        @use_agent_middleware
-        class ProtocolOnlyAgent:
-            """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+#     @use_agent_middleware
+#     class ProtocolOnlyAgent:
+#         """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
 
-            def __init__(self):
-                self.id = "protocol-only-agent"
-                self.name = "Protocol Only Agent"
-                self.description = "Test agent"
-                self.middleware = [TrackingMiddleware()]
+#         def __init__(self):
+#             self.id = "protocol-only-agent"
+#             self.name = "Protocol Only Agent"
+#             self.description = "Test agent"
+#             self.middleware = [TrackingMiddleware()]
 
-            async def run(
-                self, messages=None, *, stream: bool = False, thread=None, **kwargs
-            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
-                if stream:
+#         async def run(
+#             self, messages=None, *, stream: bool = False, thread=None, **kwargs
+#         ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+#             if stream:
 
-                    async def _stream():
-                        yield AgentResponseUpdate()
+#                 async def _stream():
+#                     yield AgentResponseUpdate()
 
-                    return _stream()
-                return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+#                 return _stream()
+#             return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
 
-            def get_new_thread(self, **kwargs):
-                return None
+#         def get_new_thread(self, **kwargs):
+#             return None
 
-        agent = ProtocolOnlyAgent()
-        assert isinstance(agent, AgentProtocol)
+#     agent = ProtocolOnlyAgent()
+#     assert isinstance(agent, AgentProtocol)
 
-        # Test run (non-streaming)
-        response = await agent.run("test message")
-        assert response is not None
-        assert execution_order == ["before", "after"]
+#     # Test run (non-streaming)
+#     response = await agent.run("test message")
+#     assert response is not None
+#     assert execution_order == ["before", "after"]

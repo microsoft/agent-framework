@@ -45,7 +45,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework._middleware import Middleware
+    from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        middleware: Sequence["Middleware"] | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

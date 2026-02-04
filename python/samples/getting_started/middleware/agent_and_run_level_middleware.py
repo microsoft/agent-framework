@@ -18,7 +18,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Agent-Level and Run-Level Middleware Example
+Agent-Level and Run-Level MiddlewareTypes Example
 
 This sample demonstrates the difference between agent-level and run-level middleware:
 
@@ -107,7 +107,7 @@ async def debugging_middleware(
     """Run-level debugging middleware for troubleshooting specific runs."""
     print("[Debug] Debug mode enabled for this run")
     print(f"[Debug] Messages count: {len(context.messages)}")
-    print(f"[Debug] Is streaming: {context.is_streaming}")
+    print(f"[Debug] Is streaming: {context.stream}")
 
     # Log existing metadata from agent middleware
     if context.metadata:
@@ -163,7 +163,7 @@ async def function_logging_middleware(
 
 async def main() -> None:
     """Example demonstrating agent-level and run-level middleware."""
-    print("=== Agent-Level and Run-Level Middleware Example ===\n")
+    print("=== Agent-Level and Run-Level MiddlewareTypes Example ===\n")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

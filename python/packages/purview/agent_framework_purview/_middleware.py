@@ -78,7 +78,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         try:
             # Post (response) check only if we have a normal AgentResponse
             # Use the same user_id from the request for the response evaluation
-            if context.result and not context.is_streaming:
+            if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
                     Activity.UPLOAD_TEXT,
@@ -167,7 +167,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         try:
             # Post (response) evaluation only if non-streaming and we have messages result shape
             # Use the same user_id from the request for the response evaluation
-            if context.result and not context.is_streaming:
+            if context.result and not context.stream:
                 result_obj = context.result
                 messages = getattr(result_obj, "messages", None)
                 if messages:

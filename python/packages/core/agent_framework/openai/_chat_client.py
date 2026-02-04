@@ -18,7 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._middleware import ChatLevelMiddleware, ChatMiddlewareLayer
+from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -609,7 +609,7 @@ class OpenAIChatClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         base_url: str | None = None,
-        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -631,7 +631,7 @@ class OpenAIChatClient(  # type: ignore[misc]
             base_url: The base URL to use. If provided will override
                 the standard value for an OpenAI connector, the env vars or .env file value.
                 Can also be set via environment variable OPENAI_BASE_URL.
-            middleware: Optional sequence of ChatLevelMiddleware to apply to requests.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.

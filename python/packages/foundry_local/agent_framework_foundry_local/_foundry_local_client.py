@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, Generic
 
 from agent_framework import (
-    ChatLevelMiddleware,
+    ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     ChatOptions,
     FunctionInvocationConfiguration,
@@ -153,7 +153,7 @@ class FoundryLocalClient(
         timeout: float | None = None,
         prepare_model: bool = True,
         device: DeviceType | None = None,
-        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
@@ -176,7 +176,7 @@ class FoundryLocalClient(
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
                 The values are in the foundry_local.models.DeviceType enum.
-            middleware: Optional sequence of ChatLevelMiddleware to apply to requests.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.

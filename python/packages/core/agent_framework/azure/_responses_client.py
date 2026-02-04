@@ -33,7 +33,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from .._middleware import Middleware
+    from .._middleware import MiddlewareTypes
     from ..openai._responses_client import OpenAIResponsesOptions
 
 __all__ = ["AzureOpenAIResponsesClient"]
@@ -74,7 +74,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        middleware: Sequence["Middleware"] | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

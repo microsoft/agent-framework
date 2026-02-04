@@ -11,7 +11,7 @@ from uuid import uuid4
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
-    ChatLevelMiddleware,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
@@ -238,7 +238,7 @@ class BedrockChatClient(
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
-        middleware: Sequence[ChatLevelMiddleware] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,

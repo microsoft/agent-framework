@@ -5,6 +5,7 @@ from typing import Any
 
 from agent_framework import (
     ChatAgent,
+    ChatClientProtocol,
     ChatContext,
     ChatMessage,
     ChatMiddleware,
@@ -24,7 +25,7 @@ from .conftest import MockBaseChatClient
 class TestChatMiddleware:
     """Test cases for chat middleware functionality."""
 
-    async def test_class_based_chat_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+    async def test_class_based_chat_middleware(self, chat_client_base: ChatClientProtocol) -> None:
         """Test class-based chat middleware with ChatClient."""
         execution_order: list[str] = []
 
@@ -113,7 +114,7 @@ class TestChatMiddleware:
         ) -> None:
             # Override the response without calling next()
             context.result = ChatResponse(
-                messages=[ChatMessage(role=Role.ASSISTANT, text="Middleware overridden response")],
+                messages=[ChatMessage(role=Role.ASSISTANT, text="MiddlewareTypes overridden response")],
                 response_id="middleware-response-123",
             )
             context.terminate = True
@@ -128,7 +129,7 @@ class TestChatMiddleware:
         # Verify that the response was overridden
         assert response is not None
         assert len(response.messages) > 0
-        assert response.messages[0].text == "Middleware overridden response"
+        assert response.messages[0].text == "MiddlewareTypes overridden response"
         assert response.response_id == "middleware-response-123"
 
     async def test_multiple_chat_middleware_execution_order(self, chat_client_base: "MockBaseChatClient") -> None:
@@ -195,8 +196,6 @@ class TestChatMiddleware:
         # Verify middleware execution order
         assert execution_order == [
             "agent_chat_middleware_before",
-            "agent_chat_middleware_before",
-            "agent_chat_middleware_after",
             "agent_chat_middleware_after",
         ]
 
@@ -230,10 +229,6 @@ class TestChatMiddleware:
         expected_order = [
             "first_before",
             "second_before",
-            "first_before",
-            "second_before",
-            "second_after",
-            "first_after",
             "second_after",
             "first_after",
         ]
@@ -247,7 +242,7 @@ class TestChatMiddleware:
         async def streaming_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
             execution_order.append("streaming_before")
             # Verify it's a streaming context
-            assert context.is_streaming is True
+            assert context.stream is True
 
             def upper_case_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
                 for content in update.contents:

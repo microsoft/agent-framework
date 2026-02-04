@@ -2295,7 +2295,7 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: ChatCli
 
 
 class TerminateLoopMiddleware(FunctionMiddleware):
-    """Middleware that sets terminate=True to exit the function calling loop."""
+    """MiddlewareTypes that sets terminate=True to exit the function calling loop."""
 
     async def process(
         self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
