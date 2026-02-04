@@ -38,7 +38,7 @@ class SerializationProtocol(Protocol):
 
 
             # ChatMessage implements SerializationProtocol via SerializationMixin
-            user_msg = ChatMessage(role="user", text="What's the weather like today?")
+            user_msg = ChatMessage("user", ["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -53,7 +53,7 @@ class SerializationProtocol(Protocol):
             # Deserialize back to ChatMessage instance - automatic type reconstruction
             restored_msg = ChatMessage.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
-            print(restored_msg.role.value)  # "user"
+            print(restored_msg.role)  # "user"
 
             # Verify protocol compliance (useful for type checking and validation)
             assert isinstance(user_msg, SerializationProtocol)
@@ -175,8 +175,8 @@ class SerializationMixin:
             # ChatMessageStoreState handles nested ChatMessage serialization
             store_state = ChatMessageStoreState(
                 messages=[
-                    ChatMessage(role="user", text="Hello agent"),
-                    ChatMessage(role="assistant", text="Hi! How can I help?"),
+                    ChatMessage("user", ["Hello agent"]),
+                    ChatMessage("assistant", ["Hi! How can I help?"]),
                 ]
             )
 

@@ -98,6 +98,19 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         => new(new GitHubCopilotAgentSession() { SessionId = sessionId });
 
     /// <inheritdoc/>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not GitHubCopilotAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
     public override ValueTask<AgentSession> DeserializeSessionAsync(
         JsonElement serializedSession,
         JsonSerializerOptions? jsonSerializerOptions = null,

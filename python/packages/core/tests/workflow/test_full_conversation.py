@@ -16,7 +16,6 @@ from agent_framework import (
     ChatMessage,
     Content,
     Executor,
-    Role,
     SequentialBuilder,
     WorkflowBuilder,
     WorkflowContext,
@@ -40,7 +39,7 @@ class _SimpleAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -89,8 +88,8 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     # Assert: full_conversation contains [user("hello world"), assistant("agent-reply")]
     assert isinstance(payload, dict)
     assert payload["length"] == 2
-    assert payload["roles"][0] == Role.USER and "hello world" in (payload["texts"][0] or "")
-    assert payload["roles"][1] == Role.ASSISTANT and "agent-reply" in (payload["texts"][1] or "")
+    assert payload["roles"][0] == "user" and "hello world" in (payload["texts"][0] or "")
+    assert payload["roles"][1] == "assistant" and "agent-reply" in (payload["texts"][1] or "")
 
 
 class _CaptureAgent(BaseAgent):
@@ -116,9 +115,9 @@ class _CaptureAgent(BaseAgent):
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role=Role.USER, text=m))
+                    norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -134,7 +133,7 @@ class _CaptureAgent(BaseAgent):
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role=Role.USER, text=m))
+                    norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
         yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
 
@@ -154,5 +153,5 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     # Assert: second agent should have seen the user prompt and A1's assistant reply
     seen = a2._last_messages  # pyright: ignore[reportPrivateUsage]
     assert len(seen) == 2
-    assert seen[0].role == Role.USER and "hello seq" in (seen[0].text or "")
-    assert seen[1].role == Role.ASSISTANT and "A1 reply" in (seen[1].text or "")
+    assert seen[0].role == "user" and "hello seq" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")

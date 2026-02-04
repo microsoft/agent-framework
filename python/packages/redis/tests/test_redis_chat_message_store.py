@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Content, Role
+from agent_framework import ChatMessage, Content
 
 from agent_framework_redis import RedisChatMessageStore
 
@@ -19,9 +19,9 @@ class TestRedisChatMessageStore:
     def sample_messages(self):
         """Sample chat messages for testing."""
         return [
-            ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-            ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
-            ChatMessage(role=Role.USER, text="How are you?", message_id="msg3"),
+            ChatMessage("user", ["Hello"], message_id="msg1"),
+            ChatMessage("assistant", ["Hi there!"], message_id="msg2"),
+            ChatMessage("user", ["How are you?"], message_id="msg3"),
         ]
 
     @pytest.fixture
@@ -250,7 +250,7 @@ class TestRedisChatMessageStore:
             store = RedisChatMessageStore(redis_url="redis://localhost:6379", thread_id="test123", max_messages=3)
             store._redis_client = mock_redis_client
 
-            message = ChatMessage(role=Role.USER, text="Test")
+            message = ChatMessage("user", ["Test"])
             await store.add_messages([message])
 
             # Should trim after adding to keep only last 3 messages
@@ -269,8 +269,8 @@ class TestRedisChatMessageStore:
         """Test listing messages with data in Redis."""
         # Create proper serialized messages using the actual serialization method
         test_messages = [
-            ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-            ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
+            ChatMessage("user", ["Hello"], message_id="msg1"),
+            ChatMessage("assistant", ["Hi there!"], message_id="msg2"),
         ]
         serialized_messages = [redis_store._serialize_message(msg) for msg in test_messages]
         mock_redis_client.lrange.return_value = serialized_messages
@@ -278,9 +278,9 @@ class TestRedisChatMessageStore:
         messages = await redis_store.list_messages()
 
         assert len(messages) == 2
-        assert messages[0].role == Role.USER
+        assert messages[0].role == "user"
         assert messages[0].text == "Hello"
-        assert messages[1].role == Role.ASSISTANT
+        assert messages[1].role == "assistant"
         assert messages[1].text == "Hi there!"
 
     async def test_list_messages_with_initial_messages(self, sample_messages):
@@ -412,7 +412,7 @@ class TestRedisChatMessageStore:
 
         # Message with multiple content types
         message = ChatMessage(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[Content.from_text(text="Hello"), Content.from_text(text="World")],
             author_name="TestBot",
             message_id="complex_msg",
@@ -422,7 +422,7 @@ class TestRedisChatMessageStore:
         serialized = store._serialize_message(message)
         deserialized = store._deserialize_message(serialized)
 
-        assert deserialized.role == Role.ASSISTANT
+        assert deserialized.role == "assistant"
         assert deserialized.text == "Hello World"
         assert deserialized.author_name == "TestBot"
         assert deserialized.message_id == "complex_msg"
@@ -444,7 +444,7 @@ class TestRedisChatMessageStore:
             store = RedisChatMessageStore(redis_url="redis://localhost:6379", thread_id="test123")
             store._redis_client = mock_client
 
-            message = ChatMessage(role=Role.USER, text="Test")
+            message = ChatMessage("user", ["Test"])
 
             # Should propagate Redis connection errors
             with pytest.raises(Exception, match="Connection failed"):
@@ -485,7 +485,7 @@ class TestRedisChatMessageStore:
         mock_redis_client.llen.return_value = 2
         mock_redis_client.lset = AsyncMock()
 
-        new_message = ChatMessage(role=Role.USER, text="Updated message")
+        new_message = ChatMessage("user", ["Updated message"])
         await redis_store.setitem(0, new_message)
 
         mock_redis_client.lset.assert_called_once()
@@ -497,13 +497,13 @@ class TestRedisChatMessageStore:
         """Test setitem raises IndexError for invalid index."""
         mock_redis_client.llen.return_value = 0
 
-        new_message = ChatMessage(role=Role.USER, text="Test")
+        new_message = ChatMessage("user", ["Test"])
         with pytest.raises(IndexError):
             await redis_store.setitem(0, new_message)
 
     async def test_append(self, redis_store, mock_redis_client):
         """Test append method delegates to add_messages."""
-        message = ChatMessage(role=Role.USER, text="Appended message")
+        message = ChatMessage("user", ["Appended message"])
         await redis_store.append(message)
 
         # Should call pipeline operations via add_messages

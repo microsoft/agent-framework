@@ -71,6 +71,11 @@ public sealed class AggregatorPromptAgentFactoryTests
             throw new NotImplementedException();
         }
 
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            throw new NotImplementedException();
+        }
+
         public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();

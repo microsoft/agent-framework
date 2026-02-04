@@ -41,6 +41,27 @@ public sealed class DurableAIAgent : AIAgent
     }
 
     /// <summary>
+    /// Serializes an agent session to JSON.
+    /// </summary>
+    /// <param name="session">The session to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
+    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return durableSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <summary>
     /// Deserializes an agent session from JSON.
     /// </summary>
     /// <param name="serializedSession">The serialized session data.</param>

@@ -45,6 +45,9 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             _ => throw new NotSupportedException(),
         });
 
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
+
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
 
@@ -361,7 +364,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             this.PairedRequests = state.PairedRequests;
         }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
             JsonElement sessionState = base.Serialize(jsonSerializerOptions);
 

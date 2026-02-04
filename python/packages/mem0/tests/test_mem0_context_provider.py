@@ -7,7 +7,7 @@ import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Content, Context, Role
+from agent_framework import ChatMessage, Content, Context
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
@@ -36,9 +36,9 @@ def mock_mem0_client() -> AsyncMock:
 def sample_messages() -> list[ChatMessage]:
     """Create sample chat messages for testing."""
     return [
-        ChatMessage(role=Role.USER, text="Hello, how are you?"),
-        ChatMessage(role=Role.ASSISTANT, text="I'm doing well, thank you!"),
-        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
+        ChatMessage("user", ["Hello, how are you?"]),
+        ChatMessage("assistant", ["I'm doing well, thank you!"]),
+        ChatMessage("system", ["You are a helpful assistant"]),
     ]
 
 
@@ -191,7 +191,7 @@ class TestMem0ProviderMessagesAdding:
     async def test_messages_adding_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Test that invoked fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="Hello!")
+        message = ChatMessage("user", ["Hello!"])
 
         with pytest.raises(ServiceInitializationError) as exc_info:
             await provider.invoked(message)
@@ -201,7 +201,7 @@ class TestMem0ProviderMessagesAdding:
     async def test_messages_adding_single_message(self, mock_mem0_client: AsyncMock) -> None:
         """Test adding a single message."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="Hello!")
+        message = ChatMessage("user", ["Hello!"])
 
         await provider.invoked(message)
 
@@ -288,9 +288,9 @@ class TestMem0ProviderMessagesAdding:
         """Test that empty or invalid messages are filtered out."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
-            ChatMessage(role=Role.USER, text=""),  # Empty text
-            ChatMessage(role=Role.USER, text="   "),  # Whitespace only
-            ChatMessage(role=Role.USER, text="Valid message"),
+            ChatMessage("user", [""]),  # Empty text
+            ChatMessage("user", ["   "]),  # Whitespace only
+            ChatMessage("user", ["Valid message"]),
         ]
 
         await provider.invoked(messages)
@@ -303,8 +303,8 @@ class TestMem0ProviderMessagesAdding:
         """Test that mem0 client is not called when no valid messages exist."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
-            ChatMessage(role=Role.USER, text=""),
-            ChatMessage(role=Role.USER, text="   "),
+            ChatMessage("user", [""]),
+            ChatMessage("user", ["   "]),
         ]
 
         await provider.invoked(messages)
@@ -318,7 +318,7 @@ class TestMem0ProviderModelInvoking:
     async def test_model_invoking_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Test that invoking fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="What's the weather?")
+        message = ChatMessage("user", ["What's the weather?"])
 
         with pytest.raises(ServiceInitializationError) as exc_info:
             await provider.invoking(message)
@@ -328,7 +328,7 @@ class TestMem0ProviderModelInvoking:
     async def test_model_invoking_single_message(self, mock_mem0_client: AsyncMock) -> None:
         """Test invoking with a single message."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="What's the weather?")
+        message = ChatMessage("user", ["What's the weather?"])
 
         # Mock search results
         mock_mem0_client.search.return_value = [
@@ -369,7 +369,7 @@ class TestMem0ProviderModelInvoking:
     async def test_model_invoking_with_agent_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test invoking with agent_id."""
         provider = Mem0Provider(agent_id="agent123", mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="Hello")
+        message = ChatMessage("user", ["Hello"])
 
         mock_mem0_client.search.return_value = []
 
@@ -387,7 +387,7 @@ class TestMem0ProviderModelInvoking:
             mem0_client=mock_mem0_client,
         )
         provider._per_operation_thread_id = "operation_thread"
-        message = ChatMessage(role=Role.USER, text="Hello")
+        message = ChatMessage("user", ["Hello"])
 
         mock_mem0_client.search.return_value = []
 
@@ -399,7 +399,7 @@ class TestMem0ProviderModelInvoking:
     async def test_model_invoking_no_memories_returns_none_instructions(self, mock_mem0_client: AsyncMock) -> None:
         """Test that no memories returns context with None instructions."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        message = ChatMessage(role=Role.USER, text="Hello")
+        message = ChatMessage("user", ["Hello"])
 
         mock_mem0_client.search.return_value = []
 
@@ -416,7 +416,7 @@ class TestMem0ProviderModelInvoking:
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         function_call = Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}')
         message = ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[
                 Content.from_function_approval_response(
                     id="approval_1",
@@ -437,9 +437,9 @@ class TestMem0ProviderModelInvoking:
         """Test that empty message text is filtered out from query."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         messages = [
-            ChatMessage(role=Role.USER, text=""),
-            ChatMessage(role=Role.USER, text="Valid message"),
-            ChatMessage(role=Role.USER, text="   "),
+            ChatMessage("user", [""]),
+            ChatMessage("user", ["Valid message"]),
+            ChatMessage("user", ["   "]),
         ]
 
         mock_mem0_client.search.return_value = []
@@ -457,7 +457,7 @@ class TestMem0ProviderModelInvoking:
             context_prompt=custom_prompt,
             mem0_client=mock_mem0_client,
         )
-        message = ChatMessage(role=Role.USER, text="Hello")
+        message = ChatMessage("user", ["Hello"])
 
         mock_mem0_client.search.return_value = [{"memory": "Test memory"}]
 

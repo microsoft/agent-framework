@@ -47,7 +47,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session
 // Serialize the session state, so it can be stored for later use.
 // Since the chat history is stored in the vector store, the serialized session
 // only contains the guid that the messages are stored under in the vector store.
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 
 Console.WriteLine("\n--- Serialized session ---\n");
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, new JsonSerializerOptions { WriteIndented = true }));

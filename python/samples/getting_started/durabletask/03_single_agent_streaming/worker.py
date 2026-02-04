@@ -27,7 +27,6 @@ from agent_framework.azure import (
 )
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-
 from redis_stream_response_handler import RedisStreamResponseHandler
 from tools import get_local_events, get_weather_forecast
 
@@ -186,12 +185,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -212,34 +211,34 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Create the Redis streaming callback
     redis_callback = RedisStreamCallback()
-    
+
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker, callback=redis_callback)
-    
+
     # Create and register the TravelPlanner agent
     logger.debug("Creating and registering TravelPlanner agent...")
     travel_agent = create_travel_agent()
     agent_worker.add_agent(travel_agent)
-    
+
     logger.debug(f"✓ Registered agent: {travel_agent.name}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Agent Worker with Redis Streaming...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agent and callback
     setup_worker(worker)
-    
+
     # Start the worker
     logger.debug("Worker started and listening for requests...")
     worker.start()
-    
+
     try:
         # Keep the worker running
         while True:

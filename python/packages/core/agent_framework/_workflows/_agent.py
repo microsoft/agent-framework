@@ -16,7 +16,6 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
-    Role,
     UsageDetails,
 )
 
@@ -344,7 +343,7 @@ class WorkflowAgent(BaseAgent):
                     return None
                 return AgentResponseUpdate(
                     contents=contents,
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name=executor_id,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
@@ -370,7 +369,7 @@ class WorkflowAgent(BaseAgent):
                 )
                 return AgentResponseUpdate(
                     contents=[function_call, approval_request],
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
@@ -453,7 +452,7 @@ class WorkflowAgent(BaseAgent):
         - Group updates by response_id; within each response_id, group by message_id and keep a dangling bucket for
           updates without message_id.
         - Convert each group (per message and dangling) into an intermediate AgentResponse via
-          AgentResponse.from_agent_run_response_updates, then sort by created_at and merge.
+          AgentResponse.from_updates, then sort by created_at and merge.
         - Append messages from updates without any response_id at the end (global dangling), while aggregating metadata.
 
         Args:
@@ -548,9 +547,9 @@ class WorkflowAgent(BaseAgent):
             per_message_responses: list[AgentResponse] = []
             for _, msg_updates in by_msg.items():
                 if msg_updates:
-                    per_message_responses.append(AgentResponse.from_agent_run_response_updates(msg_updates))
+                    per_message_responses.append(AgentResponse.from_updates(msg_updates))
             if dangling:
-                per_message_responses.append(AgentResponse.from_agent_run_response_updates(dangling))
+                per_message_responses.append(AgentResponse.from_updates(dangling))
 
             per_message_responses.sort(key=lambda r: _parse_dt(r.created_at))
 
@@ -584,7 +583,7 @@ class WorkflowAgent(BaseAgent):
         # These are updates that couldn't be associated with any response_id
         # (e.g., orphan FunctionResultContent with no matching FunctionCallContent)
         if global_dangling:
-            flattened = AgentResponse.from_agent_run_response_updates(global_dangling)
+            flattened = AgentResponse.from_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
                 merged_usage = add_usage_details(merged_usage, flattened.usage_details)  # type: ignore[arg-type]

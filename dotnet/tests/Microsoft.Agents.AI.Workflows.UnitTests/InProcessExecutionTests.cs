@@ -149,6 +149,9 @@ public class InProcessExecutionTests
         public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedSession,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
+        public override System.Text.Json.JsonElement SerializeSession(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
+
         protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentSession? session = null,

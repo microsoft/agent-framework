@@ -11,8 +11,8 @@ from agent_framework import (
     ChatMessage,
     Content,
     FileCheckpointStorage,
+    HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
     RequestInfoEvent,
     Workflow,
     WorkflowOutputEvent,
@@ -102,11 +102,11 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
             name="checkpoint_handoff_demo",
             participants=[triage, refund, order],
         )
-        .set_coordinator("triage_agent")
+        .with_start_agent(triage)
         .with_checkpointing(checkpoint_storage)
         .with_termination_condition(
             # Terminate after 5 user messages for this demo
-            lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 5
+            lambda conv: sum(1 for msg in conv if msg.role == "user") >= 5
         )
         .build()
     )
@@ -114,25 +114,27 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
     return workflow, triage, refund, order
 
 
-def _print_handoff_request(request: HandoffUserInputRequest, request_id: str) -> None:
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
+    """Display the agent's response messages when requesting user input."""
+    if not response.messages:
+        print("(No agent messages)")
+        return
+
+    print("\n[Agent is requesting your input...]")
+    for message in response.messages:
+        if not message.text:
+            continue
+        speaker = message.author_name or message.role.value
+        print(f"  {speaker}: {message.text}")
+
+
+def _print_handoff_request(request: HandoffAgentUserRequest, request_id: str) -> None:
     """Log pending handoff request details for debugging."""
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - User input needed")
     print(f"Request ID: {request_id}")
-    print(f"Awaiting agent: {request.awaiting_agent_id}")
-    print(f"Prompt: {request.prompt}")
 
-    # Note: After checkpoint restore, conversation may be empty because it's not serialized
-    # to prevent duplication (the conversation is preserved in the coordinator's state).
-    # See issue #2667.
-    if request.conversation:
-        print("\nConversation so far:")
-        for msg in request.conversation[-3:]:
-            author = msg.author_name or msg.role.value
-            snippet = msg.text[:120] + "..." if len(msg.text) > 120 else msg.text
-            print(f"  {author}: {snippet}")
-    else:
-        print("\n(Conversation restored from checkpoint - context preserved in workflow state)")
+    _print_handoff_agent_user_request(request.agent_response)
 
     print(f"{'=' * 60}\n")
 
@@ -157,7 +159,7 @@ def _build_responses_for_requests(
     """Create response payloads for each pending request."""
     responses: dict[str, object] = {}
     for request in pending_requests:
-        if isinstance(request.data, HandoffUserInputRequest):
+        if isinstance(request.data, HandoffAgentUserRequest):
             if user_response is None:
                 raise ValueError("User response is required for HandoffUserInputRequest")
             responses[request.request_id] = user_response
@@ -199,7 +201,7 @@ async def run_until_user_input_needed(
 
         elif isinstance(event, RequestInfoEvent):
             pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -256,7 +258,7 @@ async def resume_with_responses(
     async for event in workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id):  # type: ignore[attr-defined]
         if isinstance(event, RequestInfoEvent):
             restored_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -283,13 +285,13 @@ async def resume_with_responses(
                 # Now safe to cast event.data to list[ChatMessage]
                 conversation = cast(list[ChatMessage], event.data)
                 for msg in conversation[-3:]:  # Show last 3 messages
-                    author = msg.author_name or msg.role.value
+                    author = msg.author_name or msg.role
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text
                     print(f"  {author}: {text}")
 
         elif isinstance(event, RequestInfoEvent):
             new_pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -302,7 +304,7 @@ async def main() -> None:
     Demonstrate the checkpoint-based pause/resume pattern for handoff workflows.
 
     This sample shows:
-    1. Starting a workflow and getting a HandoffUserInputRequest
+    1. Starting a workflow and getting a HandoffAgentUserRequest
     2. Pausing (checkpoint is saved automatically)
     3. Resuming from checkpoint with a user response or tool approval (two-step pattern)
     4. Continuing the conversation until completion
@@ -361,8 +363,10 @@ async def main() -> None:
         print("\n>>> Simulating process restart...\n")
         workflow_step, _, _, _ = create_workflow(checkpoint_storage=storage)
 
-        needs_user_input = any(isinstance(req.data, HandoffUserInputRequest) for req in pending_requests)
-        needs_tool_approval = any(isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests)
+        needs_user_input = any(isinstance(req.data, HandoffAgentUserRequest) for req in pending_requests)
+        needs_tool_approval = any(
+            isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests
+        )
 
         user_response = None
         if needs_user_input:

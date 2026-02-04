@@ -77,6 +77,10 @@ public abstract class DelegatingAIAgent : AIAgent
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => this.InnerAgent.CreateSessionAsync(cancellationToken);
 
     /// <inheritdoc />
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => this.InnerAgent.SerializeSession(session, jsonSerializerOptions);
+
+    /// <inheritdoc />
     public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.DeserializeSessionAsync(serializedSession, jsonSerializerOptions, cancellationToken);
 

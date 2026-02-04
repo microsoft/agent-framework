@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # Conditions receive the message data and return bool (sync or async).
 EdgeCondition: TypeAlias = Callable[[Any], bool | Awaitable[bool]]
 
+# TypeVar for EdgeGroup subclasses used in class methods
+EdgeGroupT = TypeVar("EdgeGroupT", bound="EdgeGroup")
+
 
 def _extract_function_name(func: Callable[..., Any]) -> str:
     """Map a Python callable to a concise, human-focused identifier.
@@ -308,8 +311,6 @@ class EdgeGroup(DictConvertible):
 
     from builtins import type as builtin_type
 
-    _T_EdgeGroup = TypeVar("_T_EdgeGroup", bound="EdgeGroup")
-
     _TYPE_REGISTRY: ClassVar[dict[str, builtin_type["EdgeGroup"]]] = {}
 
     def __init__(
@@ -392,7 +393,7 @@ class EdgeGroup(DictConvertible):
         }
 
     @classmethod
-    def register(cls, subclass: builtin_type[_T_EdgeGroup]) -> builtin_type[_T_EdgeGroup]:
+    def register(cls, subclass: builtin_type[EdgeGroupT]) -> builtin_type[EdgeGroupT]:
         """Register a subclass so deserialisation can recover the right type.
 
         Registration is typically performed via the decorator syntax applied to

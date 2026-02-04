@@ -14,7 +14,7 @@ from typing import Any, ClassVar, TypeAlias
 
 from typing_extensions import Never
 
-from .._types import ChatMessage, Role
+from .._types import ChatMessage
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._events import WorkflowEvent
 from ._executor import Executor, handler
@@ -57,7 +57,7 @@ class GroupChatResponseMessage:
 
 
 TerminationCondition: TypeAlias = Callable[[list[ChatMessage]], bool | Awaitable[bool]]
-GroupChatWorkflowContext_T_Out: TypeAlias = AgentExecutorRequest | GroupChatRequestMessage | GroupChatParticipantMessage
+GroupChatWorkflowContextOutT: TypeAlias = AgentExecutorRequest | GroupChatRequestMessage | GroupChatParticipantMessage
 
 
 # region Group chat events
@@ -201,7 +201,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     async def handle_str(
         self,
         task: str,
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handler for string input as workflow entry point.
 
@@ -214,13 +214,13 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Usage:
             workflow.run("Write a blog post about AI agents")
         """
-        await self._handle_messages([ChatMessage(role=Role.USER, text=task)], ctx)
+        await self._handle_messages([ChatMessage("user", [task])], ctx)
 
     @handler
     async def handle_message(
         self,
         task: ChatMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handler for single ChatMessage input as workflow entry point.
 
@@ -231,7 +231,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
 
         Usage:
-            workflow.run(ChatMessage(role=Role.USER, text="Write a blog post about AI agents"))
+            workflow.run(ChatMessage("user", ["Write a blog post about AI agents"]))
         """
         await self._handle_messages([task], ctx)
 
@@ -239,7 +239,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     async def handle_messages(
         self,
         task: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handler for list of ChatMessages as workflow entry point.
 
@@ -250,8 +250,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
         Usage:
             workflow.run([
-                ChatMessage(role=Role.USER, text="Write a blog post about AI agents"),
-                ChatMessage(role=Role.USER, text="Make it engaging and informative.")
+                ChatMessage("user", ["Write a blog post about AI agents"]),
+                ChatMessage("user", ["Make it engaging and informative."])
             ])
         """
         if not task:
@@ -262,7 +262,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     async def handle_participant_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handler for participant responses.
 
@@ -288,7 +288,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     async def _handle_messages(
         self,
         messages: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handle task messages from users as workflow entry point.
 
@@ -303,7 +303,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
     ) -> None:
         """Handle a participant response.
 
@@ -401,7 +401,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             ChatMessage with completion content
         """
-        return ChatMessage(role=Role.ASSISTANT, text=message, author_name=self._name)
+        return ChatMessage("assistant", [message], author_name=self._name)
 
     # Participant routing (shared across all patterns)
 
@@ -465,7 +465,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             # AgentExecutors receive simple message list
             messages: list[ChatMessage] = []
             if additional_instruction:
-                messages.append(ChatMessage(role=Role.USER, text=additional_instruction))
+                messages.append(ChatMessage("user", [additional_instruction]))
             request = AgentExecutorRequest(messages=messages, should_respond=True)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(

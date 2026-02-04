@@ -13,13 +13,11 @@ from agent_framework import (
     AgentExecutorResponse,
     ChatAgent,
     ChatMessage,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
     WorkflowOutputEvent,
     executor,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -93,7 +91,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -120,7 +118,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -135,7 +133,7 @@ async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentEx
     # Only called for long NotSpam emails by selection_func
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
     )
 
 

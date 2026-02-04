@@ -14,7 +14,6 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -95,7 +94,7 @@ def _display_event(event: WorkflowEvent) -> None:
         conversation = cast(list[ChatMessage], event.data)
         print("\n=== Final Conversation (Autonomous with Iteration) ===")
         for message in conversation:
-            speaker = message.author_name or message.role.value
+            speaker = message.author_name or message.role
             text_preview = message.text[:200] + "..." if len(message.text) > 200 else message.text
             print(f"- {speaker}: {text_preview}")
         print(f"\nTotal messages: {len(conversation)}")
@@ -131,7 +130,7 @@ async def main() -> None:
         )
         .with_termination_condition(
             # Terminate after coordinator provides 5 assistant responses
-            lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role.value == "assistant")
+            lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant")
             >= 5
         )
         .build()
