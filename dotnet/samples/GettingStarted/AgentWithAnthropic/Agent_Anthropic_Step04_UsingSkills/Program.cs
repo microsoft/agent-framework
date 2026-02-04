@@ -22,16 +22,16 @@ string apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? throw
 string model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5-20250929";
 
 // Create the Anthropic client
-AnthropicClient anthropicClient = new() { APIKey = apiKey };
+AnthropicClient anthropicClient = new() { ApiKey = apiKey };
 
 // List available Anthropic-managed skills (optional - API may not be available in all regions)
 Console.WriteLine("Available Anthropic-managed skills:");
 try
 {
-    SkillListPageResponse skills = await anthropicClient.Beta.Skills.List(
+    SkillListPage skills = await anthropicClient.Beta.Skills.List(
         new SkillListParams { Source = "anthropic", Betas = [AnthropicBeta.Skills2025_10_02] });
 
-    foreach (var skill in skills.Data)
+    foreach (var skill in skills.Items)
     {
         Console.WriteLine($"  {skill.Source}: {skill.ID} (version: {skill.LatestVersion})");
     }

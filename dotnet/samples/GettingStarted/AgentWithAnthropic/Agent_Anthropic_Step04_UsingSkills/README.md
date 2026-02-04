@@ -48,10 +48,10 @@ Anthropic provides several managed skills that can be used with the Claude API:
 You can list available skills using the Anthropic SDK:
 
 ```csharp
-SkillListPageResponse skills = await anthropicClient.Beta.Skills.List(
+SkillListPage skills = await anthropicClient.Beta.Skills.List(
     new SkillListParams { Source = "anthropic", Betas = [AnthropicBeta.Skills2025_10_02] });
 
-foreach (var skill in skills.Data)
+foreach (var skill in skills.Items)
 {
     Console.WriteLine($"{skill.Source}: {skill.ID} (version: {skill.LatestVersion})");
 }

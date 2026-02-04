@@ -28,7 +28,7 @@ public sealed class AnthropicSkillsIntegrationTests
     public async Task CreateAgentWithPptxSkillAsync()
     {
         // Arrange
-        AnthropicClient anthropicClient = new() { APIKey = s_config.ApiKey };
+        AnthropicClient anthropicClient = new() { ApiKey = s_config.ApiKey };
         string model = s_config.ChatModelId;
 
         BetaSkillParams pptxSkill = new()
@@ -57,15 +57,15 @@ public sealed class AnthropicSkillsIntegrationTests
     public async Task ListAnthropicManagedSkillsAsync()
     {
         // Arrange
-        AnthropicClient anthropicClient = new() { APIKey = s_config.ApiKey };
+        AnthropicClient anthropicClient = new() { ApiKey = s_config.ApiKey };
 
         // Act
-        SkillListPageResponse skills = await anthropicClient.Beta.Skills.List(
+        SkillListPage skills = await anthropicClient.Beta.Skills.List(
             new SkillListParams { Source = "anthropic", Betas = [AnthropicBeta.Skills2025_10_02] });
 
         // Assert
         Assert.NotNull(skills);
-        Assert.NotNull(skills.Data);
-        Assert.Contains(skills.Data, skill => skill.ID == "pptx");
+        Assert.NotNull(skills.Items);
+        Assert.Contains(skills.Items, skill => skill.ID == "pptx");
     }
 }
