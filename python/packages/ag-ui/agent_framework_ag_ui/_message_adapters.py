@@ -299,7 +299,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
     def _find_matching_func_call(call_id: str) -> Content | None:
         for prev_msg in result:
-            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             for content in prev_msg.contents or []:
@@ -317,7 +317,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 return str(explicit_call_id)
 
         for prev_msg in result:
-            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             direct_call = None
@@ -426,7 +426,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         m
                         for m in result
                         if not (
-                            (m.role if hasattr(m.role, "value") else str(m.role)) == "tool"
+                            (m.role.value if hasattr(m.role, "value") else str(m.role)) == "tool"
                             and any(
                                 c.type == "function_result" and c.call_id == approval_call_id
                                 for c in (m.contents or [])

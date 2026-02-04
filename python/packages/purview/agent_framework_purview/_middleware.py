@@ -60,7 +60,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 from agent_framework import AgentResponse, ChatMessage
 
                 context.result = AgentResponse(
-                    messages=[ChatMessage("system", [self._settings.blocked_prompt_message])]
+                    messages=[ChatMessage(role="system", text=self._settings.blocked_prompt_message)]
                 )
                 raise MiddlewareTermination
         except MiddlewareTermination:
@@ -89,7 +89,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                     from agent_framework import AgentResponse, ChatMessage
 
                     context.result = AgentResponse(
-                        messages=[ChatMessage("system", [self._settings.blocked_response_message])]
+                        messages=[ChatMessage(role="system", text=self._settings.blocked_response_message)]
                     )
             else:
                 # Streaming responses are not supported for post-checks
@@ -150,7 +150,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
             if should_block_prompt:
                 from agent_framework import ChatMessage, ChatResponse
 
-                blocked_message = ChatMessage("system", [self._settings.blocked_prompt_message])
+                blocked_message = ChatMessage(role="system", text=self._settings.blocked_prompt_message)
                 context.result = ChatResponse(messages=[blocked_message])
                 raise MiddlewareTermination
         except MiddlewareTermination:
@@ -179,7 +179,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                     if should_block_response:
                         from agent_framework import ChatMessage, ChatResponse
 
-                        blocked_message = ChatMessage("system", [self._settings.blocked_response_message])
+                        blocked_message = ChatMessage(role="system", text=self._settings.blocked_response_message)
                         context.result = ChatResponse(messages=[blocked_message])
             else:
                 logger.debug("Streaming responses are not supported for Purview policy post-checks")
