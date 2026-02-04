@@ -74,8 +74,8 @@ async def main() -> None:
     agent_response = await agent.run(prompt)
     print("===== Final Aggregated Response =====\n")
     for message in agent_response.messages:
-        # The agent_response contains messages from all participants
-        # TODO: How to get the individual messages here?
+        # The agent_response contains messages from all participants concatenated
+        # into a single message.
         print(f"{message.author_name}: {message.text}\n")
 
 

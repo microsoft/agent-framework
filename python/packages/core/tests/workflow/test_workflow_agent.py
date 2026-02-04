@@ -497,20 +497,20 @@ class TestWorkflowAgent:
         async for update in agent.run_stream("test"):
             updates.append(update)
 
-        assert len(updates) == 1
-        assert len(updates[0].contents) == 4
-        texts = [c.text for c in updates[0].contents if c.type == "text"]
-        assert texts == ["first message", "second message", "third", "fourth"]
+        assert len(updates) == 3
+        full_response = AgentResponse.from_agent_run_response_updates(updates)
+        assert len(full_response.messages) == 3
+        texts = [message.text for message in full_response.messages]
+        # Note: `from_agent_run_response_updates` coalesces multiple text contents into one content
+        assert texts == ["first message", "second message", "thirdfourth"]
 
-        # Verify run() coalesces text contents (expected behavior)
+        # Verify run()
         result = await agent.run("test")
 
         assert isinstance(result, AgentResponse)
-        assert len(result.messages) == 1
-        # Content items are coalesced into one
-        assert len(result.messages[0].contents) == 4
-        texts = [c.text for c in result.messages[0].contents if c.type == "text"]
-        assert texts == ["first message", "second message", "third", "fourth"]
+        assert len(result.messages) == 3
+        texts = [message.text for message in result.messages]
+        assert texts == ["first message", "second message", "third fourth"]
 
     async def test_thread_conversation_history_included_in_workflow_run(self) -> None:
         """Test that conversation history from thread is included when running WorkflowAgent.
