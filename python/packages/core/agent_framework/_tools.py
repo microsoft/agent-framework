@@ -796,11 +796,26 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            # Filter out framework kwargs that are not JSON serializable
+            serializable_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in {
+                    "chat_options",
+                    "tools",
+                    "tool_choice",
+                    "thread",
+                    "conversation_id",
+                    "options",
+                    "response_format",
+                }
+            }
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
                 if arguments
-                else json.dumps(kwargs)
-                if kwargs
+                else json.dumps(serializable_kwargs, default=str)
+                if serializable_kwargs
                 else "None"
             })
         with get_function_span(attributes=attributes) as span:
