@@ -65,7 +65,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         protocol.ThrowIfNotChatProtocol(allowCatchAll: true);
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
 
     public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
@@ -73,7 +73,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
     private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
     {
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         if (session is not WorkflowSession workflowSession)
         {

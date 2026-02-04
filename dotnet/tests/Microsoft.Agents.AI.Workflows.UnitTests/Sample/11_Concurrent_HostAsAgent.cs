@@ -33,7 +33,7 @@ internal static class Step11EntryPoint
     {
         AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
-        AgentSession session = await hostAgent.GetNewSessionAsync();
+        AgentSession session = await hostAgent.CreateSessionAsync();
         foreach (string input in inputs)
         {
             AgentResponse response;

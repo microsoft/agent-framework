@@ -13,7 +13,6 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
-    tool,
 )
 from agent_framework._workflows._events import WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
@@ -123,7 +122,7 @@ async def main():
     # Run the workflow with the user's initial message and stream events as they occur.
     # This surfaces executor events, workflow outputs, run-state changes, and errors.
     async for event in workflow.run_stream(
-        ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."])
     ):
         if isinstance(event, WorkflowStatusEvent):
             prefix = f"State ({event.origin.value}): "

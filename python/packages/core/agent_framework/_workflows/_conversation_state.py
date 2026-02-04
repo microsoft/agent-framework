@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from typing import Any, cast
 
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
@@ -40,15 +40,13 @@ def decode_chat_messages(payload: Iterable[dict[str, Any]]) -> list[ChatMessage]
             continue
 
         role_value = decode_checkpoint_value(item.get("role"))
-        if isinstance(role_value, Role):
+        if isinstance(role_value, str):
             role = role_value
-        elif isinstance(role_value, dict):
-            role_dict = cast(dict[str, Any], role_value)
-            role = Role.from_dict(role_dict)
-        elif isinstance(role_value, str):
-            role = Role(value=role_value)
+        elif isinstance(role_value, dict) and "value" in role_value:
+            # Handle legacy serialization format
+            role = role_value["value"]
         else:
-            role = Role.ASSISTANT
+            role = "assistant"
 
         contents_field = item.get("contents", [])
         contents: list[Any] = []

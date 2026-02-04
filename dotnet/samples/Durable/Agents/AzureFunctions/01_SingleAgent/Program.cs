@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable IDE0002 // Simplify Member Access
+
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;

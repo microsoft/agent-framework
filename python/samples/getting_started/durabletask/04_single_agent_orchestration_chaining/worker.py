@@ -11,15 +11,15 @@ Prerequisites:
 """
 
 import asyncio
-from collections.abc import Generator
 import logging
 import os
+from collections.abc import Generator
 
 from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.task import OrchestrationContext, Task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.task import OrchestrationContext, Task
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +42,7 @@ def create_writer_agent() -> "ChatAgent":
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."
     )
-    
+
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
@@ -78,18 +78,18 @@ def single_agent_chaining_orchestration(
         str: The final refined text from the second agent run
     """
     logger.debug("[Orchestration] Starting single agent chaining...")
-    
+
     # Wrap the orchestration context to access agents
     agent_context = DurableAIAgentOrchestrationContext(context)
-    
+
     # Get the writer agent using the agent context
     writer = agent_context.get_agent(WRITER_AGENT_NAME)
-    
+
     # Create a new thread for the conversation - this will be shared across both runs
     writer_thread = writer.get_new_thread()
-    
+
     logger.debug(f"[Orchestration] Created thread: {writer_thread.session_id}")
-    
+
     prompt = "Write a concise inspirational sentence about learning."
     # First run: Generate an initial inspirational sentence
     logger.info("[Orchestration] First agent run: Generating initial sentence about: %s", prompt)
@@ -98,21 +98,21 @@ def single_agent_chaining_orchestration(
         thread=writer_thread,
     )
     logger.info(f"[Orchestration] Initial response: {initial_response.text}")
-    
+
     # Second run: Refine the initial response on the same thread
     improved_prompt = (
         f"Improve this further while keeping it under 25 words: "
         f"{initial_response.text}"
     )
-    
+
     logger.info("[Orchestration] Second agent run: Refining the sentence: %s", improved_prompt)
     refined_response = yield writer.run(
         messages=improved_prompt,
         thread=writer_thread,
     )
-    
+
     logger.info(f"[Orchestration] Refined response: {refined_response.text}")
-    
+
     logger.debug("[Orchestration] Chaining complete")
     return refined_response.text
 
@@ -134,12 +134,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -160,45 +160,45 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Create and register the Writer agent
     logger.debug("Creating and registering Writer agent...")
     writer_agent = create_writer_agent()
     agent_worker.add_agent(writer_agent)
-    
+
     logger.debug(f"✓ Registered agent: {writer_agent.name}")
-    
+
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
     worker.add_orchestrator(single_agent_chaining_orchestration)    # type: ignore
     logger.debug(f"✓ Registered orchestration: {single_agent_chaining_orchestration.__name__}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Single Agent Chaining Worker with Orchestration...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agents and orchestrations
     setup_worker(worker)
-    
+
     logger.debug("Worker is ready and listening for requests...")
     logger.debug("Press Ctrl+C to stop.")
-    
+
     try:
         # Start the worker (this blocks until stopped)
         worker.start()
-        
+
         # Keep the worker running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
-    
+
     logger.debug("Worker stopped")
 
 

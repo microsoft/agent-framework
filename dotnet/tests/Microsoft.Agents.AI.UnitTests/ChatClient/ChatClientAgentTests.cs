@@ -239,8 +239,8 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
-        // Create a session using the agent's GetNewSessionAsync method
-        var session = await agent.GetNewSessionAsync();
+        // Create a session using the agent's CreateSessionAsync method
+        var session = await agent.CreateSessionAsync();
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "new message")], session: session);
@@ -354,7 +354,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockService.Object, options: new() { AIContextProviderFactory = (_, _) => new(mockProvider.Object), ChatOptions = new() { Instructions = "base instructions", Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
 
         // Act
-        var session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunAsync(requestMessages, session);
 
         // Assert
@@ -1255,7 +1255,7 @@ public partial class ChatClientAgentTests
         });
 
         // Act
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunStreamingAsync([new(ChatRole.User, "test")], session).ToListAsync();
 
         // Assert
@@ -1293,7 +1293,7 @@ public partial class ChatClientAgentTests
         });
 
         // Act & Assert
-        ChatClientAgentSession? session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync([new(ChatRole.User, "test")], session).ToListAsync());
         Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
     }
@@ -1350,7 +1350,7 @@ public partial class ChatClientAgentTests
             });
 
         // Act
-        var session = await agent.GetNewSessionAsync() as ChatClientAgentSession;
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         var updates = agent.RunStreamingAsync(requestMessages, session);
         _ = await updates.ToAgentResponseAsync();
 

@@ -47,7 +47,7 @@ internal sealed class Program
 
         AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
 
         ProjectConversation conversation =
             await aiProjectClient

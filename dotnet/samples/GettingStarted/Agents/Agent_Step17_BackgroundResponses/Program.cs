@@ -19,7 +19,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
 AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", session, options);
@@ -41,7 +41,7 @@ Console.WriteLine(response.Text);
 
 // Reset options and session for streaming.
 options = new() { AllowBackgroundResponses = true };
-session = await agent.GetNewSessionAsync();
+session = await agent.CreateSessionAsync();
 
 AgentResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.

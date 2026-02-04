@@ -31,7 +31,7 @@ from typing_extensions import Never
 
 from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
-from .._types import ChatMessage, Role
+from .._types import ChatMessage
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
 from ._base_group_chat_orchestrator import (
@@ -424,7 +424,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(ChatMessage(role=Role.USER, text=instruction))
+        current_conversation.append(ChatMessage("user", [instruction]))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -439,7 +439,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 # We don't need the full conversation since the thread should maintain history
                 current_conversation = [
                     ChatMessage(
-                        role=Role.USER,
+                        role="user",
                         text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
                     )
                 ]
@@ -782,7 +782,7 @@ class GroupChatBuilder:
 
 
             def stop_after_two_calls(conversation: list[ChatMessage]) -> bool:
-                calls = sum(1 for msg in conversation if msg.role == Role.ASSISTANT and msg.author_name == "specialist")
+                calls = sum(1 for msg in conversation if msg.role == "assistant" and msg.author_name == "specialist")
                 return calls >= 2
 
 

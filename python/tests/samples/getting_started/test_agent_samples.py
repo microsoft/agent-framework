@@ -16,9 +16,6 @@ from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import
 from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
     tools_on_run_level as azure_ai_with_function_tools_run,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_local_mcp import (
-    main as azure_ai_with_local_mcp,
-)
 
 from samples.getting_started.agents.azure_ai.azure_ai_basic import (
     main as azure_ai_basic,
@@ -31,6 +28,9 @@ from samples.getting_started.agents.azure_ai.azure_ai_with_existing_agent import
 )
 from samples.getting_started.agents.azure_ai.azure_ai_with_explicit_settings import (
     main as azure_ai_with_explicit_settings,
+)
+from samples.getting_started.agents.azure_ai.azure_ai_with_local_mcp import (
+    main as azure_ai_with_local_mcp,
 )
 from samples.getting_started.agents.azure_ai.azure_ai_with_thread import (
     main as azure_ai_with_thread,

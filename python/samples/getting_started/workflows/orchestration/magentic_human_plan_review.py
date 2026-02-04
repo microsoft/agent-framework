@@ -12,7 +12,6 @@ from agent_framework import (
     MagenticPlanReviewRequest,
     RequestInfoEvent,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 

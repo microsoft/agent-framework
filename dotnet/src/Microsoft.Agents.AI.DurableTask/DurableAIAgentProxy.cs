@@ -18,7 +18,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         return ValueTask.FromResult<AgentSession>(new DurableAgentSession(AgentSessionId.WithRandomKey(this.Name!)));
     }
@@ -29,12 +29,12 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
                 "The provided session is not valid for a durable agent. " +
-                "Create a new session using GetNewSession or provide a session previously created by this agent.",
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
                 paramName: nameof(session));
         }
 

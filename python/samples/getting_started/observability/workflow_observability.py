@@ -8,7 +8,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
-    tool,
 )
 from agent_framework.observability import configure_otel_providers, get_tracer
 from opentelemetry.trace import SpanKind

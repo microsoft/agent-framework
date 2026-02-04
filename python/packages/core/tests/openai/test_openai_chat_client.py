@@ -154,7 +154,7 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
 async def test_content_filter_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatClient()
-    messages = [ChatMessage(role="user", text="test message")]
+    messages = [ChatMessage("user", ["test message"])]
 
     # Create a mock BadRequestError with content_filter code
     mock_response = MagicMock()
@@ -209,7 +209,7 @@ def get_weather(location: str) -> str:
 async def test_exception_message_includes_original_error_details() -> None:
     """Test that exception messages include original error details in the new format."""
     client = OpenAIChatClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="test message")]
+    messages = [ChatMessage("user", ["test message"])]
 
     mock_response = MagicMock()
     original_error_message = "Invalid API request format"
@@ -652,12 +652,12 @@ def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_en
     )
 
     # Test that approval request is skipped
-    message_with_request = ChatMessage(role="assistant", contents=[approval_request])
+    message_with_request = ChatMessage("assistant", [approval_request])
     prepared_request = client._prepare_message_for_openai(message_with_request)
     assert len(prepared_request) == 0  # Should be empty - approval content is skipped
 
     # Test that approval response is skipped
-    message_with_response = ChatMessage(role="user", contents=[approval_response])
+    message_with_response = ChatMessage("user", [approval_response])
     prepared_response = client._prepare_message_for_openai(message_with_response)
     assert len(prepared_response) == 0  # Should be empty - approval content is skipped
 
@@ -752,7 +752,7 @@ def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) 
     client = OpenAIChatClient()
     client.model_id = None  # Remove model_id
 
-    messages = [ChatMessage(role="user", text="test")]
+    messages = [ChatMessage("user", ["test"])]
 
     with pytest.raises(ValueError, match="model_id must be a non-empty string"):
         client._prepare_options(messages, {})
@@ -786,7 +786,7 @@ def test_prepare_options_with_instructions(openai_unit_test_env: dict[str, str])
     """Test that instructions are prepended as system message."""
     client = OpenAIChatClient()
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
     options = {"instructions": "You are a helpful assistant."}
 
     prepared_options = client._prepare_options(messages, options)
@@ -836,7 +836,7 @@ def test_tool_choice_required_with_function_name(openai_unit_test_env: dict[str,
     """Test that tool_choice with required mode and function name is correctly prepared."""
     client = OpenAIChatClient()
 
-    messages = [ChatMessage(role="user", text="test")]
+    messages = [ChatMessage("user", ["test"])]
     options = {
         "tools": [get_weather],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
@@ -854,7 +854,7 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatClient()
 
-    messages = [ChatMessage(role="user", text="test")]
+    messages = [ChatMessage("user", ["test"])]
     custom_format = {
         "type": "json_schema",
         "json_schema": {"name": "Test", "schema": {"type": "object"}},
@@ -894,7 +894,7 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(openai_unit_t
     """Test that parallel_tool_calls is removed when no tools are present."""
     client = OpenAIChatClient()
 
-    messages = [ChatMessage(role="user", text="test")]
+    messages = [ChatMessage("user", ["test"])]
     options = {"allow_multiple_tool_calls": True}
 
     prepared_options = client._prepare_options(messages, options)
@@ -906,7 +906,7 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(openai_unit_t
 async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
     """Test that streaming errors are properly handled."""
     client = OpenAIChatClient()
-    messages = [ChatMessage(role="user", text="test")]
+    messages = [ChatMessage("user", ["test"])]
 
     # Create a mock error during streaming
     mock_error = Exception("Streaming error")
@@ -1008,14 +1008,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
         elif option_name.startswith("response_format"):
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+            messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -1032,7 +1032,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name.startswith("response_format") else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -1080,7 +1080,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
 
@@ -1105,7 +1105,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None

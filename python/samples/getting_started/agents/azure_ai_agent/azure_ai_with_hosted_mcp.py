@@ -31,7 +31,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             new_input.append(
                 ChatMessage(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread, store=True)

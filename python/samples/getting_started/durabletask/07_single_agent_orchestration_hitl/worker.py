@@ -11,17 +11,17 @@ Prerequisites:
 """
 
 import asyncio
-from collections.abc import Generator
-from datetime import timedelta
 import logging
 import os
+from collections.abc import Generator
+from datetime import timedelta
 from typing import Any, cast
 
 from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
 from pydantic import BaseModel, ValidationError
 
 # Configure logging
@@ -64,7 +64,7 @@ def create_writer_agent() -> "ChatAgent":
         "Return your response as JSON with 'title' and 'content' fields."
         "Limit response to 300 words or less."
     )
-    
+
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
@@ -85,6 +85,7 @@ def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) 
     logger.info("Use the client to send approval or rejection.")
     return "Notification sent to user for approval."
 
+
 def publish_content(context: ActivityContext, content: dict[str, str]) -> str:
     """Activity function to publish approved content.
     
@@ -100,7 +101,7 @@ def publish_content(context: ActivityContext, content: dict[str, str]) -> str:
 
 
 def content_generation_hitl_orchestration(
-    context: OrchestrationContext, 
+    context: OrchestrationContext,
     payload_raw: Any
 ) -> Generator[Task[Any], Any, dict[str, str]]:
     """Human-in-the-loop orchestration for content generation with approval workflow.
@@ -128,44 +129,44 @@ def content_generation_hitl_orchestration(
         RuntimeError: If max review attempts exhausted
     """
     logger.debug("[Orchestration] Starting HITL content generation orchestration")
-    
+
     # Validate input
     if not isinstance(payload_raw, dict):
         raise ValueError("Content generation input is required")
-    
+
     try:
         payload = ContentGenerationInput.model_validate(payload_raw)
     except ValidationError as exc:
         raise ValueError(f"Invalid content generation input: {exc}") from exc
-    
+
     logger.debug(f"[Orchestration] Topic: {payload.topic}")
     logger.debug(f"[Orchestration] Max attempts: {payload.max_review_attempts}")
     logger.debug(f"[Orchestration] Approval timeout: {payload.approval_timeout_seconds}s")
-    
+
     # Wrap the orchestration context to access agents
     agent_context = DurableAIAgentOrchestrationContext(context)
-    
+
     # Get the writer agent
     writer = agent_context.get_agent(WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
     logger.info(f"ThreadID: {writer_thread.session_id}")
-    
+
     # Generate initial content
     logger.info("[Orchestration] Generating initial content...")
-    
+
     initial_response: AgentResponse = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
             options={"response_format": GeneratedContent},
     )
     content = cast(GeneratedContent, initial_response.value)
-    
+
     if not isinstance(content, GeneratedContent):
         raise ValueError("Agent returned no content after extraction.")
-    
+
     logger.debug(f"[Orchestration] Initial content generated: {content.title}")
-    
+
     # Review loop
     attempt = 0
     while attempt < payload.max_review_attempts:
@@ -173,34 +174,34 @@ def content_generation_hitl_orchestration(
         logger.debug(f"[Orchestration] Review iteration #{attempt}/{payload.max_review_attempts}")
 
         context.set_custom_status(f"Requesting human feedback (Attempt {attempt}, timeout {payload.approval_timeout_seconds}s)")
-        
+
         # Notify user for approval
         yield context.call_activity(
-            "notify_user_for_approval", 
+            "notify_user_for_approval",
             input=content.model_dump()
         )
 
         logger.debug("[Orchestration] Waiting for human approval or timeout...")
-        
+
         # Wait for approval event or timeout
         approval_task: Task[Any] = context.wait_for_external_event(HUMAN_APPROVAL_EVENT)  # type: ignore
         timeout_task: Task[Any] = context.create_timer(  # type: ignore
             context.current_utc_datetime + timedelta(seconds=payload.approval_timeout_seconds)
         )
-        
+
         # Race between approval and timeout
         winner_task = yield when_any([approval_task, timeout_task])  # type: ignore
-        
+
         if winner_task == approval_task:
             # Approval received before timeout
             logger.debug("[Orchestration] Received human approval event")
 
             context.set_custom_status("Content reviewed by human reviewer.")
-            
+
             # Parse approval
-            approval_data: Any = approval_task.get_result() # type: ignore
+            approval_data: Any = approval_task.get_result()  # type: ignore
             logger.debug(f"[Orchestration] Approval data: {approval_data}")
-            
+
             # Handle different formats of approval_data
             if isinstance(approval_data, dict):
                 approval = HumanApproval.model_validate(approval_data)
@@ -215,7 +216,7 @@ def content_generation_hitl_orchestration(
                     approval = HumanApproval(approved=False, feedback=approval_data)
             else:
                 approval = HumanApproval(approved=False, feedback=str(approval_data))   # type: ignore
-            
+
             if approval.approved:
                 # Content approved - publish and return
                 logger.debug("[Orchestration] Content approved! Publishing...")
@@ -225,52 +226,52 @@ def content_generation_hitl_orchestration(
                     input=content.model_dump()
                 )
                 yield publish_task
-                
+
                 logger.debug("[Orchestration] Content published successfully")
                 return {"content": content.content, "title": content.title}
-            
+
             # Content rejected - incorporate feedback and regenerate
             logger.debug(f"[Orchestration] Content rejected. Feedback: {approval.feedback}")
-            
+
             # Check if we've exhausted attempts
             if attempt >= payload.max_review_attempts:
                 context.set_custom_status("Max review attempts exhausted.")
                 # Max attempts exhausted
                 logger.error(f"[Orchestration] Max attempts ({payload.max_review_attempts}) exhausted")
                 break
-            
-            context.set_custom_status(f"Content rejected by human reviewer. Regenerating...")
-            
+
+            context.set_custom_status("Content rejected by human reviewer. Regenerating...")
+
             rewrite_prompt = (
                 "The content was rejected by a human reviewer. Please rewrite the article incorporating their feedback.\n\n"
                 f"Human Feedback: {approval.feedback or 'No specific feedback provided.'}"
             )
-            
+
             logger.debug("[Orchestration] Regenerating content with feedback...")
 
             logger.warning(f"Regenerating with ThreadID: {writer_thread.session_id}")
-            
+
             rewrite_response: AgentResponse = yield writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
                     options={"response_format": GeneratedContent},
             )
             rewritten_content = cast(GeneratedContent, rewrite_response.value)
-            
+
             if not isinstance(rewritten_content, GeneratedContent):
                 raise ValueError("Agent returned no content after rewrite.")
-            
+
             content = rewritten_content
             logger.debug(f"[Orchestration] Content regenerated: {content.title}")
-            
+
         else:
             # Timeout occurred
             logger.error(f"[Orchestration] Approval timeout after {payload.approval_timeout_seconds}s")
-            
+
             raise TimeoutError(
                 f"Human approval timed out after {payload.approval_timeout_seconds} second(s)."
             )
-    
+
     # If we exit the loop without returning, max attempts were exhausted
     context.set_custom_status("Max review attempts exhausted.")
     raise RuntimeError(
@@ -295,12 +296,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -321,52 +322,52 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Create and register the writer agent
     logger.debug("Creating and registering Writer agent...")
     writer_agent = create_writer_agent()
     agent_worker.add_agent(writer_agent)
-    
+
     logger.debug(f"✓ Registered agent: {writer_agent.name}")
-    
+
     # Register activity functions
     logger.debug("Registering activity functions...")
     worker.add_activity(notify_user_for_approval)  # type: ignore
     worker.add_activity(publish_content)  # type: ignore
-    logger.debug(f"✓ Registered activity: notify_user_for_approval")
-    logger.debug(f"✓ Registered activity: publish_content")
-    
+    logger.debug("✓ Registered activity: notify_user_for_approval")
+    logger.debug("✓ Registered activity: publish_content")
+
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(content_generation_hitl_orchestration) # type: ignore
+    worker.add_orchestrator(content_generation_hitl_orchestration)  # type: ignore
     logger.debug(f"✓ Registered orchestration: {content_generation_hitl_orchestration.__name__}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task HITL Content Generation Worker...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agents, orchestrations, and activities
     setup_worker(worker)
-    
+
     logger.debug("Worker is ready and listening for requests...")
     logger.debug("Press Ctrl+C to stop.")
-    
+
     try:
         # Start the worker (this blocks until stopped)
         worker.start()
-        
+
         # Keep the worker running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
-    
+
     logger.debug("Worker stopped")
 
 

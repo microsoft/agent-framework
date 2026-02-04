@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework._types import ChatMessage, Content, Role
+from agent_framework._types import ChatMessage, Content
 from loguru import logger
 
 
@@ -18,25 +18,25 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
 
     flipped_messages = []
     for msg in messages:
-        if msg.role == Role.ASSISTANT:
+        if msg.role == "assistant":
             # Flip assistant to user
             contents = filter_out_function_calls(msg.contents)
             if contents:
                 flipped_msg = ChatMessage(
-                    role=Role.USER,
+                    role="user",
                     # The function calls will cause 400 when role is user
                     contents=contents,
                     author_name=msg.author_name,
                     message_id=msg.message_id,
                 )
                 flipped_messages.append(flipped_msg)
-        elif msg.role == Role.USER:
+        elif msg.role == "user":
             # Flip user to assistant
             flipped_msg = ChatMessage(
-                role=Role.ASSISTANT, contents=msg.contents, author_name=msg.author_name, message_id=msg.message_id
+                role="assistant", contents=msg.contents, author_name=msg.author_name, message_id=msg.message_id
             )
             flipped_messages.append(flipped_msg)
-        elif msg.role == Role.TOOL:
+        elif msg.role == "tool":
             # Skip tool messages
             pass
         else:
@@ -59,16 +59,16 @@ def log_messages(messages: list[ChatMessage]) -> None:
                 if hasattr(content, "type"):
                     if content.type == "text":
                         escape_text = content.text.replace("<", r"\<")  # type: ignore[union-attr]
-                        if msg.role == Role.SYSTEM:
+                        if msg.role == "system":
                             logger_.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
-                        elif msg.role == Role.USER:
+                        elif msg.role == "user":
                             logger_.info(f"<green>[USER]</green> {escape_text}")
-                        elif msg.role == Role.ASSISTANT:
+                        elif msg.role == "assistant":
                             logger_.info(f"<blue>[ASSISTANT]</blue> {escape_text}")
-                        elif msg.role == Role.TOOL:
+                        elif msg.role == "tool":
                             logger_.info(f"<yellow>[TOOL]</yellow> {escape_text}")
                         else:
-                            logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {escape_text}")
+                            logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {escape_text}")
                     elif content.type == "function_call":
                         function_call_text = f"{content.name}({content.arguments})"
                         function_call_text = function_call_text.replace("<", r"\<")
@@ -79,34 +79,34 @@ def log_messages(messages: list[ChatMessage]) -> None:
                         logger_.info(f"<yellow>[TOOL_RESULT]</yellow> 🔨 {function_result_text}")
                     else:
                         content_text = str(content).replace("<", r"\<")
-                        logger_.info(f"<magenta>[{msg.role.value.upper()}] ({content.type})</magenta> {content_text}")
+                        logger_.info(f"<magenta>[{msg.role.upper()}] ({content.type})</magenta> {content_text}")
                 else:
                     # Fallback for content without type
                     text_content = str(content).replace("<", r"\<")
-                    if msg.role == Role.SYSTEM:
+                    if msg.role == "system":
                         logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
-                    elif msg.role == Role.USER:
+                    elif msg.role == "user":
                         logger_.info(f"<green>[USER]</green> {text_content}")
-                    elif msg.role == Role.ASSISTANT:
+                    elif msg.role == "assistant":
                         logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
-                    elif msg.role == Role.TOOL:
+                    elif msg.role == "tool":
                         logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
                     else:
-                        logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+                        logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")
         elif hasattr(msg, "text") and msg.text:
             # Handle simple text messages
             text_content = msg.text.replace("<", r"\<")
-            if msg.role == Role.SYSTEM:
+            if msg.role == "system":
                 logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
-            elif msg.role == Role.USER:
+            elif msg.role == "user":
                 logger_.info(f"<green>[USER]</green> {text_content}")
-            elif msg.role == Role.ASSISTANT:
+            elif msg.role == "assistant":
                 logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
-            elif msg.role == Role.TOOL:
+            elif msg.role == "tool":
                 logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
             else:
-                logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+                logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")
         else:
             # Fallback for other message formats
             text_content = str(msg).replace("<", r"\<")
-            logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+            logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")

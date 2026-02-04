@@ -797,7 +797,7 @@ class DurableAgentStateMessage:
             DurableAgentStateMessage with converted content items and metadata
         """
         return DurableAgentStateMessage(
-            role=request.role.value,
+            role=request.role,
             contents=[DurableAgentStateTextContent(text=request.message)],
             created_at=_parse_created_at(request.created_at) if request.created_at else None,
         )
@@ -817,7 +817,7 @@ class DurableAgentStateMessage:
         ]
 
         return DurableAgentStateMessage(
-            role=chat_message.role.value,
+            role=chat_message.role,
             contents=contents_list,
             author_name=chat_message.author_name,
             extension_data=dict(chat_message.additional_properties) if chat_message.additional_properties else None,

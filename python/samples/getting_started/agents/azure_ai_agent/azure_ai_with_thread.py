@@ -4,8 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread
-from agent_framework import tool
+from agent_framework import AgentThread, tool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -16,6 +15,7 @@ Azure AI Agent with Thread Management Example
 This sample demonstrates thread management with Azure AI Agents, comparing
 automatic thread creation with explicit thread management for persistent context.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

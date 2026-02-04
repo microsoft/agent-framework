@@ -12,12 +12,11 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
-    Role,
-    TextContent,
-    tool,
     chat_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
@@ -43,7 +42,7 @@ async def security_filter_middleware(
 
     # Check only the last message (most recent user input)
     last_message = context.messages[-1] if context.messages else None
-    if last_message and last_message.role == Role.USER and last_message.text:
+    if last_message and last_message.role == "user" and last_message.text:
         message_lower = last_message.text.lower()
         for term in blocked_terms:
             if term in message_lower:
@@ -57,8 +56,8 @@ async def security_filter_middleware(
                     # Streaming mode: return async generator
                     async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[TextContent(text=error_message)],
-                            role=Role.ASSISTANT,
+                            contents=[Content.from_text(text=error_message)],
+                            role="assistant",
                         )
 
                     context.result = blocked_stream()
@@ -67,7 +66,7 @@ async def security_filter_middleware(
                     context.result = ChatResponse(
                         messages=[
                             ChatMessage(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 text=error_message,
                             )
                         ]

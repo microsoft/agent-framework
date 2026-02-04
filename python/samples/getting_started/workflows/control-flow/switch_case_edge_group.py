@@ -13,12 +13,10 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     ChatAgent,  # Case entry for a switch-case edge group
     ChatMessage,
     Default,  # Default branch when no cases match
-    Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
-    tool,
-)
+    )
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
@@ -100,7 +98,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -121,7 +119,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content from shared state using the id carried in DetectionResult.
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
     )
 
 
