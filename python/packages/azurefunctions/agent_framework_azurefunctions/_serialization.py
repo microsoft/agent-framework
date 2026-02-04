@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import types
+from collections.abc import Sequence
 from dataclasses import asdict, fields, is_dataclass
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
@@ -287,7 +288,7 @@ def reconstruct_agent_executor_response(data: dict[str, Any]) -> AgentExecutorRe
     )
 
 
-def reconstruct_message_for_handler(data: Any, input_types: list[type[Any]]) -> Any:
+def reconstruct_message_for_handler(data: Any, input_types: Sequence[type[Any] | types.UnionType]) -> Any:
     """Attempt to reconstruct a message to match one of the handler's expected types.
 
     Handles:

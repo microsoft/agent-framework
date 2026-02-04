@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -581,7 +582,7 @@ def run_workflow_orchestrator(
     initial_message: Any,
     shared_state: dict[str, Any] | None = None,
     hitl_timeout_hours: float = DEFAULT_HITL_TIMEOUT_HOURS,
-):
+) -> Generator[Any, Any, list[Any]]:
     """Traverse and execute the workflow graph using Durable Functions.
 
     This orchestrator reuses MAF's edge group routing logic while adapting
