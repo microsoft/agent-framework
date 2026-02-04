@@ -29,7 +29,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     Content,
     ResponseStream,
@@ -58,12 +58,12 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgent(AgentTelemetryLayer, BareAgent):
+class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
     via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
-    A2A responses (Messages/Tasks) back to framework types. Inherits BareAgent capabilities
+    A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
     while managing the underlying A2A protocol communication.
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
@@ -99,7 +99,7 @@ class A2AAgent(AgentTelemetryLayer, BareAgent):
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
                 10.0s write, 5.0s pool - optimized for A2A operations).
-            kwargs: any additional properties, passed to BareAgent.
+            kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client

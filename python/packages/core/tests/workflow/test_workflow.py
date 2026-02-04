@@ -14,7 +14,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     Content,
     Executor,
@@ -848,7 +848,7 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     assert result.get_final_state() == WorkflowRunState.IDLE
 
 
-class _StreamingTestAgent(BareAgent):
+class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 
     def __init__(self, *, reply_text: str, **kwargs: Any) -> None:

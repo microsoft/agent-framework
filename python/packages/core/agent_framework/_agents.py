@@ -161,7 +161,7 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["AgentProtocol", "BareAgent", "BareChatAgent", "ChatAgent"]
+__all__ = ["AgentProtocol", "BareAgent", "BaseAgent", "ChatAgent", "RawChatAgent"]
 
 
 # region Agent Protocol
@@ -281,10 +281,10 @@ class AgentProtocol(Protocol):
         ...
 
 
-# region BareAgent
+# region BaseAgent
 
 
-class BareAgent(SerializationMixin):
+class BaseAgent(SerializationMixin):
     """Base class for all Agent Framework agents.
 
     This is the minimal base class without middleware or telemetry layers.
@@ -294,18 +294,18 @@ class BareAgent(SerializationMixin):
     context providers, middleware support, and thread management.
 
     Note:
-        BareAgent cannot be instantiated directly as it doesn't implement the
+        BaseAgent cannot be instantiated directly as it doesn't implement the
         ``run()`` and other methods required by AgentProtocol.
         Use a concrete implementation like ChatAgent or create a subclass.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import BareAgent, AgentThread, AgentResponse
+            from agent_framework import BaseAgent, AgentThread, AgentResponse
 
 
             # Create a concrete subclass that implements the protocol
-            class SimpleAgent(BareAgent):
+            class SimpleAgent(BaseAgent):
                 async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
                     if stream:
 
@@ -347,7 +347,7 @@ class BareAgent(SerializationMixin):
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a BareAgent instance.
+        """Initialize a BaseAgent instance.
 
         Keyword Args:
             id: The unique identifier of the agent. If no id is provided,
@@ -519,10 +519,14 @@ class BareAgent(SerializationMixin):
         return agent_tool
 
 
+# Backward compatibility alias
+BareAgent = BaseAgent
+
+
 # region ChatAgent
 
 
-class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
+class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     """A Chat Client Agent without middleware or telemetry layers.
 
     This is the core chat agent implementation. For most use cases,
@@ -1406,7 +1410,7 @@ class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
 class ChatAgent(
     AgentTelemetryLayer,
     AgentMiddlewareLayer,
-    BareChatAgent[TOptions_co],
+    RawChatAgent[TOptions_co],
     Generic[TOptions_co],
 ):
     """A Chat Client Agent with middleware, telemetry, and full layer support.
@@ -1415,7 +1419,7 @@ class ChatAgent(
     - Agent middleware support for request/response interception
     - OpenTelemetry-based telemetry for observability
 
-    For a minimal implementation without these features, use :class:`BareChatAgent`.
+    For a minimal implementation without these features, use :class:`RawChatAgent`.
     """
 
     pass

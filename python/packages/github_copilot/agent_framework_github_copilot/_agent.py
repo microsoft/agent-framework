@@ -12,7 +12,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     Content,
     ContextProvider,
@@ -98,7 +98,7 @@ TOptions = TypeVar(
 )
 
 
-class GitHubCopilotAgent(BareAgent, Generic[TOptions]):
+class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
     """A GitHub Copilot Agent.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities

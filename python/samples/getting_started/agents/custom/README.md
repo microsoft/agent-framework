@@ -6,7 +6,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 
 | File | Description |
 |------|-------------|
-| [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BareAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper thread management, and message history handling. |
+| [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BaseAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper thread management, and message history handling. |
 | [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
 
 ## Key Takeaways

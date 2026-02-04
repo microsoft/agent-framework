@@ -8,7 +8,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     ChatMessageStore,
     Content,
@@ -21,7 +21,7 @@ from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import SequentialBuilder
 
 
-class _CountingAgent(BareAgent):
+class _CountingAgent(BaseAgent):
     """Agent that echoes messages with a counter to verify thread state persistence."""
 
     def __init__(self, **kwargs: Any):

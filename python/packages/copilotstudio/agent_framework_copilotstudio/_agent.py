@@ -8,7 +8,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     Content,
     ContextProvider,
@@ -69,7 +69,7 @@ class CopilotStudioSettings(AFBaseSettings):
     tenantid: str | None = None
 
 
-class CopilotStudioAgent(BareAgent):
+class CopilotStudioAgent(BaseAgent):
     """A Copilot Studio Agent."""
 
     def __init__(

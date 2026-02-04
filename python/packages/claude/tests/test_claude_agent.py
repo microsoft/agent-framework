@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
+from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -312,7 +312,7 @@ class TestClaudeAgentRun:
 
 
 class TestClaudeAgentRunStream:
-    """Tests for ClaudeAgent run_stream method."""
+    """Tests for ClaudeAgent streaming run method."""
 
     @staticmethod
     async def _create_async_generator(items: list[Any]) -> Any:
@@ -332,7 +332,7 @@ class TestClaudeAgentRunStream:
         return mock_client
 
     async def test_run_stream_yields_updates(self) -> None:
-        """Test run_stream yields AgentResponseUpdate objects."""
+        """Test run(stream=True) yields AgentResponseUpdate objects."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -371,11 +371,11 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             updates: list[AgentResponseUpdate] = []
-            async for update in agent.run_stream("Hello"):
+            async for update in agent.run("Hello", stream=True):
                 updates.append(update)
             # StreamEvent yields text deltas
-            assert len(updates) == 2
-            assert updates[0].role == "assistant"
+            assert len(updates) == 3
+            assert updates[0].role == Role.ASSISTANT
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
@@ -687,7 +687,7 @@ class TestFormatPrompt:
         """Test formatting user message."""
         agent = ClaudeAgent()
         msg = ChatMessage(
-            role="user",
+            role=Role.USER,
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
@@ -697,9 +697,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage("user", [Content.from_text(text="Hi")]),
-            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
-            ChatMessage("user", [Content.from_text(text="How are you?")]),
+            ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hi")]),
+            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello!")]),
+            ChatMessage(role=Role.USER, contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

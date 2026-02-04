@@ -10,7 +10,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    BareAgent,
+    BaseAgent,
     ChatMessage,
     Executor,
     WorkflowBuilder,
@@ -20,7 +20,7 @@ from agent_framework import (
 )
 
 
-class DummyAgent(BareAgent):
+class DummyAgent(BaseAgent):
     def run(self, messages=None, *, stream: bool = False, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream_impl()
