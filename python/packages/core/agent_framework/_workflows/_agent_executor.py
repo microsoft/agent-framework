@@ -377,12 +377,12 @@ class AgentExecutor(Executor):
         # Build the final AgentResponse from the collected updates
         if isinstance(self._agent, ChatAgent):
             response_format = self._agent.default_options.get("response_format")
-            response = AgentResponse.from_agent_run_response_updates(
+            response = AgentResponse.from_agent_response_updates(
                 updates,
                 output_format_type=response_format,
             )
         else:
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_agent_response_updates(updates)
 
         # Handle any user input requests after the streaming completes
         if user_input_requests:

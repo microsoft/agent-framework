@@ -2452,7 +2452,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
             # Combine streaming updates
             updates = [...]  # List of AgentResponseUpdate objects
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_agent_response_updates(updates)
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
@@ -2567,7 +2567,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    def from_agent_run_response_updates(
+    def from_agent_response_updates(
         cls: type["AgentResponse[Any]"],
         updates: Sequence["AgentResponseUpdate"],
         *,
@@ -2576,7 +2576,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    def from_agent_run_response_updates(
+    def from_agent_response_updates(
         cls: type["AgentResponse[Any]"],
         updates: Sequence["AgentResponseUpdate"],
         *,
@@ -2584,7 +2584,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     ) -> "AgentResponse[Any]": ...
 
     @classmethod
-    def from_agent_run_response_updates(
+    def from_agent_response_updates(
         cls: type[TAgentRunResponse],
         updates: Sequence["AgentResponseUpdate"],
         *,

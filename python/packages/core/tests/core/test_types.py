@@ -1129,7 +1129,7 @@ def test_agent_run_response_text_property_empty() -> None:
 
 def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpdate) -> None:
     updates = [agent_response_update, agent_response_update]
-    response = AgentResponse.from_agent_run_response_updates(updates)
+    response = AgentResponse.from_agent_response_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
 

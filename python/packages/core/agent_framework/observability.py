@@ -1450,7 +1450,7 @@ def _trace_agent_run_stream(
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             else:
-                response = AgentResponse.from_agent_run_response_updates(all_updates)
+                response = AgentResponse.from_agent_response_updates(all_updates)
                 attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:

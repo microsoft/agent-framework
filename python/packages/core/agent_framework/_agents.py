@@ -490,7 +490,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_agent_response_updates(response_updates).text
 
         agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
