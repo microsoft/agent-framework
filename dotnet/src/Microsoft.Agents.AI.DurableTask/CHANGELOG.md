@@ -8,6 +8,7 @@
 - Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
 - Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067));
 - Renamed AgentThread to AgentSession ([#3430](https://github.com/microsoft/agent-framework/pull/3430))
+- Updated to use base `AgentRunOptions.ResponseFormat` for structured output configuration ([#3658](https://github.com/microsoft/agent-framework/pull/3658))
 
 ## v1.0.0-preview.251204.1
 

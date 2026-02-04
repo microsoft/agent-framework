@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI;
 /// may involve multiple agents working together.
 /// </remarks>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public abstract class AIAgent
+public abstract partial class AIAgent
 {
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
