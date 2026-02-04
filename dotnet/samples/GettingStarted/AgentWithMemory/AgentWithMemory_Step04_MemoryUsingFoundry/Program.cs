@@ -16,7 +16,7 @@ using Microsoft.Agents.AI.FoundryMemory;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MEMORY_STORE_NAME") ?? "sample-memory-store-name";
-string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODEL") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODEL") ?? "gpt-4.1";
 string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_EMBEDDING_MODEL") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
@@ -114,6 +114,17 @@ internal sealed class DebugHttpClientHandler : HttpClientHandler
 
         Console.WriteLine("\n=== HTTP RESPONSE ===");
         Console.WriteLine($"Status: {(int)response.StatusCode} {response.StatusCode}");
+        Console.WriteLine("Headers:");
+        foreach (var header in response.Headers)
+        {
+            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
+        }
+
         string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         Console.WriteLine("Body: " + responseBody);
         Console.WriteLine("=====================\n");
