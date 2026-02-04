@@ -11,7 +11,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -21,21 +20,16 @@ namespace Microsoft.Agents.AI;
 /// <typeparam name="T">The type of value expected from the agent.</typeparam>
 public class AgentResponse<T> : AgentResponse
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentResponse{T}"/> class.
-    /// </summary>
-    public AgentResponse()
-    {
-    }
+    private readonly JsonSerializerOptions _serializerOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentResponse{T}"/> class.
     /// </summary>
     /// <param name="response">The <see cref="AgentResponse"/> from which to populate this <see cref="AgentResponse{T}"/>.</param>
-    /// <param name="responseFormat">The JSON response format configuration used to deserialize the agent's response.</param>
-    public AgentResponse(AgentResponse response, NewChatResponseFormatJson? responseFormat = null) : base(response)
+    /// <param name="serializerOptions">The <see cref="JsonSerializerOptions"/> to use when deserializing the result.</param>
+    public AgentResponse(AgentResponse response, JsonSerializerOptions serializerOptions) : base(response)
     {
-        this.ResponseFormat = responseFormat;
+        this._serializerOptions = serializerOptions;
     }
 
     /// <summary>
@@ -46,26 +40,17 @@ public class AgentResponse<T> : AgentResponse
     {
         get
         {
-            return (T)this.Deserialize(this.ResponseFormat?.SchemaType ?? typeof(T), this.ResponseFormat?.SchemaSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
+            var structuredOutput = this.GetResultCore(this._serializerOptions, out var failureReason);
+            return failureReason switch
+            {
+                FailureReason.ResultDidNotContainJson => throw new InvalidOperationException("The response did not contain JSON to be deserialized."),
+                FailureReason.DeserializationProducedNull => throw new InvalidOperationException("The deserialized response is null."),
+                _ => structuredOutput!,
+            };
         }
     }
 
-    private NewChatResponseFormatJson? ResponseFormat { get; }
-
-    private object Deserialize(Type targetType, JsonSerializerOptions serializerOptions)
-    {
-        _ = Throw.IfNull(serializerOptions);
-
-        var structuredOutput = this.GetResultCore(targetType, serializerOptions, out var failureReason);
-        return failureReason switch
-        {
-            FailureReason.ResultDidNotContainJson => throw new InvalidOperationException("The response did not contain JSON to be deserialized."),
-            FailureReason.DeserializationProducedNull => throw new InvalidOperationException("The deserialized response is null."),
-            _ => structuredOutput!,
-        };
-    }
-
-    private object? GetResultCore(Type targetType, JsonSerializerOptions serializerOptions, out FailureReason? failureReason)
+    private T? GetResultCore(JsonSerializerOptions serializerOptions, out FailureReason? failureReason)
     {
         var json = this.Text;
         if (string.IsNullOrEmpty(json))
@@ -74,7 +59,8 @@ public class AgentResponse<T> : AgentResponse
             return default;
         }
 
-        object? deserialized = DeserializeFirstTopLevelObject(json!, serializerOptions.GetTypeInfo(targetType));
+        // If there's an exception here, we want it to propagate, since the Result property is meant to throw directly
+        T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
 
         if (deserialized is null)
         {
@@ -86,7 +72,7 @@ public class AgentResponse<T> : AgentResponse
         return deserialized;
     }
 
-    private static object? DeserializeFirstTopLevelObject(string json, JsonTypeInfo typeInfo)
+    private static T? DeserializeFirstTopLevelObject(string json, JsonTypeInfo<T> typeInfo)
     {
 #if NET
         // We need to deserialize only the first top-level object as a workaround for a common LLM backend
@@ -112,6 +98,6 @@ public class AgentResponse<T> : AgentResponse
     private enum FailureReason
     {
         ResultDidNotContainJson,
-        DeserializationProducedNull,
+        DeserializationProducedNull
     }
 }

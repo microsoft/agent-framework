@@ -86,7 +86,7 @@ public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
         {
             ChatOptions = new ChatOptions()
             {
-                ResponseFormat = NewChatResponseFormat.ForJsonSchema<T>(AgentAbstractionsJsonUtilities.DefaultOptions)
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<T>(AgentAbstractionsJsonUtilities.DefaultOptions)
             },
         };
 

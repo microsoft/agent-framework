@@ -52,7 +52,5 @@ public partial class ChatClientAgent_SO_WithRunAsyncTests
 
     [JsonSourceGenerationOptions(UseStringEnumConverter = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(Animal))]
-    [JsonSerializable(typeof(JsonElement))]
-    [JsonSerializable(typeof(object))]
     private sealed partial class JsonContext3 : JsonSerializerContext;
 }

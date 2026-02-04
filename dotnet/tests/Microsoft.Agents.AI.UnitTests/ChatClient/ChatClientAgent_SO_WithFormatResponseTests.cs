@@ -30,7 +30,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
                 ResponseId = "test",
             });
 
-        ChatResponseFormatJson responseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson responseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
 
         ChatClientAgent agent = new(mockService.Object, options: new ChatClientAgentOptions
         {
@@ -66,7 +66,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
                 ResponseId = "test",
             });
 
-        ChatResponseFormatJson responseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson responseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
 
         ChatClientAgent agent = new(mockService.Object);
 
@@ -101,8 +101,8 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
                 ResponseId = "test",
             });
 
-        ChatResponseFormatJson initializationResponseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
-        ChatResponseFormatJson invocationResponseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson initializationResponseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson invocationResponseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
 
         ChatClientAgent agent = new(mockService.Object, options: new ChatClientAgentOptions
         {
@@ -144,8 +144,8 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
                 ResponseId = "test",
             });
 
-        ChatResponseFormatJson chatOptionsResponseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
-        ChatResponseFormatJson runOptionsResponseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson chatOptionsResponseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson runOptionsResponseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
 
         ChatClientAgent agent = new(mockService.Object);
 
@@ -184,7 +184,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
                 ResponseId = "test",
             });
 
-        ChatResponseFormatJson responseFormat = NewChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
+        ChatResponseFormatJson responseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext4.Default.Options);
 
         ChatClientAgent agent = new(mockService.Object, options: new ChatClientAgentOptions
         {

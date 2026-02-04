@@ -124,12 +124,13 @@ public abstract partial class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var responseFormat = NewChatResponseFormat.ForJsonSchema<T>(serializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
+        serializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         options = options?.Clone() ?? new AgentRunOptions();
-        options.ResponseFormat = responseFormat;
+        options.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>(serializerOptions);
 
         AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
-        return new AgentResponse<T>(response, responseFormat);
+
+        return new AgentResponse<T>(response, serializerOptions);
     }
 }

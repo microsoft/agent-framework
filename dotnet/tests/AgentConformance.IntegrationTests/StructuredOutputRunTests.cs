@@ -27,7 +27,7 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
 
         var options = new AgentRunOptions
         {
-            ResponseFormat = NewChatResponseFormat.ForJsonSchema<CityInfo>(AgentAbstractionsJsonUtilities.DefaultOptions)
+            ResponseFormat = ChatResponseFormat.ForJsonSchema<CityInfo>(AgentAbstractionsJsonUtilities.DefaultOptions)
         };
 
         // Act
