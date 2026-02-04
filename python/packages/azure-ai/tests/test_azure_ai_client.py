@@ -1308,7 +1308,8 @@ async def client() -> AsyncGenerator[AzureAIClient, None]:
         )
         try:
             assert client.function_invocation_configuration
-            client.function_invocation_configuration["max_iterations"] = 1
+            # Need at least 2 iterations for tool_choice tests: one to get function call, one to get final response
+            client.function_invocation_configuration["max_iterations"] = 2
             yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
