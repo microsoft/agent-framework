@@ -400,7 +400,7 @@ class StorageContextHooks(ContextHooks):
 
 **Smart Load Behavior (both approaches):**
 - `load_messages=None` (default): Automatically disable loading when:
-  - `context.options.get('store') == False`, OR
+  - `context.options.get('store') == True`, OR
   - `context.service_session_id is not None` (service handles storage)
 
 **Comparison to Current:**
