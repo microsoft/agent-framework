@@ -7,8 +7,10 @@ from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0Provider
 from azure.identity.aio import AzureCliCredential
 from mem0 import AsyncMemory
+from agent_framework import tool
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
     if company_code != "CNTS":
         raise ValueError("Company code not found")
@@ -35,11 +37,11 @@ async def main() -> None:
     local_mem0_client = AsyncMemory()
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=Mem0Provider(user_id=user_id, mem0_client=local_mem0_client),
+            context_provider=Mem0Provider(user_id=user_id, mem0_client=local_mem0_client),
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.

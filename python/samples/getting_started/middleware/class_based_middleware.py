@@ -8,12 +8,13 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
     Role,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -33,6 +34,8 @@ This approach is useful when you need stateful middleware or complex logic that 
 from object-oriented design patterns.
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -58,7 +61,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
             if "password" in query.lower() or "secret" in query.lower():
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
-                context.result = AgentRunResponse(
+                context.result = AgentResponse(
                     messages=[
                         ChatMessage(role=Role.ASSISTANT, text="Detected sensitive information, the request is blocked.")
                     ]
@@ -99,7 +102,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

@@ -346,8 +346,8 @@ class EntityDiscovery:
         instructions = None
         model = None
         chat_client_type = None
-        context_providers_list = None
-        middleware_list = None
+        context_provider_list = None
+        middlewares_list = None
 
         if entity_type == "agent":
             from ._utils import extract_agent_metadata
@@ -356,8 +356,8 @@ class EntityDiscovery:
             instructions = agent_meta["instructions"]
             model = agent_meta["model"]
             chat_client_type = agent_meta["chat_client_type"]
-            context_providers_list = agent_meta["context_providers"]
-            middleware_list = agent_meta["middleware"]
+            context_provider_list = agent_meta["context_provider"]
+            middlewares_list = agent_meta["middleware"]
 
         # Log helpful info about agent capabilities (before creating EntityInfo)
         if entity_type == "agent":
@@ -395,8 +395,8 @@ class EntityDiscovery:
             instructions=instructions,
             model_id=model,
             chat_client_type=chat_client_type,
-            context_providers=context_providers_list,
-            middleware=middleware_list,
+            context_provider=context_provider_list,
+            middleware=middlewares_list,
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
@@ -666,7 +666,16 @@ class EntityDiscovery:
             logger.debug(f"Successfully imported {pattern}")
             return module, None
 
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as e:
+            # Distinguish between "module pattern doesn't exist" vs "module has import errors"
+            # If the missing module is the pattern itself, it's just not found (try next pattern)
+            # If the missing module is something else (a dependency), capture the error
+            missing_module = getattr(e, "name", None)
+            if missing_module and missing_module != pattern and not pattern.endswith(f".{missing_module}"):
+                # The module exists but has an import error (missing dependency)
+                logger.warning(f"Error importing {pattern}: {e}")
+                return None, e
+            # The module pattern itself doesn't exist - this is expected, try next pattern
             logger.debug(f"Import pattern {pattern} not found")
             return None, None
         except Exception as e:
@@ -820,8 +829,8 @@ class EntityDiscovery:
             instructions = None
             model = None
             chat_client_type = None
-            context_providers_list = None
-            middleware_list = None
+            context_provider_list = None
+            middlewares_list = None
 
             if obj_type == "agent":
                 from ._utils import extract_agent_metadata
@@ -830,8 +839,8 @@ class EntityDiscovery:
                 instructions = agent_meta["instructions"]
                 model = agent_meta["model"]
                 chat_client_type = agent_meta["chat_client_type"]
-                context_providers_list = agent_meta["context_providers"]
-                middleware_list = agent_meta["middleware"]
+                context_provider_list = agent_meta["context_provider"]
+                middlewares_list = agent_meta["middleware"]
 
             entity_info = EntityInfo(
                 id=entity_id,
@@ -843,8 +852,8 @@ class EntityDiscovery:
                 instructions=instructions,
                 model_id=model,
                 chat_client_type=chat_client_type,
-                context_providers=context_providers_list,
-                middleware=middleware_list,
+                context_provider=context_provider_list,
+                middleware=middlewares_list,
                 metadata={
                     "module_path": module_path,
                     "entity_type": obj_type,
@@ -874,10 +883,14 @@ class EntityDiscovery:
 
         try:
             if obj_type == "agent":
-                # For agents, check chat_options.tools first
-                chat_options = getattr(obj, "chat_options", None)
-                if chat_options and hasattr(chat_options, "tools"):
-                    for tool in chat_options.tools:
+                # For agents, check default_options.get("tools")
+                chat_options = getattr(obj, "default_options", None)
+                chat_options_tools = None
+                if chat_options:
+                    chat_options_tools = chat_options.get("tools")
+
+                if chat_options_tools:
+                    for tool in chat_options_tools:
                         if hasattr(tool, "__name__"):
                             tools.append(tool.__name__)
                         elif hasattr(tool, "name"):

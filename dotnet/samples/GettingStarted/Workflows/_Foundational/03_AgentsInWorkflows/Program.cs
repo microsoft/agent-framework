@@ -52,7 +52,7 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is AgentRunUpdateEvent executorComplete)
+            if (evt is AgentResponseUpdateEvent executorComplete)
             {
                 Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }

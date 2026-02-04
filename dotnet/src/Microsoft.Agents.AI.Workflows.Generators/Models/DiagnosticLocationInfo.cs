@@ -14,7 +14,7 @@ internal sealed record DiagnosticLocationInfo(
     LinePositionSpan LineSpan)
 {
     /// <summary>
-    /// Creates a LocationInfo from a Roslyn Location.
+    /// Creates a DiagnosticLocationInfo from a Roslyn Location.
     /// </summary>
     public static DiagnosticLocationInfo? FromLocation(Location? location)
     {
@@ -23,7 +23,7 @@ internal sealed record DiagnosticLocationInfo(
             return null;
         }
 
-        var lineSpan = location.GetLineSpan();
+        FileLinePositionSpan lineSpan = location.GetLineSpan();
         return new DiagnosticLocationInfo(
             lineSpan.Path ?? string.Empty,
             location.SourceSpan,
@@ -35,7 +35,7 @@ internal sealed record DiagnosticLocationInfo(
     /// </summary>
     public Location ToRoslynLocation()
     {
-        if (string.IsNullOrEmpty(this.FilePath))
+        if (string.IsNullOrWhiteSpace(this.FilePath))
         {
             return Location.None;
         }

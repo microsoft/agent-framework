@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {
@@ -177,7 +177,7 @@ internal sealed class WorkflowRunner
                     Console.ResetColor();
                     break;
 
-                case AgentRunUpdateEvent streamEvent:
+                case AgentResponseUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
                         hasStreamed = false;
@@ -230,7 +230,7 @@ internal sealed class WorkflowRunner
                     }
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     try
                     {
                         if (hasStreamed)

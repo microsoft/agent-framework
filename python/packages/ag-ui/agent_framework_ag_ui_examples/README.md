@@ -169,7 +169,7 @@ The package uses a clean, orchestrator-based architecture:
 - **AgentFrameworkAgent**: Lightweight wrapper that delegates to orchestrators
 - **Orchestrators**: Handle different execution flows (default, human-in-the-loop, etc.)
 - **Confirmation Strategies**: Domain-specific confirmation messages (extensible)
-- **AgentFrameworkEventBridge**: Converts AgentRunResponseUpdate to AG-UI events
+- **AgentFrameworkEventBridge**: Converts AgentResponseUpdate to AG-UI events
 - **Message Adapters**: Bidirectional conversion between AG-UI and Agent Framework message formats
 - **FastAPI Endpoint**: Streaming HTTP endpoint with Server-Sent Events (SSE)
 
@@ -187,21 +187,21 @@ The package uses a clean, orchestrator-based architecture:
 You can create your own agent factories following the same pattern as the examples:
 
 ```python
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework import ChatClientProtocol
 from agent_framework.ag_ui import AgentFrameworkAgent
 
-@ai_function
+@tool
 def my_tool(param: str) -> str:
     """My custom tool."""
     return f"Result: {param}"
 
 def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
     """Create a custom agent with the specified chat client.
-    
+
     Args:
         chat_client: The chat client to use for the agent
-        
+
     Returns:
         A configured AgentFrameworkAgent instance
     """
@@ -211,7 +211,7 @@ def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
         chat_client=chat_client,
         tools=[my_tool],
     )
-    
+
     return AgentFrameworkAgent(
         agent=agent,
         name="MyCustomAgent",
@@ -289,48 +289,14 @@ wrapped_agent = AgentFrameworkAgent(
 )
 ```
 
-### Custom Confirmation Strategies
-
-Provide domain-specific confirmation messages:
-
-```python
-from typing import Any
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.ag_ui import AgentFrameworkAgent, ConfirmationStrategy
-
-class CustomConfirmationStrategy(ConfirmationStrategy):
-    def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
-        return "Your custom approval message!"
-    
-    def on_approval_rejected(self, steps: list[dict[str, Any]]) -> str:
-        return "Your custom rejection message!"
-    
-    def on_state_confirmed(self) -> str:
-        return "State changes confirmed!"
-    
-    def on_state_rejected(self) -> str:
-        return "State changes rejected!"
-
-agent = ChatAgent(
-    name="custom_agent",
-    chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
-)
-
-wrapped_agent = AgentFrameworkAgent(
-    agent=agent,
-    confirmation_strategy=CustomConfirmationStrategy(),
-)
-```
-
 ### Human in the Loop
 
 Human-in-the-loop is automatically handled when tools are marked for approval:
 
 ```python
-from agent_framework import ai_function
+from agent_framework import tool
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def sensitive_action(param: str) -> str:
     """This action requires user approval."""
     return f"Executed with {param}"
@@ -349,7 +315,7 @@ class MyCustomOrchestrator(Orchestrator):
     def can_handle(self, context: ExecutionContext) -> bool:
         # Return True if this orchestrator should handle the request
         return context.input_data.get("custom_mode") == True
-    
+
     async def run(self, context: ExecutionContext):
         # Custom execution logic
         yield RunStartedEvent(...)

@@ -16,18 +16,16 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
 
-    <!-- 👇 We don't want to reference the source generator dll directly in consuming projects -->
+    <!-- Don't include build output in lib folder -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
-
-    <!-- Place build output in analyzers folder for NuGet package -->
-    <!--<IncludeBuildOutput>true</IncludeBuildOutput>
-    <BuildOutputTargetFolder>analyzers/dotnet/cs</BuildOutputTargetFolder>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>-->
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
 
     <!-- Suppress nullable warnings for netstandard2.0 -->
     <NoWarn>$(NoWarn);nullable</NoWarn>
     <!-- Suppress analyzer release tracking requirement for source generators -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- Suppress NU5128 warning about dependencies not matching target framework -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -53,7 +51,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <!-- Include the analyzer DLL using the correct target framework path -->
+    <None Include="$(OutputPath)$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)$(AssemblyName).pdb" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
+
+  <!-- Ensure the files exist before packing -->
+  <Target Name="EnsureAnalyzerAssembliesExist" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('$(OutputPath)$(AssemblyName).dll')" 
+           Text="Analyzer assembly not found at: $(OutputPath)$(AssemblyName).dll" />
+  </Target>
 
 </Project>

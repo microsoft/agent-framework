@@ -3,7 +3,7 @@
 import asyncio
 import base64
 
-from agent_framework import DataContent, UriContent
+from agent_framework import DataContent, HostedImageGenerationTool, ImageGenerationToolResultContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -48,17 +48,15 @@ async def main() -> None:
     print("=== OpenAI Responses Image Generation Agent Example ===")
 
     # Create an agent with customized image generation options
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         instructions="You are a helpful AI that can generate images.",
         tools=[
-            {
-                "type": "image_generation",
-                # Core parameters
-                "size": "1024x1024",
-                "background": "transparent",
-                "quality": "low",
-                "format": "webp",
-            }
+            HostedImageGenerationTool(
+                options={
+                    "size": "1024x1024",
+                    "output_format": "webp",
+                }
+            )
         ],
     )
 
@@ -72,9 +70,11 @@ async def main() -> None:
     # Show information about the generated image
     for message in result.messages:
         for content in message.contents:
-            if isinstance(content, (DataContent, UriContent)) and content.uri:
-                show_image_info(content.uri)
-                break
+            if isinstance(content, ImageGenerationToolResultContent) and content.outputs:
+                for output in content.outputs:
+                    if isinstance(output, (DataContent, UriContent)) and output.uri:
+                        show_image_info(output.uri)
+                        break
 
 
 if __name__ == "__main__":

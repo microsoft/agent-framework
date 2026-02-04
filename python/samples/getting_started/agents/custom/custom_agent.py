@@ -5,13 +5,14 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
     Role,
     TextContent,
+    tool,
 )
 
 """
@@ -60,7 +61,7 @@ class EchoAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> AgentResponse:
         """Execute the agent and return a complete response.
 
         Args:
@@ -69,7 +70,7 @@ class EchoAgent(BaseAgent):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            An AgentRunResponse containing the agent's reply.
+            An AgentResponse containing the agent's reply.
         """
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
@@ -93,7 +94,7 @@ class EchoAgent(BaseAgent):
         if thread is not None:
             await self._notify_thread_of_new_messages(thread, normalized_messages, response_message)
 
-        return AgentRunResponse(messages=[response_message])
+        return AgentResponse(messages=[response_message])
 
     async def run_stream(
         self,
@@ -101,7 +102,7 @@ class EchoAgent(BaseAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AsyncIterable[AgentResponseUpdate]:
         """Execute the agent and yield streaming response updates.
 
         Args:
@@ -110,7 +111,7 @@ class EchoAgent(BaseAgent):
             **kwargs: Additional keyword arguments.
 
         Yields:
-            AgentRunResponseUpdate objects containing chunks of the response.
+            AgentResponseUpdate objects containing chunks of the response.
         """
         # Normalize input messages to a list
         normalized_messages = self._normalize_messages(messages)
@@ -131,7 +132,7 @@ class EchoAgent(BaseAgent):
             # Add space before word except for the first one
             chunk_text = f" {word}" if i > 0 else word
 
-            yield AgentRunResponseUpdate(
+            yield AgentResponseUpdate(
                 contents=[TextContent(text=chunk_text)],
                 role=Role.ASSISTANT,
             )
@@ -158,7 +159,6 @@ async def main() -> None:
     # Test non-streaming
     print(f"Agent Name: {echo_agent.name}")
     print(f"Agent ID: {echo_agent.id}")
-    print(f"Display Name: {echo_agent.display_name}")
 
     query = "Hello, custom agent!"
     print(f"\nUser: {query}")

@@ -22,15 +22,21 @@ public static class GeneratorTestHelper
     /// <summary>
     /// Runs the ExecutorRouteGenerator on the provided source code and returns the result.
     /// </summary>
-    public static GeneratorRunResult RunGenerator(string source)
+    public static GeneratorRunResult RunGenerator(string source) => RunGenerator([source]);
+
+    /// <summary>
+    /// Runs the ExecutorRouteGenerator on multiple source files and returns the result.
+    /// Use this to test scenarios with partial classes split across files.
+    /// </summary>
+    public static GeneratorRunResult RunGenerator(params string[] sources)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
+        var syntaxTrees = sources.Select(s => CSharpSyntaxTree.ParseText(s)).ToArray();
 
         var references = GetMetadataReferences();
 
         var compilation = CSharpCompilation.Create(
             assemblyName: "TestAssembly",
-            syntaxTrees: [syntaxTree],
+            syntaxTrees: syntaxTrees,
             references: references,
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 

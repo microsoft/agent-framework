@@ -7,10 +7,11 @@ from typing import Annotated
 
 from agent_framework import (
     AgentMiddleware,
+    AgentResponse,
     AgentRunContext,
-    AgentRunResponse,
     ChatMessage,
     Role,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -28,6 +29,8 @@ The example includes:
 This is useful for implementing security checks, rate limiting, or early exit conditions.
 """
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -57,7 +60,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     print(f"[PreTerminationMiddleware] Blocked word '{blocked_word}' detected. Terminating request.")
 
                     # Set a custom response
-                    context.result = AgentRunResponse(
+                    context.result = AgentResponse(
                         messages=[
                             ChatMessage(
                                 role=Role.ASSISTANT,
@@ -110,11 +113,11 @@ async def pre_termination_middleware() -> None:
     print("\n--- Example 1: Pre-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middleware=PreTerminationMiddleware(blocked_words=["bad", "inappropriate"]),
+            middleware=[PreTerminationMiddleware(blocked_words=["bad", "inappropriate"])],
         ) as agent,
     ):
         # Test with normal query
@@ -137,11 +140,11 @@ async def post_termination_middleware() -> None:
     print("\n--- Example 2: Post-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
-            middleware=PostTerminationMiddleware(max_responses=1),
+            middleware=[PostTerminationMiddleware(max_responses=1)],
         ) as agent,
     ):
         # First run (should work)

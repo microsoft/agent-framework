@@ -31,14 +31,14 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetResponsesClient(deploymentName)
-     .CreateAIAgent(
+     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
-AgentThread thread = agent.GetNewThread();
-Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", thread));
+AgentSession session = await agent.CreateSessionAsync();
+Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", session));
 
 // **** MCP Tool with Approval Required ****
 // *****************************************
@@ -58,14 +58,14 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetResponsesClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgentWithApproval",
         tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
-var threadWithRequiredApproval = agentWithRequiredApproval.GetNewThread();
-var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", threadWithRequiredApproval);
+var sessionWithRequiredApproval = await agentWithRequiredApproval.CreateSessionAsync();
+var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
 var userInputRequests = response.UserInputRequests.ToList();
 
 while (userInputRequests.Count > 0)
@@ -87,7 +87,7 @@ while (userInputRequests.Count > 0)
         .ToList();
 
     // Pass the user input responses back to the agent for further processing.
-    response = await agentWithRequiredApproval.RunAsync(userInputResponses, threadWithRequiredApproval);
+    response = await agentWithRequiredApproval.RunAsync(userInputResponses, sessionWithRequiredApproval);
 
     userInputRequests = response.UserInputRequests.ToList();
 }

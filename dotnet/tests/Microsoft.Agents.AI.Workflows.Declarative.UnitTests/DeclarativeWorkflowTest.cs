@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
 using Xunit.Abstractions;
@@ -352,7 +352,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                     this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
                     break;
 

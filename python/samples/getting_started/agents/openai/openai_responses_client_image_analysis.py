@@ -17,7 +17,7 @@ async def main():
     print("=== OpenAI Responses Agent with Image Analysis ===")
 
     # 1. Create an OpenAI Responses agent with vision capabilities
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="VisionAgent",
         instructions="You are a helpful agent that can analyze images.",
     )

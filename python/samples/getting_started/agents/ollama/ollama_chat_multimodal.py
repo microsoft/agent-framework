@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, DataContent, Role, TextContent
+from agent_framework import ChatMessage, Content, Role
 from agent_framework.ollama import OllamaChatClient
 
 """
@@ -12,7 +12,7 @@ This sample demonstrates implementing a Ollama agent with multimodal input capab
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support multimodal input, to test multimodal input try gemma3:4b
-Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
 https://ollama.com/
 
 """
@@ -35,8 +35,8 @@ async def test_image() -> None:
     message = ChatMessage(
         role=Role.USER,
         contents=[
-            TextContent(text="What's in this image?"),
-            DataContent(uri=image_uri, media_type="image/png"),
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri=image_uri, media_type="image/png"),
         ],
     )
 

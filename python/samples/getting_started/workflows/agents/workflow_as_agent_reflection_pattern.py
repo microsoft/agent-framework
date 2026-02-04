@@ -5,16 +5,17 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentResponseUpdate,
     AgentRunUpdateEvent,
     ChatClientProtocol,
     ChatMessage,
-    Contents,
+    Content,
     Executor,
     Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
@@ -100,7 +101,7 @@ class Reviewer(Executor):
         messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
 
         print("Reviewer: Sending review request to LLM...")
-        response = await self._chat_client.get_response(messages=messages, response_format=_Response)
+        response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
 
         parsed = _Response.model_validate_json(response.messages[-1].text)
 
@@ -155,13 +156,13 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[Contents] = []
+            contents: list[Content] = []
             for message in request.agent_messages:
                 contents.extend(message.contents)
 
             # Emit approved result to external consumer via AgentRunUpdateEvent.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role=Role.ASSISTANT))
             )
             return
 

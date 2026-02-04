@@ -1,14 +1,15 @@
 # Multi-turn Conversation with AI Agents
 
-This sample demonstrates how to implement multi-turn conversations with AI agents, where context is preserved across multiple agent runs using threads.
+This sample demonstrates how to implement multi-turn conversations with AI agents, where context is preserved across multiple agent runs using threads and conversation IDs.
 
 ## What this sample demonstrates
 
 - Creating an AI agent with instructions
-- Using threads to maintain conversation context
+- Creating a project conversation to track conversations in the Foundry UI
+- Using threads with conversation IDs to maintain conversation context
 - Running multi-turn conversations with text output
 - Running multi-turn conversations with streaming output
-- Managing agent lifecycle (creation and deletion)
+- Managing agent and conversation lifecycle (creation and deletion)
 
 ## Prerequisites
 
@@ -41,10 +42,18 @@ dotnet run --project .\FoundryAgents_Step02_MultiturnConversation
 The sample will:
 
 1. Create an agent named "JokerAgent" with instructions to tell jokes
-2. Create a thread for conversation context
-3. Run the agent with a text prompt and display the response
-4. Send a follow-up message to the same thread, demonstrating context preservation
-5. Create a new thread and run the agent with streaming
-6. Send a follow-up streaming message to demonstrate multi-turn streaming
-7. Clean up resources by deleting the agent
+2. Create a project conversation to enable visibility in the Azure Foundry UI
+3. Create a thread linked to the conversation ID for context tracking
+4. Run the agent with a text prompt and display the response
+5. Send a follow-up message to the same thread, demonstrating context preservation
+6. Create a new thread sharing the same conversation ID and run the agent with streaming
+7. Send a follow-up streaming message to demonstrate multi-turn streaming
+8. Clean up resources by deleting the agent and conversation
+
+## Conversation ID vs PreviousResponseId
+
+When working with multi-turn conversations, there are two approaches:
+
+- **With Conversation ID**: By passing a `conversation.Id` to `CreateSessionAsync()`, the conversation will be visible in the Azure Foundry Project UI. This is useful for tracking and debugging conversations.
+- **Without Conversation ID**: Sessions created without a conversation ID still work correctly, maintaining context via `PreviousResponseId`. However, these conversations may not appear in the Foundry UI.
 

@@ -2,6 +2,7 @@
 
 """Tests for Purview client."""
 
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -18,6 +19,8 @@ from agent_framework_purview._exceptions import (
     PurviewServiceError,
 )
 from agent_framework_purview._models import (
+    ContentActivitiesRequest,
+    ContentActivitiesResponse,
     PolicyLocation,
     ProcessContentRequest,
     ProtectionScopesRequest,
@@ -47,7 +50,9 @@ class TestPurviewClient:
         return PurviewSettings(app_name="Test App", tenant_id="test-tenant", default_user_id="test-user")
 
     @pytest.fixture
-    async def client(self, mock_credential: MagicMock, settings: PurviewSettings) -> PurviewClient:
+    async def client(
+        self, mock_credential: MagicMock, settings: PurviewSettings
+    ) -> AsyncGenerator[PurviewClient, None]:
         """Create a PurviewClient with mock credential."""
         client = PurviewClient(mock_credential, settings, timeout=10.0)
         yield client
@@ -184,6 +189,215 @@ class TestPurviewClient:
 
             assert response.scope_identifier == "scope-123"
             assert response.scopes == []
+
+    async def test_get_protection_scopes_uses_etag_header_when_present(self, client: PurviewClient) -> None:
+        """Test that get_protection_scopes prefers the HTTP ETag header when present."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        location = PolicyLocation(**{"@odata.type": "microsoft.graph.policyLocationApplication", "value": "app-id"})
+        request = ProtectionScopesRequest(
+            user_id="user-123", tenant_id="tenant-456", locations=[location], correlation_id="corr-789"
+        )
+
+        response_obj = ProtectionScopesResponse(**{"scopeIdentifier": "scope-from-body", "value": []})
+
+        with patch.object(
+            client,
+            "_post",
+            return_value=(response_obj, {"etag": '"etag-from-header"'}),
+        ):
+            response = await client.get_protection_scopes(request)
+
+        assert response.scope_identifier == "etag-from-header"
+
+    async def test_post_402_returns_empty_response_when_ignore_payment_required_enabled(
+        self, mock_credential: MagicMock
+    ) -> None:
+        """Test that 402 is suppressed when ignore_payment_required=True."""
+        from agent_framework_purview._models import ProcessContentResponse
+
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
+        client = PurviewClient(mock_credential, settings)
+
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+
+        resp = httpx.Response(402, text="Payment required", request=httpx.Request("POST", "http://test"))
+
+        with patch.object(client._client, "post", return_value=resp):
+            result = await client._post("http://test", request, ProcessContentResponse, token="fake-token")
+
+        assert isinstance(result, ProcessContentResponse)
+        await client.close()
+
+    async def test_post_sets_request_and_response_correlation_id(self, client: PurviewClient) -> None:
+        """Test that correlation_id is injected into request headers and hydrated from response headers."""
+        from agent_framework_purview._models import ProcessContentResponse
+
+        # correlation_id is optional and should be auto-generated when empty
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request.correlation_id = ""  # force auto-generation branch
+
+        captured_headers: dict[str, str] = {}
+
+        async def fake_post(url: str, json=None, headers=None):
+            nonlocal captured_headers
+            captured_headers = dict(headers or {})
+            return httpx.Response(
+                200,
+                json={"id": "resp-1", "protectionScopeState": "notModified"},
+                headers={"client-request-id": "corr-from-response"},
+                request=httpx.Request("POST", url),
+            )
+
+        with patch.object(client._client, "post", side_effect=fake_post):
+            result_obj, result_headers = await client._post(
+                "http://test",
+                request,
+                ProcessContentResponse,
+                token="fake-token",
+                return_response=True,
+            )
+
+        assert "client-request-id" in captured_headers
+        assert captured_headers["client-request-id"]
+        assert result_headers["client-request-id"] == "corr-from-response"
+        assert result_obj.correlation_id == "corr-from-response"
+
+    async def test_process_content_402_returns_empty_when_ignored(self, mock_credential: MagicMock) -> None:
+        """Test that process_content returns an empty response (non-tuple path) when 402 is ignored."""
+        from agent_framework_purview._models import ProcessContentResponse
+
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
+        client = PurviewClient(mock_credential, settings)
+
+        req = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 402
+        mock_response.text = "Payment required"
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            response = await client.process_content(req)
+
+        assert isinstance(response, ProcessContentResponse)
+        await client.close()
+
+    async def test_post_sets_correlation_id_attribute_on_recording_span(self, client: PurviewClient) -> None:
+        """Test that correlation_id is added to the active span when recording is enabled."""
+        from agent_framework_purview._models import ProcessContentResponse
+
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request.correlation_id = "corr-123"
+
+        class RecordingSpan:
+            def __init__(self) -> None:
+                self.attributes: dict[str, str] = {}
+
+            def is_recording(self) -> bool:
+                return True
+
+            def set_attribute(self, key: str, value: str) -> None:
+                self.attributes[key] = value
+
+        span = RecordingSpan()
+
+        with (
+            patch("agent_framework_purview._client.trace.get_current_span", return_value=span),
+            patch.object(
+                client._client,
+                "post",
+                return_value=httpx.Response(
+                    200,
+                    json={"id": "resp-1", "protectionScopeState": "notModified"},
+                    headers={},
+                    request=httpx.Request("POST", "http://test"),
+                ),
+            ),
+        ):
+            await client._post("http://test", request, ProcessContentResponse, token="fake-token")
+
+        assert span.attributes["correlation_id"] == "corr-123"
+
+    async def test_post_uses_constructor_when_response_type_has_no_model_validate(self, client: PurviewClient) -> None:
+        """Test that _post falls back to the response type constructor when model_validate is absent."""
+
+        class DummyResponse:
+            def __init__(self, **data):
+                self.data = data
+
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request.correlation_id = "corr-123"
+
+        with patch.object(
+            client._client,
+            "post",
+            return_value=httpx.Response(
+                200,
+                json={"hello": "world"},
+                headers={},
+                request=httpx.Request("POST", "http://test"),
+            ),
+        ):
+            result = await client._post("http://test", request, DummyResponse, token="fake-token")
+
+        assert isinstance(result, DummyResponse)
+        assert result.data == {"hello": "world"}
+
+    async def test_send_content_activities_success(self, client: PurviewClient, content_to_process_factory) -> None:
+        """Test send_content_activities success path."""
+        request = ContentActivitiesRequest(
+            user_id="user-123",
+            tenant_id="tenant-456",
+            content_to_process=content_to_process_factory("hello"),
+            correlation_id="corr-1",
+        )
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {"error": None}
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            resp = await client.send_content_activities(request)
+
+        assert isinstance(resp, ContentActivitiesResponse)
+
+    async def test_post_handles_invalid_json_response_body(self, client: PurviewClient) -> None:
+        """Test that invalid JSON bodies fall back to an empty dict."""
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request.correlation_id = "corr-123"
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.side_effect = ValueError("not json")
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            result = await client._post("http://test", request, ContentActivitiesResponse, token="fake-token")
+
+        assert isinstance(result, ContentActivitiesResponse)
+
+    async def test_post_deserialization_failure_raises_purview_service_error(self, client: PurviewClient) -> None:
+        """Test that response deserialization errors are wrapped as PurviewServiceError."""
+
+        class BadResponseType:
+            @classmethod
+            def model_validate(cls, value):
+                raise RuntimeError("boom")
+
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request.correlation_id = "corr-123"
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {"any": "data"}
+
+        with (
+            patch.object(client._client, "post", return_value=mock_response),
+            pytest.raises(PurviewServiceError, match="Failed to deserialize Purview response"),
+        ):
+            await client._post("http://test", request, BadResponseType, token="fake-token")
 
     async def test_client_close(self, mock_credential: AsyncMock, settings: PurviewSettings) -> None:
         """Test client properly closes HTTP client."""

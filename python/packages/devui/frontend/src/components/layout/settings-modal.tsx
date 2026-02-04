@@ -41,8 +41,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
-  // OpenAI proxy mode, Azure deployment, auth status, server capabilities, and version from store
-  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode } = useDevUIStore();
+  // OpenAI proxy mode, Azure deployment, auth status, server capabilities, streaming, and version from store
+  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode, streamingEnabled, setStreamingEnabled } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -353,6 +353,37 @@ export function SettingsModal({
                   />
                 </div>
               </div>
+
+              {/* Streaming Mode Setting */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Streaming Mode
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Stream responses token-by-token as they're generated
+                    </p>
+                  </div>
+                  <Switch
+                    checked={streamingEnabled}
+                    onCheckedChange={setStreamingEnabled}
+                  />
+                </div>
+                {!streamingEnabled && (
+                  <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 p-3 rounded">
+                    <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">Non-streaming mode limitations:</p>
+                      <ul className="mt-1 space-y-0.5 list-disc list-inside text-amber-600/80 dark:text-amber-400/80">
+                        <li>Tool calls won't display in real-time</li>
+                        <li>No typing indicator during generation</li>
+                        <li>Response appears all at once when complete</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -628,11 +659,11 @@ export function SettingsModal({
                 <div className="space-y-2 pt-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Capabilities</p>
                   <div className="space-y-1 text-sm">
-                    {serverCapabilities?.tracing !== undefined && (
+                    {serverCapabilities?.instrumentation !== undefined && (
                       <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Tracing:</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.tracing ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                          {serverCapabilities.tracing ? 'Enabled' : 'Disabled'}
+                        <span className="text-muted-foreground">Instrumentation:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.instrumentation ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.instrumentation ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
                     )}

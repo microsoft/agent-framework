@@ -4,8 +4,9 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import AgentThread
+from agent_framework import tool
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -16,7 +17,8 @@ This sample demonstrates thread management with Azure AI Agents, comparing
 automatic thread creation with explicit thread management for persistent context.
 """
 
-
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -33,12 +35,14 @@ async def example_with_automatic_thread_creation() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         # First conversation - no thread provided, will be created automatically
         first_query = "What's the weather like in Seattle?"
         print(f"User: {first_query}")
@@ -62,12 +66,14 @@ async def example_with_thread_persistence() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         # Create a new thread that will be reused
         thread = agent.get_new_thread()
 
@@ -103,12 +109,14 @@ async def example_with_existing_thread_id() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(credential=credential),
+        AzureAIAgentsProvider(credential=credential) as provider,
+    ):
+        agent = await provider.create_agent(
+            name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
-        ) as agent,
-    ):
+        )
+
         # Start a conversation and get the thread ID
         thread = agent.get_new_thread()
         first_query = "What's the weather in Paris?"
@@ -123,15 +131,17 @@ async def example_with_existing_thread_id() -> None:
     if existing_thread_id:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
-        # Create a new agent instance but use the existing thread ID
+        # Create a new provider and agent but use the existing thread ID
         async with (
             AzureCliCredential() as credential,
-            ChatAgent(
-                chat_client=AzureAIAgentClient(thread_id=existing_thread_id, credential=credential),
+            AzureAIAgentsProvider(credential=credential) as provider,
+        ):
+            agent = await provider.create_agent(
+                name="WeatherAgent",
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
-            ) as agent,
-        ):
+            )
+
             # Create a thread with the existing ID
             thread = AgentThread(service_thread_id=existing_thread_id)
 

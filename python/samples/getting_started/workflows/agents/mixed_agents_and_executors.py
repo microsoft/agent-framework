@@ -11,6 +11,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -66,8 +67,8 @@ class Evaluator(Executor):
             ctx: Workflow context for yielding the final output string
         """
         target_text = "1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89"
-        correctness = target_text in message.agent_run_response.text
-        consumption = message.agent_run_response.usage_details
+        correctness = target_text in message.agent_response.text
+        consumption = message.agent_response.usage_details
         await ctx.yield_output(f"Correctness: {correctness}, Consumption: {consumption}")
 
 
@@ -82,7 +83,7 @@ def create_coding_agent(client: AzureAIAgentClient) -> ChatAgent:
     Returns:
         A ChatAgent configured with coding instructions and tools
     """
-    return client.create_agent(
+    return client.as_agent(
         name="CodingAgent",
         instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
         tools=HostedCodeInterpreterTool(),

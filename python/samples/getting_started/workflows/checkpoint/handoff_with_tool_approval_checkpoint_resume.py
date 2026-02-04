@@ -9,15 +9,15 @@ from typing import cast
 from agent_framework import (
     ChatAgent,
     ChatMessage,
+    Content,
     FileCheckpointStorage,
-    FunctionApprovalRequestContent,
     HandoffBuilder,
     HandoffUserInputRequest,
     RequestInfoEvent,
     Workflow,
     WorkflowOutputEvent,
     WorkflowStatusEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -26,7 +26,7 @@ from azure.identity import AzureCliCredential
 Sample: Handoff Workflow with Tool Approvals + Checkpoint Resume
 
 Demonstrates the two-step pattern for resuming a handoff workflow from a checkpoint
-while handling both HandoffUserInputRequest prompts and FunctionApprovalRequestContent
+while handling both HandoffUserInputRequest prompts and function approval request Content
 for tool calls (e.g., submit_refund).
 
 Scenario:
@@ -51,7 +51,7 @@ CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     """Capture a refund request for manual review before processing."""
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
@@ -60,7 +60,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
 def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
-    triage = client.create_agent(
+    triage = client.as_agent(
         name="triage_agent",
         instructions=(
             "You are a customer service triage agent. Listen to customer issues and determine "
@@ -69,7 +69,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
         ),
     )
 
-    refund = client.create_agent(
+    refund = client.as_agent(
         name="refund_agent",
         instructions=(
             "You are a refund specialist. Help customers with refund requests. "
@@ -80,7 +80,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
         tools=[submit_refund],
     )
 
-    order = client.create_agent(
+    order = client.as_agent(
         name="order_agent",
         instructions=(
             "You are an order tracking specialist. Help customers track their orders. "
@@ -137,7 +137,7 @@ def _print_handoff_request(request: HandoffUserInputRequest, request_id: str) ->
     print(f"{'=' * 60}\n")
 
 
-def _print_function_approval_request(request: FunctionApprovalRequestContent, request_id: str) -> None:
+def _print_function_approval_request(request: Content, request_id: str) -> None:
     """Log pending tool approval details for debugging."""
     args = request.function_call.parse_arguments() or {}
     print(f"\n{'=' * 60}")
@@ -161,10 +161,10 @@ def _build_responses_for_requests(
             if user_response is None:
                 raise ValueError("User response is required for HandoffUserInputRequest")
             responses[request.request_id] = user_response
-        elif isinstance(request.data, FunctionApprovalRequestContent):
+        elif isinstance(request.data, Content) and request.data.type == "function_approval_request":
             if approve_tools is None:
-                raise ValueError("Approval decision is required for FunctionApprovalRequestContent")
-            responses[request.request_id] = request.data.create_response(approved=approve_tools)
+                raise ValueError("Approval decision is required for function approval request")
+            responses[request.request_id] = request.data.to_function_approval_response(approved=approve_tools)
         else:
             raise ValueError(f"Unsupported request type: {type(request.data)}")
     return responses
@@ -201,7 +201,7 @@ async def run_until_user_input_needed(
             pending_requests.append(event)
             if isinstance(event.data, HandoffUserInputRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
         elif isinstance(event, WorkflowOutputEvent):
@@ -258,7 +258,7 @@ async def resume_with_responses(
             restored_requests.append(event)
             if isinstance(event.data, HandoffUserInputRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
     if not restored_requests:
@@ -291,7 +291,7 @@ async def resume_with_responses(
             new_pending_requests.append(event)
             if isinstance(event.data, HandoffUserInputRequest):
                 _print_handoff_request(event.data, event.request_id)
-            elif isinstance(event.data, FunctionApprovalRequestContent):
+            elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
     return new_pending_requests, latest_checkpoint.checkpoint_id
@@ -362,7 +362,7 @@ async def main() -> None:
         workflow_step, _, _, _ = create_workflow(checkpoint_storage=storage)
 
         needs_user_input = any(isinstance(req.data, HandoffUserInputRequest) for req in pending_requests)
-        needs_tool_approval = any(isinstance(req.data, FunctionApprovalRequestContent) for req in pending_requests)
+        needs_tool_approval = any(isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests)
 
         user_response = None
         if needs_user_input:

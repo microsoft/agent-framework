@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 {
     using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
     using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-    using Microsoft.Bot.ObjectModel;
+    using Microsoft.Agents.ObjectModel;
     using Microsoft.Extensions.AI;
     using System.Collections.Generic;
     using System;
@@ -71,8 +71,8 @@ if (this.Model.Activity is MessageActivityTemplate messageActivity)
 
     } 
      
-            this.Write("\n            );\n        AgentRunResponse response = new([new ChatMessage(ChatRole" +
-                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRunRes" +
+            this.Write("\n            );\n        AgentResponse response = new([new ChatMessage(ChatRole" +
+                    ".Assistant, activityText)]);\n        await context.AddEventAsync(new AgentRes" +
                     "ponseEvent(this.Id, response)).ConfigureAwait(false);");
 
 } 

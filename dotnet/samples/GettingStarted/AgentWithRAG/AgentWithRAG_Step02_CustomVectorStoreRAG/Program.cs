@@ -68,28 +68,28 @@ TextSearchProviderOptions textSearchOptions = new()
 // Create the AI agent with the TextSearchProvider as the AI context provider.
 AIAgent agent = azureOpenAIClient
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions
+    .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief." },
-        AIContextProviderFactory = ctx => new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions))
     });
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.CreateSessionAsync();
 
-Console.WriteLine(">> Asking about SK threads\n");
-Console.WriteLine(await agent.RunAsync("Hi! How do I create a thread in Semantic Kernel?", thread));
+Console.WriteLine(">> Asking about SK sessions\n");
+Console.WriteLine(await agent.RunAsync("Hi! How do I create a thread/session in Semantic Kernel?", session));
 
 // Here we are asking a very vague question when taken out of context,
 // but since we are including previous messages in our search using RecentMessageMemoryLimit
 // the RAG search should still produce useful results.
-Console.WriteLine("\n>> Asking about AF threads\n");
-Console.WriteLine(await agent.RunAsync("and in Agent Framework?", thread));
+Console.WriteLine("\n>> Asking about AF sessions\n");
+Console.WriteLine(await agent.RunAsync("and in Agent Framework?", session));
 
 Console.WriteLine("\n>> Contrasting Approaches\n");
-Console.WriteLine(await agent.RunAsync("Please contrast the two approaches", thread));
+Console.WriteLine(await agent.RunAsync("Please contrast the two approaches", session));
 
 Console.WriteLine("\n>> Asking about ancestry\n");
-Console.WriteLine(await agent.RunAsync("What are the predecessors to the Agent Framework?", thread));
+Console.WriteLine(await agent.RunAsync("What are the predecessors to the Agent Framework?", session));
 
 static async Task UploadDataFromMarkdown(string markdownUrl, string sourceName, VectorStoreCollection<Guid, DocumentationChunk> vectorStoreCollection, int chunkSize, int overlap)
 {

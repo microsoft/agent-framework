@@ -6,7 +6,10 @@ import logging
 import os
 
 import uvicorn
+from agent_framework import ChatOptions
+from agent_framework._clients import BaseChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.anthropic import AnthropicClient
 from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,7 +63,10 @@ app.add_middleware(
 
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
-chat_client = AzureOpenAIChatClient()
+# Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
+chat_client: BaseChatClient[ChatOptions] = (
+    AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient()
+)
 
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(
