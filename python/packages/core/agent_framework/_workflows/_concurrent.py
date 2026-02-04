@@ -8,7 +8,7 @@ from typing import Any
 
 from typing_extensions import Never
 
-from agent_framework import AgentProtocol, ChatMessage, Role
+from agent_framework import AgentProtocol, ChatMessage
 
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
@@ -91,16 +91,13 @@ class _AggregateAgentConversations(Executor):
             logger.error("Concurrent aggregator received empty results list")
             raise ValueError("Aggregation failed: no results provided")
 
-        def _is_role(msg: Any, role: Role) -> bool:
+        def _is_role(msg: Any, role: str) -> bool:
             r = getattr(msg, "role", None)
             if r is None:
                 return False
             # Normalize both r and role to lowercase strings for comparison
             r_str = str(r).lower() if isinstance(r, str) or hasattr(r, "__str__") else r
-            role_str = getattr(role, "value", None)
-            if role_str is None:
-                role_str = str(role)
-            role_str = role_str.lower()
+            role_str = str(role).lower()
             return r_str == role_str
 
         prompt_message: ChatMessage | None = None

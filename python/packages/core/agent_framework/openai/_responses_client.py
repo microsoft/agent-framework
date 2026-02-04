@@ -54,7 +54,6 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
@@ -669,7 +668,7 @@ class OpenAIBaseResponsesClient(
 
     def _prepare_content_for_openai(
         self,
-        role: Role,
+        role: str,
         content: Content,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:

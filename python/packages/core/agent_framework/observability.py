@@ -41,7 +41,6 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponse,
         ChatResponseUpdate,
         Content,
-        FinishReason,
     )
 
 __all__ = [
@@ -1715,7 +1714,7 @@ def _capture_messages(
     messages: "str | ChatMessage | list[str] | list[ChatMessage]",
     system_instructions: str | list[str] | None = None,
     output: bool = False,
-    finish_reason: "FinishReason | None" = None,
+    finish_reason: str | None = None,
 ) -> None:
     """Log messages with extra information."""
     from ._types import prepare_messages
