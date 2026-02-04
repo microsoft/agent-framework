@@ -34,7 +34,7 @@ class _FakeAgentExec(Executor):
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        response = AgentResponse(messages=ChatMessage("assistant", text=self._reply_text))
+        response = AgentResponse(messages=ChatMessage(role="assistant", text=self._reply_text))
         full_conversation = list(request.messages) + list(response.messages)
         await ctx.send_message(AgentExecutorResponse(self.id, response, full_conversation=full_conversation))
 

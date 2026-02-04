@@ -695,7 +695,7 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
         "top_p": 0.9,
     }
 
-    messages = [ChatMessage("user", ["Hello"])]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -724,7 +724,7 @@ def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage("user", ["Hello"])]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -749,7 +749,7 @@ def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> 
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage("user", ["Calculate something"])]
+    messages = [ChatMessage(role="user", text="Calculate something")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -769,7 +769,7 @@ def test_prepare_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
         "tool_choice": "none",
     }
 
-    messages = [ChatMessage("user", ["Hello"])]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -819,7 +819,7 @@ def test_prepare_options_required_function(mock_async_openai: MagicMock) -> None
         "tool_choice": tool_choice,
     }
 
-    messages = [ChatMessage("user", ["Hello"])]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -845,7 +845,7 @@ def test_prepare_options_with_file_search_tool(mock_async_openai: MagicMock) -> 
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage("user", ["Search for information"])]
+    messages = [ChatMessage(role="user", text="Search for information")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -870,7 +870,7 @@ def test_prepare_options_with_mapping_tool(mock_async_openai: MagicMock) -> None
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage("user", ["Use custom tool"])]
+    messages = [ChatMessage(role="user", text="Use custom tool")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -892,7 +892,7 @@ def test_prepare_options_with_pydantic_response_format(mock_async_openai: MagicM
         model_config = ConfigDict(extra="forbid")
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
-    messages = [ChatMessage("user", ["Test"])]
+    messages = [ChatMessage(role="user", text="Test")]
     options = {"response_format": TestResponse}
 
     run_options, _ = chat_client._prepare_options(messages, options)  # type: ignore
@@ -908,8 +908,8 @@ def test_prepare_options_with_system_message(mock_async_openai: MagicMock) -> No
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     messages = [
-        ChatMessage("system", ["You are a helpful assistant."]),
-        ChatMessage("user", ["Hello"]),
+        ChatMessage(role="system", text="You are a helpful assistant."),
+        ChatMessage(role="user", text="Hello"),
     ]
 
     # Call the method
@@ -929,7 +929,7 @@ def test_prepare_options_with_image_content(mock_async_openai: MagicMock) -> Non
 
     # Create message with image content
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage("user", [image_content])]
+    messages = [ChatMessage(role="user", text=image_content)]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, {})  # type: ignore
@@ -1049,7 +1049,7 @@ async def test_get_response() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage("user", ["What's the weather like today?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
         response = await openai_assistants_client.get_response(messages=messages)
@@ -1067,7 +1067,7 @@ async def test_get_response_tools() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
         response = await openai_assistants_client.get_response(
@@ -1095,7 +1095,7 @@ async def test_streaming() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage("user", ["What's the weather like today?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
         response = openai_assistants_client.get_response(stream=True, messages=messages)
@@ -1119,7 +1119,7 @@ async def test_streaming_tools() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
         response = openai_assistants_client.get_response(
@@ -1148,7 +1148,7 @@ async def test_with_existing_assistant() -> None:
     # First create an assistant to use in the test
     async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as temp_client:
         # Get the assistant ID by triggering assistant creation
-        messages = [ChatMessage("user", ["Hello"])]
+        messages = [ChatMessage(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
         assistant_id = temp_client.assistant_id
 
@@ -1159,7 +1159,7 @@ async def test_with_existing_assistant() -> None:
             assert isinstance(openai_assistants_client, ChatClientProtocol)
             assert openai_assistants_client.assistant_id == assistant_id
 
-            messages = [ChatMessage("user", ["What can you do?"])]
+            messages = [ChatMessage(role="user", text="What can you do?")]
 
             # Test that the client can be used to get a response
             response = await openai_assistants_client.get_response(messages=messages)
@@ -1178,7 +1178,7 @@ async def test_file_search() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage("user", ["What's the weather like today?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = await openai_assistants_client.get_response(
@@ -1204,7 +1204,7 @@ async def test_file_search_streaming() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage("user", ["What's the weather like today?"]))
+        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = openai_assistants_client.get_response(

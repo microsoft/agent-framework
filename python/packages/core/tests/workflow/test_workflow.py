@@ -863,7 +863,7 @@ class _StreamingTestAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - returns complete response."""
-        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+        return AgentResponse(messages=[ChatMessage(role="assistant", text=self._reply_text)])
 
     async def run_stream(
         self,

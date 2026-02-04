@@ -33,7 +33,7 @@ class DummyAgent(BaseAgent):
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage("user", [m]))
+                    norm.append(ChatMessage(role="user", text=m))
         return AgentResponse(messages=norm)
 
     async def _run_stream_impl(self):  # type: ignore[override]
