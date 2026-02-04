@@ -785,7 +785,9 @@ class GroupChatBuilder:
 
 
             def stop_after_two_calls(conversation: list[ChatMessage]) -> bool:
-                calls = sum(1 for msg in conversation if msg.role == "assistant" and msg.author_name == "specialist")
+                calls = sum(
+                    1 for msg in conversation if msg.role.value == "assistant" and msg.author_name == "specialist"
+                )
                 return calls >= 2
 
 
