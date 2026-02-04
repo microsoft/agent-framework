@@ -62,7 +62,7 @@ def test_mcp_prompt_message_to_ai_content():
     ai_content = _parse_message_from_mcp(mcp_message)
 
     assert isinstance(ai_content, ChatMessage)
-    assert ai_content.role == "user"
+    assert ai_content.role.value == "user"
     assert len(ai_content.contents) == 1
     assert ai_content.contents[0].type == "text"
     assert ai_content.contents[0].text == "Hello, world!"
@@ -1055,7 +1055,7 @@ async def test_local_mcp_server_prompt_execution():
 
         assert len(result) == 1
         assert isinstance(result[0], ChatMessage)
-        assert result[0].role == "user"
+        assert result[0].role.value == "user"
         assert len(result[0].contents) == 1
         assert result[0].contents[0].text == "Test message"
 

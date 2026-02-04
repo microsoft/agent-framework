@@ -422,7 +422,7 @@ class TestWorkflowAgent:
         result = await agent.run("test")
 
         assert len(result.messages) == 1
-        assert result.messages[0].role == "assistant"
+        assert result.messages[0].role.value == "assistant"
         assert result.messages[0].text == "response text"
         assert result.messages[0].author_name == "custom-author"
 
@@ -1089,7 +1089,10 @@ class TestWorkflowAgentMergeUpdates:
             ("text", "assistant"),
         ]
 
-        assert content_sequence == expected_sequence, (
+        # Compare using role.value for Role enum
+        actual_sequence_normalized = [(t, r.value if hasattr(r, 'value') else r) for t, r in content_sequence]
+
+        assert actual_sequence_normalized == expected_sequence, (
             f"FunctionResultContent should come immediately after FunctionCallContent. "
             f"Got: {content_sequence}, Expected: {expected_sequence}"
         )

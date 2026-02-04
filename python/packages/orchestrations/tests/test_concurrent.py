@@ -124,12 +124,12 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
-    assert messages[0].role == "user"
+    assert messages[0].role.value == "user"
     assert "hello world" in messages[0].text
 
     assistant_texts = {m.text for m in messages[1:]}
     assert assistant_texts == {"Alpha", "Beta", "Gamma"}
-    assert all(m.role == "assistant" for m in messages[1:])
+    assert all(m.role.value == "assistant" for m in messages[1:])
 
 
 async def test_concurrent_custom_aggregator_callback_is_used() -> None:
@@ -543,9 +543,9 @@ async def test_concurrent_with_register_participants() -> None:
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
-    assert messages[0].role == "user"
+    assert messages[0].role.value == "user"
     assert "test prompt" in messages[0].text
 
     assistant_texts = {m.text for m in messages[1:]}
     assert assistant_texts == {"Alpha", "Beta", "Gamma"}
-    assert all(m.role == "assistant" for m in messages[1:])
+    assert all(m.role.value == "assistant" for m in messages[1:])

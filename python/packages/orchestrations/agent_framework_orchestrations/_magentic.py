@@ -640,19 +640,17 @@ class StandardMagenticManager(MagenticManagerBase):
 
         # Update facts
         facts_update_user = ChatMessage(
-            "user",
-            [
-                self.task_ledger_facts_update_prompt.format(
-                    task=magentic_context.task, old_facts=self.task_ledger.facts.text
-                )
-            ],
+            role="user",
+            text=self.task_ledger_facts_update_prompt.format(
+                task=magentic_context.task, old_facts=self.task_ledger.facts.text
+            ),
         )
         updated_facts = await self._complete([*magentic_context.chat_history, facts_update_user])
 
         # Update plan
         plan_update_user = ChatMessage(
-            "user",
-            [self.task_ledger_plan_update_prompt.format(team=team_text)],
+            role="user",
+            text=self.task_ledger_plan_update_prompt.format(team=team_text),
         )
         updated_plan = await self._complete([
             *magentic_context.chat_history,
