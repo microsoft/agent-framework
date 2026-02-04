@@ -244,5 +244,5 @@ if __name__ == "__main__":
         launch(durable=False)
     else:
         print("Usage: python function_app.py --maf")
-        print("  --maf    Run in pure MAF mode with DevUI (http://localhost:8096)")
+        print("  --maf    Run in pure MAF mode with DevUI (http://localhost:8094)")
         print("\nFor Azure Functions mode, use: func start")
