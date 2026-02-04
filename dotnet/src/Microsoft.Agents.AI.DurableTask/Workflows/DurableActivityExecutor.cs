@@ -16,6 +16,15 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 internal static class DurableActivityExecutor
 {
     /// <summary>
+    /// Shared JSON options that match the DurableDataConverter settings.
+    /// </summary>
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
+    /// <summary>
     /// Executes an activity using the provided executor binding.
     /// </summary>
     /// <param name="binding">The executor binding to invoke.</param>
@@ -96,15 +105,6 @@ internal static class DurableActivityExecutor
         }
     }
 
-    /// <summary>
-    /// Shared JSON options that match the DurableDataConverter settings.
-    /// </summary>
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
     private static object DeserializeInput(string input, Type targetType)
     {
         if (targetType == typeof(string))
@@ -112,7 +112,6 @@ internal static class DurableActivityExecutor
             return input;
         }
 
-        // Use consistent JSON options that match DurableDataConverter (CamelCase, case-insensitive)
         return JsonSerializer.Deserialize(input, targetType, s_jsonOptions)
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
