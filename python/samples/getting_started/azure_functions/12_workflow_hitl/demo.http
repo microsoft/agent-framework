@@ -1,0 +1,123 @@
+### ============================================================================
+### Workflow HITL Sample - Content Moderation with Human Approval
+### ============================================================================
+### This sample demonstrates MAF workflows with human-in-the-loop using the
+### request_info / @response_handler pattern on Azure Durable Functions.
+###
+### The AgentFunctionApp automatically provides all HITL endpoints.
+###
+### Prerequisites:
+### 1. Start Azurite: azurite --silent --location .
+### 2. Start Durable Task Scheduler emulator
+### 3. Configure local.settings.json with Azure OpenAI credentials
+### 4. Run: func start
+### ============================================================================
+
+
+### ============================================================================
+### 1. Start the Workflow with Content for Moderation
+### ============================================================================
+### This starts the workflow. The AI will analyze the content, then the workflow
+### will pause waiting for human approval.
+
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+  "content_id": "article-001",
+  "title": "Introduction to AI in Healthcare",
+  "body": "Artificial intelligence is revolutionizing healthcare by enabling faster diagnosis, personalized treatment plans, and improved patient outcomes. Machine learning algorithms can analyze medical images with remarkable accuracy, often detecting issues that human radiologists might miss.",
+  "author": "Dr. Jane Smith"
+}
+
+
+### ============================================================================
+### 2. Start Workflow with Potentially Problematic Content
+### ============================================================================
+### This content should trigger higher risk assessment from the AI analyzer.
+
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+  "content_id": "article-002",
+  "title": "Get Rich Quick Scheme",
+  "body": "Click here NOW to make $10,000 overnight! This SECRET method is GUARANTEED to work! Limited time offer - act NOW before it's too late! Send your bank details immediately!",
+  "author": "Definitely Not Spam"
+}
+
+
+### ============================================================================
+### 3. Check Workflow Status
+### ============================================================================
+### Replace INSTANCE_ID with the value returned from the run call.
+### The status will show pending HITL requests if waiting for human approval.
+
+@instanceId = 3130c486c9374e4e87125cbd9a238dfc
+
+GET http://localhost:7071/api/workflow/status/{{instanceId}}
+
+
+### ============================================================================
+### 4. Send Human Approval
+### ============================================================================
+### Approve the content for publication.
+### Replace INSTANCE_ID and REQUEST_ID with values from the status response.
+
+@requestId = 1682e5f8-0917-4b68-aa04-d4688cfa2e69
+
+POST http://localhost:7071/api/workflow/respond/{{instanceId}}/{{requestId}}
+Content-Type: application/json
+
+{
+  "approved": true,
+  "reviewer_notes": "Content is appropriate and well-written. Approved for publication."
+}
+
+
+### ============================================================================
+### 5. Send Human Rejection
+### ============================================================================
+### Reject the content with feedback.
+
+POST http://localhost:7071/api/workflow/respond/{{instanceId}}/{{requestId}}
+Content-Type: application/json
+
+{
+  "approved": false,
+  "reviewer_notes": "Content appears to be spam. Contains multiple spam indicators including urgency language, promises of easy money, and requests for personal information."
+}
+
+
+### ============================================================================
+### Example Workflow - Complete Happy Path
+### ============================================================================
+### 
+### Step 1: Start workflow with content
+### POST http://localhost:7071/api/workflow/run
+### -> Returns instanceId: "abc123..."
+###
+### Step 2: Check status (workflow is waiting for human input)
+### GET http://localhost:7071/api/workflow/status/abc123
+### -> Returns pendingHumanInputRequests with requestId: "req-456..."
+###
+### Step 3: Approve content
+### POST http://localhost:7071/api/workflow/respond/abc123/req-456
+### {
+###   "approved": true,
+###   "reviewer_notes": "Looks good!"
+### }
+### -> Returns success
+###
+### Step 4: Check final status
+### GET http://localhost:7071/api/workflow/status/abc123
+### -> Returns runtimeStatus: "Completed", output: "✅ Content approved..."
+###
+### ============================================================================
+
+
+### ============================================================================
+### Health Check
+### ============================================================================
+
+GET http://localhost:7071/api/health

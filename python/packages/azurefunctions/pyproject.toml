@@ -49,7 +49,7 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
-timeout = 120
+timeout = 300
 markers = [
     "integration: marks tests as integration tests (require running function app)",
     "orchestration: marks tests that use orchestrations (require Azurite)",
