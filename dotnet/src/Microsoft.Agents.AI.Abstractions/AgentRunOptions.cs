@@ -28,7 +28,7 @@ public class AgentRunOptions
     /// </summary>
     /// <param name="options">The options instance from which to copy values.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
-    public AgentRunOptions(AgentRunOptions options)
+    protected AgentRunOptions(AgentRunOptions options)
     {
         _ = Throw.IfNull(options);
         this.ContinuationToken = options.ContinuationToken;

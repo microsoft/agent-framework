@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -27,7 +26,7 @@ public class AgentRunOptionsTests
         };
 
         // Act
-        var clone = new AgentRunOptions(options);
+        var clone = options.Clone();
 
         // Assert
         Assert.NotNull(clone);
@@ -38,11 +37,6 @@ public class AgentRunOptionsTests
         Assert.Equal("value1", clone.AdditionalProperties["key1"]);
         Assert.Equal(42, clone.AdditionalProperties["key2"]);
     }
-
-    [Fact]
-    public void CloningConstructorThrowsIfNull() =>
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new AgentRunOptions(null!));
 
     [Fact]
     public void JsonSerializationRoundtrips()
