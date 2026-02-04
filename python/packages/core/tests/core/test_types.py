@@ -45,18 +45,12 @@ from agent_framework.exceptions import ContentError
 def ai_tool() -> FunctionTool:
     """Returns a generic FunctionTool."""
 
-    class GenericTool(BaseModel):
-        name: str
-        description: str | None = None
-        additional_properties: dict[str, Any] | None = None
+    @tool
+    def generic_tool(name: str) -> str:
+        """A generic tool that echoes the name."""
+        return f"Hello, {name}"
 
-        def parameters(self) -> dict[str, Any]:
-            """Return the parameters of the tool as a JSON schema."""
-            return {
-                "name": {"type": "string"},
-            }
-
-    return GenericTool(name="generic_tool", description="A generic tool")
+    return generic_tool
 
 
 @fixture
@@ -3456,16 +3450,16 @@ def test_content_from_data_type_error():
         Content.from_data("not bytes", "text/plain")  # type: ignore[arg-type]
 
 
-# region normalize_tools with single tool protocol
+# region normalize_tools with single FunctionTool
 
 
-def test_normalize_tools_with_single_tool_protocol(ai_tool):
-    """Test normalize_tools with single ToolProtocol."""
+def test_normalize_tools_with_single_function_tool(tool_tool):
+    """Test normalize_tools with single FunctionTool."""
     from agent_framework._types import normalize_tools
 
-    result = normalize_tools(ai_tool)
+    result = normalize_tools(tool_tool)
     assert len(result) == 1
-    assert result[0] is ai_tool
+    assert result[0] is tool_tool
 
 
 # region text_reasoning content addition with None annotations
