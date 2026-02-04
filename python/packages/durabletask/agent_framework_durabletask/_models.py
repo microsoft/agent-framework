@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import AgentThread, Role
+from agent_framework import AgentThread
 
 from ._constants import REQUEST_RESPONSE_FORMAT_TEXT
 
@@ -115,7 +115,7 @@ class RunRequest:
     message: str
     request_response_format: str
     correlation_id: str
-    role: Role = "user"
+    role: str = "user"
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
     wait_for_response: bool = True
@@ -128,7 +128,7 @@ class RunRequest:
         message: str,
         correlation_id: str,
         request_response_format: str = REQUEST_RESPONSE_FORMAT_TEXT,
-        role: Role | str | None = "user",
+        role: str | None = "user",
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
         wait_for_response: bool = True,
