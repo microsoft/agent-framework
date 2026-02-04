@@ -28,7 +28,6 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
-    Role,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -112,7 +111,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(role="user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -148,7 +147,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from shared state and forward it to the assistant.
     email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage(role="user", text=email.email_content)], should_respond=True)
     )
 
 

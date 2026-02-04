@@ -169,9 +169,9 @@ class TestBuildAgentExecutorResponse:
         )
 
         assert len(response.full_conversation) == 2
-        assert response.full_conversation[0].role.value == "user"
+        assert response.full_conversation[0].role == "user"
         assert response.full_conversation[0].text == "User said this"
-        assert response.full_conversation[1].role.value == "assistant"
+        assert response.full_conversation[1].role == "assistant"
 
     def test_conversation_extends_previous_agent_executor_response(self) -> None:
         """Test that previous AgentExecutorResponse's conversation is extended."""

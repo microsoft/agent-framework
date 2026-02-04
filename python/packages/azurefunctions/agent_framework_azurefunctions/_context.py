@@ -16,7 +16,7 @@ from agent_framework import (
     Message,
     RequestInfoEvent,
     RunnerContext,
-    SharedState,
+    State,
     WorkflowCheckpoint,
     WorkflowEvent,
 )
@@ -108,7 +108,7 @@ class CapturingRunnerContext(RunnerContext):
 
     async def create_checkpoint(
         self,
-        shared_state: SharedState,
+        shared_state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
