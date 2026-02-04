@@ -389,8 +389,11 @@ class AgentFunctionApp(DFAppBase):
         """Register the workflow orchestration and related HTTP endpoints."""
 
         @self.orchestration_trigger(context_name="context")
-        def workflow_orchestrator(context: df.DurableOrchestrationContext):  # type: ignore[type-arg]
+        def workflow_orchestrator(context: df.DurableOrchestrationContext) -> Any:  # type: ignore[type-arg]
             """Generic orchestrator for running the configured workflow."""
+            if self.workflow is None:
+                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
+
             input_data = context.get_input()
 
             # Ensure input is a string for the agent
