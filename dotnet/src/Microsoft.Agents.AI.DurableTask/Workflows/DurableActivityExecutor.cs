@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -81,7 +81,7 @@ internal static class DurableActivityExecutor
             return str;
         }
 
-        return JsonSerializer.Serialize(result, result.GetType());
+        return JsonSerializer.Serialize(result, result.GetType(), s_jsonOptions);
     }
 
     private static DurableActivityInput? TryDeserializeActivityInput(string input)
@@ -96,6 +96,15 @@ internal static class DurableActivityExecutor
         }
     }
 
+    /// <summary>
+    /// Shared JSON options that match the DurableDataConverter settings.
+    /// </summary>
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
     private static object DeserializeInput(string input, Type targetType)
     {
         if (targetType == typeof(string))
@@ -103,7 +112,8 @@ internal static class DurableActivityExecutor
             return input;
         }
 
-        return JsonSerializer.Deserialize(input, targetType)
+        // Use consistent JSON options that match DurableDataConverter (CamelCase, case-insensitive)
+        return JsonSerializer.Deserialize(input, targetType, s_jsonOptions)
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
 

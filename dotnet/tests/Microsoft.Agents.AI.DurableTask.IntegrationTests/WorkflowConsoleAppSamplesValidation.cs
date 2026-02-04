@@ -180,4 +180,63 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
             Assert.Fail($"Workflow failed: {line}");
         }
     }
+
+    [Fact]
+    public async Task WorkflowAndAgentsSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "04_WorkflowAndAgents");
+
+        await this.RunSampleTestAsync(samplePath, (process, logs) =>
+        {
+            // Arrange
+            bool foundDemo1 = false;
+            bool foundBiologistResponse = false;
+            bool foundChemistResponse = false;
+            bool foundDemo2 = false;
+            bool foundPhysicsWorkflow = false;
+            bool foundDemo3 = false;
+            bool foundExpertTeamWorkflow = false;
+            bool foundDemo4 = false;
+            bool foundChemistryWorkflow = false;
+            bool allDemosCompleted = false;
+
+            // Act
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                foundDemo1 |= line.Contains("DEMO 1:", StringComparison.Ordinal);
+                foundBiologistResponse |= line.Contains("Biologist:", StringComparison.Ordinal);
+                foundChemistResponse |= line.Contains("Chemist:", StringComparison.Ordinal);
+                foundDemo2 |= line.Contains("DEMO 2:", StringComparison.Ordinal);
+                foundPhysicsWorkflow |= line.Contains("PhysicsExpertReview", StringComparison.Ordinal);
+                foundDemo3 |= line.Contains("DEMO 3:", StringComparison.Ordinal);
+                foundExpertTeamWorkflow |= line.Contains("ExpertTeamReview", StringComparison.Ordinal);
+                foundDemo4 |= line.Contains("DEMO 4:", StringComparison.Ordinal);
+                foundChemistryWorkflow |= line.Contains("ChemistryExpertReview", StringComparison.Ordinal);
+
+                if (line.Contains("All demos completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    allDemosCompleted = true;
+                    break;
+                }
+
+                this.AssertNoError(line);
+            }
+
+            // Assert
+            Assert.True(foundDemo1, "DEMO 1 (Direct Agent Conversation) not found.");
+            Assert.True(foundBiologistResponse, "Biologist agent response not found.");
+            Assert.True(foundChemistResponse, "Chemist agent response not found.");
+            Assert.True(foundDemo2, "DEMO 2 (Single-Agent Workflow) not found.");
+            Assert.True(foundPhysicsWorkflow, "PhysicsExpertReview workflow not found.");
+            Assert.True(foundDemo3, "DEMO 3 (Multi-Agent Workflow) not found.");
+            Assert.True(foundExpertTeamWorkflow, "ExpertTeamReview workflow not found.");
+            Assert.True(foundDemo4, "DEMO 4 (Chemistry Workflow) not found.");
+            Assert.True(foundChemistryWorkflow, "ChemistryExpertReview workflow not found.");
+            Assert.True(allDemosCompleted, "Sample did not complete all demos successfully.");
+
+            return Task.CompletedTask;
+        });
+    }
 }

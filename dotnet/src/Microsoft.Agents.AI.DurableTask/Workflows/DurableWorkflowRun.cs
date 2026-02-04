@@ -2,6 +2,7 @@
 
 using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
@@ -43,7 +44,8 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
     /// <typeparam name="TResult">The expected result type.</typeparam>
     /// <param name="cancellationToken">A cancellation token to observe.</param>
     /// <returns>The result of the workflow execution.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the workflow failed or was terminated.</exception>
+    /// <exception cref="TaskFailedException">Thrown when the workflow failed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the workflow was terminated or ended with an unexpected status.</exception>
     public async ValueTask<TResult?> WaitForCompletionAsync<TResult>(CancellationToken cancellationToken = default)
     {
         OrchestrationMetadata metadata = await this._client.WaitForInstanceCompletionAsync(
@@ -58,11 +60,21 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
 
         if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Failed)
         {
-            string errorMessage = metadata.FailureDetails?.ErrorMessage ?? "Workflow execution failed.";
-            throw new InvalidOperationException(errorMessage);
+            if (metadata.FailureDetails is not null)
+            {
+                // Use TaskFailedException to preserve full failure details including stack trace and inner exceptions
+                throw new TaskFailedException(
+                    taskName: this.WorkflowName,
+                    taskId: 0,
+                    failureDetails: metadata.FailureDetails);
+            }
+
+            throw new InvalidOperationException(
+                $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) failed without failure details.");
         }
 
-        throw new InvalidOperationException($"Workflow ended with unexpected status: {metadata.RuntimeStatus}");
+        throw new InvalidOperationException(
+            $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) ended with unexpected status: {metadata.RuntimeStatus}");
     }
 
     /// <summary>

@@ -49,7 +49,7 @@ internal sealed class DurableWorkflowRunner
     /// <exception cref="InvalidOperationException">Thrown when the specified workflow is not found.</exception>
     internal async Task<string> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
-        DurableWorkflowInput<string> workflowInput,
+        DurableWorkflowInput<object> workflowInput,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -64,7 +64,10 @@ internal sealed class DurableWorkflowRunner
         WorkflowGraphInfo graphInfo = WorkflowAnalyzer.BuildGraphInfo(workflow);
         DurableEdgeMap edgeMap = new(graphInfo);
 
-        return await RunSuperstepLoopAsync(context, workflow, edgeMap, workflowInput.Input, logger).ConfigureAwait(true);
+        // Extract input - the start executor determines the expected input type from its own InputTypes
+        object input = workflowInput.Input;
+
+        return await RunSuperstepLoopAsync(context, workflow, edgeMap, input, logger).ConfigureAwait(true);
     }
 
     private Workflow GetWorkflowOrThrow(string orchestrationName)
@@ -82,15 +85,22 @@ internal sealed class DurableWorkflowRunner
     /// <summary>
     /// Runs the workflow execution loop using superstep-based processing.
     /// </summary>
+    [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Input types are preserved by the Durable Task framework's DataConverter.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Input types are preserved by the Durable Task framework's DataConverter.")]
     private static async Task<string> RunSuperstepLoopAsync(
         TaskOrchestrationContext context,
         Workflow workflow,
         DurableEdgeMap edgeMap,
-        string initialInput,
+        object initialInput,
         ILogger logger)
     {
         SuperstepState state = new(workflow, edgeMap);
-        edgeMap.EnqueueInput(initialInput, typeof(string).FullName, state.MessageQueues);
+
+        // Convert input to string for the message queue - serialize if not already a string
+        string inputString = initialInput is string s ? s : JsonSerializer.Serialize(initialInput);
+
+        // Pass null for inputTypeName - the start executor determines its input type from its own InputTypes
+        edgeMap.EnqueueInput(inputString, inputTypeName: null, state.MessageQueues);
 
         for (int superstep = 1; superstep <= MaxSupersteps; superstep++)
         {

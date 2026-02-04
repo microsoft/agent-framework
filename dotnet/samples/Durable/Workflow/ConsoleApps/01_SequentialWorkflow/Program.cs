@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask.Client.AzureManaged;
@@ -57,7 +58,8 @@ while (true)
 
     try
     {
-        await StartNewWorkflowAsync(input, cancelOrder, workflowClient);
+        OrderCancelRequest request = new(OrderId: input, Reason: "Customer requested cancellation");
+        await StartNewWorkflowAsync(request, cancelOrder, workflowClient);
     }
     catch (Exception ex)
     {
@@ -69,13 +71,13 @@ while (true)
 
 await host.StopAsync();
 
-// Start a new workflow using IWorkflowClient (no DurableTaskClient needed)
-static async Task StartNewWorkflowAsync(string orderId, Workflow workflow, IWorkflowClient client)
+// Start a new workflow using IWorkflowClient with typed input
+static async Task StartNewWorkflowAsync(OrderCancelRequest request, Workflow workflow, IWorkflowClient client)
 {
-    Console.WriteLine($"Starting workflow for order '{orderId}'...");
+    Console.WriteLine($"Starting workflow for order '{request.OrderId}' (Reason: {request.Reason})...");
 
     // RunAsync returns IWorkflowRun, cast to IAwaitableWorkflowRun for completion waiting
-    IAwaitableWorkflowRun run = (IAwaitableWorkflowRun)await client.RunAsync(workflow, orderId);
+    IAwaitableWorkflowRun run = (IAwaitableWorkflowRun)await client.RunAsync(workflow, request);
     Console.WriteLine($"Run ID: {run.RunId}");
 
     try

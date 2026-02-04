@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
 /// <summary>
@@ -32,7 +34,7 @@ internal static class WorkflowNamingHelper
     {
         ArgumentException.ThrowIfNullOrEmpty(orchestrationFunctionName);
 
-        if (!TryGetWorkflowName(orchestrationFunctionName, out string? workflowName) || workflowName is null)
+        if (!TryGetWorkflowName(orchestrationFunctionName, out string? workflowName))
         {
             throw new ArgumentException(
                 $"Orchestration function name '{orchestrationFunctionName}' does not have the expected '{OrchestrationFunctionPrefix}' prefix or is missing a workflow name.",
@@ -65,7 +67,7 @@ internal static class WorkflowNamingHelper
         return separatorIndex > 0 ? executorId[..separatorIndex] : executorId;
     }
 
-    private static bool TryGetWorkflowName(string? orchestrationFunctionName, out string? workflowName)
+    private static bool TryGetWorkflowName(string? orchestrationFunctionName, [NotNullWhen(true)] out string? workflowName)
     {
         workflowName = null;
 

@@ -5,32 +5,41 @@ using Microsoft.Agents.AI.Workflows;
 namespace SequentialWorkflow;
 
 /// <summary>
+/// Represents a request to cancel an order.
+/// </summary>
+/// <param name="OrderId">The ID of the order to cancel.</param>
+/// <param name="Reason">The reason for cancellation.</param>
+internal sealed record OrderCancelRequest(string OrderId, string Reason);
+
+/// <summary>
 /// Looks up an order by its ID and return an Order object.
 /// </summary>
-internal sealed class OrderLookup() : Executor<string, Order>("OrderLookup")
+internal sealed class OrderLookup() : Executor<OrderCancelRequest, Order>("OrderLookup")
 {
     public override async ValueTask<Order> HandleAsync(
-        string message,
+        OrderCancelRequest message,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
     {
         Console.WriteLine();
         Console.ForegroundColor = ConsoleColor.Magenta;
         Console.WriteLine("┌─────────────────────────────────────────────────────────────────┐");
-        Console.WriteLine($"│ [Activity] OrderLookup: Starting lookup for order '{message}'");
+        Console.WriteLine($"│ [Activity] OrderLookup: Starting lookup for order '{message.OrderId}'");
+        Console.WriteLine($"│ [Activity] OrderLookup: Cancellation reason: '{message.Reason}'");
         Console.ResetColor();
 
         // Simulate database lookup with delay
         await Task.Delay(TimeSpan.FromMicroseconds(100), cancellationToken);
 
         Order order = new(
-            Id: message,
+            Id: message.OrderId,
             OrderDate: DateTime.UtcNow.AddDays(-1),
             IsCancelled: false,
+            CancelReason: message.Reason,
             Customer: new Customer(Name: "Jerry", Email: "jerry@example.com"));
 
         Console.ForegroundColor = ConsoleColor.Magenta;
-        Console.WriteLine($"│ [Activity] OrderLookup: Found order '{message}' for customer '{order.Customer.Name}'");
+        Console.WriteLine($"│ [Activity] OrderLookup: Found order '{message.OrderId}' for customer '{order.Customer.Name}'");
         Console.WriteLine("└─────────────────────────────────────────────────────────────────┘");
         Console.ResetColor();
 
@@ -102,6 +111,6 @@ internal sealed class SendEmail() : Executor<Order, string>("SendEmail")
     }
 }
 
-internal sealed record Order(string Id, DateTime OrderDate, bool IsCancelled, Customer Customer);
+internal sealed record Order(string Id, DateTime OrderDate, bool IsCancelled, string? CancelReason, Customer Customer);
 
 internal sealed record Customer(string Name, string Email);

@@ -6,6 +6,7 @@
 // - Valid customers → PaymentProcessor
 
 using ConditionalEdges;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask.Client.AzureManaged;

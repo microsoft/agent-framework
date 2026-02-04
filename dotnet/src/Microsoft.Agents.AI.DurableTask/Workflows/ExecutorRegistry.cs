@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
@@ -26,7 +27,7 @@ internal sealed class ExecutorRegistry
     /// <param name="executorName">The executor name to look up.</param>
     /// <param name="registration">When this method returns, contains the registration if found; otherwise, null.</param>
     /// <returns><see langword="true"/> if the executor was found; otherwise, <see langword="false"/>.</returns>
-    internal bool TryGetExecutor(string executorName, out ExecutorRegistration? registration)
+    internal bool TryGetExecutor(string executorName, [NotNullWhen(true)] out ExecutorRegistration? registration)
     {
         return this._executors.TryGetValue(executorName, out registration);
     }
