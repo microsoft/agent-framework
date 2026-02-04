@@ -9,7 +9,6 @@ from ._client import AGUIChatClient
 from ._endpoint import add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
-from ._thread import AGUIThread
 from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig, RunMetadata
 
 try:
@@ -31,7 +30,6 @@ __all__ = [
     "AgentState",
     "PredictStateConfig",
     "RunMetadata",
-    "AGUIThread",
     "DEFAULT_TAGS",
     "__version__",
 ]

@@ -331,7 +331,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         self,
         *,
         messages: Sequence[ChatMessage],
-        stream: bool,
+        stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
