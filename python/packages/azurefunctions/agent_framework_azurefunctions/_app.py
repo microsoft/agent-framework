@@ -273,7 +273,7 @@ class AgentFunctionApp(DFAppBase):
             """
             import json as json_module
 
-            from agent_framework import SharedState
+            from agent_framework import State
 
             data = json_module.loads(inputData)
             message_data = data["message"]
@@ -296,7 +296,7 @@ class AgentFunctionApp(DFAppBase):
             async def run() -> dict[str, Any]:
                 # Create runner context and shared state
                 runner_context = CapturingRunnerContext()
-                shared_state = SharedState()
+                shared_state = State()
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
                 deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
