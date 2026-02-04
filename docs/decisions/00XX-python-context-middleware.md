@@ -125,7 +125,7 @@ The following key decisions shape the ContextMiddleware design:
 | 4 | **Multiple Storage Allowed** | Warn if multiple have `load_messages=True` (likely misconfiguration). |
 | 5 | **Single Storage Class** | One `StorageContextMiddleware` configured for memory/audit/evaluation - no separate classes. |
 | 6 | **Mandatory source_id** | Required parameter forces explicit naming for attribution in `context_messages` dict. |
-| 7 | **Smart Load Behavior** | `load_messages=None` (default) disables loading when `options.store=False` OR `service_session_id` present. |
+| 7 | **Smart Load Behavior** | `load_messages=None` (default) disables loading when `options.store=True` OR `service_session_id` present. And does load otherwise  |
 | 8 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. |
 | 9 | **Selective Storage** | `store_context_messages` and `store_context_from` control what gets persisted from other middleware. |
 | 10 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
@@ -314,17 +314,17 @@ class ContextHooks(ABC):
 
 ```
 Middleware (Wrapper/Onion):            Hooks (Linear):
-┌─────────────────────────┐            ┌─────────────────────────┐
-│ middleware1.process()   │            │ hook1.before_run()      │
-│  ┌───────────────────┐  │            │ hook2.before_run()      │
+┌──────────────────────────┐            ┌─────────────────────────┐
+│ middleware1.process()    │            │ hook1.before_run()      │
+│  ┌───────────────────┐   │            │ hook2.before_run()      │
 │  │ middleware2.process│  │            │ hook3.before_run()      │
-│  │  ┌─────────────┐  │  │            ├─────────────────────────┤
-│  │  │   invoke    │  │  │     vs     │      <invoke>           │
-│  │  └─────────────┘  │  │            ├─────────────────────────┤
-│  │ (post-processing) │  │            │ hook3.after_run()       │
-│  └───────────────────┘  │            │ hook2.after_run()       │
-│ (post-processing)       │            │ hook1.after_run()       │
-└─────────────────────────┘            └─────────────────────────┘
+│  │  ┌─────────────┐  │   │            ├─────────────────────────┤
+│  │  │   invoke    │  │   │     vs     │      <invoke>           │
+│  │  └─────────────┘  │   │            ├─────────────────────────┤
+│  │ (post-processing) │   │            │ hook3.after_run()       │
+│  └───────────────────┘   │            │ hook2.after_run()       │
+│ (post-processing)        │            │ hook1.after_run()       │
+└──────────────────────────┘            └─────────────────────────┘
 ```
 
 ### 2. Agent vs Session Ownership
