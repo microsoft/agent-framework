@@ -72,11 +72,7 @@ async def main() -> None:
         for content in message.contents:
             if content.type == "image_generation" and content.outputs:
                 for output in content.outputs:
-<<<<<<< HEAD
                     if output.type in ("data", "uri") and output.uri:
-=======
-                    if content.type in {"data", "uri"} and output.uri:
->>>>>>> 5acd756e0 (redid layering of chat clients and agents)
                         show_image_info(output.uri)
                         break
 
