@@ -1128,11 +1128,12 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         if stream:
             from ._types import ResponseStream
 
+            # TODO(teams): figure out what happens when the stream is NOT consumed
             stream_result = super_get_response(messages=messages, stream=True, options=opts, **kwargs)
             if isinstance(stream_result, ResponseStream):
                 result_stream = stream_result
             elif isinstance(stream_result, Awaitable):
-                result_stream = ResponseStream.wrap(stream_result)
+                result_stream = ResponseStream.from_awaitable(stream_result)
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1181,7 +1182,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
-            return result_stream.with_finalizer(_finalize).with_teardown(_record_duration)
+            return result_stream.with_result_hook(_finalize).with_cleanup_hook(_record_duration)
 
         async def _get_response() -> "ChatResponse":
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
@@ -1297,7 +1298,7 @@ class AgentTelemetryLayer:
             if isinstance(run_result, ResponseStream):
                 result_stream = run_result
             elif isinstance(run_result, Awaitable):
-                result_stream = ResponseStream.wrap(run_result)
+                result_stream = ResponseStream.from_awaitable(run_result)
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1345,7 +1346,7 @@ class AgentTelemetryLayer:
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
-            return result_stream.with_finalizer(_finalize).with_teardown(_record_duration)
+            return result_stream.with_result_hook(_finalize).with_cleanup_hook(_record_duration)
 
         async def _run() -> "AgentResponse":
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:

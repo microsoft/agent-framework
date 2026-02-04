@@ -236,7 +236,7 @@ class TestChatMiddleware:
                         content.text = content.text.upper()
                 return update
 
-            context.stream_update_hooks.append(upper_case_update)
+            context.stream_transform_hooks.append(upper_case_update)
             await next(context)
             execution_order.append("streaming_after")
 

@@ -256,6 +256,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Other keyword parameters.
 
         Examples:

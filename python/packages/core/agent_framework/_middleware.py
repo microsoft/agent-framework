@@ -237,9 +237,9 @@ class ChatContext(SerializationMixin):
         terminate: A flag indicating whether to terminate execution after current middleware.
                 When set to True, execution will stop as soon as control returns to framework.
         kwargs: Additional keyword arguments passed to the chat client.
-        stream_update_hooks: Hooks applied to each streamed update.
-        stream_finalizers: Hooks applied to the finalized response.
-        stream_teardown_hooks: Hooks executed after stream consumption.
+        stream_transform_hooks: Hooks applied to transform each streamed update.
+        stream_result_hooks: Hooks applied to the finalized response (after finalizer).
+        stream_cleanup_hooks: Hooks executed after stream consumption (before finalizer).
 
     Examples:
         .. code-block:: python
@@ -276,12 +276,12 @@ class ChatContext(SerializationMixin):
         result: "ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None" = None,
         terminate: bool = False,
         kwargs: dict[str, Any] | None = None,
-        stream_update_hooks: Sequence[
+        stream_transform_hooks: Sequence[
             Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
         ]
         | None = None,
-        stream_finalizers: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
-        stream_teardown_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
+        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
 
@@ -294,9 +294,9 @@ class ChatContext(SerializationMixin):
             result: Chat execution result.
             terminate: A flag indicating whether to terminate execution after current middleware.
             kwargs: Additional keyword arguments passed to the chat client.
-            stream_update_hooks: Update hooks to apply to a streaming response.
-            stream_finalizers: Finalizers to apply to the finalized streaming response.
-            stream_teardown_hooks: Teardown hooks to run after streaming completes.
+            stream_transform_hooks: Transform hooks to apply to each streamed update.
+            stream_result_hooks: Result hooks to apply to the finalized streaming response.
+            stream_cleanup_hooks: Cleanup hooks to run after streaming completes.
         """
         self.chat_client = chat_client
         self.messages = messages
@@ -306,9 +306,9 @@ class ChatContext(SerializationMixin):
         self.result = result
         self.terminate = terminate
         self.kwargs = kwargs if kwargs is not None else {}
-        self.stream_update_hooks = list(stream_update_hooks or [])
-        self.stream_finalizers = list(stream_finalizers or [])
-        self.stream_teardown_hooks = list(stream_teardown_hooks or [])
+        self.stream_transform_hooks = list(stream_transform_hooks or [])
+        self.stream_result_hooks = list(stream_result_hooks or [])
+        self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
 
 
 class AgentMiddleware(ABC):
@@ -1052,12 +1052,12 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             if not isinstance(stream, ResponseStream):
                 raise ValueError("Streaming chat middleware requires a ResponseStream result.")
 
-            for hook in context.stream_update_hooks:
-                stream.with_update_hook(hook)
-            for finalizer in context.stream_finalizers:
-                stream.with_finalizer(finalizer)
-            for teardown_hook in context.stream_teardown_hooks:
-                stream.with_teardown(teardown_hook)  # type: ignore[arg-type]
+            for hook in context.stream_transform_hooks:
+                stream.with_transform_hook(hook)
+            for result_hook in context.stream_result_hooks:
+                stream.with_result_hook(result_hook)
+            for cleanup_hook in context.stream_cleanup_hooks:
+                stream.with_cleanup_hook(cleanup_hook)  # type: ignore[arg-type]
             return stream
 
         async def _run() -> "ChatResponse":
@@ -1093,7 +1093,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
     def __init__(
         self,
         *,
-        middleware: (Sequence[ChatLevelMiddleware] | None) = None,
+        middleware: Sequence[ChatLevelMiddleware] | None = None,
         **kwargs: Any,
     ) -> None:
         middleware_list = categorize_middleware(middleware)
@@ -1188,7 +1188,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         )
 
         if stream:
-            return ResponseStream.wrap(result)  # type: ignore[arg-type,return-value]
+            return ResponseStream.from_awaitable(result)  # type: ignore[arg-type,return-value]
         return result  # type: ignore[return-value]
 
 
@@ -1448,7 +1448,7 @@ def _middleware_enabled_run_impl(
                     raise MiddlewareException("Streaming agent middleware requires a ResponseStream result.")
                 return result
 
-            return ResponseStream.wrap(
+            return ResponseStream.from_awaitable(
                 agent_pipeline.execute_stream(
                     self,  # type: ignore[arg-type]
                     normalized_messages,
