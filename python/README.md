@@ -113,8 +113,8 @@ async def main():
     client = OpenAIChatClient()
 
     messages = [
-        ChatMessage(role="system", text="You are a helpful assistant."),
-        ChatMessage(role="user", text="Write a haiku about Agent Framework.")
+        ChatMessage("system", ["You are a helpful assistant."]),
+        ChatMessage("user", ["Write a haiku about Agent Framework."])
     ]
 
     response = await client.get_response(messages)

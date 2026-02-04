@@ -4,8 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework import tool
+from agent_framework import ChatAgent, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
@@ -16,6 +15,7 @@ from pydantic import Field
 This sample shows how you can observe an agent in Agent Framework by using the
 same observability setup function.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

@@ -93,7 +93,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         => emitEvents ?? this._options.EmitAgentUpdateEvents ?? false;
 
     private async ValueTask<AgentSession> EnsureSessionAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
     private const string UserInputRequestStateKey = nameof(_userInputHandler);
     private const string FunctionCallRequestStateKey = nameof(_functionCallHandler);

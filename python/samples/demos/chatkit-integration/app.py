@@ -18,8 +18,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
-from agent_framework import tool
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -131,6 +130,7 @@ async def stream_widget(
 
     yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_weather(
@@ -170,12 +170,14 @@ def get_weather(
     )
     return WeatherResponse(text, weather_data)
 
+
 @tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
     logger.info("Getting current UTC time")
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
 
 @tool(approval_mode="never_require")
 def show_city_selector() -> str:
@@ -279,7 +281,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 ChatMessage(
-                    role=Role.USER,
+                    role="user",
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -456,7 +458,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [ChatMessage("user", [f"What's the weather in {city_label}?"])]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 

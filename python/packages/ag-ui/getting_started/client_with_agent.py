@@ -171,7 +171,7 @@ async def main():
                 messages = await thread.message_store.list_messages()
                 print(f"\n[THREAD STATE] {len(messages)} messages in thread's message_store")
                 for i, msg in enumerate(messages[-6:], 1):  # Show last 6
-                    role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                    role = msg.role if hasattr(msg.role, "value") else str(msg.role)
                     text_preview = _preview_for_message(msg)
                     print(f"  {i}. [{role}]: {text_preview}")
 

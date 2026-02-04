@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -45,7 +44,7 @@ class _ToolCallingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - not used in this test."""
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
 
     async def run_stream(
         self,
@@ -58,7 +57,7 @@ class _ToolCallingAgent(BaseAgent):
         # First update: some text
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="Let me search for that...")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Second update: tool call (no text!)
@@ -70,7 +69,7 @@ class _ToolCallingAgent(BaseAgent):
                     arguments={"query": "weather"},
                 )
             ],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Third update: tool result (no text!)
@@ -81,13 +80,13 @@ class _ToolCallingAgent(BaseAgent):
                     result={"temperature": 72, "condition": "sunny"},
                 )
             ],
-            role=Role.TOOL,
+            role="tool",
         )
 
         # Fourth update: final text response
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="The weather is sunny, 72°F.")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
 
@@ -179,7 +178,7 @@ class MockChatClient:
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage(role="assistant", text="Tool executed successfully."))
+            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response
@@ -212,7 +211,7 @@ class MockChatClient:
                     role="assistant",
                 )
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1

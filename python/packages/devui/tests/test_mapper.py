@@ -15,7 +15,6 @@ import pytest
 from agent_framework._types import (
     AgentResponseUpdate,
     Content,
-    Role,
 )
 
 # Import real workflow event classes - NOT mocks!
@@ -84,7 +83,7 @@ def create_test_content(content_type: str, **kwargs: Any) -> Any:
 
 def create_test_agent_update(contents: list[Any]) -> AgentResponseUpdate:
     """Create test AgentResponseUpdate."""
-    return AgentResponseUpdate(contents=contents, role=Role.ASSISTANT, message_id="test_msg", response_id="test_resp")
+    return AgentResponseUpdate(contents=contents, role="assistant", message_id="test_msg", response_id="test_resp")
 
 
 # =============================================================================
@@ -450,13 +449,13 @@ async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
     This tests the ACTUAL event format Magentic emits - not a fake MagenticAgentDeltaEvent class.
     Magentic uses AgentRunUpdateEvent with additional_properties containing magentic_event_type.
     """
-    from agent_framework._types import AgentResponseUpdate, Role
+    from agent_framework._types import AgentResponseUpdate
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create the REAL event format that Magentic emits
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="Hello from agent")],
-        role=Role.ASSISTANT,
+        role="assistant",
         author_name="Writer",
         additional_properties={
             "magentic_event_type": "agent_delta",
@@ -481,13 +480,13 @@ async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_r
     Magentic emits orchestrator planning/instruction messages using AgentRunUpdateEvent
     with additional_properties containing magentic_event_type='orchestrator_message'.
     """
-    from agent_framework._types import AgentResponseUpdate, Role
+    from agent_framework._types import AgentResponseUpdate
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create orchestrator message event (REAL format from Magentic)
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="Planning: First, the writer will create content...")],
-        role=Role.ASSISTANT,
+        role="assistant",
         author_name="Orchestrator",
         additional_properties={
             "magentic_event_type": "orchestrator_message",
@@ -517,21 +516,21 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
     additional_properties. Any mapper code checking for 'MagenticAgentDeltaEvent'
     class names is dead code.
     """
-    from agent_framework._types import AgentResponseUpdate, Role
+    from agent_framework._types import AgentResponseUpdate
     from agent_framework._workflows._events import AgentRunUpdateEvent
 
     # Create events the way different workflows do it
     # 1. Regular workflow (no additional_properties)
     regular_update = AgentResponseUpdate(
         contents=[Content.from_text(text="Regular workflow response")],
-        role=Role.ASSISTANT,
+        role="assistant",
     )
     regular_event = AgentRunUpdateEvent(executor_id="regular_executor", data=regular_update)
 
     # 2. Magentic workflow (with additional_properties)
     magentic_update = AgentResponseUpdate(
         contents=[Content.from_text(text="Magentic workflow response")],
-        role=Role.ASSISTANT,
+        role="assistant",
         additional_properties={"magentic_event_type": "agent_delta"},
     )
     magentic_event = AgentRunUpdateEvent(executor_id="magentic_executor", data=magentic_update)
@@ -598,13 +597,13 @@ async def test_workflow_output_event(mapper: MessageMapper, test_request: AgentF
 
 async def test_workflow_output_event_with_list_data(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test WorkflowOutputEvent with list data (common for sequential/concurrent workflows)."""
-    from agent_framework import ChatMessage, Role
+    from agent_framework import ChatMessage
     from agent_framework._workflows._events import WorkflowOutputEvent
 
     # Sequential/Concurrent workflows often output list[ChatMessage]
     messages = [
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="World")]),
+        ChatMessage("user", [Content.from_text(text="Hello")]),
+        ChatMessage("assistant", [Content.from_text(text="World")]),
     ]
     event = WorkflowOutputEvent(data=messages, executor_id="complete")
     events = await mapper.convert_event(event, test_request)

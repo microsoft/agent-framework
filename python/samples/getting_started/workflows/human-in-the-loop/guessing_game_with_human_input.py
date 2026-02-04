@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,  # Chat message structure
     Executor,  # Base class for workflow executors
     RequestInfoEvent,  # Event emitted when human input is requested
-    Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per run context and event bus
     WorkflowOutputEvent,  # Event emitted when workflow yields output
@@ -18,8 +17,7 @@ from agent_framework import (
     WorkflowStatusEvent,  # Event emitted on run state changes
     handler,
     response_handler,  # Decorator to expose an Executor method as a step
-    tool,
-)
+    )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
@@ -88,7 +86,7 @@ class TurnManager(Executor):
         - Input is a simple starter token (ignored here).
         - Output is an AgentExecutorRequest that triggers the agent to produce a guess.
         """
-        user = ChatMessage(Role.USER, text="Start by making your first guess.")
+        user = ChatMessage("user", text="Start by making your first guess.")
         await ctx.send_message(AgentExecutorRequest(messages=[user], should_respond=True))
 
     @handler
@@ -138,7 +136,7 @@ class TurnManager(Executor):
         # Provide feedback to the agent to try again.
         # We keep the agent's output strictly JSON to ensure stable parsing on the next turn.
         user_msg = ChatMessage(
-            Role.USER,
+            "user",
             text=(f'Feedback: {reply}. Return ONLY a JSON object matching the schema {{"guess": <int 1..10>}}.'),
         )
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))

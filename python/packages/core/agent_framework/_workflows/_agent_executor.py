@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import types
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -110,7 +111,7 @@ class AgentExecutor(Executor):
         return self._output_response
 
     @property
-    def workflow_output_types(self) -> list[type[Any]]:
+    def workflow_output_types(self) -> list[type[Any] | types.UnionType]:
         # Override to declare AgentResponse as a possible output type only if enabled.
         if self._output_response:
             return [AgentResponse]
@@ -197,7 +198,7 @@ class AgentExecutor(Executor):
 
         if not self._pending_agent_requests:
             # All pending requests have been resolved; resume agent execution
-            self._cache = normalize_messages_input(ChatMessage(role="user", contents=self._pending_responses_to_agent))
+            self._cache = normalize_messages_input(ChatMessage("user", self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 
@@ -377,12 +378,12 @@ class AgentExecutor(Executor):
         # Build the final AgentResponse from the collected updates
         if isinstance(self._agent, ChatAgent):
             response_format = self._agent.default_options.get("response_format")
-            response = AgentResponse.from_agent_run_response_updates(
+            response = AgentResponse.from_updates(
                 updates,
                 output_format_type=response_format,
             )
         else:
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_updates(updates)
 
         # Handle any user input requests after the streaming completes
         if user_input_requests:

@@ -334,7 +334,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         Returns:
             ChatResponse object
         """
-        return await ChatResponse.from_chat_response_generator(
+        return await ChatResponse.from_update_generator(
             self._inner_get_streaming_response(
                 messages=messages,
                 options=options,

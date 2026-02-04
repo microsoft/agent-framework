@@ -14,7 +14,6 @@ from agent_framework import (
     ChatMessage,
     Content,
     Executor,
-    Role,
     SequentialBuilder,
     TypeCompatibilityError,
     WorkflowContext,
@@ -36,7 +35,7 @@ class _EchoAgent(BaseAgent):
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} reply")])
+        return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} reply"])])
 
     async def run_stream(  # type: ignore[override]
         self,
@@ -55,9 +54,9 @@ class _SummarizerExec(Executor):
     @handler
     async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
         conversation = agent_response.full_conversation or []
-        user_texts = [m.text for m in conversation if m.role == Role.USER]
-        agents = [m.author_name or m.role for m in conversation if m.role == Role.ASSISTANT]
-        summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary of users:{len(user_texts)} agents:{len(agents)}")
+        user_texts = [m.text for m in conversation if m.role == "user"]
+        agents = [m.author_name or m.role for m in conversation if m.role == "assistant"]
+        summary = ChatMessage("assistant", [f"Summary of users:{len(user_texts)} agents:{len(agents)}"])
         await ctx.send_message(list(conversation) + [summary])
 
 
@@ -119,9 +118,9 @@ async def test_sequential_agents_append_to_context() -> None:
     assert isinstance(output, list)
     msgs: list[ChatMessage] = output
     assert len(msgs) == 3
-    assert msgs[0].role == Role.USER and "hello sequential" in msgs[0].text
-    assert msgs[1].role == Role.ASSISTANT and (msgs[1].author_name == "A1" or True)
-    assert msgs[2].role == Role.ASSISTANT and (msgs[2].author_name == "A2" or True)
+    assert msgs[0].role == "user" and "hello sequential" in msgs[0].text
+    assert msgs[1].role == "assistant" and (msgs[1].author_name == "A1" or True)
+    assert msgs[2].role == "assistant" and (msgs[2].author_name == "A2" or True)
     assert "A1 reply" in msgs[1].text
     assert "A2 reply" in msgs[2].text
 
@@ -152,9 +151,9 @@ async def test_sequential_register_participants_with_agent_factories() -> None:
     assert isinstance(output, list)
     msgs: list[ChatMessage] = output
     assert len(msgs) == 3
-    assert msgs[0].role == Role.USER and "hello factories" in msgs[0].text
-    assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
-    assert msgs[2].role == Role.ASSISTANT and "A2 reply" in msgs[2].text
+    assert msgs[0].role == "user" and "hello factories" in msgs[0].text
+    assert msgs[1].role == "assistant" and "A1 reply" in msgs[1].text
+    assert msgs[2].role == "assistant" and "A2 reply" in msgs[2].text
 
 
 async def test_sequential_with_custom_executor_summary() -> None:
@@ -178,9 +177,9 @@ async def test_sequential_with_custom_executor_summary() -> None:
     msgs: list[ChatMessage] = output
     # Expect: [user, A1 reply, summary]
     assert len(msgs) == 3
-    assert msgs[0].role == Role.USER
-    assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
-    assert msgs[2].role == Role.ASSISTANT and msgs[2].text.startswith("Summary of users:")
+    assert msgs[0].role == "user"
+    assert msgs[1].role == "assistant" and "A1 reply" in msgs[1].text
+    assert msgs[2].role == "assistant" and msgs[2].text.startswith("Summary of users:")
 
 
 async def test_sequential_register_participants_mixed_agents_and_executors() -> None:
@@ -209,9 +208,9 @@ async def test_sequential_register_participants_mixed_agents_and_executors() -> 
     msgs: list[ChatMessage] = output
     # Expect: [user, A1 reply, summary]
     assert len(msgs) == 3
-    assert msgs[0].role == Role.USER and "topic Y" in msgs[0].text
-    assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
-    assert msgs[2].role == Role.ASSISTANT and msgs[2].text.startswith("Summary of users:")
+    assert msgs[0].role == "user" and "topic Y" in msgs[0].text
+    assert msgs[1].role == "assistant" and "A1 reply" in msgs[1].text
+    assert msgs[2].role == "assistant" and msgs[2].text.startswith("Summary of users:")
 
 
 async def test_sequential_checkpoint_resume_round_trip() -> None:
