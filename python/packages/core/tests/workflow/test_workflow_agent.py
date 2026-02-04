@@ -28,7 +28,7 @@ from agent_framework import (
 
 
 class SimpleExecutor(Executor):
-    """Simple executor that emits AgentRunEvent or AgentRunStreamingEvent."""
+    """Simple executor that emits a response based on input."""
 
     def __init__(self, id: str, response_text: str, streaming: bool = False):
         super().__init__(id=id)
@@ -144,7 +144,7 @@ class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
 
     async def test_end_to_end_basic_workflow(self):
-        """Test basic end-to-end workflow execution with 2 executors emitting AgentRunEvent."""
+        """Test basic end-to-end workflow execution with 2 executors emitting AgentResponse."""
         # Create workflow with two executors
         executor1 = SimpleExecutor(id="executor1", response_text="Step1", streaming=False)
         executor2 = SimpleExecutor(id="executor2", response_text="Step2", streaming=False)
@@ -748,13 +748,13 @@ class TestWorkflowAgent:
 class TestWorkflowAgentAuthorName:
     """Test cases for author_name enrichment in WorkflowAgent (GitHub issue #1331)."""
 
-    async def test_agent_run_update_event_gets_executor_id_as_author_name(self):
-        """Test that AgentRunUpdateEvent gets executor_id as author_name when not already set.
+    async def test_agent_response_update_gets_executor_id_as_author_name(self):
+        """Test that AgentResponseUpdate gets executor_id as author_name when not already set.
 
         This validates the fix for GitHub issue #1331: agent responses should include
         identification of which agent produced them in multi-agent workflows.
         """
-        # Create workflow with executor that emits AgentRunUpdateEvent without author_name
+        # Create workflow with executor that emits AgentResponseUpdate without author_name
         executor1 = SimpleExecutor(id="my_executor_id", response_text="Response")
         workflow = WorkflowBuilder().set_start_executor(executor1).build()
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
@@ -770,7 +770,7 @@ class TestWorkflowAgentAuthorName:
         # Verify author_name is set to executor_id
         assert updates[0].author_name == "my_executor_id"
 
-    async def test_agent_run_update_event_preserves_existing_author_name(self):
+    async def test_agent_response_update_preserves_existing_author_name(self):
         """Test that existing author_name is preserved and not overwritten."""
 
         class AuthorNameExecutor(Executor):

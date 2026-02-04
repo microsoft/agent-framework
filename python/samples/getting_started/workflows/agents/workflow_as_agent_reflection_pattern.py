@@ -29,7 +29,6 @@ approved responses are emitted to the external consumer. The workflow completes 
 Key Concepts Demonstrated:
 - WorkflowAgent: Wraps a workflow to behave like a regular agent.
 - Cyclic workflow design (Worker ↔ Reviewer) for iterative improvement.
-- AgentRunUpdateEvent: Mechanism for emitting approved responses externally.
 - Structured output parsing for review feedback using Pydantic.
 - State management for pending requests and retry logic.
 
@@ -154,7 +153,7 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            # Emit approved result to external consumer via AgentRunUpdateEvent.
+            # Emit approved result to external consumer
             await ctx.yield_output(AgentResponse(messages=request.agent_messages))
             return
 

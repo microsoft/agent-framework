@@ -243,7 +243,7 @@ class WorkflowAgent(BaseAgent):
         Returns:
             An AgentResponse representing the workflow execution results.
         """
-        output_events: list[WorkflowEvent] = []
+        output_events: list[WorkflowOutputEvent | RequestInfoEvent] = []
         async for event in self._run_core(
             input_messages, thread, checkpoint_id, checkpoint_storage, streaming=False, **kwargs
         ):
@@ -449,7 +449,11 @@ class WorkflowAgent(BaseAgent):
                     raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
-                        data.created_at if not latest_created_at else max(latest_created_at, data.created_at)
+                        data.created_at
+                        if not latest_created_at
+                        else max(latest_created_at, data.created_at)
+                        if data.created_at
+                        else latest_created_at
                     )
                 elif isinstance(data, ChatMessage):
                     messages.append(data)

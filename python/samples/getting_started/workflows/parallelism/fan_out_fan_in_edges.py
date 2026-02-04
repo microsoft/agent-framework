@@ -30,7 +30,6 @@ Purpose:
 Show how to construct a parallel branch pattern in workflows. Demonstrate:
 - Fan out by targeting multiple AgentExecutor nodes from one dispatcher.
 - Fan in by collecting a list of AgentExecutorResponse objects and reducing them to a single result.
-- Simple tracing using AgentRunEvent to observe execution order and progress.
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.

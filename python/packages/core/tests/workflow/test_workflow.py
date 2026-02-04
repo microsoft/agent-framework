@@ -892,17 +892,17 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     result = await workflow.run("test message")
 
     # Filter for agent events (result is a list of events)
-    agent_run_events = [e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)]
-    agent_update_events = [
+    agent_response = [e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)]
+    agent_response_updates = [
         e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
     ]
 
-    # In non-streaming mode, should have AgentRunEvent, no AgentRunUpdateEvent
-    assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
-    assert len(agent_update_events) == 0, "Expected no AgentRunUpdateEvent in non-streaming mode"
-    assert agent_run_events[0].executor_id == "agent_exec"
-    assert agent_run_events[0].data is not None
-    assert agent_run_events[0].data.messages[0].text == "Hello World"
+    # In non-streaming mode, should have AgentResponse, no AgentResponseUpdate
+    assert len(agent_response) == 1, "Expected exactly one AgentResponse in non-streaming mode"
+    assert len(agent_response_updates) == 0, "Expected no AgentResponseUpdate in non-streaming mode"
+    assert agent_response[0].executor_id == "agent_exec"
+    assert agent_response[0].data is not None
+    assert agent_response[0].data.messages[0].text == "Hello World"
 
     # Test streaming mode with run_stream()
     stream_events: list[WorkflowEvent] = []
@@ -910,26 +910,26 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    stream_agent_runs = [
+    agent_response = [
         cast(AgentResponse, e.data)  # type: ignore
         for e in stream_events
         if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
     ]
-    stream_agent_updates = [
+    agent_response_updates = [
         e.data for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
     ]
 
-    # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
-    assert len(stream_agent_runs) == 0, "Expected no AgentRunEvent in streaming mode"
-    assert len(stream_agent_updates) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
+    # In streaming mode, should have AgentResponseUpdate, no AgentResponse
+    assert len(agent_response) == 0, "Expected no AgentResponse in streaming mode"
+    assert len(agent_response_updates) > 0, "Expected AgentResponseUpdate events in streaming mode"
 
     # Verify we got incremental updates (one per character in "Hello World")
-    assert len(stream_agent_updates) == len("Hello World"), "Expected one update per character"
+    assert len(agent_response_updates) == len("Hello World"), "Expected one update per character"
 
     # Verify the updates build up to the full message
     accumulated_text = "".join([
         e.contents[0].text
-        for e in stream_agent_updates
+        for e in agent_response_updates
         if e.contents
         and isinstance(e.contents[0], Content)
         and e.contents[0].type == "text"
