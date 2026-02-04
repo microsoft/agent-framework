@@ -68,8 +68,8 @@ def process_config(config: MutableMapping[str, Any]) -> None:
 
 To make the code easier to use and maintain:
 
-- **Positional parameters**: Only use for up to 3 fully expected parameters
-- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
+- **Positional parameters**: Only use for up to 3 fully expected parameters (this is not a hard rule, but a guideline there are instances where this does make sense to exceed)
+- **Keyword-only parameters**: Arguments after `*` in function signatures are keyword-only; prefer these for optional parameters
 - **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
 ```python
 def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
@@ -82,9 +82,19 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
     if isinstance(tool_mode, str):
         tool_mode = ChatToolMode(tool_mode)
 ```
-- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
-- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
 - **Avoid shadowing built-ins**: Do not use parameter names that shadow Python built-ins (e.g., use `next_handler` instead of `next`). See [#3583](https://github.com/microsoft/agent-framework/issues/3583) for progress.
+
+### Using `**kwargs`
+
+> **Note:** This convention is being adopted. See [#3642](https://github.com/microsoft/agent-framework/issues/3642) for progress.
+
+Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
+
+- **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
+- **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
+- **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
+- **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose
 
 ## Method Naming Inside Connectors
 
