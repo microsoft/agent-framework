@@ -14,10 +14,10 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentProtocol,
     AgentResponse,
-    BaseChatClient,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    CoreChatClient,
     ResponseStream,
     Role,
     UsageDetails,
@@ -157,7 +157,7 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
 def mock_chat_client():
     """Create a mock chat client for testing."""
 
-    class MockChatClient(ChatTelemetryMixin, BaseChatClient):
+    class MockChatClient(ChatTelemetryMixin, CoreChatClient[Any]):
         def service_url(self):
             return "https://test.example.com"
 

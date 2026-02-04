@@ -56,7 +56,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgent(AgentTelemetryMixin[Any], BaseAgent):
+class A2AAgent(AgentTelemetryMixin, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents

@@ -39,7 +39,6 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
     ResponseStream,
     prepare_messages,
     validate_chat_options,
@@ -132,26 +131,6 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
     """
 
     additional_properties: dict[str, Any]
-
-    @overload
-    def get_response(
-        self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
-        *,
-        stream: Literal[False] = ...,
-        options: TOptions_contra | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[ChatResponse]: ...
-
-    @overload
-    def get_response(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
-        *,
-        stream: Literal[True],
-        options: TOptions_contra | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]: ...
 
     def get_response(
         self,
@@ -340,7 +319,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = False,
         options: "ChatOptions[TResponseModelT]",
@@ -350,7 +329,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = False,
         options: TOptions_co | None = None,
@@ -360,7 +339,7 @@ class CoreChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = False,
         options: TOptions_co | "ChatOptions[Any]" | None = None,
