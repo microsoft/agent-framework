@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import types
 from dataclasses import asdict, fields, is_dataclass
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -169,9 +169,7 @@ def _reconstruct_dataclass_fields(dataclass_type: type, data: dict[str, Any]) ->
 
     # Get type hints for the dataclass
     try:
-        import typing
-
-        type_hints = typing.get_type_hints(dataclass_type)
+        type_hints = get_type_hints(dataclass_type)
     except Exception:
         # Fall back to field annotations if get_type_hints fails
         for f in fields(dataclass_type):
