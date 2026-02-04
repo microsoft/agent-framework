@@ -54,6 +54,19 @@ public class CopilotStudioAgent : AIAgent
         => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        Throw.IfNull(session);
+
+        if (session is not CopilotStudioAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
     public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new CopilotStudioAgentSession(serializedSession, jsonSerializerOptions));
 

@@ -126,6 +126,21 @@ public abstract class AIAgent
     public abstract ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Serializes an agent session to its JSON representation.
+    /// </summary>
+    /// <param name="session">The <see cref="AgentSession"/> to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the serialization process.</param>
+    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The type of <paramref name="session"/> is not supported by this agent.</exception>
+    /// <remarks>
+    /// This method enables saving conversation sessions to persistent storage,
+    /// allowing conversations to resume across application restarts or be migrated between
+    /// different agent instances. Use <see cref="DeserializeSessionAsync"/> to restore the session.
+    /// </remarks>
+    public abstract JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null);
+
+    /// <summary>
     /// Deserializes an agent session from its JSON serialized representation.
     /// </summary>
     /// <param name="serializedSession">A <see cref="JsonElement"/> containing the serialized session state.</param>

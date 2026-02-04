@@ -68,6 +68,18 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
 
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not WorkflowSession workflowSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return workflowSession.Serialize(jsonSerializerOptions);
+    }
+
     public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new WorkflowSession(this._workflow, serializedSession, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
 

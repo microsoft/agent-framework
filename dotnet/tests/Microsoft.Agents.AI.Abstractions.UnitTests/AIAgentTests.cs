@@ -449,6 +449,9 @@ public class AIAgentTests
         public override async ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
         public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 

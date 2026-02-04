@@ -98,7 +98,7 @@ public abstract class InMemoryAgentSession : AgentSession
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    protected internal virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var chatHistoryProviderState = this.ChatHistoryProvider.Serialize(jsonSerializerOptions);
 

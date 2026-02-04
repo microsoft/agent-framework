@@ -85,13 +85,9 @@ public abstract class ServiceIdAgentSession : AgentSession
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use for the serialization process.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state, containing the service session identifier.</returns>
-    /// <remarks>
-    /// The serialized state contains only the service session identifier, as all other conversation state
-    /// is maintained remotely by the backing service. This makes the serialized representation very lightweight.
-    /// </remarks>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    protected internal virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var state = new ServiceIdAgentSessionState
         {
