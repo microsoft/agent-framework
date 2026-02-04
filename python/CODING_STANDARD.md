@@ -277,7 +277,7 @@ pip install agent-framework-core[all]
 # or (equivalently):
 pip install agent-framework
 
-# Install specific connector
+# Install specific connector (pulls in core as dependency)
 pip install agent-framework-azure-ai
 ```
 
