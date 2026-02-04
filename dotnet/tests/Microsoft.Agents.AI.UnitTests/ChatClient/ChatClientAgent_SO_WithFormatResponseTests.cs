@@ -49,7 +49,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
     }
 
     [Fact]
-    public async Task RunAsync_ResponseFormatProvidedAtAgentInvokation_IsPropagatedToChatClientAsync()
+    public async Task RunAsync_ResponseFormatProvidedAtAgentInvocation_IsPropagatedToChatClientAsync()
     {
         // Arrange
         ChatResponseFormat? capturedResponseFormat = null;
