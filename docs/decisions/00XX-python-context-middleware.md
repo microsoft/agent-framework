@@ -44,7 +44,7 @@ This ADR addresses the following issues from the parent issue [#3575](https://gi
 | [#3587](https://github.com/microsoft/agent-framework/issues/3587) | Rename AgentThread to AgentSession | ✅ `AgentThread` → `AgentSession` (clean break, no alias). See [§7 Renaming](#7-renaming-thread--session). |
 | [#3588](https://github.com/microsoft/agent-framework/issues/3588) | Add get_new_session, get_session_by_id methods | ✅ `agent.create_session()` (no params) and `agent.get_session_by_id(id)`. See [§9 Session Management Methods](#9-session-management-methods). |
 | [#3589](https://github.com/microsoft/agent-framework/issues/3589) | Move serialize method into the agent | ✅ `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. See [§8 Serialization](#8-session-serializationdeserialization). |
-| [#3590](https://github.com/microsoft/agent-framework/issues/3590) | Design orthogonal ChatMessageStore for service vs local | ✅ `StorageContextMiddleware` works orthogonally: `service_session_id` presence triggers smart behavior (don't load if service manages storage). Multiple storage middleware allowed. See [§3 Unified Storage](#3-unified-storage-middleware). |
+| [#3590](https://github.com/microsoft/agent-framework/issues/3590) | Design orthogonal ChatMessageStore for service vs local | ✅ `StorageContextMiddleware` works orthogonally: configure `load_messages=False` when service manages storage. Multiple storage middleware allowed. See [§3 Unified Storage](#3-unified-storage-middleware). |
 | [#3601](https://github.com/microsoft/agent-framework/issues/3601) | Rename ChatMessageStore to ChatHistoryProvider | 🔒 **Closed** - Superseded by this ADR. `ChatMessageStore` removed entirely, replaced by `StorageContextMiddleware`. |
 
 ## Current State Analysis
@@ -122,11 +122,11 @@ The following key decisions shape the ContextMiddleware design:
 | 1 | **Agent vs Session Ownership** | Agent owns middleware config; Session owns resolved pipeline. Enables per-session factories. |
 | 2 | **Instance or Factory** | Middleware can be shared instances or `(session_id) -> Middleware` factories for per-session state. |
 | 3 | **Default Storage at Runtime** | `InMemoryStorageMiddleware` auto-added when no service_session_id, store≠True, and no pipeline. Evaluated at runtime so users can modify pipeline first. |
-| 4 | **Multiple Storage Allowed** | Warn if multiple have `load_messages=True` (likely misconfiguration). |
+| 4 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero storage middleware/hooks have `load_messages=True` (likely misconfiguration). |
 | 5 | **Single Storage Class** | One `StorageContextMiddleware` configured for memory/audit/evaluation - no separate classes. |
 | 6 | **Mandatory source_id** | Required parameter forces explicit naming for attribution in `context_messages` dict. |
-| 7 | **Smart Load Behavior** | `load_messages=None` (default) disables loading when `options.store=True` OR `service_session_id` present. And does load otherwise  |
-| 8 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. |
+| 7 | **Explicit Load Behavior** | `load_messages: bool = True` - explicit configuration with no automatic detection. For `StorageContextHooks`, `before_run` is skipped entirely when `load_messages=False`. |
+| 8 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. Messages can have an `attribution` marker in `additional_properties` for external filtering scenarios. |
 | 9 | **Selective Storage** | `store_context_messages` and `store_context_from` control what gets persisted from other middleware. |
 | 10 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
 | 11 | **Clean Break** | Remove `AgentThread`, `ContextProvider`, `ChatMessageStore` completely (preview, no compatibility shims). |
@@ -388,7 +388,7 @@ class StorageContextMiddleware(ContextMiddleware):
         self,
         source_id: str,
         *,
-        load_messages: bool | None = None,  # None = smart mode
+        load_messages: bool = True,
         store_inputs: bool = True,
         store_responses: bool = True,
         store_context_messages: bool = False,
@@ -403,7 +403,7 @@ class StorageContextHooks(ContextHooks):
         self,
         source_id: str,
         *,
-        load_messages: bool | None = None,  # None = smart mode
+        load_messages: bool = True,
         store_inputs: bool = True,
         store_responses: bool = True,
         store_context_messages: bool = False,
@@ -411,10 +411,9 @@ class StorageContextHooks(ContextHooks):
     ): ...
 ```
 
-**Smart Load Behavior (both approaches):**
-- `load_messages=None` (default): Automatically disable loading when:
-  - `context.options.get('store') == True`, OR
-  - `context.service_session_id is not None` (service handles storage)
+**Load Behavior:**
+- `load_messages=True` (default): Load messages from storage in `before_run`/pre-processing
+- `load_messages=False`: Skip loading; for `StorageContextHooks`, the `before_run` hook is not called at all
 
 **Comparison to Current:**
 | Aspect | ChatMessageStore (Current) | Storage Middleware/Hooks (New) |
@@ -450,6 +449,27 @@ class SessionContext:
 - Debug which middleware/hooks added which messages
 - Filter messages by source (e.g., exclude RAG from storage)
 - Multiple instances of same type distinguishable
+
+**Message-level Attribution:**
+
+In addition to source-based filtering, individual `ChatMessage` objects should have an `attribution` marker in their `additional_properties` dict. This enables external scenarios to filter messages after the full list has been composed from input and context messages:
+
+```python
+# Setting attribution on a message
+message = ChatMessage(
+    role="system",
+    text="Relevant context from knowledge base",
+    additional_properties={"attribution": "knowledge_base"}
+)
+
+# Filtering by attribution (external scenario)
+all_messages = context.get_all_messages(include_input=True)
+filtered = [m for m in all_messages if m.additional_properties.get("attribution") != "ephemeral"]
+```
+
+This is useful for scenarios where filtering by `source_id` is not sufficient, such as when messages from the same source need different treatment.
+
+> **Note:** The `attribution` marker is intended for runtime filtering only and should **not** be propagated to storage. Storage middleware should strip `attribution` from `additional_properties` before persisting messages.
 
 ### 5. Default Storage Behavior
 
@@ -851,6 +871,9 @@ Regardless of the chosen approach, these extension points could support compacti
 - A `CompactionStrategy` that can be shared between middleware/hooks and function calling configuration
 - Hooks for `ChatClient` to notify the agent layer when context limits are approaching
 - A unified `ContextManager` that coordinates compaction across layers
+- **Message-level attribution**: The `attribution` marker in `ChatMessage.additional_properties` can be used during compaction to identify messages that should be preserved (e.g., `attribution: "important"`) or that are safe to remove (e.g., `attribution: "ephemeral"`). This prevents accidental filtering of critical context during aggressive compaction.
+
+> **Note:** The .NET SDK currently has a `ChatReducer` interface for context reduction/compaction. We should consider adopting similar naming in Python (e.g., `ChatReducer` or `ContextReducer`) for cross-platform consistency.
 
 **This section requires further discussion.**
 
@@ -1162,19 +1185,20 @@ class StorageContextMiddleware(ContextMiddleware):
     - Evaluation storage (stores only for later analysis)
 
     Loading behavior (when to add messages to context_messages[source_id]):
-    - `load_messages=True`: Always load messages
+    - `load_messages=True` (default): Load messages from storage
     - `load_messages=False`: Never load (audit/logging mode)
-    - `load_messages=None` (default): Smart mode - load unless:
-      - `context.options.get('store', True)` is False, OR
-      - `context.service_session_id` is present (service manages storage)
 
     Storage behavior:
     - `store_inputs`: Store input messages (default True)
     - `store_responses`: Store response messages (default True)
     - Storage always happens unless explicitly disabled, regardless of load_messages
 
-    Warning: If multiple middleware have load_messages=True, a warning
-    is logged at pipeline creation time (likely misconfiguration).
+    Warning: At session creation time, a warning is logged if:
+    - Multiple storage middleware have `load_messages=True` (likely duplicate loading)
+    - Zero storage middleware have `load_messages=True` (likely missing primary storage)
+
+    These are warnings only (not errors) because valid use cases exist for both scenarios,
+    such as intentional multi-source loading or audit-only storage configurations.
 
     Examples:
         # Primary memory - loads and stores
@@ -1208,7 +1232,7 @@ class StorageContextMiddleware(ContextMiddleware):
         source_id: str,
         *,
         session_id: str | None = None,
-        load_messages: bool | None = None,  # None = smart mode
+        load_messages: bool = True,
         store_responses: bool = True,
         store_inputs: bool = True,
         store_context_messages: bool = False,  # Store context added by other middleware
@@ -1235,19 +1259,6 @@ class StorageContextMiddleware(ContextMiddleware):
         """Persist messages for this session."""
         pass
 
-    def _should_load_messages(self, context: SessionContext) -> bool:
-        """Determine if we should load messages based on config and context."""
-        # Explicit configuration takes precedence
-        if self.load_messages is not None:
-            return self.load_messages
-
-        # Smart mode: don't load if service manages storage
-        if context.service_session_id is not None:
-            return False
-
-        # Smart mode: respect options['store']
-        return context.options.get('store', True)
-
     def _get_context_messages_to_store(self, context: SessionContext) -> list[ChatMessage]:
         """Get context messages that should be stored based on configuration."""
         if not self.store_context_messages:
@@ -1266,7 +1277,7 @@ class StorageContextMiddleware(ContextMiddleware):
         next: ContextMiddlewareNext
     ) -> None:
         # PRE: Load history if configured, keyed by our source_id
-        if self._should_load_messages(context):
+        if self.load_messages:
             history = await self.get_messages(context.session_id)
             context.add_messages(self.source_id, history)
 
@@ -1363,18 +1374,36 @@ class ContextMiddlewarePipeline:
         return cls(middleware)
 
     def _validate_middleware(self) -> None:
-        """Warn if multiple middleware are configured to load messages."""
-        loaders = [
+        """Warn if storage middleware configuration looks like a mistake.
+
+        These are warnings only (not errors) because valid use cases exist
+        for both multiple loaders and zero loaders.
+        """
+        storage_middleware = [
             m for m in self._middleware
             if isinstance(m, StorageContextMiddleware)
-            and m.load_messages is True
         ]
+
+        if not storage_middleware:
+            # No storage middleware at all - that's fine, user may not need it
+            return
+
+        loaders = [m for m in storage_middleware if m.load_messages is True]
+
         if len(loaders) > 1:
             warnings.warn(
                 f"Multiple storage middleware configured to load messages: "
                 f"{[m.source_id for m in loaders]}. "
                 f"This may cause duplicate messages in context. "
-                f"Consider setting load_messages=False on all but one.",
+                f"If this is intentional, you can ignore this warning.",
+                UserWarning
+            )
+        elif len(loaders) == 0:
+            warnings.warn(
+                f"Storage middleware configured but none have load_messages=True: "
+                f"{[m.source_id for m in storage_middleware]}. "
+                f"No conversation history will be loaded. "
+                f"If this is intentional (e.g., audit-only), you can ignore this warning.",
                 UserWarning
             )
 
@@ -1723,7 +1752,7 @@ search_middleware = AzureAISearchContextMiddleware(
 )
 
 # Primary memory storage (loads + stores)
-# load_messages=None (default) = smart mode, respects options['store'] and service_session_id
+# load_messages=True (default) - loads and stores messages
 memory_middleware = RedisStorageMiddleware(
     source_id="memory",
     redis_url="redis://...",
@@ -1741,7 +1770,7 @@ agent = ChatAgent(
     chat_client=client,
     name="assistant",
     context_middleware=[
-        memory_middleware,   # First: loads history (smart mode)
+        memory_middleware,   # First: loads history
         search_middleware,   # Second: adds RAG context
         audit_middleware,    # Third: stores for audit (no load)
     ]
@@ -1874,14 +1903,12 @@ class RAGContextMiddleware(ContextMiddleware):
         await next(context)
 ```
 
-### Example 5: Smart Storage with options.store and service_session_id
+### Example 5: Explicit Storage Configuration for Service-Managed Sessions
 
 ```python
-# Default StorageContextMiddleware already has smart behavior!
-# load_messages=None (default) means:
-#   - Don't load if options['store'] is False
-#   - Don't load if service_session_id is present (service manages storage)
-#   - Otherwise, load messages
+# StorageContextMiddleware uses explicit configuration - no automatic detection.
+# load_messages=True (default): Load messages from storage
+# load_messages=False: Skip loading (useful for audit-only storage)
 
 agent = ChatAgent(
     chat_client=client,
@@ -1889,7 +1916,7 @@ agent = ChatAgent(
         RedisStorageMiddleware(
             source_id="memory",
             redis_url="redis://...",
-            # load_messages=None is the default - smart mode
+            # load_messages=True is the default
         )
     ]
 )
@@ -1899,17 +1926,21 @@ session = agent.create_session()
 # Normal run - loads and stores messages
 response = await agent.run("Hello!", session=session)
 
-# Run without loading history (but still stores for audit)
-response = await agent.run(
-    "What's 2+2?",
-    session=session,
-    options={"store": False}  # Don't load history for this call
+# For service-managed sessions, configure storage explicitly:
+# - Use load_messages=False when service handles history
+service_storage = RedisStorageMiddleware(
+    source_id="audit",
+    redis_url="redis://...",
+    load_messages=False,  # Don't load - service manages history
 )
 
-# With service-managed session - won't load (service handles it)
-service_session = agent.get_new_session(service_session_id="thread_abc123")
-response = await agent.run("Hello!", session=service_session)
-# Storage middleware sees service_session_id, skips loading
+agent_with_service = ChatAgent(
+    chat_client=client,
+    context_middleware=[service_storage]
+)
+service_session = agent_with_service.create_session(service_session_id="thread_abc123")
+response = await agent_with_service.run("Hello!", session=service_session)
+# Storage middleware stores for audit but doesn't load (service handles history)
 ```
 
 ### Example 6: Multiple Instances of Same Middleware Type
@@ -2145,7 +2176,7 @@ class StorageWithLogging(StorageContextMiddleware):
 - [ ] Create `ContextMiddlewarePipeline` with `from_config()` factory method
 - [ ] Create `ContextMiddlewareFactory` type alias and resolution logic
 - [ ] Create `StorageContextMiddleware` base class with load_messages/store flags
-- [ ] Implement pipeline validation (warn on multiple loaders with `load_messages=True`)
+- [ ] Implement pipeline validation (warn if multiple or zero storage middleware have `load_messages=True`)
 - [ ] Add `serialize()` and `restore()` methods to `ContextMiddleware` base class
 
 #### Phase 2: AgentSession Implementation
@@ -2179,7 +2210,7 @@ class StorageWithLogging(StorageContextMiddleware):
 - [ ] Unit tests for `ContextMiddleware` and pipeline execution order
 - [ ] Unit tests for middleware factory resolution
 - [ ] Unit tests for `StorageContextMiddleware` load/store behavior
-- [ ] Unit tests for `options.store` and `service_session_id` triggers
+- [ ] Unit tests for pipeline validation warnings (multiple/zero loaders)
 - [ ] Unit tests for source attribution (mandatory source_id)
 - [ ] Unit tests for `store_context_messages` and `store_context_from` options
 - [ ] Unit tests for session serialization/deserialization
