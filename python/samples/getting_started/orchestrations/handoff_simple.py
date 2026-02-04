@@ -233,12 +233,12 @@ async def main() -> None:
     ]
 
     # Start the workflow with the initial user message
-    # run_stream() returns an async iterator of WorkflowEvent
+    # run(..., stream=True) returns an async iterator of WorkflowEvent
     print("[Starting workflow with initial user message...]\n")
     initial_message = "Hello, I need assistance with my recent purchase."
     print(f"- User: {initial_message}")
-    workflow_result = await workflow.run(initial_message)
-    pending_requests = _handle_events(workflow_result)
+    workflow_result = workflow.run(initial_message, stream=True)
+    pending_requests = _handle_events([event async for event in workflow_result])
 
     # Process the request/response cycle
     # The workflow will continue requesting input until:

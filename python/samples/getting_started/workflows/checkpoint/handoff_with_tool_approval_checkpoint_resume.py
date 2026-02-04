@@ -39,7 +39,7 @@ Scenario:
 6. Workflow continues from the saved state.
 
 Pattern:
-- Step 1: workflow.run_stream(checkpoint_id=...) to restore checkpoint and pending requests.
+- Step 1: workflow.run(checkpoint_id=..., stream=True) to restore checkpoint and pending requests.
 - Step 2: workflow.send_responses_streaming(responses) to supply human replies and approvals.
 - Two-step approach is required because send_responses_streaming does not accept checkpoint_id.
 
@@ -190,10 +190,10 @@ async def run_until_user_input_needed(
 
     if initial_message:
         print(f"\nStarting workflow with: {initial_message}\n")
-        event_stream = workflow.run_stream(message=initial_message)  # type: ignore[attr-defined]
+        event_stream = workflow.run(message=initial_message, stream=True)  # type: ignore[attr-defined]
     elif checkpoint_id:
         print(f"\nResuming workflow from checkpoint: {checkpoint_id}\n")
-        event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)  # type: ignore[attr-defined]
+        event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)  # type: ignore[attr-defined]
     else:
         raise ValueError("Must provide either initial_message or checkpoint_id")
 
@@ -257,7 +257,7 @@ async def resume_with_responses(
     # Step 1: Restore the checkpoint to load pending requests into memory
     # The checkpoint restoration re-emits pending RequestInfoEvents
     restored_requests: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id):  # type: ignore[attr-defined]
+    async for event in workflow.run(checkpoint_id=latest_checkpoint.checkpoint_id, stream=True):  # type: ignore[attr-defined]
         if isinstance(event, RequestInfoEvent):
             restored_requests.append(event)
             if isinstance(event.data, HandoffAgentUserRequest):

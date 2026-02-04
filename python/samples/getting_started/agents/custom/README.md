@@ -13,7 +13,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 
 ### Custom Agents
 - Custom agents give you complete control over the agent's behavior
-- You must implement both `run()` (for complete responses) and `run_stream()` (for streaming responses)
+- You must implement both `run()` for both the `stream=True` and `stream=False` cases
 - Use `self._normalize_messages()` to handle different input message formats
 - Use `self._notify_thread_of_new_messages()` to properly manage conversation history
 

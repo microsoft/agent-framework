@@ -16,7 +16,7 @@ from typing_extensions import Never
 Sample: Sequential workflow with streaming.
 
 Two custom executors run in sequence. The first converts text to uppercase,
-the second reverses the text and completes the workflow. The run_stream loop prints events as they occur.
+the second reverses the text and completes the workflow. The streaming run loop prints events as they occur.
 
 Purpose:
 Show how to define explicit Executor classes with @handler methods, wire them in order with
@@ -75,7 +75,7 @@ async def main() -> None:
     # Step 2: Stream events for a single input.
     # The stream will include executor invoke and completion events, plus workflow outputs.
     outputs: list[str] = []
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         print(f"Event: {event}")
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(cast(str, event.data))

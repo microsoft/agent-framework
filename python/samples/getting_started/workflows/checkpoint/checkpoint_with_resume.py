@@ -119,9 +119,9 @@ async def main():
         # Start from checkpoint or fresh execution
         print(f"\n** Workflow {workflow.id} started **")
         event_stream = (
-            workflow.run_stream(message=10)
+            workflow.run(message=10, stream=True)
             if latest_checkpoint is None
-            else workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id)
+            else workflow.run(checkpoint_id=latest_checkpoint.checkpoint_id, stream=True)
         )
 
         output: str | None = None

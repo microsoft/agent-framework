@@ -118,8 +118,8 @@ async def main() -> None:
         .build()
     )
 
-    events = workflow.run_stream(
-        "Create quick workspace wellness tips for a remote analyst working across two monitors."
+    events = workflow.run(
+        "Create quick workspace wellness tips for a remote analyst working across two monitors.", stream=True
     )
 
     # Track the last author to format streaming output.

@@ -109,7 +109,7 @@ async def main() -> None:
     # request_id we must reuse on resume. In a real system this is where the UI would present
     # the plan for human review.
     plan_review_request: MagenticPlanReviewRequest | None = None
-    async for event in workflow.run_stream(TASK):
+    async for event in workflow.run(TASK, stream=True):
         if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
             plan_review_request = event.data
             print(f"Captured plan review request: {event.request_id}")
@@ -148,7 +148,7 @@ async def main() -> None:
 
     # Resume execution and capture the re-emitted plan review request.
     request_info_event: RequestInfoEvent | None = None
-    async for event in resumed_workflow.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
+    async for event in resumed_workflow.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, MagenticPlanReviewRequest):
             request_info_event = event
 
@@ -221,7 +221,7 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.run_stream(checkpoint_id=post_plan_checkpoint.checkpoint_id):
+    async for event in post_plan_workflow.run(checkpoint_id=post_plan_checkpoint.checkpoint_id, stream=True):
         post_emitted_events = True
         if isinstance(event, WorkflowOutputEvent):
             final_event_post = event

@@ -2005,12 +2005,12 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
             if stream:
-                return ResponseStream(
-                    self._run_stream(messages=messages, thread=thread, **kwargs),
-                    lambda x: AgentResponse.from_agent_run_response_updates(x),
-                )
+                return self._run_stream(messages=messages, thread=thread, **kwargs)
+            return self._run(messages=messages, thread=thread, **kwargs)
+
+        async def _run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(messages=[], thread=thread)
 
         async def _run_stream(self, messages=None, *, thread=None, **kwargs):
