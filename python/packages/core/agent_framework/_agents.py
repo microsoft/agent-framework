@@ -718,7 +718,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             "stop": opts.pop("stop", None),
             "store": opts.pop("store", None),
             "temperature": opts.pop("temperature", None),
-            "tool_choice": opts.pop("tool_choice", None),
+            "tool_choice": opts.pop("tool_choice", "auto"),
             "tools": agent_tools,
             "top_p": opts.pop("top_p", None),
             "user": opts.pop("user", None),

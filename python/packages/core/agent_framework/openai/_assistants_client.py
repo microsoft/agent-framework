@@ -636,7 +636,9 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []
-        if tool_mode["mode"] != "none" and tools is not None:
+        # Always include tools if provided, regardless of tool_choice
+        # tool_choice="none" means the model won't call tools, but tools should still be available
+        if tools is not None:
             for tool in tools:
                 if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
