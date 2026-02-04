@@ -217,7 +217,9 @@ class ContextHooks(ABC):
         pass
 ```
 
-**Alternative naming options:**
+> **Note on naming:** Both the class name (`ContextHooks`) and method names (`before_run`/`after_run`) are open for discussion. The names used throughout this ADR are placeholders pending a final decision. See alternative naming options below.
+
+**Alternative class naming options:**
 
 | Name | Rationale |
 |------|-----------|
@@ -228,6 +230,17 @@ class ContextHooks(ABC):
 | `ContextPlugin` | Emphasizes extensibility, familiar from build tools |
 | `SessionHooks` | Ties to `AgentSession`, emphasizes session lifecycle |
 | `InvokeHooks` | Directly describes what's being hooked (the invoke call) |
+
+**Alternative method naming options:**
+
+| before / after | Rationale |
+|----------------|-----------|
+| `before_run` / `after_run` | Matches `agent.run()` terminology |
+| `before_invoke` / `after_invoke` | Emphasizes invocation lifecycle |
+| `invoking` / `invoked` | Matches current Python `ContextProvider` and .NET naming |
+| `pre_invoke` / `post_invoke` | Common prefix convention |
+| `on_invoking` / `on_invoked` | Event-style naming |
+| `prepare` / `finalize` | Action-oriented naming |
 
 **Example usage:**
 
@@ -456,7 +469,7 @@ Default in-memory storage is added at runtime **only when**:
 - **No pipeline configured at all** (pipeline is empty or None)
 
 **Important:** If the user configures *any* middleware/hooks (even non-storage ones), the framework does **not** automatically add storage. This is intentional:
-- Once users start customizing the pipeline, we consider them a advanced user and they should know what they are doing,. therefore they should explicitly configure storage
+- Once users start customizing the pipeline, we consider them a advanced user and they should know what they are doing, therefore they should explicitly configure storage
 - Automatic insertion would create ordering ambiguity
 - Explicit configuration is clearer than implicit behavior
 
@@ -493,6 +506,7 @@ agent = ChatAgent(context_hooks=[create_cache])
 `AgentThread` becomes `AgentSession` to better reflect its purpose:
 - "Thread" implies a sequence of messages
 - "Session" better captures the broader scope (state, pipeline, lifecycle)
+- Align with recent change in .NET SDK
 
 ### 8. Session Serialization/Deserialization
 
