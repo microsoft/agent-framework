@@ -147,7 +147,7 @@ public abstract partial class AIAgent
     /// <param name="serializerOptions">Optional JSON serializer options to use for deserializing the response.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{Object}"/> with the agent's output.</returns>
     /// <remarks>
     /// This overload is useful when the agent has sufficient context from previous messages in the session
     /// or from its initial configuration to generate a meaningful response without additional input.
@@ -172,7 +172,7 @@ public abstract partial class AIAgent
     /// <param name="serializerOptions">Optional JSON serializer options to use for deserializing the response.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{Object}"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="resultType"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
@@ -205,7 +205,7 @@ public abstract partial class AIAgent
     /// <param name="serializerOptions">Optional JSON serializer options to use for deserializing the response.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{Object}"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="resultType"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public Task<AgentResponse<object>> RunAsync(
@@ -234,7 +234,7 @@ public abstract partial class AIAgent
     /// <param name="serializerOptions">Optional JSON serializer options to use for deserializing the response.</param>
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{Object}"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="resultType"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
