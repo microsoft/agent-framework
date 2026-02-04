@@ -3,10 +3,10 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.AI;
-using System.Threading.Tasks;
-using Moq;
 using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
