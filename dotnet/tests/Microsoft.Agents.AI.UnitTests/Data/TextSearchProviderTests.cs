@@ -340,7 +340,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(initialMessages, aiContextProviderMessages: null) { InvokeException = new InvalidOperationException("Request Failed") });
+        await provider.InvokedAsync(new(initialMessages) { InvokeException = new InvalidOperationException("Request Failed") });
 
         var invokingContext = new AIContextProvider.InvokingContext(
         [
@@ -380,7 +380,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(initialMessages, aiContextProviderMessages: null));
+        await provider.InvokedAsync(new(initialMessages));
 
         var invokingContext = new AIContextProvider.InvokingContext(
         [
@@ -417,7 +417,7 @@ public sealed class TextSearchProviderTests
         [
             new ChatMessage(ChatRole.User, "A"),
             new ChatMessage(ChatRole.Assistant, "B"),
-        ], aiContextProviderMessages: null));
+        ]));
 
         // Second memory update (C,D,E)
         await provider.InvokedAsync(new(
@@ -425,7 +425,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
             new ChatMessage(ChatRole.User, "E"),
-        ], aiContextProviderMessages: null));
+        ]));
 
         var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "F")]);
 
@@ -462,7 +462,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "U2"),
             new ChatMessage(ChatRole.Assistant, "A2"),
         };
-        await provider.InvokedAsync(new(initialMessages, null));
+        await provider.InvokedAsync(new(initialMessages));
 
         var invokingContext = new AIContextProvider.InvokingContext(
         [
@@ -518,7 +518,7 @@ public sealed class TextSearchProviderTests
         };
 
         // Act
-        await provider.InvokedAsync(new(messages, aiContextProviderMessages: null)); // Populate recent memory.
+        await provider.InvokedAsync(new(messages)); // Populate recent memory.
         var state = provider.Serialize();
 
         // Assert
@@ -547,7 +547,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
+        await provider.InvokedAsync(new(messages));
 
         // Act
         var state = provider.Serialize();
@@ -588,7 +588,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.Assistant, "L4"),
             new ChatMessage(ChatRole.User, "L5"),
         };
-        await initialProvider.InvokedAsync(new(messages, aiContextProviderMessages: null));
+        await initialProvider.InvokedAsync(new(messages));
         var state = initialProvider.Serialize();
 
         string? capturedInput = null;

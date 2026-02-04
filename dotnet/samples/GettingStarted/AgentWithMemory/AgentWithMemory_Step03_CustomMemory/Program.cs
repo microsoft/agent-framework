@@ -104,7 +104,7 @@ namespace SampleApp
 
         public UserInfo UserInfo { get; set; }
 
-        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((this.UserInfo.UserName is null || this.UserInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
@@ -122,7 +122,7 @@ namespace SampleApp
             }
         }
 
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             StringBuilder instructions = new();
 

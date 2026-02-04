@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,92 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class ChatHistoryProviderTests
 {
+    #region InvokingAsync Message Stamping Tests
+
+    [Fact]
+    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        IEnumerable<ChatMessage> messages = await provider.InvokingAsync(context);
+
+        // Assert
+        ChatMessage message = messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(typeof(TestChatHistoryProvider).FullName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WithCustomSourceName_StampsMessagesWithCustomSourceAsync()
+    {
+        // Arrange
+        const string CustomSourceName = "CustomHistorySource";
+        var provider = new TestChatHistoryProviderWithCustomSource(CustomSourceName);
+        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        IEnumerable<ChatMessage> messages = await provider.InvokingAsync(context);
+
+        // Assert
+        ChatMessage message = messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(CustomSourceName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_DoesNotReStampAlreadyStampedMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProviderWithPreStampedMessages();
+        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        IEnumerable<ChatMessage> messages = await provider.InvokingAsync(context);
+
+        // Assert
+        ChatMessage message = messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(typeof(TestChatHistoryProviderWithPreStampedMessages).FullName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_StampsMultipleMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProviderWithMultipleMessages();
+        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        IEnumerable<ChatMessage> messages = await provider.InvokingAsync(context);
+
+        // Assert
+        List<ChatMessage> messageList = messages.ToList();
+        Assert.Equal(3, messageList.Count);
+
+        foreach (ChatMessage message in messageList)
+        {
+            Assert.NotNull(message.AdditionalProperties);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+            Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+            Assert.Equal(typeof(TestChatHistoryProviderWithMultipleMessages).FullName, source);
+        }
+    }
+
+    #endregion
+
     #region GetService Method Tests
 
     [Fact]
@@ -212,10 +299,62 @@ public class ChatHistoryProviderTests
 
     private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
-            => new(Array.Empty<ChatMessage>());
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new([new ChatMessage(ChatRole.User, "Test Message")]);
 
-        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+            => default;
+
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
+    }
+
+    private sealed class TestChatHistoryProviderWithCustomSource : ChatHistoryProvider
+    {
+        public TestChatHistoryProviderWithCustomSource(string sourceName) : base(sourceName)
+        {
+        }
+
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new([new ChatMessage(ChatRole.User, "Test Message")]);
+
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+            => default;
+
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
+    }
+
+    private sealed class TestChatHistoryProviderWithPreStampedMessages : ChatHistoryProvider
+    {
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        {
+            var message = new ChatMessage(ChatRole.User, "Pre-stamped Message");
+            message.AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                [AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.ChatHistory,
+                [AgentRequestMessageSource.AdditionalPropertiesKey] = this.GetType().FullName!
+            };
+            return new([message]);
+        }
+
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+            => default;
+
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
+    }
+
+    private sealed class TestChatHistoryProviderWithMultipleMessages : ChatHistoryProvider
+    {
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new([
+                new ChatMessage(ChatRole.User, "Message 1"),
+                new ChatMessage(ChatRole.Assistant, "Message 2"),
+                new ChatMessage(ChatRole.User, "Message 3")
+            ]);
+
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
             => default;
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)

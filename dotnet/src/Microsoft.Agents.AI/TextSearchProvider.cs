@@ -107,7 +107,7 @@ public sealed class TextSearchProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
@@ -117,7 +117,9 @@ public sealed class TextSearchProvider : AIContextProvider
 
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
-        var requestMessagesText = context.RequestMessages.Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
+        var requestMessagesText = context.RequestMessages
+            .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+            .Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
         foreach (var messageText in this._recentMessagesText.Concat(requestMessagesText))
         {
             if (sbInput.Length > 0)
@@ -166,7 +168,7 @@ public sealed class TextSearchProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         int limit = this._recentMessageMemoryLimit;
         if (limit <= 0)
@@ -180,6 +182,7 @@ public sealed class TextSearchProvider : AIContextProvider
         }
 
         var messagesText = context.RequestMessages
+            .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
             .Concat(context.ResponseMessages ?? [])
             .Where(m =>
                 this._recentMessageRolesIncluded.Contains(m.Role) &&

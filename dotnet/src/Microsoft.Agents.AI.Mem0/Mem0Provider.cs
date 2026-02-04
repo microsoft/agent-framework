@@ -131,13 +131,16 @@ public sealed class Mem0Provider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
         string queryText = string.Join(
             Environment.NewLine,
-            context.RequestMessages.Where(m => !string.IsNullOrWhiteSpace(m.Text)).Select(m => m.Text));
+            context.RequestMessages
+                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+                .Where(m => !string.IsNullOrWhiteSpace(m.Text))
+                .Select(m => m.Text));
 
         try
         {
@@ -202,7 +205,7 @@ public sealed class Mem0Provider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         if (context.InvokeException is not null)
         {
@@ -212,7 +215,11 @@ public sealed class Mem0Provider : AIContextProvider
         try
         {
             // Persist request and response messages after invocation.
-            await this.PersistMessagesAsync(context.RequestMessages.Concat(context.ResponseMessages ?? []), cancellationToken).ConfigureAwait(false);
+            await this.PersistMessagesAsync(
+                context.RequestMessages
+                    .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+                    .Concat(context.ResponseMessages ?? []),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

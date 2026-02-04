@@ -116,7 +116,7 @@ public class ChatHistoryMemoryProviderTests
         var requestMsgWithNulls = new ChatMessage(ChatRole.User, "request text nulls");
         var responseMsg = new ChatMessage(ChatRole.Assistant, "response text") { MessageId = "resp-1", AuthorName = "assistant" };
 
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsgWithValues, requestMsgWithNulls], aiContextProviderMessages: null)
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsgWithValues, requestMsgWithNulls])
         {
             ResponseMessages = [responseMsg]
         };
@@ -174,7 +174,7 @@ public class ChatHistoryMemoryProviderTests
             1,
             new ChatHistoryMemoryProviderScope() { UserId = "UID" });
         var requestMsg = new ChatMessage(ChatRole.User, "request text") { MessageId = "req-1" };
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null)
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsg])
         {
             InvokeException = new InvalidOperationException("Invoke failed")
         };
@@ -203,7 +203,7 @@ public class ChatHistoryMemoryProviderTests
             new ChatHistoryMemoryProviderScope() { UserId = "UID" },
             loggerFactory: this._loggerFactoryMock.Object);
         var requestMsg = new ChatMessage(ChatRole.User, "request text") { MessageId = "req-1" };
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsg]);
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
@@ -254,7 +254,7 @@ public class ChatHistoryMemoryProviderTests
             loggerFactory: this._loggerFactoryMock.Object);
 
         var requestMsg = new ChatMessage(ChatRole.User, "request text");
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsg]);
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -33,8 +34,8 @@ public static class ChatHistoryProviderExtensions
     }
 
     /// <summary>
-    /// Decorates the provided chat message <see cref="ChatHistoryProvider"/> so that it does not add
-    /// messages produced by any <see cref="AIContextProvider"/> to chat history.
+    /// Decorates the provided <see cref="ChatHistoryProvider"/> so that it does not add
+    /// messages with <see cref="AgentRequestMessageSourceType.AIContextProvider"/> to chat history.
     /// </summary>
     /// <param name="provider">The <see cref="ChatHistoryProvider"/> to add the message filter to.</param>
     /// <returns>A new <see cref="ChatHistoryProvider"/> instance that filters out <see cref="AIContextProvider"/> messages so they do not get added.</returns>
@@ -44,7 +45,7 @@ public static class ChatHistoryProviderExtensions
             innerProvider: provider,
             invokedMessagesFilter: (ctx) =>
             {
-                ctx.AIContextProviderMessages = null;
+                ctx.RequestMessages = ctx.RequestMessages.Where(x => x.GetAgentRequestMessageSource() != AgentRequestMessageSourceType.AIContextProvider);
                 return ctx;
             });
     }

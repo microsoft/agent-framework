@@ -287,7 +287,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -347,7 +347,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
@@ -364,7 +364,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
-        var messageList = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []).ToList();
+        var messageList = context.RequestMessages.Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
         {
             return;

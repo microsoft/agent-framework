@@ -25,8 +25,8 @@ namespace Microsoft.Agents.AI;
 /// abstractions to work with any compatible vector store implementation.
 /// </para>
 /// <para>
-/// Messages are stored during the <see cref="InvokedAsync"/> method and retrieved during the
-/// <see cref="InvokingAsync"/> method using semantic similarity search.
+/// Messages are stored during the <see cref="InvokedCoreAsync"/> method and retrieved during the
+/// <see cref="InvokingCoreAsync"/> method using semantic similarity search.
 /// </para>
 /// <para>
 /// Behavior is configurable through <see cref="ChatHistoryMemoryProviderOptions"/>. When
@@ -175,7 +175,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -189,6 +189,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         {
             // Get the text from the current request messages
             var requestText = string.Join("\n", context.RequestMessages
+                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
@@ -228,7 +229,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -244,6 +245,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
             List<Dictionary<string, object?>> itemsToStore = context.RequestMessages
+                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {

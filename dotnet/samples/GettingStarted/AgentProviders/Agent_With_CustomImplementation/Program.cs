@@ -62,7 +62,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages)
             {
                 ResponseMessages = responseMessages
             };
@@ -94,7 +94,7 @@ namespace SampleApp
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages)
             {
                 ResponseMessages = responseMessages
             };

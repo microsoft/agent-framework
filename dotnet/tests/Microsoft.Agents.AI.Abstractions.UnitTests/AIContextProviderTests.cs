@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -11,34 +12,154 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 public class AIContextProviderTests
 {
+    #region InvokingAsync Message Stamping Tests
+
+    [Fact]
+    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceAsync()
+    {
+        // Arrange
+        var provider = new TestAIContextProviderWithMessages();
+        var context = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        AIContext aiContext = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        ChatMessage message = aiContext.Messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(typeof(TestAIContextProviderWithMessages).FullName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WithCustomSourceName_StampsMessagesWithCustomSourceAsync()
+    {
+        // Arrange
+        const string CustomSourceName = "CustomContextSource";
+        var provider = new TestAIContextProviderWithCustomSource(CustomSourceName);
+        var context = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        AIContext aiContext = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        ChatMessage message = aiContext.Messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(CustomSourceName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_DoesNotReStampAlreadyStampedMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestAIContextProviderWithPreStampedMessages();
+        var context = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        AIContext aiContext = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        ChatMessage message = aiContext.Messages.Single();
+        Assert.NotNull(message.AdditionalProperties);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+        Assert.Equal(typeof(TestAIContextProviderWithPreStampedMessages).FullName, source);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_StampsMultipleMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestAIContextProviderWithMultipleMessages();
+        var context = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        AIContext aiContext = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        List<ChatMessage> messageList = aiContext.Messages.ToList();
+        Assert.Equal(3, messageList.Count);
+
+        foreach (ChatMessage message in messageList)
+        {
+            Assert.NotNull(message.AdditionalProperties);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
+            Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
+            Assert.Equal(typeof(TestAIContextProviderWithMultipleMessages).FullName, source);
+        }
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WithNullMessages_ReturnsContextWithoutStampingAsync()
+    {
+        // Arrange
+        var provider = new TestAIContextProvider();
+        var context = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Request")]);
+
+        // Act
+        AIContext aiContext = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Null(aiContext.Messages);
+    }
+
+    #endregion
+
+    #region Basic Tests
+
     [Fact]
     public async Task InvokedAsync_ReturnsCompletedTaskAsync()
     {
+        // Arrange
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>([]);
-        var task = provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
+
+        // Act
+        ValueTask task = provider.InvokedAsync(new(messages));
+
+        // Assert
         Assert.Equal(default, task);
     }
 
     [Fact]
     public void Serialize_ReturnsEmptyElement()
     {
+        // Arrange
         var provider = new TestAIContextProvider();
+
+        // Act
         var actual = provider.Serialize();
+
+        // Assert
         Assert.Equal(default, actual);
     }
 
     [Fact]
     public void InvokingContext_Constructor_ThrowsForNullMessages()
     {
+        // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokingContext(null!));
     }
 
     [Fact]
     public void InvokedContext_Constructor_ThrowsForNullMessages()
     {
-        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!, aiContextProviderMessages: null));
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!));
     }
+
+    #endregion
 
     #region GetService Method Tests
 
@@ -263,9 +384,59 @@ public class AIContextProviderTests
 
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(new AIContext());
+    }
+
+    private sealed class TestAIContextProviderWithMessages : AIContextProvider
+    {
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(new AIContext
+            {
+                Messages = [new ChatMessage(ChatRole.System, "Context Message")]
+            });
+    }
+
+    private sealed class TestAIContextProviderWithCustomSource : AIContextProvider
+    {
+        public TestAIContextProviderWithCustomSource(string sourceName) : base(sourceName)
         {
-            return default;
         }
+
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(new AIContext
+            {
+                Messages = [new ChatMessage(ChatRole.System, "Context Message")]
+            });
+    }
+
+    private sealed class TestAIContextProviderWithPreStampedMessages : AIContextProvider
+    {
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        {
+            var message = new ChatMessage(ChatRole.System, "Pre-stamped Message");
+            message.AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                [AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.AIContextProvider,
+                [AgentRequestMessageSource.AdditionalPropertiesKey] = this.GetType().FullName!
+            };
+            return new(new AIContext
+            {
+                Messages = [message]
+            });
+        }
+    }
+
+    private sealed class TestAIContextProviderWithMultipleMessages : AIContextProvider
+    {
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(new AIContext
+            {
+                Messages = [
+                    new ChatMessage(ChatRole.System, "Message 1"),
+                    new ChatMessage(ChatRole.User, "Message 2"),
+                    new ChatMessage(ChatRole.Assistant, "Message 3")
+                ]
+            });
     }
 }
