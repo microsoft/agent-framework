@@ -762,7 +762,7 @@ def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> 
 
 
 def test_prepare_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
-    """Test _prepare_options with tool_choice set to 'none'."""
+    """Test _prepare_options with tool_choice set to 'none' and no tools."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     options = {
@@ -774,9 +774,38 @@ def test_prepare_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
-    # Should set tool_choice to none and not include tools
+    # Should set tool_choice to none - no tools because none were provided
     assert run_options["tool_choice"] == "none"
     assert "tools" not in run_options
+
+
+def test_prepare_options_tool_choice_none_with_tools(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with tool_choice='none' but tools provided.
+
+    When tool_choice='none', the model won't call tools, but tools should still
+    be sent to the API so they're available for future turns in the conversation.
+    """
+    chat_client = create_test_openai_assistants_client(mock_async_openai)
+
+    # Create a function tool
+    @tool(approval_mode="never_require")
+    def test_func(arg: str) -> str:
+        return arg
+
+    options = {
+        "tool_choice": "none",
+        "tools": [test_func],
+    }
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+
+    # Call the method
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
+
+    # Should set tool_choice to none BUT still include tools
+    assert run_options["tool_choice"] == "none"
+    assert "tools" in run_options
+    assert len(run_options["tools"]) == 1
 
 
 def test_prepare_options_required_function(mock_async_openai: MagicMock) -> None:
