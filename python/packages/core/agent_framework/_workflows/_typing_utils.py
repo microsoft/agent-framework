@@ -3,10 +3,10 @@
 from types import UnionType
 from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
-from .._agents import ChatAgent, TOptions_co
+from .._agents import ChatAgent
 
 
-def is_chat_agent(agent: Any) -> TypeGuard[ChatAgent[TOptions_co]]:
+def is_chat_agent(agent: Any) -> TypeGuard[ChatAgent]:
     """Check if the given agent is a ChatAgent.
 
     Args:
