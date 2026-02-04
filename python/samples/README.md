@@ -242,32 +242,36 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/multimodal_input/openai_chat_multimodal.py`](./getting_started/multimodal_input/openai_chat_multimodal.py) | OpenAI Chat with multimodal (image) input example |
 
 
-## Azure Functions
+## Durable
+
+These samples demonstrate durable agent hosting patterns using the Durable Task Scheduler and Azure Functions with Durable Extension.
+
+### Azure Functions
 
 | Sample | Description |
 |--------|-------------|
-| [`getting_started/azure_functions/01_single_agent/`](./getting_started/azure_functions/01_single_agent/) | Host a single agent in Azure Functions with Durable Extension HTTP endpoints and per-session state. |
-| [`getting_started/azure_functions/02_multi_agent/`](./getting_started/azure_functions/02_multi_agent/) | Register multiple agents in one function app with dedicated run routes and a health check endpoint. |
-| [`getting_started/azure_functions/03_reliable_streaming/`](./getting_started/azure_functions/03_reliable_streaming/) | Implement reliable streaming for durable agents using Redis Streams with cursor-based resumption. |
-| [`getting_started/azure_functions/04_single_agent_orchestration_chaining/`](./getting_started/azure_functions/04_single_agent_orchestration_chaining/) | Chain sequential agent executions inside a durable orchestration while preserving the shared thread context. |
-| [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
-| [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
-| [`getting_started/azure_functions/07_single_agent_orchestration_hitl/`](./getting_started/azure_functions/07_single_agent_orchestration_hitl/) | Implement a human-in-the-loop approval loop that iterates on agent output inside a durable orchestration. |
-| [`getting_started/azure_functions/08_mcp_server/`](./getting_started/azure_functions/08_mcp_server/) | Configure agents as both HTTP endpoints and MCP tools for flexible integration patterns. |
+| [`durable/azure_functions/01_single_agent/`](./durable/azure_functions/01_single_agent/) | Host a single agent in Azure Functions with Durable Extension HTTP endpoints and per-session state. |
+| [`durable/azure_functions/02_multi_agent/`](./durable/azure_functions/02_multi_agent/) | Register multiple agents in one function app with dedicated run routes and a health check endpoint. |
+| [`durable/azure_functions/03_reliable_streaming/`](./durable/azure_functions/03_reliable_streaming/) | Implement reliable streaming for durable agents using Redis Streams with cursor-based resumption. |
+| [`durable/azure_functions/04_single_agent_orchestration_chaining/`](./durable/azure_functions/04_single_agent_orchestration_chaining/) | Chain sequential agent executions inside a durable orchestration while preserving the shared thread context. |
+| [`durable/azure_functions/05_multi_agent_orchestration_concurrency/`](./durable/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
+| [`durable/azure_functions/06_multi_agent_orchestration_conditionals/`](./durable/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
+| [`durable/azure_functions/07_single_agent_orchestration_hitl/`](./durable/azure_functions/07_single_agent_orchestration_hitl/) | Implement a human-in-the-loop approval loop that iterates on agent output inside a durable orchestration. |
+| [`durable/azure_functions/08_mcp_server/`](./durable/azure_functions/08_mcp_server/) | Configure agents as both HTTP endpoints and MCP tools for flexible integration patterns. |
 
-## Durable Task
+### Console Apps
 
 These samples demonstrate durable agent hosting using the Durable Task Scheduler with a worker-client architecture pattern, enabling distributed agent execution with persistent conversation state.
 
 | Sample | Description |
 |--------|-------------|
-| [`getting_started/durabletask/01_single_agent/`](./getting_started/durabletask/01_single_agent/) | Host a single conversational agent with worker-client architecture and agent state management. |
-| [`getting_started/durabletask/02_multi_agent/`](./getting_started/durabletask/02_multi_agent/) | Host multiple domain-specific agents and route requests based on question topic. |
-| [`getting_started/durabletask/03_single_agent_streaming/`](./getting_started/durabletask/03_single_agent_streaming/) | Implement reliable streaming using Redis Streams with cursor-based resumption for durable agents. |
-| [`getting_started/durabletask/04_single_agent_orchestration_chaining/`](./getting_started/durabletask/04_single_agent_orchestration_chaining/) | Chain multiple agent invocations using durable orchestration while preserving conversation context. |
-| [`getting_started/durabletask/05_multi_agent_orchestration_concurrency/`](./getting_started/durabletask/05_multi_agent_orchestration_concurrency/) | Run multiple agents concurrently within an orchestration and aggregate their responses. |
-| [`getting_started/durabletask/06_multi_agent_orchestration_conditionals/`](./getting_started/durabletask/06_multi_agent_orchestration_conditionals/) | Implement conditional branching with spam detection using structured outputs and activity functions. |
-| [`getting_started/durabletask/07_single_agent_orchestration_hitl/`](./getting_started/durabletask/07_single_agent_orchestration_hitl/) | Human-in-the-loop pattern with external event handling, timeouts, and iterative refinement. |
+| [`durable/console_apps/01_single_agent/`](./durable/console_apps/01_single_agent/) | Host a single conversational agent with worker-client architecture and agent state management. |
+| [`durable/console_apps/02_multi_agent/`](./durable/console_apps/02_multi_agent/) | Host multiple domain-specific agents and route requests based on question topic. |
+| [`durable/console_apps/03_single_agent_streaming/`](./durable/console_apps/03_single_agent_streaming/) | Implement reliable streaming using Redis Streams with cursor-based resumption for durable agents. |
+| [`durable/console_apps/04_single_agent_orchestration_chaining/`](./durable/console_apps/04_single_agent_orchestration_chaining/) | Chain multiple agent invocations using durable orchestration while preserving conversation context. |
+| [`durable/console_apps/05_multi_agent_orchestration_concurrency/`](./durable/console_apps/05_multi_agent_orchestration_concurrency/) | Run multiple agents concurrently within an orchestration and aggregate their responses. |
+| [`durable/console_apps/06_multi_agent_orchestration_conditionals/`](./durable/console_apps/06_multi_agent_orchestration_conditionals/) | Implement conditional branching with spam detection using structured outputs and activity functions. |
+| [`durable/console_apps/07_single_agent_orchestration_hitl/`](./durable/console_apps/07_single_agent_orchestration_hitl/) | Human-in-the-loop pattern with external event handling, timeouts, and iterative refinement. |
 
 ## Observability
 

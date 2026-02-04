@@ -21,7 +21,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/06_multi_agent_orchestration_conditionals
+cd samples/durable/console_apps/06_multi_agent_orchestration_conditionals
 python sample.py
 ```
 

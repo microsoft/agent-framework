@@ -20,7 +20,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/02_multi_agent
+cd samples/durable/console_apps/02_multi_agent
 python sample.py
 ```
 
