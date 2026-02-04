@@ -10,7 +10,7 @@ using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
-public partial class ChatClientAgent_SO_WithFormatResponseTests
+public partial class ChatClientAgent_StructuredOutput_WithFormatResponseTests
 {
     [Fact]
     public async Task RunAsync_ResponseFormatProvidedAtAgentInitialization_IsPropagatedToChatClientAsync()

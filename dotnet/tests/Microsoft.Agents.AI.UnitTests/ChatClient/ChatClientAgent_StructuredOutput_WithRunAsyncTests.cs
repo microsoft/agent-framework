@@ -10,7 +10,7 @@ using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
-public partial class ChatClientAgent_SO_WithRunAsyncTests
+public partial class ChatClientAgent_StructuredOutput_WithRunAsyncTests
 {
     [Fact]
     public async Task RunAsync_WithGenericType_SetsJsonSchemaResponseFormatAndDeserializesResultAsync()
