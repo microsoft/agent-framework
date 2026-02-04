@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import types
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -110,7 +111,7 @@ class AgentExecutor(Executor):
         return self._output_response
 
     @property
-    def workflow_output_types(self) -> list[type[Any]]:
+    def workflow_output_types(self) -> list[type[Any] | types.UnionType]:
         # Override to declare AgentResponse as a possible output type only if enabled.
         if self._output_response:
             return [AgentResponse]

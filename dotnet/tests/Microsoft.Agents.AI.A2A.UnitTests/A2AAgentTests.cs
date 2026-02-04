@@ -148,7 +148,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync(inputMessages, session);
@@ -168,7 +168,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -201,7 +201,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -272,7 +272,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, session))
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -316,7 +316,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -440,7 +440,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
@@ -466,7 +466,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync("Start a task", session);
@@ -492,7 +492,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var result = await this._agent.RunAsync("Start a long-running task", session);
@@ -586,7 +586,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         // Act
@@ -613,7 +613,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", session))
@@ -686,7 +686,7 @@ public sealed class A2AAgentTests : IDisposable
             ]
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -725,7 +725,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Working }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -768,7 +768,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();

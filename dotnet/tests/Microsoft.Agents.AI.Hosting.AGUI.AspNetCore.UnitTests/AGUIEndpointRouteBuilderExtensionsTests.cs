@@ -425,7 +425,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
         public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
@@ -515,7 +515,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Test agent";
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
         public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>

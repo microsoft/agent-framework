@@ -42,7 +42,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public sealed override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new CopilotStudioAgentSession());
 
     /// <summary>
@@ -50,7 +50,7 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
     /// <returns>A new <see cref="AgentSession"/> instance.</returns>
-    public ValueTask<AgentSession> GetNewSessionAsync(string conversationId)
+    public ValueTask<AgentSession> CreateSessionAsync(string conversationId)
         => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>
@@ -68,7 +68,7 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid session to work with.
         // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
@@ -107,7 +107,7 @@ public class CopilotStudioAgent : AIAgent
         // Ensure that we have a valid session to work with.
         // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");

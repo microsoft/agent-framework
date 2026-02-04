@@ -352,9 +352,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
+            # instructions is accessed from chat_options since the base class excludes it from run_options
             combined_instructions = [
                 instructions
-                for instructions in [messages_instructions, run_options.get("instructions")]
+                for instructions in [messages_instructions, chat_options.get("instructions") if chat_options else None]
                 if instructions
             ]
             if combined_instructions:

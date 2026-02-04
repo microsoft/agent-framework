@@ -6,8 +6,8 @@ from agent_framework import (
     ChatAgent,
     CodeInterpreterToolCallContent,
     CodeInterpreterToolResultContent,
+    Content,
     HostedCodeInterpreterTool,
-    TextContent,
     tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
@@ -41,13 +41,13 @@ async def main() -> None:
         if code_blocks:
             code_inputs = code_blocks[0].inputs or []
             for content in code_inputs:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     print(f"Generated code:\n{content.text}")
                     break
         if outputs:
             print("Execution outputs:")
             for out in outputs[0].outputs or []:
-                if isinstance(out, TextContent):
+                if out.type == "text":
                     print(out.text)
 
 
