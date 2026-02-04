@@ -1391,12 +1391,26 @@ async def test_integration_options(
 
         assert response is not None
         assert isinstance(response, ChatResponse)
-        assert response.text is not None, f"No text in response for option '{option_name}'"
-        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+
+        # For tool_choice="required", we return after tool execution without a model text response
+        is_required_tool_choice = option_name == "tool_choice" and (
+            option_value == "required" or (isinstance(option_value, dict) and option_value.get("mode") == "required")
+        )
+
+        if is_required_tool_choice:
+            # Response should have function call and function result, but no text from model
+            assert len(response.messages) >= 2, f"Expected function call + result for {option_name}"
+            has_function_call = any(c.type == "function_call" for msg in response.messages for c in msg.contents)
+            has_function_result = any(c.type == "function_result" for msg in response.messages for c in msg.contents)
+            assert has_function_call, f"No function call in response for {option_name}"
+            assert has_function_result, f"No function result in response for {option_name}"
+        else:
+            assert response.text is not None, f"No text in response for option '{option_name}'"
+            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
 
         # Validate based on option type
         if needs_validation:
-            if option_name.startswith("tool_choice"):
+            if option_name.startswith("tool_choice") and not is_required_tool_choice:
                 # Should have called the weather function
                 text = response.text.lower()
                 assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
