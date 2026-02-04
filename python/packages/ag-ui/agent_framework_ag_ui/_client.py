@@ -179,7 +179,7 @@ class AGUIChatClient(
 
         .. code-block:: python
 
-            async for update in client.get_streaming_response("Tell me a story"):
+            async for update in client.get_response("Tell me a story", stream=True):
                 if update.contents:
                     for content in update.contents:
                         if hasattr(content, "text"):
@@ -471,14 +471,3 @@ class AGUIChatClient(
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
                 yield update
-
-    def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Legacy helper for streaming responses."""
-        stream = self.get_response(messages, stream=True, **kwargs)
-        if not isinstance(stream, ResponseStream):
-            raise ValueError("Expected ResponseStream for streaming response.")
-        return stream

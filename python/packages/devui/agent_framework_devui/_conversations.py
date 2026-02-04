@@ -588,7 +588,7 @@ class InMemoryConversationStore(ConversationStore):
         return None
 
     def get_thread(self, conversation_id: str) -> AgentThread | None:
-        """Get AgentThread for execution - CRITICAL for agent.run_stream()."""
+        """Get AgentThread for execution - CRITICAL for agent.run()."""
         conv_data = self._conversations.get(conversation_id)
         return conv_data["thread"] if conv_data else None
 

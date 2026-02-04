@@ -1944,7 +1944,7 @@ class TestMiddlewareWithProtocolOnlyAgent:
     """Test use_agent_middleware with agents implementing only AgentProtocol."""
 
     async def test_middleware_with_protocol_only_agent(self) -> None:
-        """Verify middleware works without BareAgent inheritance for both run and run_stream."""
+        """Verify middleware works without BareAgent inheritance for both run."""
         from collections.abc import AsyncIterable
 
         from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate, use_agent_middleware
@@ -1990,5 +1990,3 @@ class TestMiddlewareWithProtocolOnlyAgent:
         response = await agent.run("test message")
         assert response is not None
         assert execution_order == ["before", "after"]
-
-        # run_stream is not wrapped by use_agent_middleware

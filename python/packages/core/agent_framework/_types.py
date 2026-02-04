@@ -2216,7 +2216,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
                 client = ChatClient()  # should be a concrete implementation
                 response = await ChatResponse.from_chat_response_generator(
-                    client.get_streaming_response("Hello, how are you?")
+                    client.get_response("Hello, how are you?", stream=True)
                 )
                 print(response.text)
 

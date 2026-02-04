@@ -230,7 +230,6 @@ class TestAgentEntityRunAgent:
 
         mock_agent = Mock()
         mock_agent.name = "StreamingAgent"
-        mock_agent.run_stream = Mock(return_value=update_generator())
         mock_agent.run = AsyncMock(side_effect=AssertionError("run() should not be called when streaming succeeds"))
 
         callback = RecordingCallback()
@@ -272,7 +271,6 @@ class TestAgentEntityRunAgent:
         """Ensure the final callback fires even when streaming is unavailable."""
         mock_agent = Mock()
         mock_agent.name = "NonStreamingAgent"
-        mock_agent.run_stream = None
         agent_response = _agent_response("Final response")
         mock_agent.run = AsyncMock(return_value=agent_response)
 

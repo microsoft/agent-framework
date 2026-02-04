@@ -585,7 +585,7 @@ async def test_get_streaming(
         stream=True,
         messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
-        # `OpenAIChatCompletionBase._inner_get_streaming_response`.
+        # `OpenAIChatCompletionBase.get_response(..., stream=True)`.
         # To ensure consistency, we align the arguments here accordingly.
         stream_options={"include_usage": True},
     )

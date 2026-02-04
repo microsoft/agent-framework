@@ -129,7 +129,7 @@ class Workflow(DictConvertible):
     The workflow provides two primary execution APIs, each supporting multiple scenarios:
 
     - **run()**: Execute to completion, returns WorkflowRunResult with all events
-    - **run_stream()**: Returns async generator yielding events as they occur
+    - **run(..., stream=True)**: Returns ResponseStream yielding events as they occur
 
     Both methods support:
     - Initial workflow runs: Provide `message` parameter
@@ -138,7 +138,7 @@ class Workflow(DictConvertible):
     - Runtime checkpointing: Provide `checkpoint_storage` to enable/override checkpointing for this run
 
     ## State Management
-    Workflow instances contain states and states are preserved across calls to `run` and `run_stream`.
+    Workflow instances contain states and states are preserved across calls to `run`.
     To execute multiple independent runs, create separate Workflow instances via WorkflowBuilder.
 
     ## External Input Requests
@@ -156,7 +156,7 @@ class Workflow(DictConvertible):
     Build-time (via WorkflowBuilder):
         workflow = WorkflowBuilder().with_checkpointing(storage).build()
 
-    Runtime (via run/run_stream parameters):
+    Runtime (via run parameters):
         result = await workflow.run(message, checkpoint_storage=runtime_storage)
 
     When enabled, checkpoints are created at the end of each superstep, capturing:

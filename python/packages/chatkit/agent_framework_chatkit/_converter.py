@@ -563,7 +563,7 @@ class ThreadItemConverter:
                 from agent_framework import ChatAgent
 
                 agent = ChatAgent(...)
-                response = await agent.run_stream(messages)
+                response = await agent.run(messages)
         """
         thread_items = list(thread_items) if isinstance(thread_items, Sequence) else [thread_items]
 

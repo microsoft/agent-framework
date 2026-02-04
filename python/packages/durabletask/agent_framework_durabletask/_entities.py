@@ -202,32 +202,33 @@ class AgentEntity:
                 request_message=request_message,
             )
 
-        run_stream_callable = getattr(self.agent, "run_stream", None)
-        if callable(run_stream_callable):
-            try:
-                stream_candidate = run_stream_callable(**run_kwargs)
-                if inspect.isawaitable(stream_candidate):
-                    stream_candidate = await stream_candidate
+        run_callable = getattr(self.agent, "run", None)
+        if run_callable is None or not callable(run_callable):
+            raise AttributeError("Agent does not implement run() method")
 
-                return await self._consume_stream(
-                    stream=cast(AsyncIterable[AgentResponseUpdate], stream_candidate),
-                    callback_context=callback_context,
-                )
-            except TypeError as type_error:
-                if "__aiter__" not in str(type_error):
-                    raise
-                logger.debug(
-                    "run_stream returned a non-async result; falling back to run(): %s",
-                    type_error,
-                )
-            except Exception as stream_error:
-                logger.warning(
-                    "run_stream failed; falling back to run(): %s",
-                    stream_error,
-                    exc_info=True,
-                )
-        else:
-            logger.debug("Agent does not expose run_stream; falling back to run().")
+        # Try streaming first with run(stream=True)
+        try:
+            stream_candidate = run_callable(stream=True, **run_kwargs)
+            if inspect.isawaitable(stream_candidate):
+                stream_candidate = await stream_candidate
+
+            return await self._consume_stream(
+                stream=cast(AsyncIterable[AgentResponseUpdate], stream_candidate),
+                callback_context=callback_context,
+            )
+        except TypeError as type_error:
+            if "__aiter__" not in str(type_error) and "stream" not in str(type_error):
+                raise
+            logger.debug(
+                "run(stream=True) returned a non-async result; falling back to run(): %s",
+                type_error,
+            )
+        except Exception as stream_error:
+            logger.warning(
+                "run(stream=True) failed; falling back to run(): %s",
+                stream_error,
+                exc_info=True,
+            )
 
         agent_run_response = await self._invoke_non_stream(run_kwargs)
         await self._notify_final_response(agent_run_response, callback_context)

@@ -564,21 +564,36 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
     assert executor._extract_workflow_hil_responses({"email": "test"}) is None
 
 
-async def test_executor_handles_non_streaming_agent():
-    """Test executor can handle agents with only run() method (no run_stream)."""
-    from agent_framework import AgentResponse, AgentThread, ChatMessage, Content
+async def test_executor_handles_streaming_agent():
+    """Test executor handles agents with run(stream=True) method."""
+    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content, Role
 
-    class NonStreamingAgent:
-        """Agent with only run() method - does NOT satisfy full AgentProtocol."""
+    class StreamingAgent:
+        """Agent with run() method supporting stream parameter."""
 
-        id = "non_streaming_test"
-        name = "Non-Streaming Test Agent"
-        description = "Test agent without run_stream()"
+        id = "streaming_test"
+        name = "Streaming Test Agent"
+        description = "Test agent with run(stream=True)"
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+            if stream:
+                # Return an async generator for streaming
+                return self._stream_impl(messages)
+            # Return awaitable for non-streaming
+            return self._run_impl(messages)
+
+        async def _run_impl(self, messages):
             return AgentResponse(
-                messages=[ChatMessage("assistant", [Content.from_text(text=f"Processed: {messages}")])],
+                messages=[
+                    ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=f"Processed: {messages}")])
+                ],
                 response_id="test_123",
+            )
+
+        async def _stream_impl(self, messages):
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text=f"Processed: {messages}")],
+                role=Role.ASSISTANT,
             )
 
         def get_new_thread(self, **kwargs):
@@ -589,11 +604,11 @@ async def test_executor_handles_non_streaming_agent():
     mapper = MessageMapper()
     executor = AgentFrameworkExecutor(discovery, mapper)
 
-    agent = NonStreamingAgent()
+    agent = StreamingAgent()
     entity_info = await discovery.create_entity_info_from_object(agent, source="test")
     discovery.register_entity(entity_info.id, entity_info, agent)
 
-    # Execute non-streaming agent (use metadata.entity_id for routing)
+    # Execute streaming agent (use metadata.entity_id for routing)
     request = AgentFrameworkRequest(
         metadata={"entity_id": entity_info.id},
         input="hello",
@@ -604,7 +619,7 @@ async def test_executor_handles_non_streaming_agent():
     async for event in executor.execute_streaming(request):
         events.append(event)
 
-    # Should get events even though agent doesn't stream
+    # Should get events from streaming agent
     assert len(events) > 0
     text_events = [e for e in events if hasattr(e, "type") and e.type == "response.output_text.delta"]
     assert len(text_events) > 0

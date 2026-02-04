@@ -89,7 +89,7 @@ from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, Conte
 class NonStreamingAgent:
     id = "non_streaming"
     name = "Non-Streaming Agent"
-    description = "Agent without run_stream"
+    description = "Agent with run() method"
 
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
@@ -125,7 +125,6 @@ agent = NonStreamingAgent()
         enriched = discovery.get_entity_info(entity.id)
         assert enriched.type == "agent"  # Now correctly identified
         assert enriched.name == "Non-Streaming Agent"
-        assert not enriched.metadata.get("has_run_stream")
 
 
 async def test_lazy_loading():

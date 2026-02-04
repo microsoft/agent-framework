@@ -295,7 +295,7 @@ class BareAgent(SerializationMixin):
 
     Note:
         BareAgent cannot be instantiated directly as it doesn't implement the
-        ``run()``, ``run_stream()``, and other methods required by AgentProtocol.
+        ``run()`` and other methods required by AgentProtocol.
         Use a concrete implementation like ChatAgent or create a subclass.
 
     Examples:
@@ -443,7 +443,7 @@ class BareAgent(SerializationMixin):
             arg_name: The name of the function argument (default: "task").
             arg_description: The description for the function argument.
                 If None, defaults to "Task for {tool_name}".
-            stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
+            stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -643,7 +643,7 @@ class BareChatAgent(BareAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 tool_choice, and provider-specific options like reasoning_effort.
                 You can also create your own TypedDict for custom chat clients.
                 Note: response_format typing does not flow into run outputs when set via default_options.
-                These can be overridden at runtime via the ``options`` parameter of ``run()`` and ``run_stream()``.
+                These can be overridden at runtime via the ``options`` parameter of ``run()``.
             tools: The tools to use for the request.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 

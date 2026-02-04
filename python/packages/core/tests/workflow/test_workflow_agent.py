@@ -546,7 +546,7 @@ class TestWorkflowAgent:
     async def test_thread_conversation_history_included_in_workflow_stream(self) -> None:
         """Test that conversation history from thread is included when streaming WorkflowAgent.
 
-        This verifies that run_stream also includes thread history.
+        This verifies that stream=True also includes thread history.
         """
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing_stream")

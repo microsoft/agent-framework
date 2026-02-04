@@ -1515,7 +1515,7 @@ class MagenticBuilder:
             )
 
             # During execution, handle plan review
-            async for event in workflow.run_stream("task"):
+            async for event in workflow.run("task", stream=True):
                 if isinstance(event, RequestInfoEvent):
                     request = event.data
                     if isinstance(request, MagenticHumanInterventionRequest):

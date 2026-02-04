@@ -1594,15 +1594,21 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             self,
             messages=None,
             *,
+            stream: bool = False,
             thread=None,
             **kwargs,
         ):
+            if stream:
+                return ResponseStream(
+                    self._run_stream(messages=messages, thread=thread),
+                    finalizer=lambda x: AgentResponse.from_agent_run_response_updates(x),
+                )
             return AgentResponse(
                 messages=[ChatMessage(role=Role.ASSISTANT, text="Test response")],
                 thread=thread,
             )
 
-        async def run_stream(
+        async def _run_stream(
             self,
             messages=None,
             *,
@@ -1629,7 +1635,6 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test agent instrumentation captures exceptions."""
-    from agent_framework import AgentResponseUpdate
 
     class _FailingAgent:
         AGENT_PROVIDER_NAME = "test_provider"
@@ -1656,12 +1661,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
-            raise RuntimeError("Agent failed")
-
-        async def run_stream(self, messages=None, *, thread=None, **kwargs):
-            # yield before raise to make this an async generator
-            yield AgentResponseUpdate(text="", role=Role.ASSISTANT)
+        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
             raise RuntimeError("Agent failed")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):
@@ -1950,10 +1950,15 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+            if stream:
+                return ResponseStream(
+                    self._run_stream(messages=messages, thread=thread, **kwargs),
+                    lambda x: AgentResponse.from_agent_run_response_updates(x),
+                )
             return AgentResponse(messages=[], thread=thread)
 
-        async def run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
             yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
@@ -2000,10 +2005,15 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+            if stream:
+                return ResponseStream(
+                    self._run_stream(messages=messages, thread=thread, **kwargs),
+                    lambda x: AgentResponse.from_agent_run_response_updates(x),
+                )
             return AgentResponse(messages=[], thread=thread)
 
-        async def run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
             yield AgentResponseUpdate(text="test", role=Role.ASSISTANT)
 
     class TestAgent(AgentTelemetryLayer, _TestAgent):
@@ -2013,7 +2023,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
 
     span_exporter.clear()
     updates = []
-    async for u in agent.run_stream(messages="Hello"):
+    async for u in agent.run(messages="Hello", stream=True):
         updates.append(u)
 
     assert len(updates) == 1
