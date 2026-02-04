@@ -11,8 +11,6 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
-    Role,
-    tool,
 )
 
 """
@@ -77,8 +75,8 @@ class EchoAgent(BaseAgent):
 
         if not normalized_messages:
             response_message = ChatMessage(
-                role=Role.ASSISTANT,
-                contents=[Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
+                "assistant",
+                [Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
             )
         else:
             # For simplicity, echo the last user message
@@ -88,7 +86,7 @@ class EchoAgent(BaseAgent):
             else:
                 echo_text = f"{self.echo_prefix}[Non-text message received]"
 
-            response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
+            response_message = ChatMessage("assistant", [Content.from_text(text=echo_text)])
 
         # Notify the thread of new messages if provided
         if thread is not None:
@@ -134,7 +132,7 @@ class EchoAgent(BaseAgent):
 
             yield AgentResponseUpdate(
                 contents=[Content.from_text(text=chunk_text)],
-                role=Role.ASSISTANT,
+                role="assistant",
             )
 
             # Small delay to simulate streaming
@@ -142,7 +140,7 @@ class EchoAgent(BaseAgent):
 
         # Notify the thread of the complete response if provided
         if thread is not None:
-            complete_response = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
+            complete_response = ChatMessage("assistant", [Content.from_text(text=response_text)])
             await self._notify_thread_of_new_messages(thread, normalized_messages, complete_response)
 
 

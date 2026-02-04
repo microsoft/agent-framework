@@ -31,7 +31,6 @@ from ._tools import (
 from ._types import (
     ChatMessage,
     Content,
-    Role,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -85,7 +84,7 @@ def _parse_message_from_mcp(
 ) -> ChatMessage:
     """Parse an MCP container type into an Agent Framework type."""
     return ChatMessage(
-        role=Role(value=mcp_type.role),
+        role=mcp_type.role,
         contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
     )

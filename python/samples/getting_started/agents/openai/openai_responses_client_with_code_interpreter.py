@@ -2,7 +2,10 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, Content
+from agent_framework import (
+    ChatAgent,
+    Content,
+)
 from agent_framework.openai import OpenAIResponsesClient
 
 """

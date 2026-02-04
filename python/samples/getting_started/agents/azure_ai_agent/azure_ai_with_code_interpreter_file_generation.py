@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import AgentResponseUpdate
-from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 

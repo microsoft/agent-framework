@@ -45,6 +45,7 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     prepare_messages,
     validate_chat_options,
 )
@@ -134,7 +135,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
     @overload
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
@@ -143,7 +144,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
     @overload
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: TOptions_contra | None = None,
         **kwargs: Any,
@@ -165,7 +166,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
 
     def get_streaming_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: TOptions_contra | None = None,
         **kwargs: Any,
@@ -224,9 +225,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             class CustomChatClient(BaseChatClient):
                 async def _inner_get_response(self, *, messages, options, **kwargs):
                     # Your custom implementation
-                    return ChatResponse(
-                        messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
-                    )
+                    return ChatResponse(messages=[ChatMessage("assistant", ["Hello!"])], response_id="custom-response")
 
                 async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
                     # Your custom streaming implementation
@@ -346,7 +345,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
@@ -355,7 +354,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: TOptions_co | None = None,
         **kwargs: Any,
@@ -363,7 +362,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
     async def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: TOptions_co | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
@@ -386,7 +385,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
         *,
         options: TOptions_co | None = None,
         **kwargs: Any,

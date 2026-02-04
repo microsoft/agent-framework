@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import AgentThread, Role
+from agent_framework import AgentThread
 
 from ._constants import REQUEST_RESPONSE_FORMAT_TEXT
 
@@ -115,7 +115,7 @@ class RunRequest:
     message: str
     request_response_format: str
     correlation_id: str
-    role: Role = Role.USER
+    role: str = "user"
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
     wait_for_response: bool = True
@@ -128,7 +128,7 @@ class RunRequest:
         message: str,
         correlation_id: str,
         request_response_format: str = REQUEST_RESPONSE_FORMAT_TEXT,
-        role: Role | str | None = Role.USER,
+        role: str | None = "user",
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
         wait_for_response: bool = True,
@@ -148,16 +148,14 @@ class RunRequest:
         self.options = options if options is not None else {}
 
     @staticmethod
-    def coerce_role(value: Role | str | None) -> Role:
-        """Normalize various role representations into a Role instance."""
-        if isinstance(value, Role):
-            return value
+    def coerce_role(value: str | None) -> str:
+        """Normalize various role representations into a role string."""
         if isinstance(value, str):
             normalized = value.strip()
             if not normalized:
-                return Role.USER
-            return Role(value=normalized.lower())
-        return Role.USER
+                return "user"
+            return normalized.lower()
+        return "user"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -165,7 +163,7 @@ class RunRequest:
             "message": self.message,
             "enable_tool_calls": self.enable_tool_calls,
             "wait_for_response": self.wait_for_response,
-            "role": self.role.value,
+            "role": self.role,
             "request_response_format": self.request_response_format,
             "correlationId": self.correlation_id,
             "options": self.options,

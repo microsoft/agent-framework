@@ -40,7 +40,7 @@ AgentResponse response = await agent.RunAsync("Write a very long novel about a t
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)
 {
-    PersistAgentState(session, response.ContinuationToken);
+    PersistAgentState(agent, session, response.ContinuationToken);
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
@@ -52,9 +52,9 @@ while (response.ContinuationToken is not null)
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AgentSession? session, ResponseContinuationToken? continuationToken)
+void PersistAgentState(AIAgent agent, AgentSession? session, ResponseContinuationToken? continuationToken)
 {
-    stateStore["session"] = session!.Serialize();
+    stateStore["session"] = agent.SerializeSession(session!);
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 

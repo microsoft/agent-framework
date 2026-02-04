@@ -102,7 +102,6 @@ async def run_agent_framework() -> None:
         RequestInfoEvent,
         WorkflowRunState,
         WorkflowStatusEvent,
-        tool,
     )
     from agent_framework.openai import OpenAIChatClient
 
@@ -142,7 +141,7 @@ async def run_agent_framework() -> None:
         )
         .set_coordinator(triage_agent)
         .add_handoff(triage_agent, [billing_agent, tech_support])
-        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") > 3)
+        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") > 3)
         .build()
     )
 

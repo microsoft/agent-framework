@@ -59,14 +59,14 @@ async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentResponse:
             )
 
             # Add the assistant message with the approval request
-            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
 
             # Get user approval
             user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
             # Add the user's approval response
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         # Run again with all the context
@@ -109,14 +109,14 @@ async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None
                 )
 
                 # Add the assistant message with the approval request
-                new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+                new_inputs.append(ChatMessage("assistant", [user_input_needed]))
 
                 # Get user approval
                 user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
                 # Add the user's approval response
                 new_inputs.append(
-                    ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                    ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
                 )
 
             # Update input with all the context for next iteration

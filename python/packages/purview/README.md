@@ -72,7 +72,7 @@ async def main():
 		middleware=[purview_middleware]
 	)
 
-	response = await agent.run(ChatMessage(role=Role.USER, text="Summarize zero trust in one sentence."))
+	response = await agent.run(ChatMessage("user", ["Summarize zero trust in one sentence."]))
 	print(response)
 
 asyncio.run(main())

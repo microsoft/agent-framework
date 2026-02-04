@@ -58,29 +58,29 @@ public abstract class InMemoryAgentSession : AgentSession
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryAgentSession"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedSessionState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatHistoryProviderFactory">
     /// Optional factory function to create the <see cref="InMemoryChatHistoryProvider"/> from its serialized state.
     /// If not provided, a default factory will be used that creates a basic <see cref="InMemoryChatHistoryProvider"/>.
     /// </param>
-    /// <exception cref="ArgumentException">The <paramref name="serializedSessionState"/> is not a JSON object.</exception>
-    /// <exception cref="JsonException">The <paramref name="serializedSessionState"/> is invalid or cannot be deserialized to the expected type.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="serializedState"/> is not a JSON object.</exception>
+    /// <exception cref="JsonException">The <paramref name="serializedState"/> is invalid or cannot be deserialized to the expected type.</exception>
     /// <remarks>
     /// This constructor enables restoration of in-memory threads from previously saved state, allowing
     /// conversations to be resumed across application restarts or migrated between different instances.
     /// </remarks>
     protected InMemoryAgentSession(
-        JsonElement serializedSessionState,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         Func<JsonElement, JsonSerializerOptions?, InMemoryChatHistoryProvider>? chatHistoryProviderFactory = null)
     {
-        if (serializedSessionState.ValueKind != JsonValueKind.Object)
+        if (serializedState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedState));
         }
 
-        var state = serializedSessionState.Deserialize(
+        var state = serializedState.Deserialize(
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(InMemoryAgentSessionState))) as InMemoryAgentSessionState;
 
         this.ChatHistoryProvider =
@@ -98,7 +98,7 @@ public abstract class InMemoryAgentSession : AgentSession
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    protected internal virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var chatHistoryProviderState = this.ChatHistoryProvider.Serialize(jsonSerializerOptions);
 

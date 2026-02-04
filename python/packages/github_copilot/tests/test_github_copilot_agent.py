@@ -13,7 +13,6 @@ from agent_framework import (
     AgentThread,
     ChatMessage,
     Content,
-    Role,
 )
 from agent_framework.exceptions import ServiceException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
@@ -282,7 +281,7 @@ class TestGitHubCopilotAgentRun:
 
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.ASSISTANT
+        assert response.messages[0].role == "assistant"
         assert response.messages[0].contents[0].text == "Test response"
 
     async def test_run_chat_message(
@@ -295,7 +294,7 @@ class TestGitHubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        chat_message = ChatMessage(role=Role.USER, contents=[Content.from_text("Hello")])
+        chat_message = ChatMessage("user", [Content.from_text("Hello")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)
@@ -390,7 +389,7 @@ class TestGitHubCopilotAgentRunStream:
 
         assert len(responses) == 1
         assert isinstance(responses[0], AgentResponseUpdate)
-        assert responses[0].role == Role.ASSISTANT
+        assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
 
     async def test_run_stream_with_thread(

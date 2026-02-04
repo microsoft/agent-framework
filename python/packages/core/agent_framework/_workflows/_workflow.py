@@ -851,7 +851,7 @@ class Workflow(DictConvertible):
         The returned agent converts standard agent inputs (strings, ChatMessage, or lists of these)
         into a list[ChatMessage] that is passed to the workflow's start executor. This conversion
         happens in WorkflowAgent._normalize_messages() which transforms:
-        - str -> [ChatMessage(role=USER, text=str)]
+        - str -> [ChatMessage(USER, [str])]
         - ChatMessage -> [ChatMessage]
         - list[str | ChatMessage] -> list[ChatMessage] (with string elements converted)
 

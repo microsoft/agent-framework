@@ -386,7 +386,20 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not ChatClientAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
+    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatHistoryProvider>>? chatHistoryProviderFactory = this._agentOptions?.ChatHistoryProviderFactory is null ?
             null :
@@ -397,7 +410,7 @@ public sealed partial class ChatClientAgent : AIAgent
             (jse, jso, ct) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso }, ct);
 
         return await ChatClientAgentSession.DeserializeAsync(
-            serializedSession,
+            serializedState,
             jsonSerializerOptions,
             chatHistoryProviderFactory,
             aiContextProviderFactory,

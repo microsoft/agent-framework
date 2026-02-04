@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
+from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -375,7 +375,7 @@ class TestClaudeAgentRunStream:
                 updates.append(update)
             # StreamEvent yields text deltas
             assert len(updates) == 2
-            assert updates[0].role == Role.ASSISTANT
+            assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
@@ -499,6 +499,33 @@ class TestClaudeAgentToolConversion:
         assert sdk_tool.input_schema is not None
         assert "properties" in sdk_tool.input_schema  # type: ignore[operator]
 
+    def test_function_tool_to_sdk_mcp_tool_preserves_defs_for_nested_types(self) -> None:
+        """Test that $defs is preserved for tools with nested Pydantic models."""
+        from pydantic import BaseModel
+
+        class Address(BaseModel):
+            street: str
+            city: str
+
+        class Person(BaseModel):
+            name: str
+            address: Address
+
+        @tool
+        def create_person(person: Person) -> str:
+            """Create a person with address."""
+            return f"{person.name} lives at {person.address.street}, {person.address.city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(create_person)  # type: ignore[reportPrivateUsage]
+
+        # Verify $defs is preserved in the schema
+        assert sdk_tool.input_schema is not None
+        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
+        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        # Verify the nested reference exists in properties
+        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
 
@@ -605,7 +632,7 @@ class TestFormatPrompt:
         """Test formatting user message."""
         agent = ClaudeAgent()
         msg = ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
@@ -615,9 +642,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="How are you?")]),
+            ChatMessage("user", [Content.from_text(text="Hi")]),
+            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
+            ChatMessage("user", [Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

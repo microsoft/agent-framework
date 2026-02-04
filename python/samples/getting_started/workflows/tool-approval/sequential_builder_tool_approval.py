@@ -116,7 +116,7 @@ async def main() -> None:
                     print("\n" + "-" * 60)
                     print("Workflow completed. Final conversation:")
                     for msg in output:
-                        role = msg.role.value if hasattr(msg.role, "value") else msg.role
+                        role = msg.role if hasattr(msg.role, "value") else msg.role
                         text = msg.text[:200] + "..." if len(msg.text) > 200 else msg.text
                         print(f"  [{role}]: {text}")
     else:

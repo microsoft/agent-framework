@@ -48,8 +48,11 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new ReplayAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new ReplayAgentSession());
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     public static TestReplayAgent FromStrings(params string[] messages) =>
         new(ToChatMessages(messages));

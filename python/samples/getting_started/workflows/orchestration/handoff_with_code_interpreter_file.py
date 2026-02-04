@@ -40,7 +40,6 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from azure.identity.aio import AzureCliCredential
 
@@ -162,7 +161,7 @@ async def main() -> None:
                 HandoffBuilder()
                 .participants([triage, code_specialist])
                 .with_start_agent(triage)
-                .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 2)
+                .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") >= 2)
                 .build()
             )
 

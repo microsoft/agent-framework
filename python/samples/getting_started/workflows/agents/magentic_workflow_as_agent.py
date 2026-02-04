@@ -5,7 +5,6 @@ import asyncio
 from agent_framework import (
     ChatAgent,
     MagenticBuilder,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
