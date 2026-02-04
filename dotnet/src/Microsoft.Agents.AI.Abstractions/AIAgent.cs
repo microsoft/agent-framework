@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI;
 /// may involve multiple agents working together.
 /// </remarks>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public abstract class AIAgent
+public abstract partial class AIAgent
 {
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
@@ -223,11 +223,6 @@ public abstract class AIAgent
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse"/> with the agent's output.</returns>
     /// <remarks>
-    /// <para>
-    /// This method delegates to <see cref="RunCoreAsync"/> to perform the actual agent invocation. It handles collections of messages,
-    /// allowing for complex conversational scenarios including multi-turn interactions, function calls, and
-    /// context-rich conversations.
-    /// </para>
     /// <para>
     /// The messages are processed in the order provided and become part of the conversation history.
     /// The agent's response will also be added to <paramref name="session"/> if one is provided.

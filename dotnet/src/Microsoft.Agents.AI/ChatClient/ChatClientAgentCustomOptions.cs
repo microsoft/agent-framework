@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -162,19 +163,14 @@ public partial class ChatClientAgent
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
-    /// <param name="useJsonSchemaResponseFormat">
-    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
-    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
-    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentResponse{T}"/> with the agent's output.</returns>
-    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<T>> RunAsync<T>(
         AgentSession? session,
         JsonSerializerOptions? serializerOptions,
         ChatClientAgentRunOptions? options,
-        bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>(session, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a text message from the user, requesting a response of the specified type <typeparamref name="T"/>.
@@ -186,20 +182,15 @@ public partial class ChatClientAgent
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
-    /// <param name="useJsonSchemaResponseFormat">
-    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
-    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
-    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentResponse{T}"/> with the agent's output.</returns>
-    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<T>> RunAsync<T>(
         string message,
         AgentSession? session,
         JsonSerializerOptions? serializerOptions,
         ChatClientAgentRunOptions? options,
-        bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>(message, session, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(message, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a single chat message, requesting a response of the specified type <typeparamref name="T"/>.
@@ -211,20 +202,15 @@ public partial class ChatClientAgent
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
-    /// <param name="useJsonSchemaResponseFormat">
-    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
-    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
-    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentResponse{T}"/> with the agent's output.</returns>
-    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<T>> RunAsync<T>(
         ChatMessage message,
         AgentSession? session,
         JsonSerializerOptions? serializerOptions,
         ChatClientAgentRunOptions? options,
-        bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>(message, session, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(message, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a collection of chat messages, requesting a response of the specified type <typeparamref name="T"/>.
@@ -236,18 +222,99 @@ public partial class ChatClientAgent
     /// </param>
     /// <param name="serializerOptions">The JSON serialization options to use.</param>
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
-    /// <param name="useJsonSchemaResponseFormat">
-    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
-    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
-    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentResponse{T}"/> with the agent's output.</returns>
-    public Task<ChatClientAgentResponse<T>> RunAsync<T>(
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentSession? session,
         JsonSerializerOptions? serializerOptions,
         ChatClientAgentRunOptions? options,
-        bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>(messages, session, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(messages, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
+
+    /// <summary>
+    /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the session, and requesting a response of the specified <paramref name="resultType"/>.
+    /// </summary>
+    /// <param name="resultType">The type of structured output to request.</param>
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<object>> RunAsync(
+        Type resultType,
+        AgentSession? session,
+        JsonSerializerOptions? serializerOptions,
+        ChatClientAgentRunOptions? options,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync(resultType, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent with a text message from the user, requesting a response of the specified <paramref name="resultType"/>.
+    /// </summary>
+    /// <param name="resultType">The type of structured output to request.</param>
+    /// <param name="message">The user message to send to the agent.</param>
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<object>> RunAsync(
+        Type resultType,
+        string message,
+        AgentSession? session,
+        JsonSerializerOptions? serializerOptions,
+        ChatClientAgentRunOptions? options,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync(resultType, message, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent with a single chat message, requesting a response of the specified <paramref name="resultType"/>.
+    /// </summary>
+    /// <param name="resultType">The type of structured output to request.</param>
+    /// <param name="message">The chat message to send to the agent.</param>
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<object>> RunAsync(
+        Type resultType,
+        ChatMessage message,
+        AgentSession? session,
+        JsonSerializerOptions? serializerOptions,
+        ChatClientAgentRunOptions? options,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync(resultType, message, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent with a collection of chat messages, requesting a response of the specified <paramref name="resultType"/>.
+    /// </summary>
+    /// <param name="resultType">The type of structured output to request.</param>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
+    /// <param name="session">
+    /// The conversation session to use for this invocation. If <see langword="null"/>, a new session will be created.
+    /// The session will be updated with the input messages and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    public Task<AgentResponse<object>> RunAsync(
+        Type resultType,
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session,
+        JsonSerializerOptions? serializerOptions,
+        ChatClientAgentRunOptions? options,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync(resultType, messages, session, serializerOptions, (AgentRunOptions?)options, cancellationToken);
 }

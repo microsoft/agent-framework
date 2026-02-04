@@ -47,13 +47,18 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         {
             enableToolCalls = durableOptions.EnableToolCalls;
             enableToolNames = durableOptions.EnableToolNames;
-            responseFormat = durableOptions.ResponseFormat;
             isFireAndForget = durableOptions.IsFireAndForget;
         }
         else if (options is ChatClientAgentRunOptions chatClientOptions)
         {
             // Honor the response format from the chat client options if specified
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
+        }
+
+        // Override the response format if specified in the agent run options
+        if (options?.ResponseFormat is { } format)
+        {
+            responseFormat = format;
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);

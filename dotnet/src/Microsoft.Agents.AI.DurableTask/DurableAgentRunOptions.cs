@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI;
-
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
@@ -18,11 +16,6 @@ public sealed class DurableAgentRunOptions : AgentRunOptions
     /// Gets or sets the collection of tool names to enable. If not specified, all tools are enabled.
     /// </summary>
     public IList<string>? EnableToolNames { get; set; }
-
-    /// <summary>
-    /// Gets or sets the response format for the agent's response.
-    /// </summary>
-    public ChatResponseFormat? ResponseFormat { get; set; }
 
     /// <summary>
     /// Gets or sets whether to fire and forget the agent run request.

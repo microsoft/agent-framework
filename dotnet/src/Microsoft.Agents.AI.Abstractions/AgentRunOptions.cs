@@ -34,6 +34,7 @@ public class AgentRunOptions
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
         this.AdditionalProperties = options.AdditionalProperties?.Clone();
+        this.ResponseFormat = options.ResponseFormat;
     }
 
     /// <summary>
@@ -90,4 +91,18 @@ public class AgentRunOptions
     /// preserving implementation-specific details or extending the options with custom data.
     /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
+
+    /// <summary>
+    /// Gets or sets the response format.
+    /// </summary>
+    /// <remarks>
+    /// If <see langword="null"/>, no response format is specified and the agent will use its default.
+    /// This property can be set to <see cref="ChatResponseFormat.Text"/> to specify that the response should be unstructured text,
+    /// to <see cref="ChatResponseFormat.Json"/> to specify that the response should be structured JSON data, or
+    /// an instance of <see cref="ChatResponseFormatJson"/> constructed with a specific JSON schema to request that the
+    /// response be structured JSON data according to that schema. It is up to the agent implementation if or how
+    /// to honor the request. If the agent implementation doesn't recognize the specific kind of <see cref="ChatResponseFormat"/>,
+    /// it can be ignored.
+    /// </remarks>
+    public ChatResponseFormat? ResponseFormat { get; set; }
 }

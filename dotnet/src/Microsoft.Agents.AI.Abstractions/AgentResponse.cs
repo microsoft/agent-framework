@@ -69,6 +69,29 @@ public class AgentResponse
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="AgentResponse"/> class from an existing <see cref="AgentResponse"/>.
+    /// </summary>
+    /// <param name="response">The <see cref="AgentResponse"/> from which to copy properties.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// This constructor creates a copy of an existing agent response, preserving all
+    /// metadata and storing the original response in <see cref="RawRepresentation"/> for access to
+    /// the underlying implementation details.
+    /// </remarks>
+    public AgentResponse(AgentResponse response)
+    {
+        _ = Throw.IfNull(response);
+
+        this.AdditionalProperties = response.AdditionalProperties;
+        this.CreatedAt = response.CreatedAt;
+        this.Messages = response.Messages;
+        this.RawRepresentation = response;
+        this.ResponseId = response.ResponseId;
+        this.Usage = response.Usage;
+        this.ContinuationToken = response.ContinuationToken;
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentResponse"/> class with the specified collection of messages.
     /// </summary>
     /// <param name="messages">The collection of response messages, or <see langword="null"/> to create an empty response.</param>
