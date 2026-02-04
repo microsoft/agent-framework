@@ -11,7 +11,6 @@ from agent_framework import (
     ChatMessage,
     Executor,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -87,7 +86,7 @@ class TurnManager(Executor):
         - Input is a simple starter token (ignored here).
         - Output is an AgentExecutorRequest that triggers the agent to produce a guess.
         """
-        user = ChatMessage(Role.USER, text="Start by making your first guess.")
+        user = ChatMessage("user", text="Start by making your first guess.")
         await ctx.send_message(AgentExecutorRequest(messages=[user], should_respond=True))
 
     @handler
@@ -135,7 +134,7 @@ class TurnManager(Executor):
         # Provide feedback to the agent to try again.
         # We keep the agent's output strictly JSON to ensure stable parsing on the next turn.
         user_msg = ChatMessage(
-            Role.USER,
+            "user",
             text=(f'Feedback: {reply}. Return ONLY a JSON object matching the schema {{"guess": <int 1..10>}}.'),
         )
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))

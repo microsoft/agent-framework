@@ -21,7 +21,6 @@ from agent_framework import (
     FileCheckpointStorage,
     Message,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowCheckpointException,
     WorkflowContext,
@@ -867,7 +866,7 @@ class _StreamingTestAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - returns complete response."""
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(
         self,

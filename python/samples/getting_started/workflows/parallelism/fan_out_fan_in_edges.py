@@ -11,7 +11,6 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     Executor,  # Base class for custom Python executors
     ExecutorCompletedEvent,
     ExecutorInvokedEvent,
-    Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowContext,  # Per run context and event bus
     WorkflowOutputEvent,  # Event emitted when workflow yields output
@@ -46,7 +45,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage(Role.USER, text=prompt)
+        initial_message = ChatMessage("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 

@@ -53,7 +53,7 @@ async def main():
 
     # Run the workflow with the user's initial message and stream events as they occur.
     async for event in workflow.run_stream(
-        ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."])
     ):
         # The outputs of the workflow are whatever the agents produce. So the events are expected to
         # contain `AgentResponseUpdate` from the agents in the workflow.

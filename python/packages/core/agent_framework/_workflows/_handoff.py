@@ -42,7 +42,7 @@ from .._agents import AgentProtocol, ChatAgent
 from .._middleware import FunctionInvocationContext, FunctionMiddleware
 from .._threads import AgentThread
 from .._tools import FunctionTool, tool
-from .._types import AgentResponse, ChatMessage, Role
+from .._types import AgentResponse, ChatMessage
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
 from ._base_group_chat_orchestrator import TerminationCondition
@@ -162,7 +162,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[ChatMessage] = []
         if isinstance(response, str):
-            messages.append(ChatMessage(role=Role.USER, text=response))
+            messages.append(ChatMessage("user", [response]))
         elif isinstance(response, ChatMessage):
             messages.append(response)
         elif isinstance(response, list):
@@ -170,7 +170,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, ChatMessage):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(ChatMessage(role=Role.USER, text=item))
+                    messages.append(ChatMessage("user", [item]))
                 else:
                     raise TypeError("List items must be either str or ChatMessage instances")
         else:
@@ -427,7 +427,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([ChatMessage(role=Role.USER, text=self._autonomous_mode_prompt)])
+            self._cache.extend([ChatMessage("user", [self._autonomous_mode_prompt])])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:

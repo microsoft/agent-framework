@@ -46,7 +46,7 @@ public sealed class A2AAgentSession : AgentSession
     public string? TaskId { get; internal set; }
 
     /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var state = new A2AAgentSessionState
         {

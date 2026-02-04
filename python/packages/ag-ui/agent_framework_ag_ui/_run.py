@@ -862,7 +862,7 @@ async def run_agent_stream(
         from pydantic import BaseModel
 
         logger.info(f"Processing structured output, update count: {len(all_updates)}")
-        final_response = AgentResponse.from_agent_run_response_updates(all_updates, output_format_type=response_format)
+        final_response = AgentResponse.from_updates(all_updates, output_format_type=response_format)
 
         if final_response.value and isinstance(final_response.value, BaseModel):
             response_dict = final_response.value.model_dump(mode="json", exclude_none=True)

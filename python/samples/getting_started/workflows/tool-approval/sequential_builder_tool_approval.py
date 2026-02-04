@@ -80,7 +80,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
             print("Workflow summary:")
             outputs = cast(list[ChatMessage], event.data)
             for msg in outputs:
-                speaker = msg.author_name or msg.role.value
+                speaker = msg.author_name or msg.role
                 print(f"[{speaker}]: {msg.text}")
 
     responses: dict[str, Content] = {}

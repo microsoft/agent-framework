@@ -199,7 +199,7 @@ async def test_list_items_pagination():
 @pytest.mark.asyncio
 async def test_list_items_converts_function_calls():
     """Test that list_items properly converts function calls to ResponseFunctionToolCallItem."""
-    from agent_framework import ChatMessage, ChatMessageStore, Role
+    from agent_framework import ChatMessage, ChatMessageStore
 
     store = InMemoryConversationStore()
 
@@ -216,9 +216,9 @@ async def test_list_items_converts_function_calls():
 
     # Simulate messages from agent execution with function calls
     messages = [
-        ChatMessage(role=Role.USER, contents=[{"type": "text", "text": "What's the weather in SF?"}]),
+        ChatMessage("user", [{"type": "text", "text": "What's the weather in SF?"}]),
         ChatMessage(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[
                 {
                     "type": "function_call",
@@ -229,7 +229,7 @@ async def test_list_items_converts_function_calls():
             ],
         ),
         ChatMessage(
-            role=Role.TOOL,
+            role="tool",
             contents=[
                 {
                     "type": "function_result",
@@ -238,7 +238,7 @@ async def test_list_items_converts_function_calls():
                 }
             ],
         ),
-        ChatMessage(role=Role.ASSISTANT, contents=[{"type": "text", "text": "The weather is sunny, 65°F"}]),
+        ChatMessage("assistant", [{"type": "text", "text": "The weather is sunny, 65°F"}]),
     ]
 
     # Add messages to thread
@@ -284,7 +284,7 @@ async def test_list_items_converts_function_calls():
 @pytest.mark.asyncio
 async def test_list_items_handles_images_and_files():
     """Test that list_items properly converts data content (images/files) to OpenAI types."""
-    from agent_framework import ChatMessage, ChatMessageStore, Role
+    from agent_framework import ChatMessage, ChatMessageStore
 
     store = InMemoryConversationStore()
 
@@ -301,7 +301,7 @@ async def test_list_items_handles_images_and_files():
     # Simulate message with image and file
     messages = [
         ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[
                 {"type": "text", "text": "Check this image and PDF"},
                 {"type": "data", "uri": "data:image/png;base64,iVBORw0KGgo=", "media_type": "image/png"},

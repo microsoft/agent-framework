@@ -8,7 +8,6 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponseUpdate,
     ChatMessage,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -76,7 +75,7 @@ async def enrich_with_references(
         ctx: The workflow context to send the next request.
     """
     conversation = list(draft.full_conversation or draft.agent_response.messages)
-    original_prompt = next((message.text for message in conversation if message.role == Role.USER), "")
+    original_prompt = next((message.text for message in conversation if message.role == "user"), "")
     external_note = _lookup_external_note(original_prompt) or (
         "No additional references were found. Please refine the previous assistant response for clarity."
     )
@@ -86,7 +85,7 @@ async def enrich_with_references(
         f"{external_note}\n\n"
         "Please update the prior assistant answer so it weaves this note into the guidance."
     )
-    conversation.append(ChatMessage(role=Role.USER, text=follow_up))
+    conversation.append(ChatMessage("user", [follow_up]))
 
     # Output a new AgentExecutorRequest for the next agent in the workflow.
     # Agents in workflows handle this type and will generate a response based on the request.

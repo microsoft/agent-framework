@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from .._agents import AgentProtocol
-from .._types import ChatMessage, Role
+from .._types import ChatMessage
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
 from ._executor import Executor, handler
@@ -72,7 +72,7 @@ class AgentRequestInfoResponse:
         Returns:
             AgentRequestInfoResponse instance.
         """
-        return AgentRequestInfoResponse(messages=[ChatMessage(role=Role.USER, text=text) for text in texts])
+        return AgentRequestInfoResponse(messages=[ChatMessage("user", [text]) for text in texts])
 
     @staticmethod
     def approve() -> "AgentRequestInfoResponse":

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from agent_framework import (
+    AgentResponse,
     ChatAgent,
     ChatMessage,
     Content,
@@ -106,7 +107,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
         .with_checkpointing(checkpoint_storage)
         .with_termination_condition(
             # Terminate after 5 user messages for this demo
-            lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 5
+            lambda conv: sum(1 for msg in conv if msg.role == "user") >= 5
         )
         .build()
     )
@@ -114,35 +115,39 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
     return workflow, triage, refund, order
 
 
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
+    """Display the agent's response messages when requesting user input."""
+    if not response.messages:
+        print("(No agent messages)")
+        return
+
+    print("\n[Agent is requesting your input...]")
+    for message in response.messages:
+        if not message.text:
+            continue
+        speaker = message.author_name or message.role
+        print(f"  {speaker}: {message.text}")
+
+
 def _print_handoff_request(request: HandoffAgentUserRequest, request_id: str) -> None:
     """Log pending handoff request details for debugging."""
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - User input needed")
     print(f"Request ID: {request_id}")
-    print(f"Awaiting agent: {request.agent_response.agent_name}")
+    print(f"Awaiting agent: {request.agent_response.agent_id}")
 
-    # Note: After checkpoint restore, conversation may be empty because it's not serialized
-    # to prevent duplication (the conversation is preserved in the coordinator's state).
-    # See issue #2667.
-    if request.conversation:
-        print("\nConversation so far:")
-        for msg in request.conversation[-3:]:
-            author = msg.author_name or msg.role.value
-            snippet = msg.text[:120] + "..." if len(msg.text) > 120 else msg.text
-            print(f"  {author}: {snippet}")
-    else:
-        print("\n(Conversation restored from checkpoint - context preserved in workflow state)")
+    _print_handoff_agent_user_request(request.agent_response)
 
     print(f"{'=' * 60}\n")
 
 
 def _print_function_approval_request(request: Content, request_id: str) -> None:
     """Log pending tool approval details for debugging."""
-    args = request.function_call.parse_arguments() or {}
+    args = request.function_call.parse_arguments() or {}  # type: ignore
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - Tool approval required")
     print(f"Request ID: {request_id}")
-    print(f"Function: {request.function_call.name}")
+    print(f"Function: {request.function_call.name}")  # type: ignore
     print(f"Arguments:\n{json.dumps(args, indent=2)}")
     print(f"{'=' * 60}\n")
 
@@ -278,11 +283,11 @@ async def resume_with_responses(
 
         elif isinstance(event, WorkflowOutputEvent):
             print("\n[Workflow Output Event - Conversation Update]")
-            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):
+            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
                 # Now safe to cast event.data to list[ChatMessage]
-                conversation = cast(list[ChatMessage], event.data)
+                conversation = cast(list[ChatMessage], event.data)  # type: ignore
                 for msg in conversation[-3:]:  # Show last 3 messages
-                    author = msg.author_name or msg.role.value
+                    author = msg.author_name or msg.role
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text
                     print(f"  {author}: {text}")
 
@@ -301,7 +306,7 @@ async def main() -> None:
     Demonstrate the checkpoint-based pause/resume pattern for handoff workflows.
 
     This sample shows:
-    1. Starting a workflow and getting a HandoffUserInputRequest
+    1. Starting a workflow and getting a HandoffAgentUserRequest
     2. Pausing (checkpoint is saved automatically)
     3. Resuming from checkpoint with a user response or tool approval (two-step pattern)
     4. Continuing the conversation until completion

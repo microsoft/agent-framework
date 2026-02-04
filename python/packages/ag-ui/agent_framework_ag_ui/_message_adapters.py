@@ -9,7 +9,6 @@ from typing import Any, cast
 from agent_framework import (
     ChatMessage,
     Content,
-    Role,
     prepare_function_call_results,
 )
 
@@ -269,7 +268,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
     def _find_matching_func_call(call_id: str) -> Content | None:
         for prev_msg in result:
-            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             for content in prev_msg.contents or []:
@@ -287,7 +286,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 return str(explicit_call_id)
 
         for prev_msg in result:
-            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             direct_call = None
@@ -396,7 +395,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         m
                         for m in result
                         if not (
-                            (m.role.value if hasattr(m.role, "value") else str(m.role)) == "tool"
+                            (m.role if hasattr(m.role, "value") else str(m.role)) == "tool"
                             and any(
                                 c.type == "function_result" and c.call_id == approval_call_id
                                 for c in (m.contents or [])
@@ -473,14 +472,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         additional_properties={"ag_ui_state_args": state_args} if state_args else None,
                     )
                     chat_msg = ChatMessage(
-                        role=Role.USER,
+                        role="user",
                         contents=[approval_response],
                     )
                 else:
                     # No matching function call found - this is likely a confirm_changes approval
                     # Keep the old behavior for backwards compatibility
                     chat_msg = ChatMessage(
-                        role=Role.USER,
+                        role="user",
                         contents=[Content.from_text(text=approval_payload_text)],
                         additional_properties={"is_tool_result": True, "tool_call_id": str(tool_call_id or "")},
                     )
@@ -500,7 +499,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             else:
                 func_result = str(result_content)
             chat_msg = ChatMessage(
-                role=Role.TOOL,
+                role="tool",
                 contents=[Content.from_function_result(call_id=str(tool_call_id), result=func_result)],
             )
             if "id" in msg:
@@ -516,7 +515,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             result_content = msg.get("result", msg.get("content", ""))
 
             chat_msg = ChatMessage(
-                role=Role.TOOL,
+                role="tool",
                 contents=[Content.from_function_result(call_id=str(tool_call_id), result=result_content)],
             )
             if "id" in msg:
@@ -554,7 +553,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                             arguments=arguments,
                         )
                     )
-            chat_msg = ChatMessage(role=Role.ASSISTANT, contents=contents)
+            chat_msg = ChatMessage("assistant", contents)
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
             result.append(chat_msg)
@@ -562,7 +561,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
         # No special handling required for assistant/plain messages here
 
-        role = AGUI_TO_FRAMEWORK_ROLE.get(role_str, Role.USER)
+        role = AGUI_TO_FRAMEWORK_ROLE.get(role_str, "user")
 
         # Check if this message contains function approvals
         if "function_approvals" in msg and msg["function_approvals"]:
@@ -584,14 +583,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[arg-type]
+            chat_msg = ChatMessage(role, approval_contents)  # type: ignore[arg-type]
         else:
             # Regular text message
             content = msg.get("content", "")
             if isinstance(content, str):
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])
+                chat_msg = ChatMessage(role, [Content.from_text(text=content)])
             else:
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])
+                chat_msg = ChatMessage(role, [Content.from_text(text=str(content))])
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]

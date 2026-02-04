@@ -10,7 +10,6 @@ from agent_framework import (
     Content,
     HandoffAgentUserRequest,
     HandoffBuilder,
-    Role,
     WorkflowAgent,
     tool,
 )
@@ -120,7 +119,7 @@ def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAg
     pending_requests: dict[str, HandoffAgentUserRequest] = {}
     for message in response.messages:
         if message.text:
-            print(f"- {message.author_name or message.role.value}: {message.text}")
+            print(f"- {message.author_name or message.role}: {message.text}")
         for content in message.contents:
             if content.type == "function_call":
                 if isinstance(content.arguments, dict):
@@ -215,7 +214,7 @@ async def main() -> None:
         function_results = [
             Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
         ]
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=function_results))
+        response = await agent.run(ChatMessage("tool", function_results))
         pending_requests = handle_response_and_requests(response)
 
 

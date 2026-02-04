@@ -104,9 +104,7 @@ async def main() -> None:
         )
         .with_termination_condition(
             # Terminate after coordinator provides 5 assistant responses
-            lambda conv: (
-                sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role.value == "assistant") >= 5
-            )
+            lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant") >= 5
         )
         .build()
     )

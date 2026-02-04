@@ -69,7 +69,7 @@ async def basic_checkpointing() -> None:
     response = await agent.run(query, checkpoint_storage=checkpoint_storage)
 
     for msg in response.messages:
-        speaker = msg.author_name or msg.role.value
+        speaker = msg.author_name or msg.role
         print(f"[{speaker}]: {msg.text}")
 
     # Show checkpoints that were created

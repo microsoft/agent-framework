@@ -11,16 +11,16 @@ Prerequisites:
 """
 
 import asyncio
-from collections.abc import Generator
 import logging
 import os
+from collections.abc import Generator
 from typing import Any
 
 from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.task import OrchestrationContext, when_all, Task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.task import OrchestrationContext, Task, when_all
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -68,44 +68,44 @@ def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: 
     Returns:
         dict: Dictionary with 'physicist' and 'chemist' response texts
     """
-    
+
     logger.info(f"[Orchestration] Starting concurrent execution for prompt: {prompt}")
-    
+
     # Wrap the orchestration context to access agents
     agent_context = DurableAIAgentOrchestrationContext(context)
-    
+
     # Get agents using the agent context (returns DurableAIAgent proxies)
     physicist = agent_context.get_agent(PHYSICIST_AGENT_NAME)
     chemist = agent_context.get_agent(CHEMIST_AGENT_NAME)
-    
+
     # Create separate threads for each agent
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()
-    
+
     logger.debug(f"[Orchestration] Created threads - Physicist: {physicist_thread.session_id}, Chemist: {chemist_thread.session_id}")
-    
+
     # Create tasks from agent.run() calls - these return DurableAgentTask instances
     physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
     chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
-    
+
     logger.debug("[Orchestration] Created agent tasks, executing concurrently...")
-    
+
     # Execute both tasks concurrently using when_all
     # The DurableAgentTask instances wrap the underlying entity calls
     task_results = yield when_all([physicist_task, chemist_task])
-    
+
     logger.debug("[Orchestration] Both agents completed")
-    
+
     # Extract results from the tasks - DurableAgentTask yields AgentResponse
     physicist_result: AgentResponse = task_results[0]
     chemist_result: AgentResponse = task_results[1]
-    
+
     result = {
         "physicist": physicist_result.text,
         "chemist": chemist_result.text,
     }
-    
-    logger.debug(f"[Orchestration] Aggregated results ready")
+
+    logger.debug("[Orchestration] Aggregated results ready")
     return result
 
 
@@ -126,12 +126,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -152,48 +152,48 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Create and register both agents
     logger.debug("Creating and registering agents...")
     physicist_agent = create_physicist_agent()
     chemist_agent = create_chemist_agent()
-    
+
     agent_worker.add_agent(physicist_agent)
     agent_worker.add_agent(chemist_agent)
-    
+
     logger.debug(f"✓ Registered agents: {physicist_agent.name}, {chemist_agent.name}")
-    
+
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
     worker.add_orchestrator(multi_agent_concurrent_orchestration)   # type: ignore
     logger.debug(f"✓ Registered orchestration: {multi_agent_concurrent_orchestration.__name__}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Multi-Agent Worker with Orchestration...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agents and orchestrations
     setup_worker(worker)
-    
+
     logger.debug("Worker is ready and listening for requests...")
     logger.debug("Press Ctrl+C to stop.")
-    
+
     try:
         # Start the worker (this blocks until stopped)
         worker.start()
-        
+
         # Keep the worker running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
-    
+
     logger.debug("Worker stopped")
 
 

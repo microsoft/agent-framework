@@ -8,7 +8,7 @@ from typing import Any
 
 from typing_extensions import Never
 
-from agent_framework import AgentProtocol, ChatMessage, Role
+from agent_framework import AgentProtocol, ChatMessage
 
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._agent_utils import resolve_agent_id
@@ -91,16 +91,13 @@ class _AggregateAgentConversations(Executor):
             logger.error("Concurrent aggregator received empty results list")
             raise ValueError("Aggregation failed: no results provided")
 
-        def _is_role(msg: Any, role: Role) -> bool:
+        def _is_role(msg: Any, role: str) -> bool:
             r = getattr(msg, "role", None)
             if r is None:
                 return False
             # Normalize both r and role to lowercase strings for comparison
             r_str = str(r).lower() if isinstance(r, str) or hasattr(r, "__str__") else r
-            role_str = getattr(role, "value", None)
-            if role_str is None:
-                role_str = str(role)
-            role_str = role_str.lower()
+            role_str = str(role).lower()
             return r_str == role_str
 
         prompt_message: ChatMessage | None = None
@@ -117,14 +114,14 @@ class _AggregateAgentConversations(Executor):
 
             # Capture a single user prompt (first encountered across any conversation)
             if prompt_message is None:
-                found_user = next((m for m in conv if _is_role(m, Role.USER)), None)
+                found_user = next((m for m in conv if _is_role(m, "user")), None)
                 if found_user is not None:
                     prompt_message = found_user
 
             # Pick the final assistant message from the response; fallback to conversation search
-            final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, Role.ASSISTANT)), None)
+            final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, "assistant")), None)
             if final_assistant is None:
-                final_assistant = next((m for m in reversed(conv) if _is_role(m, Role.ASSISTANT)), None)
+                final_assistant = next((m for m in reversed(conv) if _is_role(m, "assistant")), None)
 
             if final_assistant is not None:
                 assistant_replies.append(final_assistant)

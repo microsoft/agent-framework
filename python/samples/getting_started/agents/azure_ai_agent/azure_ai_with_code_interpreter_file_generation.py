@@ -7,7 +7,6 @@ from agent_framework import (
     AgentResponseUpdate,
     HostedCodeInterpreterTool,
     HostedFileContent,
-    tool,
 )
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient

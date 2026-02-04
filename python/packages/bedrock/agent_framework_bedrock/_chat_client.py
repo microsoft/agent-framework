@@ -16,9 +16,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     FunctionTool,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -185,20 +183,20 @@ TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="B
 # endregion
 
 
-ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+ROLE_MAP: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "end_turn": FinishReason.STOP,
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "length": FinishReason.LENGTH,
-    "content_filtered": FinishReason.CONTENT_FILTER,
-    "tool_use": FinishReason.TOOL_CALLS,
+FINISH_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "length": "length",
+    "content_filtered": "content_filter",
+    "tool_use": "tool_calls",
 }
 
 
@@ -397,7 +395,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
-            if message.role == Role.SYSTEM:
+            if message.role == "system":
                 text_value = message.text
                 if text_value:
                     prompts.append({"text": text_value})
@@ -414,7 +412,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     for block in content_blocks
                     if isinstance(block, MutableMapping) and "toolUse" in block
                 )
-            elif message.role == Role.TOOL:
+            elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
                 pending_tool_use_ids.clear()
                 if not content_blocks:
@@ -574,7 +572,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage(role=Role.ASSISTANT, contents=contents, raw_representation=message)
+        chat_message = ChatMessage("assistant", contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
@@ -642,7 +640,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
+    def _map_finish_reason(self, reason: str | None) -> str | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())

@@ -13,7 +13,7 @@ URL fetching allows the agent to access any URL accessible from your network.
 
 import asyncio
 
-from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent
 from copilot.types import PermissionRequest, PermissionRequestResult
 
 
@@ -34,11 +34,9 @@ def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> Pe
 async def main() -> None:
     print("=== GitHub Copilot Agent with URL Fetching ===\n")
 
-    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-        default_options={
-            "instructions": "You are a helpful assistant that can fetch and summarize web content.",
-            "on_permission_request": prompt_permission,
-        },
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant that can fetch and summarize web content.",
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:

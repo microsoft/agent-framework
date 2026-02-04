@@ -102,7 +102,7 @@ def _print_output(event: WorkflowOutputEvent) -> None:
     print("Workflow completed. Aggregated results from both agents:")
     for msg in messages:
         if msg.text:
-            print(f"- {msg.author_name or msg.role.value}: {msg.text}")
+            print(f"- {msg.author_name or msg.role}: {msg.text}")
 
 
 async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, Content] | None:

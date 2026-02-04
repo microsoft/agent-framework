@@ -8,7 +8,6 @@ from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
     Executor,
-    Role,
     Workflow,
     WorkflowContext,
     handler,
@@ -97,13 +96,13 @@ class SummarizationExecutor(Executor):
 
         # Ask the model to synthesize a concise summary of the experts' outputs
         system_msg = ChatMessage(
-            Role.SYSTEM,
+            "system",
             text=(
                 "You are a helpful assistant that consolidates multiple domain expert outputs "
                 "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
             ),
         )
-        user_msg = ChatMessage(Role.USER, text="\n\n".join(expert_sections))
+        user_msg = ChatMessage("user", text="\n\n".join(expert_sections))
 
         response = await self.chat_client.get_response([system_msg, user_msg])
 

@@ -22,8 +22,8 @@ Prerequisites:
 """
 
 import asyncio
-from typing import cast
 from collections.abc import AsyncIterable
+from typing import cast
 
 from agent_framework import (
     AgentExecutorResponse,
@@ -73,7 +73,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
                     request.full_conversation[-2:] if len(request.full_conversation) > 2 else request.full_conversation
                 )
                 for msg in recent:
-                    name = msg.author_name or msg.role.value
+                    name = msg.author_name or msg.role
                     text = (msg.text or "")[:150]
                     print(f"  [{name}]: {text}...")
                 print("-" * 40)

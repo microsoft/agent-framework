@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Role, SequentialBuilder
+from agent_framework import SequentialBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -52,7 +52,7 @@ async def main() -> None:
         for i, msg in enumerate(agent_response.messages, start=1):
             role_value = getattr(msg.role, "value", msg.role)
             normalized_role = str(role_value).lower() if role_value is not None else "assistant"
-            name = msg.author_name or ("assistant" if normalized_role == Role.ASSISTANT.value else "user")
+            name = msg.author_name or ("assistant" if normalized_role == "assistant".value else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """

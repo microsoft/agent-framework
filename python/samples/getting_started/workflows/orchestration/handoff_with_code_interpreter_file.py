@@ -94,7 +94,7 @@ def _handle_events(events: list[WorkflowEvent]) -> tuple[list[RequestInfoEvent],
                 if isinstance(conversation, list):
                     print("\n=== Final Conversation Snapshot ===")
                     for message in conversation:
-                        speaker = message.author_name or message.role.value
+                        speaker = message.author_name or message.role
                         print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
                     print("===================================")
         elif isinstance(event, RequestInfoEvent):
@@ -176,7 +176,7 @@ async def main() -> None:
                 HandoffBuilder()
                 .participants([triage, code_specialist])
                 .with_start_agent(triage)
-                .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 2)
+                .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") >= 2)
                 .build()
             )
 

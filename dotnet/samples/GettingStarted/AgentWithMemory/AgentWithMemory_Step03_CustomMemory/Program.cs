@@ -37,7 +37,7 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 });
 
 // Create a new session for the conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Use session with blank memory\n");
 
@@ -47,7 +47,7 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
 
 // We can serialize the session. The serialized state will include the state of the memory component.
-var sesionElement = session.Serialize();
+JsonElement sesionElement = agent.SerializeSession(session);
 
 Console.WriteLine("\n>> Use deserialized session with previously created memories\n");
 
@@ -68,7 +68,7 @@ Console.WriteLine("\n>> Use new session with previously created memories\n");
 
 // It is also possible to set the memories in a memory component on an individual session.
 // This is useful if we want to start a new session, but have it share the same memories as a previous session.
-var newSession = await agent.GetNewSessionAsync();
+var newSession = await agent.CreateSessionAsync();
 if (userInfo is not null && newSession.GetService<UserInfoMemory>() is UserInfoMemory newSessionMemory)
 {
     newSessionMemory.UserInfo = userInfo;

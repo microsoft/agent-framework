@@ -165,7 +165,7 @@ public sealed class ChatClientAgentSession : AgentSession
     }
 
     /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonElement? chatHistoryProviderState = this._chatHistoryProvider?.Serialize(jsonSerializerOptions);
 

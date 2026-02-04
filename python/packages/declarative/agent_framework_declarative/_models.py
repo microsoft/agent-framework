@@ -39,7 +39,7 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
 
     Args:
         value: The value to check.
-        log_value: Whether to log the full value on error or just a snippet.
+        log_value: Whether to log additional context on error.
     """
     if value is None:
         return value
@@ -59,9 +59,9 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value: %s", exc)
         else:
-            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value (details redacted): %s", exc)
         return value
 
 

@@ -3,7 +3,7 @@
 import asyncio
 from typing import cast
 
-from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowOutputEvent
+from agent_framework import ChatMessage, SequentialBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -53,7 +53,7 @@ async def main() -> None:
     if outputs:
         print("===== Final Conversation =====")
         for i, msg in enumerate(outputs[-1], start=1):
-            name = msg.author_name or ("assistant" if msg.role == Role.ASSISTANT else "user")
+            name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """

@@ -5,12 +5,12 @@ import os
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import AgentReference, PromptAgentDefinition
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
-from agent_framework import tool
 
 """
 Azure AI Project Agent Provider Methods Example
@@ -25,6 +25,7 @@ with different configurations, which is efficient for multi-agent scenarios.
 
 Each method returns a ChatAgent that can be used for conversations.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

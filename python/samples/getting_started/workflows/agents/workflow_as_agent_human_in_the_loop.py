@@ -20,13 +20,11 @@ from agent_framework import (  # noqa: E402
     Executor,
     FunctionCallContent,
     FunctionResultContent,
-    Role,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
     handler,
     response_handler,
-    tool,
 )
 from getting_started.workflows.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
@@ -168,7 +166,7 @@ async def main() -> None:
             result=human_response,
         )
         # Send the human review result back to the agent.
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=[human_review_function_result]))
+        response = await agent.run(ChatMessage("tool", [human_review_function_result]))
         print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)

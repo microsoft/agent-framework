@@ -41,7 +41,6 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponse,
         ChatResponseUpdate,
         Content,
-        FinishReason,
     )
 
 __all__ = [
@@ -1211,7 +1210,7 @@ def _trace_get_streaming_response(
                     duration = (end_time_stamp or perf_counter()) - start_time_stamp
                     from ._types import ChatResponse
 
-                    response = ChatResponse.from_chat_response_updates(all_updates)
+                    response = ChatResponse.from_updates(all_updates)
                     attributes = _get_response_attributes(attributes, response, duration=duration)
                     _capture_response(
                         span=span,
@@ -1450,7 +1449,7 @@ def _trace_agent_run_stream(
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             else:
-                response = AgentResponse.from_agent_run_response_updates(all_updates)
+                response = AgentResponse.from_updates(all_updates)
                 attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
@@ -1715,7 +1714,7 @@ def _capture_messages(
     messages: "str | ChatMessage | list[str] | list[ChatMessage]",
     system_instructions: str | list[str] | None = None,
     output: bool = False,
-    finish_reason: "FinishReason | None" = None,
+    finish_reason: str | None = None,
 ) -> None:
     """Log messages with extra information."""
     from ._types import prepare_messages
@@ -1730,13 +1729,13 @@ def _capture_messages(
         logger.info(
             otel_message,
             extra={
-                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
+                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
                 OtelAttr.PROVIDER_NAME: provider_name,
                 ChatMessageListTimestampFilter.INDEX_KEY: index,
             },
         )
     if finish_reason:
-        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason.value]
+        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
     if system_instructions:
         if not isinstance(system_instructions, list):
@@ -1747,7 +1746,7 @@ def _capture_messages(
 
 def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
     """Create a otel representation of a message."""
-    return {"role": message.role.value, "parts": [_to_otel_part(content) for content in message.contents]}
+    return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
 
 
 def _to_otel_part(content: "Content") -> dict[str, Any] | None:
@@ -1806,7 +1805,9 @@ def _get_response_attributes(
             getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
         )
     if finish_reason:
-        attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason.value])
+        # Handle both string and object with .value attribute for backward compatibility
+        finish_reason_str = finish_reason.value if hasattr(finish_reason, "value") else finish_reason
+        attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason_str])
     if model_id := getattr(response, "model_id", None):
         attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):

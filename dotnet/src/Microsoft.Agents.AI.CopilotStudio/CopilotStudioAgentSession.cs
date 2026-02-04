@@ -25,4 +25,12 @@ public sealed class CopilotStudioAgentSession : ServiceIdAgentSession
         get { return this.ServiceSessionId; }
         internal set { this.ServiceSessionId = value; }
     }
+
+    /// <summary>
+    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
+    /// </summary>
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        => base.Serialize(jsonSerializerOptions);
 }

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import cast
 
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, GroupChatBuilder, Role, WorkflowOutputEvent
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, GroupChatBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -206,7 +206,7 @@ Share your perspective authentically. Feel free to:
         GroupChatBuilder()
         .with_orchestrator(agent=moderator)
         .participants([farmer, developer, teacher, activist, spiritual_leader, artist, immigrant, doctor])
-        .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == Role.ASSISTANT) >= 10)
+        .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 10)
         # Enable intermediate outputs to observe the conversation as it unfolds
         # Intermediate outputs will be emitted as WorkflowOutputEvent events
         .with_intermediate_outputs()
