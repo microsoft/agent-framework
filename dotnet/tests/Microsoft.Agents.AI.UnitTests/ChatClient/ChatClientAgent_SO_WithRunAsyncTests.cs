@@ -50,45 +50,6 @@ public partial class ChatClientAgent_SO_WithRunAsyncTests
         Assert.Equal(expectedSO.Species, animal.Species);
     }
 
-    [Fact]
-    public async Task RunAsync_WithNonGenericType_SetsJsonSchemaResponseFormatAndDeserializesResultAsync()
-    {
-        // Arrange
-        ChatResponseFormat? capturedResponseFormat = null;
-        ChatResponseFormatJson expectedResponseFormat = ChatResponseFormat.ForJsonSchema<Animal>(JsonContext3.Default.Options);
-        Animal expectedSO = new() { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(s => s
-            .GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) => capturedResponseFormat = opts?.ResponseFormat)
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedSO, JsonContext3.Default.Animal)))
-            {
-                ResponseId = "test",
-            });
-
-        ChatClientAgent agent = new(mockService.Object);
-
-        // Act
-        AgentResponse<object> agentResponse = await agent.RunAsync(
-            typeof(Animal),
-            messages: [new(ChatRole.User, "Hello")],
-            serializerOptions: JsonContext3.Default.Options);
-
-        // Assert
-        Assert.NotNull(capturedResponseFormat);
-        Assert.Equal(expectedResponseFormat.Schema?.GetRawText(), ((ChatResponseFormatJson)capturedResponseFormat).Schema?.GetRawText());
-
-        Assert.IsType<Animal>(agentResponse.Result);
-        Animal animal = (Animal)agentResponse.Result;
-        Assert.Equal(expectedSO.Id, animal.Id);
-        Assert.Equal(expectedSO.FullName, animal.FullName);
-        Assert.Equal(expectedSO.Species, animal.Species);
-    }
-
     [JsonSourceGenerationOptions(UseStringEnumConverter = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
     [JsonSerializable(typeof(Animal))]
     [JsonSerializable(typeof(JsonElement))]

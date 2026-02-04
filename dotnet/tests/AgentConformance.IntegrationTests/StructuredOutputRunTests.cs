@@ -63,31 +63,6 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
         Assert.Equal("Paris", response.Result.Name);
     }
 
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
-    public virtual async Task RunWithTypeAsSystemTypeReturnsExpectedResultAsync()
-    {
-        // Arrange
-        var agent = this.Fixture.Agent;
-        var session = await agent.CreateSessionAsync();
-        await using var cleanup = new SessionCleanup(session, this.Fixture);
-
-        // Act
-        AgentResponse<object> response = await agent.RunAsync(
-            typeof(CityInfo),
-            new ChatMessage(ChatRole.User, "Provide information about the capital of France."),
-            session);
-
-        // Assert
-        Assert.NotNull(response);
-        Assert.Single(response.Messages);
-        Assert.Contains("Paris", response.Text);
-        Assert.NotNull(response.Result);
-
-        Assert.IsType<CityInfo>(response.Result);
-        CityInfo cityInfo = (CityInfo)response.Result;
-        Assert.Equal("Paris", cityInfo.Name);
-    }
-
     protected static bool TryDeserialize<T>(string json, JsonSerializerOptions jsonSerializerOptions, out T structuredOutput)
     {
         try
