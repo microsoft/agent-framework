@@ -271,10 +271,10 @@ public abstract partial class AIAgent
 
         var responseFormat = NewChatResponseFormat.ForJsonSchema(resultType, serializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        options = options is null ? new AgentRunOptions() : new AgentRunOptions(options);
-        options.ResponseFormat = responseFormat;
+        AgentRunOptions effectiveOptions = options ?? new AgentRunOptions();
+        effectiveOptions.ResponseFormat = responseFormat;
 
-        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await this.RunAsync(messages, session, effectiveOptions, cancellationToken).ConfigureAwait(false);
 
         return new AgentResponse<object>(response, responseFormat);
     }
