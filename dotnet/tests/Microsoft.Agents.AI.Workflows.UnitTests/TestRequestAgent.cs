@@ -29,7 +29,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
@@ -37,13 +37,16 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             _ => throw new NotSupportedException(),
         });
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
             TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
             _ => throw new NotSupportedException(),
         });
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
@@ -73,7 +76,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
                     where TRequest : AIContent
                     where TResponse : AIContent
     {
-        this.LastSession = session ??= await this.GetNewSessionAsync(cancellationToken);
+        this.LastSession = session ??= await this.CreateSessionAsync(cancellationToken);
         TestRequestAgentSession<TRequest, TResponse> traSessin = ConvertSession<TRequest, TResponse>(session);
 
         if (traSessin.HasSentRequests)
@@ -361,7 +364,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             this.PairedRequests = state.PairedRequests;
         }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
             JsonElement sessionState = base.Serialize(jsonSerializerOptions);
 

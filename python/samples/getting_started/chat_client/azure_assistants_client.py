@@ -4,10 +4,10 @@ import asyncio
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
-from agent_framework import tool
 
 """
 Azure Assistants Client Direct Usage Example
@@ -15,6 +15,7 @@ Azure Assistants Client Direct Usage Example
 Demonstrates direct AzureAssistantsClient usage for chat interactions with Azure OpenAI assistants.
 Shows function calling capabilities and automatic assistant creation.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

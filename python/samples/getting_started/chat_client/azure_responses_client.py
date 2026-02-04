@@ -4,8 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatResponse
-from agent_framework import tool
+from agent_framework import ChatResponse, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
@@ -16,6 +15,7 @@ Azure Responses Client Direct Usage Example
 Demonstrates direct AzureResponsesClient usage for structured response generation with Azure OpenAI models.
 Shows function calling capabilities with custom business logic.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -42,19 +42,21 @@ async def main() -> None:
     stream = True
     print(f"User: {message}")
     if stream:
-        response = await ChatResponse.from_chat_response_generator(
+        response = await ChatResponse.from_update_generator(
             client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
             output_format_type=OutputStruct,
         )
-        if result := response.try_parse_value(OutputStruct):
+        try:
+            result = response.value
             print(f"Assistant: {result}")
-        else:
+        except Exception:
             print(f"Assistant: {response.text}")
     else:
         response = await client.get_response(message, tools=get_weather, options={"response_format": OutputStruct})
-        if result := response.try_parse_value(OutputStruct):
+        try:
+            result = response.value
             print(f"Assistant: {result}")
-        else:
+        except Exception:
             print(f"Assistant: {response.text}")
 
 

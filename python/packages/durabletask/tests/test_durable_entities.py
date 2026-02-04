@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content
 from pydantic import BaseModel
 
 from agent_framework_durabletask import (
@@ -81,9 +81,7 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = (
-        ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", contents=[])
-    )
+    message = ChatMessage("assistant", [text]) if text is not None else ChatMessage("assistant", [])
     return AgentResponse(messages=[message])
 
 
@@ -222,8 +220,8 @@ class TestAgentEntityRunAgent:
     async def test_run_agent_streaming_callbacks_invoked(self) -> None:
         """Ensure streaming updates trigger callbacks and run() is not used."""
         updates = [
-            AgentResponseUpdate(text="Hello"),
-            AgentResponseUpdate(text=" world"),
+            AgentResponseUpdate(contents=[Content.from_text(text="Hello")]),
+            AgentResponseUpdate(contents=[Content.from_text(text=" world")]),
         ]
 
         async def update_generator() -> AsyncIterator[AgentResponseUpdate]:
@@ -595,7 +593,7 @@ class TestRunRequestSupport:
 
         request = RunRequest(
             message="Test message",
-            role=Role.USER,
+            role="user",
             enable_tool_calls=True,
             correlation_id="corr-runreq-1",
         )
@@ -644,7 +642,7 @@ class TestRunRequestSupport:
         # Send as system role
         request = RunRequest(
             message="System message",
-            role=Role.SYSTEM,
+            role="system",
             correlation_id="corr-runreq-3",
         )
 

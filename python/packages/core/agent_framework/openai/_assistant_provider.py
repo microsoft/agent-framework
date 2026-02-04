@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
@@ -21,10 +21,13 @@ if TYPE_CHECKING:
     from ._assistants_client import OpenAIAssistantsOptions
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import TypeVar  # type:ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
-
+    from typing_extensions import TypeVar  # type:ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self, TypedDict  # type:ignore # pragma: no cover
+else:
+    from typing_extensions import Self, TypedDict  # type:ignore # pragma: no cover
 
 __all__ = ["OpenAIAssistantProvider"]
 

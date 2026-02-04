@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import contextlib
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
@@ -106,14 +107,21 @@ class Runner:
                 # Run iteration concurrently with live event streaming: we poll
                 # for new events while the iteration coroutine progresses.
                 iteration_task = asyncio.create_task(self._run_iteration())
-                while not iteration_task.done():
-                    try:
-                        # Wait briefly for any new event; timeout allows progress checks
-                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                        yield event
-                    except asyncio.TimeoutError:
-                        # Periodically continue to let iteration advance
-                        continue
+                try:
+                    while not iteration_task.done():
+                        try:
+                            # Wait briefly for any new event; timeout allows progress checks
+                            event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                            yield event
+                        except asyncio.TimeoutError:
+                            # Periodically continue to let iteration advance
+                            continue
+                except asyncio.CancelledError:
+                    # Propagate cancellation to the iteration task to avoid orphaned work
+                    iteration_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await iteration_task
+                    raise
 
                 # Propagate errors from iteration, but first surface any pending events
                 try:

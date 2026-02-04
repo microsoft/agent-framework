@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -35,7 +36,7 @@ public class DelegatingAIAgentTests
         this._innerAgentMock.Protected().SetupGet<string>("IdCore").Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewSessionAsync()).ReturnsAsync(this._testSession);
+        this._innerAgentMock.Setup(x => x.CreateSessionAsync()).ReturnsAsync(this._testSession);
 
         this._innerAgentMock
             .Protected()
@@ -132,17 +133,37 @@ public class DelegatingAIAgentTests
     #region Method Delegation Tests
 
     /// <summary>
-    /// Verify that GetNewSessionAsync delegates to inner agent.
+    /// Verify that CreateSessionAsync delegates to inner agent.
     /// </summary>
     [Fact]
-    public async Task GetNewSessionAsync_DelegatesToInnerAgentAsync()
+    public async Task CreateSessionAsync_DelegatesToInnerAgentAsync()
     {
         // Act
-        var session = await this._delegatingAgent.GetNewSessionAsync();
+        var session = await this._delegatingAgent.CreateSessionAsync();
 
         // Assert
         Assert.Same(this._testSession, session);
-        this._innerAgentMock.Verify(x => x.GetNewSessionAsync(), Times.Once);
+        this._innerAgentMock.Verify(x => x.CreateSessionAsync(), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that DeserializeSessionAsync delegates to inner agent.
+    /// </summary>
+    [Fact]
+    public async Task DeserializeSessionAsync_DelegatesToInnerAgentAsync()
+    {
+        // Arrange
+        var serializedSession = JsonSerializer.SerializeToElement("test-session-id", TestJsonSerializerContext.Default.String);
+        this._innerAgentMock
+            .Setup(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(this._testSession);
+
+        // Act
+        var session = await this._delegatingAgent.DeserializeSessionAsync(serializedSession);
+
+        // Assert
+        Assert.Same(this._testSession, session);
+        this._innerAgentMock.Verify(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

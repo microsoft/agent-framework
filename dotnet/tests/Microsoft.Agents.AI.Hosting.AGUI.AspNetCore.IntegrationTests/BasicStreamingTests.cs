@@ -31,7 +31,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         List<AgentResponseUpdate> updates = [];
@@ -62,7 +62,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
         List<AgentResponseUpdate> updates = [];
@@ -106,7 +106,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         // Act
@@ -125,7 +125,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
         // Act - First turn
@@ -169,7 +169,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
 
         List<AgentResponseUpdate> updates = [];
@@ -201,7 +201,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         // Multiple user messages sent in one turn
         ChatMessage[] userMessages =
@@ -280,11 +280,14 @@ internal sealed class FakeChatClientAgent : AIAgent
 
     public override string? Description => "A fake agent for testing";
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => throw new NotImplementedException();
 
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
@@ -344,11 +347,21 @@ internal sealed class FakeMultiMessageAgent : AIAgent
 
     public override string? Description => "A fake agent that sends multiple messages for testing";
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is not FakeInMemoryAgentSession fakeSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return fakeSession.Serialize(jsonSerializerOptions);
+    }
 
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
@@ -425,6 +438,8 @@ internal sealed class FakeMultiMessageAgent : AIAgent
             : base(serializedSession, jsonSerializerOptions)
         {
         }
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => base.Serialize(jsonSerializerOptions);
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;

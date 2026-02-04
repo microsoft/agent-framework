@@ -15,7 +15,6 @@ from agent_framework import (
     MagenticOrchestratorEvent,
     MagenticProgressLedger,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 

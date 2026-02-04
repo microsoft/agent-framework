@@ -5,7 +5,7 @@ from typing import ClassVar
 from agent_framework._pydantic import AFBaseSettings
 
 
-class GithubCopilotSettings(AFBaseSettings):
+class GitHubCopilotSettings(AFBaseSettings):
     """GitHub Copilot model settings.
 
     The settings are first loaded from environment variables with the prefix 'GITHUB_COPILOT_'.
@@ -28,17 +28,17 @@ class GithubCopilotSettings(AFBaseSettings):
     Examples:
         .. code-block:: python
 
-            from agent_framework_github_copilot import GithubCopilotSettings
+            from agent_framework_github_copilot import GitHubCopilotSettings
 
             # Using environment variables
             # Set GITHUB_COPILOT_MODEL=gpt-5
-            settings = GithubCopilotSettings()
+            settings = GitHubCopilotSettings()
 
             # Or passing parameters directly
-            settings = GithubCopilotSettings(model="claude-sonnet-4", timeout=120)
+            settings = GitHubCopilotSettings(model="claude-sonnet-4", timeout=120)
 
             # Or loading from a .env file
-            settings = GithubCopilotSettings(env_file_path="path/to/.env")
+            settings = GitHubCopilotSettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "GITHUB_COPILOT_"

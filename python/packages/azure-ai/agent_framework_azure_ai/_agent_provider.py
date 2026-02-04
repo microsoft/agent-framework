@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -27,9 +27,13 @@ if TYPE_CHECKING:
     from ._chat_client import AzureAIAgentOptions
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
+    from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 # Type variable for options - allows typed ChatAgent[TOptions] returns

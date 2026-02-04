@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
@@ -151,6 +152,111 @@ public class AIContextProviderTests
 
         // Assert
         Assert.Null(result);
+    }
+
+    #endregion
+
+    #region InvokingContext Tests
+
+    [Fact]
+    public void InvokingContext_RequestMessages_SetterThrowsForNull()
+    {
+        // Arrange
+        var messages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var context = new AIContextProvider.InvokingContext(messages);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => context.RequestMessages = null!);
+    }
+
+    [Fact]
+    public void InvokingContext_RequestMessages_SetterRoundtrips()
+    {
+        // Arrange
+        var initialMessages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var newMessages = new List<ChatMessage> { new(ChatRole.User, "New message") };
+        var context = new AIContextProvider.InvokingContext(initialMessages);
+
+        // Act
+        context.RequestMessages = newMessages;
+
+        // Assert
+        Assert.Same(newMessages, context.RequestMessages);
+    }
+
+    #endregion
+
+    #region InvokedContext Tests
+
+    [Fact]
+    public void InvokedContext_RequestMessages_SetterThrowsForNull()
+    {
+        // Arrange
+        var messages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var context = new AIContextProvider.InvokedContext(messages, aiContextProviderMessages: null);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => context.RequestMessages = null!);
+    }
+
+    [Fact]
+    public void InvokedContext_RequestMessages_SetterRoundtrips()
+    {
+        // Arrange
+        var initialMessages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var newMessages = new List<ChatMessage> { new(ChatRole.User, "New message") };
+        var context = new AIContextProvider.InvokedContext(initialMessages, aiContextProviderMessages: null);
+
+        // Act
+        context.RequestMessages = newMessages;
+
+        // Assert
+        Assert.Same(newMessages, context.RequestMessages);
+    }
+
+    [Fact]
+    public void InvokedContext_AIContextProviderMessages_Roundtrips()
+    {
+        // Arrange
+        var requestMessages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var aiContextMessages = new List<ChatMessage> { new(ChatRole.System, "AI context message") };
+        var context = new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null);
+
+        // Act
+        context.AIContextProviderMessages = aiContextMessages;
+
+        // Assert
+        Assert.Same(aiContextMessages, context.AIContextProviderMessages);
+    }
+
+    [Fact]
+    public void InvokedContext_ResponseMessages_Roundtrips()
+    {
+        // Arrange
+        var requestMessages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var responseMessages = new List<ChatMessage> { new(ChatRole.Assistant, "Response message") };
+        var context = new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null);
+
+        // Act
+        context.ResponseMessages = responseMessages;
+
+        // Assert
+        Assert.Same(responseMessages, context.ResponseMessages);
+    }
+
+    [Fact]
+    public void InvokedContext_InvokeException_Roundtrips()
+    {
+        // Arrange
+        var requestMessages = new ReadOnlyCollection<ChatMessage>([new(ChatRole.User, "Hello")]);
+        var exception = new InvalidOperationException("Test exception");
+        var context = new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null);
+
+        // Act
+        context.InvokeException = exception;
+
+        // Assert
+        Assert.Same(exception, context.InvokeException);
     }
 
     #endregion

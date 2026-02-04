@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -13,12 +13,10 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     TextSpanRegion,
     UsageDetails,
     get_logger,
@@ -47,15 +45,18 @@ from anthropic.types.beta.beta_code_execution_tool_result_error import (
 )
 from pydantic import BaseModel, SecretStr, ValidationError
 
-if sys.version_info >= (3, 13):
-    from typing import TypeVar
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 __all__ = [
     "AnthropicChatOptions",
@@ -68,6 +69,8 @@ logger = get_logger("agent_framework.anthropic")
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Anthropic Chat Options TypedDict
@@ -91,7 +94,7 @@ class ThinkingConfig(TypedDict, total=False):
     budget_tokens: int
 
 
-class AnthropicChatOptions(ChatOptions, total=False):
+class AnthropicChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Anthropic-specific chat options.
 
     Extends ChatOptions with options specific to Anthropic's Messages API.
@@ -167,20 +170,20 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Role and Finish Reason Maps
 
 
-ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+ROLE_MAP: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "tool_use": FinishReason.TOOL_CALLS,
-    "end_turn": FinishReason.STOP,
-    "refusal": FinishReason.CONTENT_FILTER,
-    "pause_turn": FinishReason.STOP,
+FINISH_REASON_MAP: dict[str, str] = {
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "end_turn": "stop",
+    "refusal": "content_filter",
+    "pause_turn": "stop",
 }
 
 
@@ -410,7 +413,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             run_options["system"] = messages[0].text
 
         # betas
@@ -497,7 +500,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
@@ -668,7 +671,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             response_id=message.id,
             messages=[
                 ChatMessage(
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,
                 )

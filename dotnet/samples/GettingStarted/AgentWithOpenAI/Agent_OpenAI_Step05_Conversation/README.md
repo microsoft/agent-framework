@@ -33,7 +33,7 @@ The `AgentSession` works with `ChatClientAgentRunOptions` to link the agent to a
 ChatClientAgentRunOptions agentRunOptions = new() { ChatOptions = new ChatOptions() { ConversationId = conversationId } };
 
 // Create a session for the conversation
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // First call links the session to the conversation
 ChatCompletion firstResponse = await agent.RunAsync([firstMessage], session, agentRunOptions);
@@ -59,7 +59,7 @@ foreach (ClientResult result in getConversationItemsResults.GetRawPages())
 1. **Create an OpenAI Client**: Initialize an `OpenAIClient` with your API key
 2. **Create a Conversation**: Use `ConversationClient` to create a server-side conversation
 3. **Create an Agent**: Initialize an `OpenAIResponseClientAgent` with the desired model and instructions
-4. **Create a Session**: Call `agent.GetNewSessionAsync()` to create a new conversation session
+4. **Create a Session**: Call `agent.CreateSessionAsync()` to create a new conversation session
 5. **Link Session to Conversation**: Pass `ChatClientAgentRunOptions` with the `ConversationId` on the first call
 6. **Send Messages**: Subsequent calls to `agent.RunAsync()` only need the session - context is maintained
 7. **Cleanup**: Delete the conversation when done using `conversationClient.DeleteConversation()`

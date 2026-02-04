@@ -55,9 +55,12 @@ def ensure_response_format(
     Raises:
         ValueError: If response_format is specified but response.value cannot be parsed
     """
-    if response_format is not None and not isinstance(response.value, response_format):
-        response.try_parse_value(response_format)
+    if response_format is not None:
+        # Set the response format on the response so .value knows how to parse
+        response._response_format = response_format
+        response._value_parsed = False  # Reset to allow re-parsing with new format
 
+        # Access response.value to trigger parsing (may raise ValidationError)
         # Validate that parsing succeeded
         if not isinstance(response.value, response_format):
             raise ValueError(

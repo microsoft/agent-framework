@@ -19,13 +19,13 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // Start a new session for the agent conversation.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Run the agent with a new session.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Serialize the session state to a JsonElement, so it can be stored for later use.
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 
 // Save the serialized session to a temporary file (for demonstration purposes).
 string tempFilePath = Path.GetTempFileName();

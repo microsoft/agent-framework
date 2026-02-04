@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260130] - 2026-01-30
+
+### Added
+
+- **agent-framework-claude**: Add BaseAgent implementation for Claude Agent SDK ([#3509](https://github.com/microsoft/agent-framework/pull/3509))
+- **agent-framework-core**: Add core types and agents unit tests ([#3470](https://github.com/microsoft/agent-framework/pull/3470))
+- **agent-framework-core**: Add core utilities unit tests ([#3487](https://github.com/microsoft/agent-framework/pull/3487))
+- **agent-framework-core**: Add observability unit tests to improve coverage ([#3469](https://github.com/microsoft/agent-framework/pull/3469))
+- **agent-framework-azure-ai**: Improved AzureAI package test coverage ([#3452](https://github.com/microsoft/agent-framework/pull/3452))
+
+### Changed
+
+- **agent-framework-core**: Added generic types to `ChatOptions` and `ChatResponse`/`AgentResponse` for Response Format ([#3305](https://github.com/microsoft/agent-framework/pull/3305))
+- **agent-framework-durabletask**: Update durabletask package ([#3492](https://github.com/microsoft/agent-framework/pull/3492))
+
+## [1.0.0b260128] - 2026-01-28
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Renamed `@ai_function` decorator to `@tool` and `AIFunction` to `FunctionTool` ([#3413](https://github.com/microsoft/agent-framework/pull/3413))
+- **agent-framework-core**: [BREAKING] Add factory pattern to `GroupChatBuilder` and `MagenticBuilder` ([#3224](https://github.com/microsoft/agent-framework/pull/3224))
+- **agent-framework-github-copilot**: [BREAKING] Renamed `Github` to `GitHub`  ([#3486](https://github.com/microsoft/agent-framework/pull/3486))
+
 ## [1.0.0b260127] - 2026-01-27
 
 ### Added
@@ -548,7 +571,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260130...HEAD
+[1.0.0b260130]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260128...python-1.0.0b260130
+[1.0.0b260128]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...python-1.0.0b260128
 [1.0.0b260127]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260123...python-1.0.0b260127
 [1.0.0b260123]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260116...python-1.0.0b260123
 [1.0.0b260116]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260114...python-1.0.0b260116

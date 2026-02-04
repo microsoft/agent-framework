@@ -9,7 +9,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -121,7 +120,7 @@ async def main():
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the workflow output.
     events = await workflow.run(
-        ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."])
     )
     # The terminal node yields output; print its contents.
     outputs = events.get_outputs()

@@ -12,7 +12,6 @@ from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
     Executor,
-    Role,
     WorkflowContext,
     WorkflowOutputEvent,
     WorkflowRunState,
@@ -36,7 +35,7 @@ class _FakeAgentExec(Executor):
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        response = AgentResponse(messages=ChatMessage(Role.ASSISTANT, text=self._reply_text))
+        response = AgentResponse(messages=ChatMessage("assistant", text=self._reply_text))
         full_conversation = list(request.messages) + list(response.messages)
         await ctx.send_message(AgentExecutorResponse(self.id, response, full_conversation=full_conversation))
 
@@ -126,12 +125,12 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
-    assert messages[0].role == Role.USER
+    assert messages[0].role == "user"
     assert "hello world" in messages[0].text
 
     assistant_texts = {m.text for m in messages[1:]}
     assert assistant_texts == {"Alpha", "Beta", "Gamma"}
-    assert all(m.role == Role.ASSISTANT for m in messages[1:])
+    assert all(m.role == "assistant" for m in messages[1:])
 
 
 async def test_concurrent_custom_aggregator_callback_is_used() -> None:
@@ -543,9 +542,9 @@ async def test_concurrent_with_register_participants() -> None:
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
-    assert messages[0].role == Role.USER
+    assert messages[0].role == "user"
     assert "test prompt" in messages[0].text
 
     assistant_texts = {m.text for m in messages[1:]}
     assert assistant_texts == {"Alpha", "Beta", "Gamma"}
-    assert all(m.role == Role.ASSISTANT for m in messages[1:])
+    assert all(m.role == "assistant" for m in messages[1:])

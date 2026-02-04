@@ -39,7 +39,7 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Cleanup by agent name removes the agent versions created.

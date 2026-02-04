@@ -4,8 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework import tool
+from agent_framework import ChatAgent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -15,6 +14,7 @@ OpenAI Responses Client Basic Example
 This sample demonstrates basic usage of OpenAIResponsesClient for structured
 response generation, showing both streaming and non-streaming responses.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

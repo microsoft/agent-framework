@@ -11,7 +11,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     BaseChatClient,
@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -40,26 +39,32 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions, total=False):
+class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.
@@ -436,12 +441,12 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
 
     def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
-            Role.SYSTEM.value: self._format_system_message,
-            Role.USER.value: self._format_user_message,
-            Role.ASSISTANT.value: self._format_assistant_message,
-            Role.TOOL.value: self._format_tool_message,
+            "system": self._format_system_message,
+            "user": self._format_user_message,
+            "assistant": self._format_assistant_message,
+            "tool": self._format_tool_message,
         }
-        return message_converters[message.role.value](message)
+        return message_converters[message.role](message)
 
     def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
@@ -510,8 +515,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
-            role=Role.ASSISTANT,
-            ai_model_id=response.model,
+            role="assistant",
+            model_id=response.model,
             created_at=response.created_at,
         )
 
@@ -519,7 +524,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
+            messages=[ChatMessage("assistant", contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(

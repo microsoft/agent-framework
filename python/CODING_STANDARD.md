@@ -55,8 +55,8 @@ Prefer attributes over inheritance when parameters are mostly the same:
 # ✅ Preferred - using attributes
 from agent_framework import ChatMessage
 
-user_msg = ChatMessage(role="user", content="Hello, world!")
-asst_msg = ChatMessage(role="assistant", content="Hello, world!")
+user_msg = ChatMessage("user", ["Hello, world!"])
+asst_msg = ChatMessage("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
 from agent_framework import UserMessage, AssistantMessage

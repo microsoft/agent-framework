@@ -4,10 +4,10 @@ import asyncio
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
-from agent_framework import tool
 
 """
 Azure AI Agent Basic Example
@@ -15,6 +15,7 @@ Azure AI Agent Basic Example
 This sample demonstrates basic usage of AzureAIProjectAgentProvider.
 Shows both streaming and non-streaming responses with function tools.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

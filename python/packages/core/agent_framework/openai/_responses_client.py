@@ -12,7 +12,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict, cast
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -54,7 +54,6 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
@@ -79,8 +78,13 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = get_logger("agent_framework.openai")
+
 
 __all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
 
@@ -108,7 +112,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-class OpenAIResponsesOptions(ChatOptions, total=False):
+TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+
+
+class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -602,7 +609,7 @@ class OpenAIBaseResponsesClient(
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        Role.TOOL messages need to be formatted different than system/user/assistant messages:
+        "tool" messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -635,7 +642,7 @@ class OpenAIBaseResponsesClient(
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, Role) else message.role,
+            "role": message.role,
         }
         for content in message.contents:
             match content.type:
@@ -661,7 +668,7 @@ class OpenAIBaseResponsesClient(
 
     def _prepare_content_for_openai(
         self,
-        role: Role,
+        role: str,
         content: Content,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
@@ -669,7 +676,7 @@ class OpenAIBaseResponsesClient(
         match content.type:
             case "text":
                 return {
-                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
+                    "type": "output_text" if role == "assistant" else "input_text",
                     "text": content.text,
                 }
             case "text_reasoning":
@@ -1019,7 +1026,7 @@ class OpenAIBaseResponsesClient(
                     )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        response_message = ChatMessage(role="assistant", contents=contents)
+        response_message = ChatMessage("assistant", contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
@@ -1379,7 +1386,7 @@ class OpenAIBaseResponsesClient(
             contents=contents,
             conversation_id=conversation_id,
             response_id=response_id,
-            role=Role.ASSISTANT,
+            role="assistant",
             model_id=model,
             additional_properties=metadata,
             raw_representation=event,

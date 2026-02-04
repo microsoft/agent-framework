@@ -16,7 +16,6 @@ from agent_framework import (
     ChatMessageStore,
     Content,
     Executor,
-    Role,
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
@@ -41,11 +40,11 @@ class SimpleExecutor(Executor):
         response_text = f"{self.response_text}: {input_text}"
 
         # Create response message for both streaming and non-streaming cases
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
+        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
 
         # Emit update event.
         streaming_update = AgentResponseUpdate(
-            contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
+            contents=[Content.from_text(text=response_text)], role="assistant", message_id=str(uuid.uuid4())
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
 
@@ -68,7 +67,7 @@ class RequestingExecutor(Executor):
         # Handle the response and emit completion response
         update = AgentResponseUpdate(
             contents=[Content.from_text(text="Request completed successfully")],
-            role=Role.ASSISTANT,
+            role="assistant",
             message_id=str(uuid.uuid4()),
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
@@ -90,10 +89,10 @@ class ConversationHistoryCapturingExecutor(Executor):
         message_count = len(messages)
         response_text = f"Received {message_count} messages"
 
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
+        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
 
         streaming_update = AgentResponseUpdate(
-            contents=[Content.from_text(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
+            contents=[Content.from_text(text=response_text)], role="assistant", message_id=str(uuid.uuid4())
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
         await ctx.send_message([response_message])
@@ -232,7 +231,7 @@ class TestWorkflowAgent:
             ),
         )
 
-        response_message = ChatMessage(role=Role.USER, contents=[approval_response])
+        response_message = ChatMessage("user", [approval_response])
 
         # Continue the workflow with the response
         continuation_result = await agent.run(response_message)
@@ -295,7 +294,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
 
         # Run directly - should return WorkflowOutputEvent in result
-        direct_result = await workflow.run([ChatMessage(role=Role.USER, contents=[Content.from_text(text="hello")])])
+        direct_result = await workflow.run([ChatMessage("user", [Content.from_text(text="hello")])])
         direct_outputs = direct_result.get_outputs()
         assert len(direct_outputs) == 1
         assert direct_outputs[0] == "processed: hello"
@@ -362,7 +361,7 @@ class TestWorkflowAgent:
         @executor
         async def chat_message_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
             msg = ChatMessage(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=[Content.from_text(text="response text")],
                 author_name="custom-author",
             )
@@ -374,7 +373,7 @@ class TestWorkflowAgent:
         result = await agent.run("test")
 
         assert len(result.messages) == 1
-        assert result.messages[0].role == Role.ASSISTANT
+        assert result.messages[0].role == "assistant"
         assert result.messages[0].text == "response text"
         assert result.messages[0].author_name == "custom-author"
 
@@ -425,10 +424,10 @@ class TestWorkflowAgent:
         async def list_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
             # Yield a list of ChatMessages (as SequentialBuilder does)
             msg_list = [
-                ChatMessage(role=Role.USER, contents=[Content.from_text(text="first message")]),
-                ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="second message")]),
+                ChatMessage("user", [Content.from_text(text="first message")]),
+                ChatMessage("assistant", [Content.from_text(text="second message")]),
                 ChatMessage(
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     contents=[Content.from_text(text="third"), Content.from_text(text="fourth")],
                 ),
             ]
@@ -469,8 +468,8 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage(role=Role.USER, text="Previous user message"),
-            ChatMessage(role=Role.ASSISTANT, text="Previous assistant response"),
+            ChatMessage("user", ["Previous user message"]),
+            ChatMessage("assistant", ["Previous assistant response"]),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
@@ -499,9 +498,9 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
-            ChatMessage(role=Role.USER, text="Hello"),
-            ChatMessage(role=Role.ASSISTANT, text="Hi there!"),
+            ChatMessage("system", ["You are a helpful assistant"]),
+            ChatMessage("user", ["Hello"]),
+            ChatMessage("assistant", ["Hi there!"]),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
@@ -579,7 +578,7 @@ class TestWorkflowAgent:
 
             async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
                 return AgentResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
+                    messages=[ChatMessage("assistant", [self._response_text])],
                     text=self._response_text,
                 )
 
@@ -589,7 +588,7 @@ class TestWorkflowAgent:
                 for word in self._response_text.split():
                     yield AgentResponseUpdate(
                         contents=[Content.from_text(text=word + " ")],
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         author_name=self._name,
                     )
 
@@ -653,7 +652,7 @@ class TestWorkflowAgent:
 
             async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentResponse:
                 return AgentResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
+                    messages=[ChatMessage("assistant", [self._response_text])],
                     text=self._response_text,
                 )
 
@@ -662,7 +661,7 @@ class TestWorkflowAgent:
             ) -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=self._response_text)],
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name=self._name,
                 )
 
@@ -728,7 +727,7 @@ class TestWorkflowAgentAuthorName:
                 # Emit update with explicit author_name
                 update = AgentResponseUpdate(
                     contents=[Content.from_text(text="Response with author")],
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     author_name="custom_author_name",  # Explicitly set
                     message_id=str(uuid.uuid4()),
                 )
@@ -780,7 +779,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response B, Message 2 (latest in resp B)
             AgentResponseUpdate(
                 contents=[Content.from_text(text="RespB-Msg2")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-b",
                 message_id="msg-2",
                 created_at="2024-01-01T12:02:00Z",
@@ -788,7 +787,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response A, Message 1 (earliest overall)
             AgentResponseUpdate(
                 contents=[Content.from_text(text="RespA-Msg1")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-a",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -796,7 +795,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response B, Message 1 (earlier in resp B)
             AgentResponseUpdate(
                 contents=[Content.from_text(text="RespB-Msg1")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-b",
                 message_id="msg-1",
                 created_at="2024-01-01T12:01:00Z",
@@ -804,7 +803,7 @@ class TestWorkflowAgentMergeUpdates:
             # Response A, Message 2 (later in resp A)
             AgentResponseUpdate(
                 contents=[Content.from_text(text="RespA-Msg2")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-a",
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:30Z",
@@ -812,7 +811,7 @@ class TestWorkflowAgentMergeUpdates:
             # Global dangling update (no response_id) - should go at end
             AgentResponseUpdate(
                 contents=[Content.from_text(text="Global-Dangling")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id=None,
                 message_id="msg-global",
                 created_at="2024-01-01T11:59:00Z",  # Earliest timestamp but should be last
@@ -886,7 +885,7 @@ class TestWorkflowAgentMergeUpdates:
                         usage_details={"input_token_count": 10, "output_token_count": 5, "total_token_count": 15}
                     ),
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -899,7 +898,7 @@ class TestWorkflowAgentMergeUpdates:
                         usage_details={"input_token_count": 20, "output_token_count": 8, "total_token_count": 28}
                     ),
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-2",
                 message_id="msg-2",
                 created_at="2024-01-01T12:01:00Z",  # Later timestamp
@@ -912,7 +911,7 @@ class TestWorkflowAgentMergeUpdates:
                         usage_details={"input_token_count": 5, "output_token_count": 3, "total_token_count": 8}
                     ),
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",  # Same response_id as first
                 message_id="msg-3",
                 created_at="2024-01-01T11:59:00Z",  # Earlier timestamp
@@ -975,7 +974,7 @@ class TestWorkflowAgentMergeUpdates:
             # User question
             AgentResponseUpdate(
                 contents=[Content.from_text(text="What is the weather?")],
-                role=Role.USER,
+                role="user",
                 response_id="resp-1",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -985,7 +984,7 @@ class TestWorkflowAgentMergeUpdates:
                 contents=[
                     Content.from_function_call(call_id=call_id, name="get_weather", arguments='{"location": "NYC"}')
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:01Z",
@@ -994,7 +993,7 @@ class TestWorkflowAgentMergeUpdates:
             # and be placed at the end (the bug); fix now correctly associates via call_id
             AgentResponseUpdate(
                 contents=[Content.from_function_result(call_id=call_id, result="Sunny, 72F")],
-                role=Role.TOOL,
+                role="tool",
                 response_id=None,
                 message_id="msg-3",
                 created_at="2024-01-01T12:00:02Z",
@@ -1002,7 +1001,7 @@ class TestWorkflowAgentMergeUpdates:
             # Final assistant answer
             AgentResponseUpdate(
                 contents=[Content.from_text(text="The weather in NYC is sunny and 72F.")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-4",
                 created_at="2024-01-01T12:00:03Z",
@@ -1026,10 +1025,10 @@ class TestWorkflowAgentMergeUpdates:
 
         # Verify correct ordering: user -> function_call -> function_result -> assistant_answer
         expected_sequence = [
-            ("text", Role.USER),
-            ("function_call", Role.ASSISTANT),
-            ("function_result", Role.TOOL),
-            ("text", Role.ASSISTANT),
+            ("text", "user"),
+            ("function_call", "assistant"),
+            ("function_result", "tool"),
+            ("text", "assistant"),
         ]
 
         assert content_sequence == expected_sequence, (
@@ -1073,7 +1072,7 @@ class TestWorkflowAgentMergeUpdates:
             # User question
             AgentResponseUpdate(
                 contents=[Content.from_text(text="What's the weather and time?")],
-                role=Role.USER,
+                role="user",
                 response_id="resp-1",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -1083,7 +1082,7 @@ class TestWorkflowAgentMergeUpdates:
                 contents=[
                     Content.from_function_call(call_id=call_id_1, name="get_weather", arguments='{"location": "NYC"}')
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:01Z",
@@ -1093,7 +1092,7 @@ class TestWorkflowAgentMergeUpdates:
                 contents=[
                     Content.from_function_call(call_id=call_id_2, name="get_time", arguments='{"timezone": "EST"}')
                 ],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-3",
                 created_at="2024-01-01T12:00:02Z",
@@ -1101,7 +1100,7 @@ class TestWorkflowAgentMergeUpdates:
             # Second function result arrives first (no response_id)
             AgentResponseUpdate(
                 contents=[Content.from_function_result(call_id=call_id_2, result="3:00 PM EST")],
-                role=Role.TOOL,
+                role="tool",
                 response_id=None,
                 message_id="msg-4",
                 created_at="2024-01-01T12:00:03Z",
@@ -1109,7 +1108,7 @@ class TestWorkflowAgentMergeUpdates:
             # First function result arrives second (no response_id)
             AgentResponseUpdate(
                 contents=[Content.from_function_result(call_id=call_id_1, result="Sunny, 72F")],
-                role=Role.TOOL,
+                role="tool",
                 response_id=None,
                 message_id="msg-5",
                 created_at="2024-01-01T12:00:04Z",
@@ -1117,7 +1116,7 @@ class TestWorkflowAgentMergeUpdates:
             # Final assistant answer
             AgentResponseUpdate(
                 contents=[Content.from_text(text="It's sunny (72F) and 3 PM in NYC.")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-6",
                 created_at="2024-01-01T12:00:05Z",
@@ -1168,7 +1167,7 @@ class TestWorkflowAgentMergeUpdates:
         updates = [
             AgentResponseUpdate(
                 contents=[Content.from_text(text="Hello")],
-                role=Role.USER,
+                role="user",
                 response_id="resp-1",
                 message_id="msg-1",
                 created_at="2024-01-01T12:00:00Z",
@@ -1176,14 +1175,14 @@ class TestWorkflowAgentMergeUpdates:
             # Function result with no matching call
             AgentResponseUpdate(
                 contents=[Content.from_function_result(call_id="orphan_call_id", result="orphan result")],
-                role=Role.TOOL,
+                role="tool",
                 response_id=None,
                 message_id="msg-2",
                 created_at="2024-01-01T12:00:01Z",
             ),
             AgentResponseUpdate(
                 contents=[Content.from_text(text="Goodbye")],
-                role=Role.ASSISTANT,
+                role="assistant",
                 response_id="resp-1",
                 message_id="msg-3",
                 created_at="2024-01-01T12:00:02Z",

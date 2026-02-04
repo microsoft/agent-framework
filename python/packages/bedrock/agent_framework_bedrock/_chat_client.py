@@ -5,7 +5,7 @@ import json
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Generic, Literal
 from uuid import uuid4
 
 from agent_framework import (
@@ -16,9 +16,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     FunctionTool,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -33,17 +31,20 @@ from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = get_logger("agent_framework.bedrock")
 
@@ -54,6 +55,8 @@ __all__ = [
     "BedrockGuardrailConfig",
     "BedrockSettings",
 ]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -82,7 +85,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions, total=False):
+class BedrockChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.
@@ -180,20 +183,20 @@ TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="B
 # endregion
 
 
-ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+ROLE_MAP: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "end_turn": FinishReason.STOP,
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "length": FinishReason.LENGTH,
-    "content_filtered": FinishReason.CONTENT_FILTER,
-    "tool_use": FinishReason.TOOL_CALLS,
+FINISH_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "length": "length",
+    "content_filtered": "content_filter",
+    "tool_use": "tool_calls",
 }
 
 
@@ -392,7 +395,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
-            if message.role == Role.SYSTEM:
+            if message.role == "system":
                 text_value = message.text
                 if text_value:
                     prompts.append({"text": text_value})
@@ -409,7 +412,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     for block in content_blocks
                     if isinstance(block, MutableMapping) and "toolUse" in block
                 )
-            elif message.role == Role.TOOL:
+            elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
                 pending_tool_use_ids.clear()
                 if not content_blocks:
@@ -569,7 +572,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage(role=Role.ASSISTANT, contents=contents, raw_representation=message)
+        chat_message = ChatMessage("assistant", contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
@@ -637,7 +640,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
+    def _map_finish_reason(self, reason: str | None) -> str | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())

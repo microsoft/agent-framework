@@ -4,12 +4,12 @@ import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
+from agent_framework import tool
 from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
-from agent_framework import tool
 
 if TYPE_CHECKING:
     from agent_framework import ChatClientProtocol
@@ -38,6 +38,7 @@ opentelemetry-enable_instrumentation \
 You can also set the environment variables instead of passing them as CLI arguments.
 
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

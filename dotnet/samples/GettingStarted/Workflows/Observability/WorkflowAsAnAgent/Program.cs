@@ -90,7 +90,7 @@ public static class Program
         {
             EnableSensitiveData = true  // enable sensitive data at the agent level such as prompts and responses
         };
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
 
         // Start an interactive loop to interact with the workflow as if it were an agent
         while (true)

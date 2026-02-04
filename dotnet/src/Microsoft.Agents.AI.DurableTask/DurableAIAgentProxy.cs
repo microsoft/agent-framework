@@ -11,14 +11,29 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
-        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return durableSession.Serialize(jsonSerializerOptions);
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(
+        JsonElement serializedState,
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
+    }
+
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         return ValueTask.FromResult<AgentSession>(new DurableAgentSession(AgentSessionId.WithRandomKey(this.Name!)));
     }
@@ -29,12 +44,12 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
                 "The provided session is not valid for a durable agent. " +
-                "Create a new session using GetNewSession or provide a session previously created by this agent.",
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
                 paramName: nameof(session));
         }
 

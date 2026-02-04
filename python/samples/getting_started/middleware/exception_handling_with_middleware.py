@@ -4,8 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext
-from agent_framework import tool
+from agent_framework import FunctionInvocationContext, tool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -23,6 +22,7 @@ The example shows:
 The middleware catches TimeoutError from an unstable data service and replaces it with
 a helpful message for the user, preventing raw exceptions from reaching the end user.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

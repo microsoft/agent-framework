@@ -28,16 +28,26 @@ namespace SampleApp
     {
         public override string? Name => "UpperCaseParrotAgent";
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
             => new(new CustomAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new CustomAgentSession(serializedSession, jsonSerializerOptions));
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            if (session is not CustomAgentSession typedSession)
+            {
+                throw new ArgumentException($"The provided session is not of type {nameof(CustomAgentSession)}.", nameof(session));
+            }
+
+            return typedSession.Serialize(jsonSerializerOptions);
+        }
+
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentSession(serializedState, jsonSerializerOptions));
 
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a session if the user didn't supply one.
-            session ??= await this.GetNewSessionAsync(cancellationToken);
+            session ??= await this.CreateSessionAsync(cancellationToken);
 
             if (session is not CustomAgentSession typedSession)
             {
@@ -69,7 +79,7 @@ namespace SampleApp
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a session if the user didn't supply one.
-            session ??= await this.GetNewSessionAsync(cancellationToken);
+            session ??= await this.CreateSessionAsync(cancellationToken);
 
             if (session is not CustomAgentSession typedSession)
             {
@@ -136,6 +146,9 @@ namespace SampleApp
 
             internal CustomAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
                 : base(serializedSessionState, jsonSerializerOptions) { }
+
+            internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+                => base.Serialize(jsonSerializerOptions);
         }
     }
 }
