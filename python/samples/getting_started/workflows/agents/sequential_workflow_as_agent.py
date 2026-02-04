@@ -50,9 +50,7 @@ async def main() -> None:
     if agent_response.messages:
         print("\n===== Conversation =====")
         for i, msg in enumerate(agent_response.messages, start=1):
-            role_value = getattr(msg.role, "value", msg.role)
-            normalized_role = str(role_value).lower() if role_value is not None else "assistant"
-            name = msg.author_name or ("assistant" if normalized_role == "assistant".value else "user")
+            name = msg.author_name or msg.role
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """

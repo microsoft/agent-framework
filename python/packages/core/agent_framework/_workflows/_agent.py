@@ -445,10 +445,6 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    # Enrich with executor identity if author_name is not already set
-                    for msg in data.messages:
-                        if not msg.author_name:
-                            msg.author_name = output_event.executor_id
                     messages.extend(data.messages)
                     raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
@@ -456,15 +452,10 @@ class WorkflowAgent(BaseAgent):
                         data.created_at if not latest_created_at else max(latest_created_at, data.created_at)
                     )
                 elif isinstance(data, ChatMessage):
-                    if not data.author_name:
-                        data.author_name = output_event.executor_id
                     messages.append(data)
                     raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[ChatMessage]):
                     chat_messages = cast(list[ChatMessage], data)
-                    for msg in chat_messages:
-                        if not msg.author_name:
-                            msg.author_name = output_event.executor_id
                     messages.extend(chat_messages)
                     raw_representations.append(data)
                 else:
@@ -518,9 +509,6 @@ class WorkflowAgent(BaseAgent):
                     ]
 
                 if isinstance(data, AgentResponseUpdate):
-                    # Enrich with executor identity if author_name is not already set
-                    if not data.author_name:
-                        data.author_name = executor_id
                     return [data]
 
                 if isinstance(data, ChatMessage):
@@ -528,7 +516,7 @@ class WorkflowAgent(BaseAgent):
                         AgentResponseUpdate(
                             contents=list(data.contents),
                             role=data.role,
-                            author_name=data.author_name or executor_id,
+                            author_name=data.author_name,
                             response_id=response_id,
                             message_id=data.message_id or str(uuid.uuid4()),
                             created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -542,7 +530,7 @@ class WorkflowAgent(BaseAgent):
                         AgentResponseUpdate(
                             contents=list(msg.contents),
                             role=msg.role,
-                            author_name=msg.author_name or executor_id,
+                            author_name=msg.author_name,
                             response_id=response_id,
                             message_id=msg.message_id or str(uuid.uuid4()),
                             created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
