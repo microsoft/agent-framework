@@ -127,11 +127,23 @@ public abstract partial class AIAgent
     {
         var responseFormat = NewChatResponseFormat.ForJsonSchema<T>(serializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        options = options is null ? new AgentRunOptions() : new AgentRunOptions(options);
-        options.ResponseFormat = responseFormat;
+        AgentRunOptions effectiveOptions;
+        if (options is null)
+        {
+            effectiveOptions = new AgentRunOptions();
+        }
+        else if (options.GetType() == typeof(AgentRunOptions))
+        {
+            effectiveOptions = new AgentRunOptions(options);
+        }
+        else
+        {
+            effectiveOptions = options;
+        }
 
-        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+        effectiveOptions.ResponseFormat = responseFormat;
 
+        AgentResponse response = await this.RunAsync(messages, session, effectiveOptions, cancellationToken).ConfigureAwait(false);
         return new AgentResponse<T>(response, responseFormat);
     }
     #endregion
