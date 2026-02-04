@@ -81,8 +81,8 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = ChatMessage("assistant", [text]) if text is not None else ChatMessage("assistant", [])
-    return AgentResponse(messages=[message])
+    message = ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", text="")
+    return AgentResponse(messages=[message], created_at="2024-01-01T00:00:00Z")
 
 
 def _create_mock_run(response: AgentResponse | None = None, side_effect: Exception | None = None):

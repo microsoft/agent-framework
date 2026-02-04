@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncIterable
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from agent_framework import (
@@ -177,7 +178,10 @@ class AgentEntity:
             error_message = ChatMessage(
                 role="assistant", contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
             )
-            error_response = AgentResponse(messages=[error_message])
+            error_response = AgentResponse(
+                messages=[error_message],
+                created_at=datetime.now(tz=timezone.utc).isoformat(),
+            )
 
             error_state_response = DurableAgentStateResponse.from_run_response(correlation_id, error_response)
             error_state_response.is_error = True
@@ -247,7 +251,7 @@ class AgentEntity:
             await self._notify_stream_update(update, callback_context)
 
         if updates:
-            response = AgentResponse.from_updates(updates)
+            response = AgentResponse.from_agent_run_response_updates(updates)
         else:
             logger.debug("[AgentEntity] No streaming updates received; creating empty response")
             response = AgentResponse(messages=[])
