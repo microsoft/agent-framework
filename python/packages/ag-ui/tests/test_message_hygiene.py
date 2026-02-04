@@ -5,6 +5,7 @@ from agent_framework import ChatMessage, Content
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
 
 
+<<<<<<< HEAD
 def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> None:
     """Test that assistant messages with ONLY confirm_changes are filtered out entirely.
 
@@ -12,6 +13,9 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
     the entire message should be filtered out because confirm_changes is a synthetic
     tool for the approval UI flow that shouldn't be sent to the LLM.
     """
+=======
+def test_sanitize_tool_history_injects_confirm_changes_result() -> None:
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
     messages = [
         ChatMessage(
             role="assistant",
@@ -31,6 +35,7 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
 
     sanitized = _sanitize_tool_history(messages)
 
+<<<<<<< HEAD
     # Assistant message with only confirm_changes should be filtered out
     assistant_messages = [
         msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
@@ -42,6 +47,12 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
         msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "tool"
     ]
     assert len(tool_messages) == 0
+=======
+    tool_messages = [msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "tool"]
+    assert len(tool_messages) == 1
+    assert str(tool_messages[0].contents[0].call_id) == "call_confirm_123"
+    assert tool_messages[0].contents[0].result == "Confirmed"
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
 
 
 def test_deduplicate_messages_prefers_non_empty_tool_results() -> None:
@@ -59,6 +70,7 @@ def test_deduplicate_messages_prefers_non_empty_tool_results() -> None:
     deduped = _deduplicate_messages(messages)
     assert len(deduped) == 1
     assert deduped[0].contents[0].result == "result data"
+<<<<<<< HEAD
 
 
 def test_convert_approval_results_to_tool_messages() -> None:
@@ -268,3 +280,5 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
     # (the approval response is handled separately by the framework)
     tool_call_ids = {str(msg.contents[0].call_id) for msg in tool_messages}
     assert "call_c1" not in tool_call_ids  # No synthetic result for confirm_changes
+=======
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)

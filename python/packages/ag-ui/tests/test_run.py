@@ -2,18 +2,24 @@
 
 """Tests for _run.py helper functions and FlowState."""
 
+<<<<<<< HEAD
 from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
 )
+=======
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
 from agent_framework import ChatMessage, Content
 
 from agent_framework_ag_ui._run import (
     FlowState,
     _build_safe_metadata,
     _create_state_context_message,
+<<<<<<< HEAD
     _emit_content,
     _emit_tool_result,
+=======
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
     _has_only_tool_calls,
     _inject_state_context,
     _should_suppress_intermediate_snapshot,
@@ -357,6 +363,7 @@ def test_emit_tool_call_generates_id():
     assert flow.tool_call_id is not None  # ID should be generated
 
 
+<<<<<<< HEAD
 def test_emit_tool_result_closes_open_message():
     """Test _emit_tool_result emits TextMessageEndEvent for open text message.
 
@@ -401,6 +408,8 @@ def test_emit_tool_result_no_open_message():
     assert len(text_end_events) == 0
 
 
+=======
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
 def test_extract_approved_state_updates_no_handler():
     """Test _extract_approved_state_updates returns empty with no handler."""
     from agent_framework_ag_ui._run import _extract_approved_state_updates
@@ -419,6 +428,7 @@ def test_extract_approved_state_updates_no_approval():
     messages = [ChatMessage("user", [Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, handler)
     assert result == {}
+<<<<<<< HEAD
 
 
 class TestBuildMessagesSnapshot:
@@ -684,3 +694,5 @@ class TestTextMessageEventBalancing:
 
         assert len(start_events) == 2
         assert len(end_events) == 2
+=======
+>>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)

@@ -16,9 +16,14 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
         """Remove function call content from message contents."""
         return [content for content in messages if content.type != "function_call"]
 
+    def get_role_value(role: str) -> str:
+        """Get the string value of a role, handling both enum and string."""
+        return role.value if hasattr(role, "value") else role  # type: ignore[union-attr]
+
     flipped_messages = []
     for msg in messages:
-        if msg.role == "assistant":
+        role_value = get_role_value(msg.role)
+        if role_value == "assistant":
             # Flip assistant to user
             contents = filter_out_function_calls(msg.contents)
             if contents:
@@ -30,18 +35,19 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
                     message_id=msg.message_id,
                 )
                 flipped_messages.append(flipped_msg)
-        elif msg.role == "user":
+        elif role_value == "user":
             # Flip user to assistant
             flipped_msg = ChatMessage(
                 role="assistant", contents=msg.contents, author_name=msg.author_name, message_id=msg.message_id
             )
             flipped_messages.append(flipped_msg)
-        elif msg.role == "tool":
+        elif role_value == "tool":
             # Skip tool messages
             pass
         else:
             # Keep other roles as-is (system, tool, etc.)
             flipped_messages.append(msg)
+    return flipped_messages
     return flipped_messages
 
 
@@ -53,22 +59,23 @@ def log_messages(messages: list[ChatMessage]) -> None:
     """
     logger_ = logger.opt(colors=True)
     for msg in messages:
+        role_value = msg.role.value if hasattr(msg.role, "value") else msg.role
         # Handle different content types
         if hasattr(msg, "contents") and msg.contents:
             for content in msg.contents:
                 if hasattr(content, "type"):
                     if content.type == "text":
                         escape_text = content.text.replace("<", r"\<")  # type: ignore[union-attr]
-                        if msg.role == "system":
+                        if role_value == "system":
                             logger_.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
-                        elif msg.role == "user":
+                        elif role_value == "user":
                             logger_.info(f"<green>[USER]</green> {escape_text}")
-                        elif msg.role == "assistant":
+                        elif role_value == "assistant":
                             logger_.info(f"<blue>[ASSISTANT]</blue> {escape_text}")
-                        elif msg.role == "tool":
+                        elif role_value == "tool":
                             logger_.info(f"<yellow>[TOOL]</yellow> {escape_text}")
                         else:
-                            logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {escape_text}")
+                            logger_.info(f"<magenta>[{role_value.upper()}]</magenta> {escape_text}")
                     elif content.type == "function_call":
                         function_call_text = f"{content.name}({content.arguments})"
                         function_call_text = function_call_text.replace("<", r"\<")
@@ -79,34 +86,34 @@ def log_messages(messages: list[ChatMessage]) -> None:
                         logger_.info(f"<yellow>[TOOL_RESULT]</yellow> 🔨 {function_result_text}")
                     else:
                         content_text = str(content).replace("<", r"\<")
-                        logger_.info(f"<magenta>[{msg.role.upper()}] ({content.type})</magenta> {content_text}")
+                        logger_.info(f"<magenta>[{role_value.upper()}] ({content.type})</magenta> {content_text}")
                 else:
                     # Fallback for content without type
                     text_content = str(content).replace("<", r"\<")
-                    if msg.role == "system":
+                    if role_value == "system":
                         logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
-                    elif msg.role == "user":
+                    elif role_value == "user":
                         logger_.info(f"<green>[USER]</green> {text_content}")
-                    elif msg.role == "assistant":
+                    elif role_value == "assistant":
                         logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
-                    elif msg.role == "tool":
+                    elif role_value == "tool":
                         logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
                     else:
-                        logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")
+                        logger_.info(f"<magenta>[{role_value.upper()}]</magenta> {text_content}")
         elif hasattr(msg, "text") and msg.text:
             # Handle simple text messages
             text_content = msg.text.replace("<", r"\<")
-            if msg.role == "system":
+            if role_value == "system":
                 logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
-            elif msg.role == "user":
+            elif role_value == "user":
                 logger_.info(f"<green>[USER]</green> {text_content}")
-            elif msg.role == "assistant":
+            elif role_value == "assistant":
                 logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
-            elif msg.role == "tool":
+            elif role_value == "tool":
                 logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
             else:
-                logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")
+                logger_.info(f"<magenta>[{role_value.upper()}]</magenta> {text_content}")
         else:
             # Fallback for other message formats
             text_content = str(msg).replace("<", r"\<")
-            logger_.info(f"<magenta>[{msg.role.upper()}]</magenta> {text_content}")
+            logger_.info(f"<magenta>[{role_value.upper()}]</magenta> {text_content}")
