@@ -1863,7 +1863,7 @@ def _replace_approval_contents_with_results(
             msg.contents.pop(idx)
 
 
-def _get_finalizers_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
+def _get_result_hooks_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
     inner_stream = getattr(stream, "_inner_stream", None)
     if inner_stream is None:
         inner_source = getattr(stream, "_inner_stream_source", None)
@@ -1871,7 +1871,7 @@ def _get_finalizers_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
             inner_stream = inner_source
     if inner_stream is None:
         inner_stream = stream
-    return list(getattr(inner_stream, "_finalizers", []))
+    return list(getattr(inner_stream, "_result_hooks", []))
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
@@ -2220,12 +2220,12 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
 
         response_format = mutable_options.get("response_format") if mutable_options else None
         output_format_type = response_format if isinstance(response_format, type) else None
-        stream_finalizers: list[Callable[[ChatResponse], Any]] = []
+        stream_result_hooks: list[Callable[[ChatResponse], Any]] = []
 
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             nonlocal filtered_kwargs
             nonlocal mutable_options
-            nonlocal stream_finalizers
+            nonlocal stream_result_hooks
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
             fcc_messages: list[ChatMessage] = []
@@ -2259,8 +2259,8 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                         **filtered_kwargs,
                     )
                 )
-                # pick up any finalizers from the previous stream
-                stream_finalizers = _get_finalizers_from_stream(stream)
+                # pick up any result_hooks from the previous stream
+                stream_result_hooks[:] = _get_result_hooks_from_stream(stream)
                 async for update in stream:
                     all_updates.append(update)
                     yield update
@@ -2321,8 +2321,8 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
 
         async def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             result = ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
-            for finalizer in stream_finalizers:
-                result = finalizer(result)
+            for hook in stream_result_hooks:
+                result = hook(result)
                 if isinstance(result, Awaitable):
                     result = await result
             return result
