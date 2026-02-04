@@ -2,7 +2,9 @@
 
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
-// This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
+// This sample shows how to create and use a simple AI agent with custom ChatHistoryProvider that stores chat history in a custom storage location.
+// The state of the custom ChatHistoryProvider (SessionDbKey) is stored with the agent session, so that when the session is resumed later,
+// the chat history can be retrieved from the custom storage location.
 
 using System.Text.Json;
 using Azure.AI.OpenAI;

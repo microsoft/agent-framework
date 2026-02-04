@@ -337,8 +337,8 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
     public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {

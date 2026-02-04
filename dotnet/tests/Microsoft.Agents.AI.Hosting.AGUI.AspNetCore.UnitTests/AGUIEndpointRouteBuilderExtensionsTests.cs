@@ -428,8 +428,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
         public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         {
@@ -531,8 +531,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
         public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         {

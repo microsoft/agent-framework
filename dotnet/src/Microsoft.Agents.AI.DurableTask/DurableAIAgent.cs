@@ -64,15 +64,15 @@ public sealed class DurableAIAgent : AIAgent
     /// <summary>
     /// Deserializes an agent session from JSON.
     /// </summary>
-    /// <param name="serializedSession">The serialized session data.</param>
+    /// <param name="serializedState">The serialized session data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A value task that represents the asynchronous operation. The task result contains the deserialized agent session.</returns>
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
     }
 
     /// <summary>

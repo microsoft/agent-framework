@@ -41,8 +41,8 @@ namespace SampleApp
             return typedSession.Serialize(jsonSerializerOptions);
         }
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new CustomAgentSession(serializedSession, jsonSerializerOptions));
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentSession(serializedState, jsonSerializerOptions));
 
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {

@@ -17,7 +17,7 @@ internal sealed class TestAgent(string name, string description) : AIAgent
         => throw new NotImplementedException();
 
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new DummyAgentSession());
 
     protected override Task<AgentResponse> RunCoreAsync(

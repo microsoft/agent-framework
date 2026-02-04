@@ -27,10 +27,10 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
     }
 
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
     }
 
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)

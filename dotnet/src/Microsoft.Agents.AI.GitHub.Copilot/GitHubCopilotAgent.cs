@@ -112,10 +112,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     /// <inheritdoc/>
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GitHubCopilotAgentSession(serializedSession, jsonSerializerOptions));
+        => new(new GitHubCopilotAgentSession(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override Task<AgentResponse> RunCoreAsync(

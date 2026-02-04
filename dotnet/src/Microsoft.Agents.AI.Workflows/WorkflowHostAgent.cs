@@ -80,8 +80,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         return workflowSession.Serialize(jsonSerializerOptions);
     }
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new WorkflowSession(this._workflow, serializedSession, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
 
     private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
     {

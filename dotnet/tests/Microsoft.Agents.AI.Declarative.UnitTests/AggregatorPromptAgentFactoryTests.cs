@@ -66,7 +66,7 @@ public sealed class AggregatorPromptAgentFactoryTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
