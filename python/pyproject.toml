@@ -226,6 +226,7 @@ format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
+typing = ["pyright", "mypy"]
 # cleaning
 clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"
