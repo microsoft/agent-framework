@@ -32,7 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
 AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", session, options);

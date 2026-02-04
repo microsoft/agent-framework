@@ -37,7 +37,7 @@ AIAgent agent = new AzureOpenAIClient(
         tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", session));
 
 // **** MCP Tool with Approval Required ****
@@ -64,7 +64,7 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
         tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
-var sessionWithRequiredApproval = await agentWithRequiredApproval.GetNewSessionAsync();
+var sessionWithRequiredApproval = await agentWithRequiredApproval.CreateSessionAsync();
 var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
 var userInputRequests = response.UserInputRequests.ToList();
 

@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import types
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -16,7 +17,7 @@ from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._conversation_state import encode_chat_messages
 from ._events import (
     AgentRunEvent,
-    AgentRunUpdateEvent,  # type: ignore[reportPrivateUsage]
+    AgentRunUpdateEvent,
 )
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
@@ -24,9 +25,9 @@ from ._request_info_mixin import response_handler
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class AgentExecutor(Executor):
         return self._output_response
 
     @property
-    def workflow_output_types(self) -> list[type[Any]]:
+    def workflow_output_types(self) -> list[type[Any] | types.UnionType]:
         # Override to declare AgentResponse as a possible output type only if enabled.
         if self._output_response:
             return [AgentResponse]

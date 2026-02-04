@@ -24,12 +24,11 @@ from typing import (
     Generic,
     Literal,
     Protocol,
-    TypedDict,
-    TypeVar,
     Union,
     cast,
     get_args,
     get_origin,
+    overload,
     runtime_checkable,
 )
 
@@ -42,7 +41,7 @@ from .exceptions import ChatClientInitializationError, ToolException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
-    capture_exception,  # type: ignore
+    capture_exception,
     get_function_span,
     get_function_span_attributes,
     get_meter,
@@ -57,20 +56,21 @@ if TYPE_CHECKING:
         Content,
     )
 
-from typing import overload
 
+# TypeVar with defaults support for Python < 3.13
+if sys.version_info >= (3, 13):
+    from typing import TypeVar as TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar as TypeVar  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
-# TypeVar with defaults support for Python < 3.13
-if sys.version_info >= (3, 13):
-    from typing import TypeVar as TypeVarWithDefaults  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import (
-        TypeVar as TypeVarWithDefaults,  # type: ignore[import] # pragma: no cover
-    )
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 
 logger = get_logger()
 
@@ -97,8 +97,8 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 # region Helpers
 
-ArgsT = TypeVarWithDefaults("ArgsT", bound=BaseModel, default=BaseModel)
-ReturnT = TypeVarWithDefaults("ReturnT", default=Any)
+ArgsT = TypeVar("ArgsT", bound=BaseModel, default=BaseModel)
+ReturnT = TypeVar("ReturnT", default=Any)
 
 
 def _parse_inputs(
@@ -796,11 +796,26 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            # Filter out framework kwargs that are not JSON serializable
+            serializable_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in {
+                    "chat_options",
+                    "tools",
+                    "tool_choice",
+                    "thread",
+                    "conversation_id",
+                    "options",
+                    "response_format",
+                }
+            }
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
                 if arguments
-                else json.dumps(kwargs)
-                if kwargs
+                else json.dumps(serializable_kwargs, default=str)
+                if serializable_kwargs
                 else "None"
             })
         with get_function_span(attributes=attributes) as span:

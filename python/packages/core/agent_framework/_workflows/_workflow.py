@@ -5,6 +5,7 @@ import functools
 import hashlib
 import json
 import logging
+import types
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
@@ -815,7 +816,7 @@ class Workflow(DictConvertible):
         return self._graph_signature_hash
 
     @property
-    def input_types(self) -> list[type[Any]]:
+    def input_types(self) -> list[type[Any] | types.UnionType]:
         """Get the input types of the workflow.
 
         The input types are the list of input types of the start executor.
@@ -827,7 +828,7 @@ class Workflow(DictConvertible):
         return start_executor.input_types
 
     @property
-    def output_types(self) -> list[type[Any]]:
+    def output_types(self) -> list[type[Any] | types.UnionType]:
         """Get the output types of the workflow.
 
         The output types are the list of all workflow output types from executors
@@ -836,7 +837,7 @@ class Workflow(DictConvertible):
         Returns:
             A list of output types that the workflow can produce.
         """
-        output_types: set[type[Any]] = set()
+        output_types: set[type[Any] | types.UnionType] = set()
 
         for executor in self.executors.values():
             workflow_output_types = executor.workflow_output_types

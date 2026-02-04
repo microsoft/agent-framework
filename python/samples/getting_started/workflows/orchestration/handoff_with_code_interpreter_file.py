@@ -32,12 +32,12 @@ from contextlib import asynccontextmanager
 from agent_framework import (
     AgentRunUpdateEvent,
     ChatAgent,
+    Content,
     HandoffAgentUserRequest,
     HandoffBuilder,
     HostedCodeInterpreterTool,
     HostedFileContent,
     RequestInfoEvent,
-    TextContent,
     WorkflowEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -76,7 +76,7 @@ def _handle_events(events: list[WorkflowEvent]) -> tuple[list[RequestInfoEvent],
                 if isinstance(content, HostedFileContent):
                     file_ids.append(content.file_id)
                     print(f"[Found HostedFileContent: file_id={content.file_id}]")
-                elif isinstance(content, TextContent) and content.annotations:
+                elif content.type == "text" and content.annotations:
                     for annotation in content.annotations:
                         if hasattr(annotation, "file_id") and annotation.file_id:
                             file_ids.append(annotation.file_id)

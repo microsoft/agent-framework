@@ -242,6 +242,83 @@ class TestScopedContentProcessor:
         # The response should have id=204 (No Content) when no scopes apply
         assert response.id == "204"
 
+    async def test_process_with_scopes_ignores_unexpected_cached_value_type(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test that a corrupted cache entry does not crash processing."""
+        from agent_framework_purview._models import (
+            ExecutionMode,
+            PolicyLocation,
+            PolicyScope,
+            ProcessContentResponse,
+            ProtectionScopeActivities,
+            ProtectionScopesResponse,
+        )
+
+        request = process_content_request_factory()
+
+        # Return a valid, inline scope so we stay on the normal (non-background) path.
+        scope_location = PolicyLocation(**{
+            "@odata.type": "microsoft.graph.policyLocationApplication",
+            "value": "app-id",
+        })
+        scope = PolicyScope(**{
+            "activities": ProtectionScopeActivities.UPLOAD_TEXT,
+            "locations": [scope_location],
+            "execution_mode": ExecutionMode.EVALUATE_INLINE,
+        })
+        mock_client.get_protection_scopes = AsyncMock(return_value=ProtectionScopesResponse(**{"value": [scope]}))
+        mock_client.process_content = AsyncMock(
+            return_value=ProcessContentResponse(**{"id": "ok", "protectionScopeState": "notModified"})
+        )
+
+        # First cache read is the tenant payment key (None). Second is the scopes cache (corrupt value).
+        processor._cache.get = AsyncMock(side_effect=[None, "corrupt-value"])  # type: ignore[method-assign]
+        processor._cache.set = AsyncMock()  # type: ignore[method-assign]
+
+        response = await processor._process_with_scopes(request)
+
+        assert response.id == "ok"
+        mock_client.get_protection_scopes.assert_called_once()
+        mock_client.process_content.assert_called_once()
+
+    async def test_process_with_scopes_uses_tenant_payment_exception_cache(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test that a cached 402 exception short-circuits all subsequent requests for the tenant."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        request = process_content_request_factory()
+
+        processor._cache.get = AsyncMock(return_value=PurviewPaymentRequiredError("Payment required"))  # type: ignore[method-assign]
+
+        with pytest.raises(PurviewPaymentRequiredError):
+            await processor._process_with_scopes(request)
+
+        mock_client.get_protection_scopes.assert_not_called()
+
+    async def test_process_content_background_retries_on_modified_state(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test offline background processing invalidates cache and retries when scope state changes."""
+        from agent_framework_purview._models import ProcessContentResponse
+
+        request = process_content_request_factory()
+        request.scope_identifier = "etag-1"
+
+        mock_client.process_content = AsyncMock(
+            side_effect=[
+                ProcessContentResponse(**{"id": "r1", "protectionScopeState": "modified"}),
+                ProcessContentResponse(**{"id": "r2", "protectionScopeState": "notModified"}),
+            ]
+        )
+        processor._cache.remove = AsyncMock()  # type: ignore[method-assign]
+
+        await processor._process_content_background(request, cache_key="purview:protection_scopes:abc")
+
+        processor._cache.remove.assert_called_once_with("purview:protection_scopes:abc")
+        assert mock_client.process_content.call_count == 2
+
     async def test_map_messages_with_user_id_in_additional_properties(self, mock_client: AsyncMock) -> None:
         """Test user_id extraction from message additional_properties."""
         settings = PurviewSettings(

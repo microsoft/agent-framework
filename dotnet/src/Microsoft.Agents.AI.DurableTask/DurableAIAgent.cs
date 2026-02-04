@@ -34,7 +34,7 @@ public sealed class DurableAIAgent : AIAgent
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A value task that represents the asynchronous operation. The task result contains a new agent session.</returns>
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         AgentSessionId sessionId = this._context.NewAgentSessionId(this._agentName);
         return ValueTask.FromResult<AgentSession>(new DurableAgentSession(sessionId));
@@ -76,12 +76,12 @@ public sealed class DurableAIAgent : AIAgent
             throw new NotSupportedException("Cancellation is not supported for durable agents.");
         }
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
                 "The provided session is not valid for a durable agent. " +
-                "Create a new session using GetNewSessionAsync or provide a session previously created by this agent.",
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
                 paramName: nameof(session));
         }
 

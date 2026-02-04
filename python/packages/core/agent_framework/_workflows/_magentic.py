@@ -39,15 +39,14 @@ from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import Self  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import Self  # type: ignore # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -1368,7 +1367,7 @@ class MagenticBuilder:
 
         - `.with_plan_review()` - Review and approve/revise plans before execution
         - `.with_human_input_on_stall()` - Intervene when workflow stalls
-        - Tool approval via `FunctionApprovalRequestContent` - Approve individual tool calls
+        - Tool approval via `function_approval_request` - Approve individual tool calls
 
         These emit `MagenticHumanInterventionRequest` events that provide structured
         decision options (APPROVE, REVISE, CONTINUE, REPLAN, GUIDANCE) appropriate

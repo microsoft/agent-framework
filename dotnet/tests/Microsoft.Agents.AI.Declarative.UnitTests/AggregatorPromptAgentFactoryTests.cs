@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
@@ -71,7 +71,7 @@ public sealed class AggregatorPromptAgentFactoryTests
             throw new NotImplementedException();
         }
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

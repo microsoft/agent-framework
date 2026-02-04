@@ -31,6 +31,7 @@ from copilot.types import (
     PermissionRequestResult,
     ResumeSessionConfig,
     SessionConfig,
+    SystemMessageConfig,
     ToolInvocation,
     ToolResult,
 )
@@ -57,8 +58,9 @@ logger = logging.getLogger("agent_framework.github_copilot")
 class GitHubCopilotOptions(TypedDict, total=False):
     """GitHub Copilot-specific options."""
 
-    instructions: str
-    """System message to append to the session."""
+    system_message: SystemMessageConfig
+    """System message configuration for the session. Use mode 'append' to add to the default
+    system prompt, or 'replace' to completely override it."""
 
     cli_path: str
     """Path to the Copilot CLI executable. Defaults to GITHUB_COPILOT_CLI_PATH environment variable
@@ -139,6 +141,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
     def __init__(
         self,
+        instructions: str | None = None,
         *,
         client: CopilotClient | None = None,
         id: str | None = None,
@@ -156,6 +159,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize the GitHub Copilot Agent.
+
+        Args:
+            instructions: System message for the agent.
 
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
@@ -188,7 +194,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         # Parse options
         opts: dict[str, Any] = dict(default_options) if default_options else {}
-        instructions = opts.pop("instructions", None)
+
+        # Handle instructions - direct parameter takes precedence over default_options.system_message
+        self._prepare_system_message(instructions, opts)
+
         cli_path = opts.pop("cli_path", None)
         model = opts.pop("model", None)
         timeout = opts.pop("timeout", None)
@@ -208,7 +217,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create GitHub Copilot settings.", ex) from ex
 
-        self._instructions = instructions
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._mcp_servers = mcp_servers
@@ -302,7 +310,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         opts: dict[str, Any] = dict(options) if options else {}
         timeout = opts.pop("timeout", None) or self._settings.timeout or DEFAULT_TIMEOUT_SECONDS
 
-        session = await self._get_or_create_session(thread, streaming=False)
+        session = await self._get_or_create_session(thread, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
@@ -365,7 +373,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         if not thread:
             thread = self.get_new_thread()
 
-        session = await self._get_or_create_session(thread, streaming=True)
+        opts: dict[str, Any] = dict(options) if options else {}
+
+        session = await self._get_or_create_session(thread, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
@@ -399,6 +409,29 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
                 yield item
         finally:
             unsubscribe()
+
+    @staticmethod
+    def _prepare_system_message(
+        instructions: str | None,
+        opts: dict[str, Any],
+    ) -> None:
+        """Prepare system message configuration in opts.
+
+        If instructions is provided, it takes precedence for content.
+        If system_message is also provided, its mode is preserved.
+        Modifies opts in place.
+
+        Args:
+            instructions: Direct instructions parameter for content.
+            opts: Options dictionary to modify.
+        """
+        opts_system_message = opts.pop("system_message", None)
+        if instructions is not None:
+            # Use instructions for content, but preserve mode from system_message if provided
+            mode = opts_system_message.get("mode", "append") if opts_system_message else "append"
+            opts["system_message"] = {"mode": mode, "content": instructions}
+        elif opts_system_message is not None:
+            opts["system_message"] = opts_system_message
 
     def _prepare_tools(
         self,
@@ -459,12 +492,14 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         self,
         thread: AgentThread,
         streaming: bool = False,
+        runtime_options: dict[str, Any] | None = None,
     ) -> CopilotSession:
         """Get an existing session or create a new one for the thread.
 
         Args:
             thread: The conversation thread.
             streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options from run/run_stream that take precedence.
 
         Returns:
             A CopilotSession instance.
@@ -479,33 +514,47 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
             if thread.service_thread_id:
                 return await self._resume_session(thread.service_thread_id, streaming)
 
-            session = await self._create_session(streaming)
+            session = await self._create_session(streaming, runtime_options)
             thread.service_thread_id = session.session_id
             return session
         except Exception as ex:
             raise ServiceException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
-    async def _create_session(self, streaming: bool) -> CopilotSession:
-        """Create a new Copilot session."""
+    async def _create_session(
+        self,
+        streaming: bool,
+        runtime_options: dict[str, Any] | None = None,
+    ) -> CopilotSession:
+        """Create a new Copilot session.
+
+        Args:
+            streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options that take precedence over default_options.
+        """
         if not self._client:
             raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
 
+        opts = runtime_options or {}
         config: SessionConfig = {"streaming": streaming}
 
-        if self._settings.model:
-            config["model"] = self._settings.model  # type: ignore[typeddict-item]
+        model = opts.get("model") or self._settings.model
+        if model:
+            config["model"] = model  # type: ignore[typeddict-item]
 
-        if self._instructions:
-            config["system_message"] = {"mode": "append", "content": self._instructions}
+        system_message = opts.get("system_message") or self._default_options.get("system_message")
+        if system_message:
+            config["system_message"] = system_message
 
         if self._tools:
             config["tools"] = self._prepare_tools(self._tools)
 
-        if self._permission_handler:
-            config["on_permission_request"] = self._permission_handler
+        permission_handler = opts.get("on_permission_request") or self._permission_handler
+        if permission_handler:
+            config["on_permission_request"] = permission_handler
 
-        if self._mcp_servers:
-            config["mcp_servers"] = self._mcp_servers
+        mcp_servers = opts.get("mcp_servers") or self._mcp_servers
+        if mcp_servers:
+            config["mcp_servers"] = mcp_servers
 
         return await self._client.create_session(config)
 
