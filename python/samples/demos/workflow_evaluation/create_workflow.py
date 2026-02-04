@@ -51,13 +51,11 @@ from agent_framework import (
     AgentRunUpdateEvent,
     ChatMessage,
     Executor,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
@@ -71,7 +69,7 @@ load_dotenv()
 @executor(id="start_executor")
 async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
     """Initiates the workflow by sending the user query to all specialized agents."""
-    await ctx.send_message([ChatMessage(role="user", text=input)])
+    await ctx.send_message([ChatMessage("user", [input])])
 
 
 class ResearchLead(Executor):
@@ -107,11 +105,11 @@ class ResearchLead(Executor):
         # Generate comprehensive travel plan summary
         messages = [
             ChatMessage(
-                role=Role.SYSTEM,
+                role="system",
                 text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
             ),
             ChatMessage(
-                role=Role.USER,
+                role="user",
                 text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
             ),
         ]
@@ -136,7 +134,7 @@ class ResearchLead(Executor):
             findings = []
             if response.agent_response and response.agent_response.messages:
                 for msg in response.agent_response.messages:
-                    if msg.role == Role.ASSISTANT and msg.text and msg.text.strip():
+                    if msg.role == "assistant" and msg.text and msg.text.strip():
                         findings.append(msg.text.strip())
 
             if findings:

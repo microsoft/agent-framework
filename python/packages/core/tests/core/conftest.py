@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     ToolProtocol,
     tool,
     use_chat_middleware,
@@ -95,7 +94,7 @@ class MockChatClient:
         self.call_count += 1
         if self.responses:
             return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+        return ChatResponse(messages=ChatMessage("assistant", ["test response"]))
 
     async def get_streaming_response(
         self,
@@ -108,7 +107,7 @@ class MockChatClient:
             for update in self.streaming_responses.pop(0):
                 yield update
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="test streaming response "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="another update")], role="assistant")
 
 
@@ -143,7 +142,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=ChatMessage("assistant", [f"test response - {messages[-1].text}"]))
 
         response = self.run_responses.pop(0)
 
@@ -168,10 +167,14 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     ) -> AsyncIterable[ChatResponseUpdate]:
         logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
         if not self.streaming_responses:
-            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"update - {messages[0].text}")], role="assistant"
+            )
             return
         if options.get("tool_choice") == "none":
-            yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text="I broke out of the function invocation loop...")], role="assistant"
+            )
             return
         response = self.streaming_responses.pop(0)
         for update in response:
@@ -233,7 +236,7 @@ class MockAgent(AgentProtocol):
         **kwargs: Any,
     ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("Response")])])
+        return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text("Response")])])
 
     async def run_stream(
         self,

@@ -49,7 +49,7 @@ class TestMultimodalWorkflowInput:
 
     def test_convert_openai_input_to_chat_message_with_image(self):
         """Test that OpenAI format with image is converted to ChatMessage with DataContent."""
-        from agent_framework import ChatMessage, Role
+        from agent_framework import ChatMessage
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -72,7 +72,7 @@ class TestMultimodalWorkflowInput:
 
         # Verify result is ChatMessage
         assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
-        assert result.role == Role.USER
+        assert result.role == "user"
 
         # Verify contents
         assert len(result.contents) == 2, f"Expected 2 contents, got {len(result.contents)}"

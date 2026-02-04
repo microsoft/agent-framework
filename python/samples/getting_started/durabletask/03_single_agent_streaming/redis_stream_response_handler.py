@@ -8,9 +8,9 @@ as a message broker. It enables clients to disconnect and reconnect without losi
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
-from collections.abc import AsyncIterator
 
 import redis.asyncio as aioredis
 

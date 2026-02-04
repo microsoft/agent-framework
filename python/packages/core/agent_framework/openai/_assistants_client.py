@@ -41,7 +41,6 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -345,7 +344,7 @@ class OpenAIAssistantsClient(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        return await ChatResponse.from_chat_response_generator(
+        return await ChatResponse.from_update_generator(
             updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
             output_format_type=options.get("response_format"),
         )
@@ -479,19 +478,19 @@ class OpenAIAssistantsClient(
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=Role.ASSISTANT,
+                        role="assistant",
                     )
                 elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
                     response_id = response.data.run_id
                 elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
                     delta = response.data.delta
-                    role = Role.USER if delta.role == "user" else Role.ASSISTANT
+                    role = "user" if delta.role == "user" else "assistant"
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             yield ChatResponseUpdate(
                                 role=role,
-                                text=delta_block.text.value,
+                                contents=[Content.from_text(text=delta_block.text.value)],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
@@ -501,7 +500,7 @@ class OpenAIAssistantsClient(
                     contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:
                         yield ChatResponseUpdate(
-                            role=Role.ASSISTANT,
+                            role="assistant",
                             contents=contents,
                             conversation_id=thread_id,
                             message_id=response_id,
@@ -522,7 +521,7 @@ class OpenAIAssistantsClient(
                         )
                     )
                     yield ChatResponseUpdate(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         contents=[usage_content],
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -536,7 +535,7 @@ class OpenAIAssistantsClient(
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=Role.ASSISTANT,
+                        role="assistant",
                     )
 
     def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Content]:
@@ -670,7 +669,7 @@ class OpenAIAssistantsClient(
         # since there is no such message roles in OpenAI Assistants.
         # All other messages are added 1:1.
         for chat_message in messages:
-            if chat_message.role.value in ["system", "developer"]:
+            if chat_message.role in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if content.type == "text"]:
                     text = getattr(text_content, "text", None)
                     if text:
@@ -697,7 +696,7 @@ class OpenAIAssistantsClient(
                     additional_messages = []
                 additional_messages.append(
                     AdditionalMessage(
-                        role="assistant" if chat_message.role == Role.ASSISTANT else "user",
+                        role="assistant" if chat_message.role == "assistant" else "user",
                         content=message_contents,
                     )
                 )

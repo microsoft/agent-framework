@@ -40,7 +40,7 @@ AIAgent agent = new AzureOpenAIClient(
             : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
 Mem0Provider mem0Provider = session.GetService<Mem0Provider>()!;
@@ -55,10 +55,10 @@ await Task.Delay(TimeSpan.FromSeconds(2));
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
 Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 
 Console.WriteLine("\n>> Start a new session that shares the same Mem0 scope\n");
-AgentSession newSession = await agent.GetNewSessionAsync();
+AgentSession newSession = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));

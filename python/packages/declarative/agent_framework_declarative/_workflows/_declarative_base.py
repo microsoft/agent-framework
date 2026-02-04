@@ -32,9 +32,9 @@ from typing import Any, Literal, cast
 
 from agent_framework._workflows import (
     Executor,
-    SharedState,
     WorkflowContext,
 )
+from agent_framework._workflows._shared_state import SharedState
 from powerfx import Engine
 
 if sys.version_info >= (3, 11):

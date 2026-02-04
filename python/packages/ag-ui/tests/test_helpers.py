@@ -29,8 +29,8 @@ class TestPendingToolCallIds:
     def test_no_tool_calls(self):
         """Returns empty set when no tool calls in messages."""
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
-            ChatMessage(role="assistant", contents=[Content.from_text("Hi there")]),
+            ChatMessage("user", [Content.from_text("Hello")]),
+            ChatMessage("assistant", [Content.from_text("Hi there")]),
         ]
         result = pending_tool_call_ids(messages)
         assert result == set()
@@ -114,7 +114,7 @@ class TestIsStateContextMessage:
 
     def test_empty_contents(self):
         """Returns False for message with empty contents."""
-        message = ChatMessage(role="system", contents=[])
+        message = ChatMessage("system", [])
         assert is_state_context_message(message) is False
 
 
@@ -342,7 +342,7 @@ class TestLatestApprovalResponse:
     def test_no_approval_response(self):
         """Returns None when no approval response in last message."""
         messages = [
-            ChatMessage(role="assistant", contents=[Content.from_text("Hello")]),
+            ChatMessage("assistant", [Content.from_text("Hello")]),
         ]
         result = latest_approval_response(messages)
         assert result is None
@@ -357,7 +357,7 @@ class TestLatestApprovalResponse:
             function_call=fc,
         )
         messages = [
-            ChatMessage(role="user", contents=[approval_content]),
+            ChatMessage("user", [approval_content]),
         ]
         result = latest_approval_response(messages)
         assert result is approval_content

@@ -40,7 +40,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
     {
         foreach (AddConversationMessageContent content in this.Model.Content)
         {
-            AIContent? messageContent = content.Type.Value.ToContent(this.Engine.Format(content.Value));
+            AIContent? messageContent = content.Type.Value.ToContent(this.Engine.Format(content.Value), content.MediaType);
             if (messageContent is not null)
             {
                 yield return messageContent;

@@ -94,7 +94,7 @@ class NonStreamingAgent:
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
             messages=[ChatMessage(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=[Content.from_text(text="response")]
             )],
             response_id="test"
@@ -210,7 +210,7 @@ class TestAgent:
 
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="test")])],
+            messages=[ChatMessage("assistant", [Content.from_text(text="test")])],
             response_id="test"
         )
 

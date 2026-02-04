@@ -8,7 +8,6 @@ from agent_framework import (
     ExecutorFailedEvent,
     InProcRunnerContext,
     RequestInfoEvent,
-    SharedState,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -20,6 +19,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
+from agent_framework._workflows._shared_state import SharedState
 
 
 class FailingExecutor(Executor):

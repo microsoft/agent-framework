@@ -352,9 +352,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
+            # instructions is accessed from chat_options since the base class excludes it from run_options
             combined_instructions = [
                 instructions
-                for instructions in [messages_instructions, run_options.get("instructions")]
+                for instructions in [messages_instructions, chat_options.get("instructions") if chat_options else None]
                 if instructions
             ]
             if combined_instructions:
@@ -420,6 +421,9 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
     @override
     def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        # Skip model check for application endpoints - model is pre-configured on server
+        if self._is_application_endpoint:
+            return
         if not run_options.get("model"):
             if not self.model_id:
                 raise ValueError("model_deployment_name must be a non-empty string")
@@ -478,7 +482,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         for message in messages:
-            if message.role.value in ["system", "developer"]:
+            if message.role in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]
             else:

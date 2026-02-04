@@ -46,10 +46,13 @@ public class WorkflowHostSmokeTests
             return new(new Session(serializedSession, jsonSerializerOptions));
         }
 
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         {
             return new(new Session());
         }
+
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
 
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {

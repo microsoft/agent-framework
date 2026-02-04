@@ -7,11 +7,9 @@ from agent_framework import (
     AgentExecutorResponse,
     ChatMessage,
     Executor,
-    Role,
     SequentialBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -48,12 +46,12 @@ class Summarizer(Executor):
         the output must be `list[ChatMessage]`.
         """
         if not agent_response.full_conversation:
-            await ctx.send_message([ChatMessage(role=Role.ASSISTANT, text="No conversation to summarize.")])
+            await ctx.send_message([ChatMessage("assistant", ["No conversation to summarize."])])
             return
 
-        users = sum(1 for m in agent_response.full_conversation if m.role == Role.USER)
-        assistants = sum(1 for m in agent_response.full_conversation if m.role == Role.ASSISTANT)
-        summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary -> users:{users} assistants:{assistants}")
+        users = sum(1 for m in agent_response.full_conversation if m.role == "user")
+        assistants = sum(1 for m in agent_response.full_conversation if m.role == "assistant")
+        summary = ChatMessage("assistant", [f"Summary -> users:{users} assistants:{assistants}"])
         final_conversation = list(agent_response.full_conversation) + [summary]
         await ctx.send_message(final_conversation)
 
@@ -78,7 +76,7 @@ async def main() -> None:
         print("===== Final Conversation =====")
         messages: list[ChatMessage] | Any = outputs[0]
         for i, msg in enumerate(messages, start=1):
-            name = msg.author_name or ("assistant" if msg.role == Role.ASSISTANT else "user")
+            name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """

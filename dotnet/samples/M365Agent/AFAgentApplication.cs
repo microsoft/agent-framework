@@ -44,7 +44,7 @@ internal sealed class AFAgentApplication : AgentApplication
         // Deserialize the conversation history into an AgentSession, or create a new one if none exists.
         AgentSession agentSession = sessionElementStart.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null
             ? await this._agent.DeserializeSessionAsync(sessionElementStart, JsonUtilities.DefaultOptions, cancellationToken)
-            : await this._agent.GetNewSessionAsync(cancellationToken);
+            : await this._agent.CreateSessionAsync(cancellationToken);
 
         ChatMessage chatMessage = HandleUserInput(turnContext);
 
@@ -80,7 +80,7 @@ internal sealed class AFAgentApplication : AgentApplication
         }
 
         // Serialize and save the updated conversation history back to turn state.
-        JsonElement sessionElementEnd = agentSession.Serialize(JsonUtilities.DefaultOptions);
+        JsonElement sessionElementEnd = this._agent.SerializeSession(agentSession, JsonUtilities.DefaultOptions);
         turnState.SetValue("conversation.chatHistory", sessionElementEnd);
 
         // End the streaming response

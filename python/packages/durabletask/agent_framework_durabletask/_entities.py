@@ -14,7 +14,6 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatMessage,
     Content,
-    Role,
     get_logger,
 )
 from durabletask.entities import DurableEntity
@@ -176,7 +175,7 @@ class AgentEntity:
             logger.exception("[AgentEntity.run] Agent execution failed.")
 
             error_message = ChatMessage(
-                role=Role.ASSISTANT, contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
+                role="assistant", contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
             )
             error_response = AgentResponse(messages=[error_message])
 
@@ -247,7 +246,7 @@ class AgentEntity:
             await self._notify_stream_update(update, callback_context)
 
         if updates:
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_updates(updates)
         else:
             logger.debug("[AgentEntity] No streaming updates received; creating empty response")
             response = AgentResponse(messages=[])

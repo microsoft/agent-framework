@@ -20,7 +20,7 @@ AIAgent agent = chatClient.AsAIAgent(
     name: "agui-client",
     description: "AG-UI Client Agent");
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 List<ChatMessage> messages =
 [
     new(ChatRole.System, "You are a helpful assistant.")

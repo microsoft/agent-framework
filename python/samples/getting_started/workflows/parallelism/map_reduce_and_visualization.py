@@ -14,8 +14,7 @@ from agent_framework import (
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
-    tool,
-)
+    )
 from typing_extensions import Never
 
 """
