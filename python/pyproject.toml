@@ -177,7 +177,7 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
-timeout = 120
+timeout = 60
 markers = [
     "azure: marks tests as Azure provider specific",
     "azure-ai: marks tests as Azure AI provider specific",

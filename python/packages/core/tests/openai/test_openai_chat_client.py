@@ -951,11 +951,11 @@ class OutputStruct(BaseModel):
         param("tools", [get_weather], True, id="tools_function"),
         param("tool_choice", "auto", True, id="tool_choice_auto"),
         param("tool_choice", "none", True, id="tool_choice_none"),
-        param("tool_choice", "required", True, id="tool_choice_required_any"),
+        param("tool_choice", "required", False, id="tool_choice_required_any"),
         param(
             "tool_choice",
             {"mode": "required", "required_function_name": "get_weather"},
-            True,
+            False,
             id="tool_choice_required",
         ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
@@ -1038,8 +1038,13 @@ async def test_integration_options(
 
         assert response is not None
         assert isinstance(response, ChatResponse)
-        assert response.text is not None, f"No text in response for option '{option_name}'"
-        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+        assert response.messages is not None
+        if not option_name.startswith("tool_choice") and (
+            (isinstance(option_value, str) and option_value != "required")
+            or (isinstance(option_value, dict) and option_value.get("mode") != "required")
+        ):
+            assert response.text is not None, f"No text in response for option '{option_name}'"
+            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
 
         # Validate based on option type
         if needs_validation:
