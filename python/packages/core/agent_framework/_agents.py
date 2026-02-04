@@ -874,7 +874,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                     options=options,
                     kwargs=kwargs,
                 )
-                response = await self.chat_client.get_response(
+                response = await self.chat_client.get_response(  # type: ignore[call-overload]
                     messages=ctx["thread_messages"],
                     stream=False,
                     options=ctx["chat_options"],
@@ -944,8 +944,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 options=options,
                 kwargs=kwargs,
             )
-            ctx = ctx_holder["ctx"]
-            return self.chat_client.get_response(
+            ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
+            return self.chat_client.get_response(  # type: ignore[call-overload, no-any-return]
                 messages=ctx["thread_messages"],
                 stream=True,
                 options=ctx["chat_options"],

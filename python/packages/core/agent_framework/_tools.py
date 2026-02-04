@@ -2062,7 +2062,9 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
-        self.function_middleware: list[FunctionMiddlewareTypes] = function_middleware or []
+        self.function_middleware: list[FunctionMiddlewareTypes] = (
+            list(function_middleware) if function_middleware else []
+        )
         self.function_invocation_configuration = normalize_function_invocation_configuration(
             function_invocation_configuration
         )

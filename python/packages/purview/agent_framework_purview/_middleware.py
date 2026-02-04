@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 
-from agent_framework import AgentMiddleware, AgentRunContext, ChatContext, ChatMiddleware
+from agent_framework import AgentMiddleware, AgentRunContext, ChatContext, ChatMiddleware, MiddlewareTermination
 from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -62,8 +62,9 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 context.result = AgentResponse(
                     messages=[ChatMessage("system", [self._settings.blocked_prompt_message])]
                 )
-                context.terminate = True
-                return
+                raise MiddlewareTermination
+        except MiddlewareTermination:
+            raise
         except PurviewPaymentRequiredError as ex:
             logger.error(f"Purview payment required error in policy pre-check: {ex}")
             if not self._settings.ignore_payment_required:
@@ -151,8 +152,9 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
                 blocked_message = ChatMessage("system", [self._settings.blocked_prompt_message])
                 context.result = ChatResponse(messages=[blocked_message])
-                context.terminate = True
-                return
+                raise MiddlewareTermination
+        except MiddlewareTermination:
+            raise
         except PurviewPaymentRequiredError as ex:
             logger.error(f"Purview payment required error in policy pre-check: {ex}")
             if not self._settings.ignore_payment_required:

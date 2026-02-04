@@ -2464,7 +2464,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         finalizer: Callable[[Sequence[TUpdate]], TFinal | Awaitable[TFinal]] | None = None,
         transform_hooks: list[Callable[[TUpdate], TUpdate | Awaitable[TUpdate] | None]] | None = None,
         cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
-        result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal] | None]] | None = None,
+        result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None]] | None = None,
     ) -> None:
         """A Async Iterable stream of updates.
 
@@ -2489,7 +2489,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         self._transform_hooks: list[Callable[[TUpdate], TUpdate | Awaitable[TUpdate] | None]] = (
             transform_hooks if transform_hooks is not None else []
         )
-        self._result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal] | None]] = (
+        self._result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None]] = (
             result_hooks if result_hooks is not None else []
         )
         self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = (
@@ -2748,7 +2748,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
 
     def with_result_hook(
         self,
-        hook: Callable[[TFinal], TFinal | Awaitable[TFinal] | None],
+        hook: Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None],
     ) -> ResponseStream[TUpdate, TFinal]:
         """Register a result hook executed after finalization."""
         self._result_hooks.append(hook)

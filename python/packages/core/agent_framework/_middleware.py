@@ -125,7 +125,7 @@ class AgentRunContext:
         result: Agent execution result. Can be observed after calling ``next()``
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be AgentResponse.
-                For streaming: should be AsyncIterable[AgentResponseUpdate].
+                For streaming: should be ResponseStream[AgentResponseUpdate, AgentResponse].
         kwargs: Additional keyword arguments passed to the agent run method.
 
     Examples:
@@ -160,7 +160,7 @@ class AgentRunContext:
         options: Mapping[str, Any] | None = None,
         stream: bool = False,
         metadata: Mapping[str, Any] | None = None,
-        result: AgentResponse | AsyncIterable[AgentResponseUpdate] | None = None,
+        result: AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None = None,
         kwargs: Mapping[str, Any] | None = None,
         stream_transform_hooks: Sequence[
             Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
@@ -767,7 +767,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             The agent response after processing through all middleware.
         """
         if not self._middleware:
-            context.result = final_handler(context)
+            context.result = final_handler(context)  # type: ignore[assignment]
             if isinstance(context.result, Awaitable):
                 context.result = await context.result
             return context.result
@@ -776,7 +776,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middleware):
 
                 async def final_wrapper(c: AgentRunContext) -> None:
-                    c.result = final_handler(c)
+                    c.result = final_handler(c)  # type: ignore[assignment]
                     if inspect.isawaitable(c.result):
                         c.result = await c.result
 
@@ -904,7 +904,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
         final_handler: Callable[
             [ChatContext], Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]
         ],
-    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+    ) -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
         """Execute the chat middleware pipeline.
 
         Args:
@@ -915,7 +915,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             The chat response after processing through all middleware.
         """
         if not self._middleware:
-            context.result = final_handler(context)
+            context.result = final_handler(context)  # type: ignore[assignment]
             if isinstance(context.result, Awaitable):
                 context.result = await context.result
             if context.stream and not isinstance(context.result, ResponseStream):
@@ -926,7 +926,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middleware):
 
                 async def final_wrapper(c: ChatContext) -> None:
-                    c.result = final_handler(c)
+                    c.result = final_handler(c)  # type: ignore[assignment]
                     if inspect.isawaitable(c.result):
                         c.result = await c.result
 
@@ -1027,7 +1027,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
             *middleware["chat"],
         )
         if not pipeline.has_middlewares:
-            return super_get_response(
+            return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
                 options=options,
@@ -1035,7 +1035,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
             )
 
         context = ChatContext(
-            chat_client=self,
+            chat_client=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),
             options=options,
             stream=stream,
@@ -1063,13 +1063,13 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
             return ResponseStream.from_awaitable(_execute_stream())
 
         # For non-streaming, return the coroutine directly
-        return _execute()
+        return _execute()  # type: ignore[return-value]
 
     def _middleware_handler(
         self, context: ChatContext
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal middleware handler to adapt to pipeline."""
-        return super().get_response(
+        return super().get_response(  # type: ignore[misc, no-any-return]
             messages=context.messages,
             stream=context.stream,
             options=context.options or {},
@@ -1089,7 +1089,7 @@ class AgentMiddlewareLayer:
         middleware_list = categorize_middleware(middleware)
         self.agent_middleware = middleware_list["agent"]
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
-        super().__init__(*args, middleware=middleware, **kwargs)
+        super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
         if chat_client := getattr(self, "chat_client", None):
             client_chat_middleware = getattr(chat_client, "chat_middleware", [])
             client_chat_middleware.extend(middleware_list["chat"])
@@ -1157,10 +1157,10 @@ class AgentMiddlewareLayer:
 
         # Execute with middleware if available
         if not pipeline.has_middlewares:
-            return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)
+            return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
 
         context = AgentRunContext(
-            agent=self,
+            agent=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),
             thread=thread,
             options=options,
@@ -1189,12 +1189,12 @@ class AgentMiddlewareLayer:
             return ResponseStream.from_awaitable(_execute_stream())
 
         # For non-streaming, return the coroutine directly
-        return _execute()
+        return _execute()  # type: ignore[return-value]
 
     def _middleware_handler(
         self, context: AgentRunContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        return super().run(
+        return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
             thread=context.thread,

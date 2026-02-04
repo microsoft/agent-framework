@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentRunContext, ChatMessage, Role
+from agent_framework import AgentResponse, AgentRunContext, ChatMessage, MiddlewareTermination, Role
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
@@ -79,11 +79,11 @@ class TestPurviewPolicyMiddleware:
                 nonlocal next_called
                 next_called = True
 
-            await middleware.process(context, mock_next)
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, mock_next)
 
             assert not next_called
             assert context.result is not None
-            assert context.terminate
             assert len(context.result.messages) == 1
             assert context.result.messages[0].role == Role.SYSTEM
             assert "blocked by policy" in context.result.messages[0].text.lower()
