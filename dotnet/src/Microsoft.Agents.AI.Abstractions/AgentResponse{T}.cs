@@ -40,36 +40,20 @@ public class AgentResponse<T> : AgentResponse
     {
         get
         {
-            var structuredOutput = this.GetResultCore(this._serializerOptions, out var failureReason);
-            return failureReason switch
+            var json = this.Text;
+            if (string.IsNullOrEmpty(json))
             {
-                FailureReason.ResultDidNotContainJson => throw new InvalidOperationException("The response did not contain JSON to be deserialized."),
-                FailureReason.DeserializationProducedNull => throw new InvalidOperationException("The deserialized response is null."),
-                _ => structuredOutput!,
-            };
+                throw new InvalidOperationException("The response did not contain JSON to be deserialized.");
+            }
+
+            T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)this._serializerOptions.GetTypeInfo(typeof(T)));
+            if (deserialized is null)
+            {
+                throw new InvalidOperationException("The deserialized response is null.");
+            }
+
+            return deserialized;
         }
-    }
-
-    private T? GetResultCore(JsonSerializerOptions serializerOptions, out FailureReason? failureReason)
-    {
-        var json = this.Text;
-        if (string.IsNullOrEmpty(json))
-        {
-            failureReason = FailureReason.ResultDidNotContainJson;
-            return default;
-        }
-
-        // If there's an exception here, we want it to propagate, since the Result property is meant to throw directly
-        T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)serializerOptions.GetTypeInfo(typeof(T)));
-
-        if (deserialized is null)
-        {
-            failureReason = FailureReason.DeserializationProducedNull;
-            return default;
-        }
-
-        failureReason = default;
-        return deserialized;
     }
 
     private static T? DeserializeFirstTopLevelObject(string json, JsonTypeInfo<T> typeInfo)
@@ -93,11 +77,5 @@ public class AgentResponse<T> : AgentResponse
 #else
         return JsonSerializer.Deserialize(json, typeInfo);
 #endif
-    }
-
-    private enum FailureReason
-    {
-        ResultDidNotContainJson,
-        DeserializationProducedNull
     }
 }

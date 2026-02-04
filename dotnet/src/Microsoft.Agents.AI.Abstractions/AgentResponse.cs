@@ -78,7 +78,7 @@ public class AgentResponse
     /// metadata and storing the original response in <see cref="RawRepresentation"/> for access to
     /// the underlying implementation details.
     /// </remarks>
-    public AgentResponse(AgentResponse response)
+    protected AgentResponse(AgentResponse response)
     {
         _ = Throw.IfNull(response);
 

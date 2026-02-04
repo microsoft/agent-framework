@@ -637,7 +637,7 @@ public sealed partial class ChatClientAgent : AIAgent
             if (agentRunOptions?.ResponseFormat is not null)
             {
                 chatOptions ??= new ChatOptions();
-                chatOptions?.ResponseFormat = agentRunOptions.ResponseFormat;
+                chatOptions.ResponseFormat = agentRunOptions.ResponseFormat;
             }
 
             ChatClientAgentContinuationToken? agentContinuationToken = null;
