@@ -890,8 +890,8 @@ def test_multiple_function_calls_in_single_message(openai_unit_test_env: dict[st
     assert prepared[0]["tool_calls"][1]["id"] == "call_2"
 
 
-def test_prepare_options_preserves_parallel_tool_calls_when_no_tools(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that parallel_tool_calls is preserved even when no tools are present."""
+def test_prepare_options_removes_parallel_tool_calls_when_no_tools(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that parallel_tool_calls is removed when no tools are present."""
     client = OpenAIChatClient()
 
     messages = [ChatMessage(role="user", text="test")]
@@ -899,8 +899,8 @@ def test_prepare_options_preserves_parallel_tool_calls_when_no_tools(openai_unit
 
     prepared_options = client._prepare_options(messages, options)
 
-    # parallel_tool_calls is preserved even when no tools (consistent with tool_choice behavior)
-    assert prepared_options.get("parallel_tool_calls") is True
+    # Should not have parallel_tool_calls when no tools
+    assert "parallel_tool_calls" not in prepared_options
 
 
 async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> None:

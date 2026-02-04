@@ -577,19 +577,21 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         # tools
         if tools := self._prepare_tools_for_openai(options.get("tools")):
             run_options["tools"] = tools
-
-        # tool_choice: convert ToolMode to appropriate format (keep even if no tools)
-        if tool_choice := options.get("tool_choice"):
-            tool_mode = validate_tool_mode(tool_choice)
-            if (mode := tool_mode.get("mode")) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "name": func_name,
-                }
-            else:
-                run_options["tool_choice"] = mode
+            # tool_choice: convert ToolMode to appropriate format
+            if tool_choice := options.get("tool_choice"):
+                tool_mode = validate_tool_mode(tool_choice)
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "name": func_name,
+                    }
+                else:
+                    run_options["tool_choice"] = mode
+        else:
+            run_options.pop("parallel_tool_calls", None)
+            run_options.pop("tool_choice", None)
 
         # response format and text config
         response_format = options.get("response_format")

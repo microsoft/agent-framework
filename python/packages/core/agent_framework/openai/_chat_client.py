@@ -282,7 +282,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         tools = options.get("tools")
         if tools is not None:
             run_options.update(self._prepare_tools_for_openai(tools))
-        if tool_choice := run_options.pop("tool_choice", None):
+        # Only include tool_choice and parallel_tool_calls if tools are present
+        if not run_options.get("tools"):
+            run_options.pop("parallel_tool_calls", None)
+            run_options.pop("tool_choice", None)
+        elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
             if (mode := tool_mode.get("mode")) == "required" and (
                 func_name := tool_mode.get("required_function_name")
