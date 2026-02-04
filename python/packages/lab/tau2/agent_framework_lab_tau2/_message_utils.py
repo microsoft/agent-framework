@@ -1,7 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any
+
 from agent_framework._types import ChatMessage, Content
 from loguru import logger
+
+
+def _get_role_value(role: Any) -> str:
+    """Get the string value of a role, handling both enum and string."""
+    return role.value if hasattr(role, "value") else str(role)
 
 
 def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
@@ -16,13 +23,9 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
         """Remove function call content from message contents."""
         return [content for content in messages if content.type != "function_call"]
 
-    def get_role_value(role: str) -> str:
-        """Get the string value of a role, handling both enum and string."""
-        return role.value if hasattr(role, "value") else role  # type: ignore[union-attr]
-
     flipped_messages = []
     for msg in messages:
-        role_value = get_role_value(msg.role)
+        role_value = _get_role_value(msg.role)
         if role_value == "assistant":
             # Flip assistant to user
             contents = filter_out_function_calls(msg.contents)
@@ -48,7 +51,6 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
             # Keep other roles as-is (system, tool, etc.)
             flipped_messages.append(msg)
     return flipped_messages
-    return flipped_messages
 
 
 def log_messages(messages: list[ChatMessage]) -> None:
@@ -59,7 +61,7 @@ def log_messages(messages: list[ChatMessage]) -> None:
     """
     logger_ = logger.opt(colors=True)
     for msg in messages:
-        role_value = msg.role.value if hasattr(msg.role, "value") else msg.role
+        role_value = _get_role_value(msg.role)
         # Handle different content types
         if hasattr(msg, "contents") and msg.contents:
             for content in msg.contents:

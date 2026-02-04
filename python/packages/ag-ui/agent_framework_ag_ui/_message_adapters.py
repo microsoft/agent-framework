@@ -620,14 +620,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[arg-type]
+            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[call-overload]
         else:
             # Regular text message
             content = msg.get("content", "")
             if isinstance(content, str):
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])  # type: ignore[arg-type]
+                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])  # type: ignore[call-overload]
             else:
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])  # type: ignore[arg-type]
+                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])  # type: ignore[call-overload]
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]

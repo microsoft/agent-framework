@@ -524,8 +524,8 @@ class AzureAISearchContextProvider(ContextProvider):
         # Convert to list and filter to USER/ASSISTANT messages with text only
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
 
-        def get_role_value(role: str) -> str:
-            return role.value if hasattr(role, "value") else str(role)  # type: ignore[union-attr]
+        def get_role_value(role: str | Any) -> str:
+            return role.value if hasattr(role, "value") else str(role)
 
         filtered_messages = [
             msg
