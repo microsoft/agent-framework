@@ -10,7 +10,6 @@ from pydantic import BaseModel, ValidationError
 from agent_framework import (
     Content,
     FunctionTool,
-    ToolProtocol,
     tool,
 )
 from agent_framework._tools import (
@@ -31,7 +30,6 @@ def test_tool_decorator():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -52,7 +50,6 @@ def test_tool_decorator_without_args():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -74,7 +71,7 @@ def test_tool_without_args():
         """A simple function that adds two numbers."""
         return 1 + 2
 
-    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, FunctionTool)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -94,7 +91,6 @@ async def test_tool_decorator_with_async():
         """An async function that adds two numbers."""
         return x + y
 
-    assert isinstance(async_test_tool, ToolProtocol)
     assert isinstance(async_test_tool, FunctionTool)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
@@ -118,7 +114,6 @@ def test_tool_decorator_in_class():
 
     test_tool = my_tools().test_tool
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"

@@ -31,7 +31,7 @@ from ._memory import Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionTool, ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionTool
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -592,10 +592,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
@@ -660,10 +660,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
         tools_ = cast(
-            ToolProtocol
+            FunctionTool
             | Callable[..., Any]
             | MutableMapping[str, Any]
-            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
             | None,
             tools_,
         )
@@ -673,7 +673,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
+        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
@@ -758,10 +758,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
@@ -773,10 +773,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
@@ -787,10 +787,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
         **kwargs: Any,
@@ -825,10 +825,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
         tools_ = cast(
-            ToolProtocol
+            FunctionTool
             | Callable[..., Any]
             | MutableMapping[str, Any]
-            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
             | None,
             tools_,
         )
@@ -837,13 +837,13 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages, **kwargs
         )
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
+        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[ToolProtocol | Callable[..., Any] | dict[str, Any]] = []
+        final_tools: list[FunctionTool | Callable[..., Any] | dict[str, Any]] = []
         # Normalize tools argument to a list without mutating the original parameter
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
@@ -930,10 +930,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         options: TOptions_co | Mapping[str, Any] | None = None,
         **kwargs: Any,
@@ -974,8 +974,8 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         )
         agent_name = self._get_agent_name()
         # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
+        final_tools: list[FunctionTool | MutableMapping[str, Any] | Callable[..., Any]] = []
+        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         # Normalize tools argument to a list without mutating the original parameter

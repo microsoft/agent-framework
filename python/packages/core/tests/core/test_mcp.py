@@ -19,7 +19,6 @@ from agent_framework import (
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
     Role,
-    ToolProtocol,
 )
 from agent_framework._mcp import (
     MCPTool,
@@ -745,7 +744,10 @@ def test_get_input_model_from_mcp_prompt():
 async def test_local_mcp_server_initialization():
     """Test MCPTool initialization."""
     server = MCPTool(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
+    assert hasattr(server, "additional_properties")
     assert server.name == "test_server"
     assert server.session is None
     assert server.functions == []
@@ -796,7 +798,9 @@ async def test_local_mcp_server_load_functions():
             return None
 
     server = TestServer(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
     async with server:
         await server.load_tools()
         assert len(server.functions) == 1

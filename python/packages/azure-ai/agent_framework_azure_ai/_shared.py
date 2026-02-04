@@ -5,7 +5,6 @@ from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import (
     FunctionTool,
-    ToolProtocol,
     get_logger,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -114,7 +113,7 @@ def _extract_project_connection_id(additional_properties: dict[str, Any] | None)
 
 
 def to_azure_ai_agent_tools(
-    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
     run_options: dict[str, Any] | None = None,
 ) -> list[ToolDefinition | dict[str, Any]]:
     """Convert Agent Framework tools to Azure AI V1 SDK tool definitions.
@@ -377,7 +376,7 @@ def from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[d
 
 
 def to_azure_ai_tools(
-    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
 ) -> list[Tool | dict[str, Any]]:
     """Converts Agent Framework tools into Azure AI compatible tools.
 

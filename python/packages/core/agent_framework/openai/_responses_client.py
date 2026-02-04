@@ -40,7 +40,6 @@ from .._logging import get_logger
 from .._middleware import use_chat_middleware
 from .._tools import (
     FunctionTool,
-    ToolProtocol,
     use_function_invocation,
 )
 from .._types import (
@@ -363,7 +362,7 @@ class OpenAIBaseResponsesClient(
     # region Prep methods
 
     def _prepare_tools_for_openai(
-        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None
+        self, tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None
     ) -> list[ToolParam | dict[str, Any]]:
         """Prepare tools for the OpenAI Responses API.
 

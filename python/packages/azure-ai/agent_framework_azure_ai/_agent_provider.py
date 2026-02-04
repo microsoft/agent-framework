@@ -10,7 +10,6 @@ from agent_framework import (
     ContextProvider,
     FunctionTool,
     Middleware,
-    ToolProtocol,
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
@@ -169,10 +168,10 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -266,10 +265,10 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         self,
         id: str,
         *,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -322,10 +321,10 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
     def as_agent(
         self,
         agent: Agent,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -379,7 +378,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
     def _to_chat_agent_from_agent(
         self,
         agent: Agent,
-        provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
+        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
         default_options: TOptions_co | None = None,
         middleware: Sequence[Middleware] | None = None,
         context_provider: ContextProvider | None = None,
@@ -422,8 +421,8 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
     def _merge_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
-    ) -> list[ToolProtocol | dict[str, Any]]:
+        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
+    ) -> list[FunctionTool | dict[str, Any]]:
         """Merge hosted tools from agent with user-provided function tools.
 
         Args:
@@ -433,7 +432,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         Returns:
             Combined list of tools for the ChatAgent.
         """
-        merged: list[ToolProtocol | dict[str, Any]] = []
+        merged: list[FunctionTool | dict[str, Any]] = []
 
         # Convert hosted tools from agent definition
         hosted_tools = from_azure_ai_agent_tools(agent_tools)
@@ -459,7 +458,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
     def _validate_function_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
     ) -> None:
         """Validate that required function tools are provided.
 

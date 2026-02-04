@@ -20,10 +20,10 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FinishReason,
+    FunctionTool,
     Role,
     TextSpanRegion,
     ToolMode,
-    ToolProtocol,
     UsageDetails,
     detect_media_type_from_base64,
     merge_chat_options,
@@ -42,8 +42,8 @@ from agent_framework.exceptions import ContentError
 
 
 @fixture
-def ai_tool() -> ToolProtocol:
-    """Returns a generic ToolProtocol."""
+def ai_tool() -> FunctionTool:
+    """Returns a generic FunctionTool."""
 
     class GenericTool(BaseModel):
         name: str
@@ -60,8 +60,8 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def tool_tool() -> ToolProtocol:
-    """Returns a executable ToolProtocol."""
+def tool_tool() -> FunctionTool:
+    """Returns a executable FunctionTool."""
 
     @tool
     def simple_function(x: int, y: int) -> int:

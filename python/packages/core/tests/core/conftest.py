@@ -21,8 +21,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Role,
-    ToolProtocol,
     tool,
     use_chat_middleware,
     use_function_invocation,
@@ -47,8 +47,8 @@ def chat_history() -> list[ChatMessage]:
 
 
 @fixture
-def ai_tool() -> ToolProtocol:
-    """Returns a generic ToolProtocol."""
+def ai_tool() -> FunctionTool:
+    """Returns a generic FunctionTool."""
 
     class GenericTool(BaseModel):
         name: str
@@ -65,8 +65,8 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def tool_tool() -> ToolProtocol:
-    """Returns a executable ToolProtocol."""
+def tool_tool() -> FunctionTool:
+    """Returns a executable FunctionTool."""
 
     @tool(approval_mode="never_require")
     def simple_function(x: int, y: int) -> int:

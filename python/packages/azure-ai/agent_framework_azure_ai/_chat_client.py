@@ -24,7 +24,6 @@ from agent_framework import (
     Middleware,
     Role,
     TextSpanRegion,
-    ToolProtocol,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
@@ -1211,9 +1210,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
 
         return tool_definitions
 
-    def _prepare_mcp_resources(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
-    ) -> list[dict[str, Any]]:
+    def _prepare_mcp_resources(self, tools: Sequence[FunctionTool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         """Prepare MCP tool resources for approval mode configuration.
 
         Handles dict-based MCP tools from get_mcp_tool() factory method.
@@ -1301,7 +1298,7 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         return additional_messages, instructions, required_action_results
 
     async def _prepare_tools_for_azure_ai(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
+        self, tools: Sequence[FunctionTool | MutableMapping[str, Any]], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the Azure AI Agents API.
 
@@ -1440,10 +1437,10 @@ class AzureAIAgentClient(BaseChatClient[TAzureAIAgentOptions], Generic[TAzureAIA
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TAzureAIAgentOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,

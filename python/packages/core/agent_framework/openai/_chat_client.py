@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
-from .._tools import FunctionTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
@@ -250,7 +250,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(self, tools: Sequence[FunctionTool | MutableMapping[str, Any]]) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
         Handles FunctionTool instances and passes through dict-based tools directly.

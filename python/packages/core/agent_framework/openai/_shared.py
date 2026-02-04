@@ -24,7 +24,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._tools import FunctionTool, ToolProtocol
+from .._tools import FunctionTool
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -279,7 +279,7 @@ class OpenAIConfigMixin(OpenAIBase):
 
 
 def to_assistant_tools(
-    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     """Convert Agent Framework tools to OpenAI Assistants API format.
 

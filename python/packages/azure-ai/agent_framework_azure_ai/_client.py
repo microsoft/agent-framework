@@ -10,8 +10,8 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStoreProtocol,
     ContextProvider,
+    FunctionTool,
     Middleware,
-    ToolProtocol,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
@@ -602,10 +602,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,

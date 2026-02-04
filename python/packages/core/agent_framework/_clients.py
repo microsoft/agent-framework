@@ -39,7 +39,7 @@ from ._threads import ChatMessageStoreProtocol
 from ._tools import (
     FUNCTION_INVOKING_CHAT_CLIENT_MARKER,
     FunctionInvocationConfiguration,
-    ToolProtocol,
+    FunctionTool,
 )
 from ._types import (
     ChatMessage,
@@ -426,10 +426,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,

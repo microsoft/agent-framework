@@ -9,7 +9,6 @@ import yaml
 from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
-    ToolProtocol,
 )
 from agent_framework import (
     FunctionTool as AFFunctionTool,
@@ -706,14 +705,14 @@ class AgentFactory:
             chat_options["additional_chat_options"] = options.additionalProperties
         return chat_options
 
-    def _parse_tools(self, tools: list[Tool] | None) -> list[ToolProtocol | dict[str, Any]] | None:
-        """Parse tool resources into ToolProtocol instances or dict-based tools."""
+    def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:
+        """Parse tool resources into AFFunctionTool instances or dict-based tools."""
         if not tools:
             return None
         return [self._parse_tool(tool_resource) for tool_resource in tools]
 
-    def _parse_tool(self, tool_resource: Tool) -> ToolProtocol | dict[str, Any]:
-        """Parse a single tool resource into a ToolProtocol instance."""
+    def _parse_tool(self, tool_resource: Tool) -> AFFunctionTool | dict[str, Any]:
+        """Parse a single tool resource into an AFFunctionTool instance."""
         match tool_resource:
             case FunctionTool():
                 func: Callable[..., Any] | None = None

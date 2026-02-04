@@ -17,7 +17,6 @@ from agent_framework import (
     ContextProvider,
     FunctionTool,
     Role,
-    ToolProtocol,
     get_logger,
     normalize_messages,
 )
@@ -215,11 +214,11 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         description: str | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | str
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | str]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
         | None = None,
         default_options: TOptions | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
@@ -240,7 +239,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             middleware: List of middleware.
             tools: Tools for the agent. Can be:
                 - Strings for built-in tools (e.g., "Read", "Write", "Bash", "Glob")
-                - Functions or ToolProtocol instances for custom tools
+                - Functions for custom tools
             default_options: Default ClaudeAgentOptions including system_prompt, model, etc.
             env_file_path: Path to .env file.
             env_file_encoding: Encoding of .env file.
@@ -286,9 +285,9 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Claude Agent settings.", ex) from ex
 
-        # Separate built-in tools (strings) from custom tools (callables/ToolProtocol)
+        # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
-        self._custom_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+        self._custom_tools: list[FunctionTool | MutableMapping[str, Any]] = []
         self._normalize_tools(tools)
 
         self._default_options = opts
@@ -297,11 +296,11 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
     def _normalize_tools(
         self,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | str
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | str]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
         | None,
     ) -> None:
         """Separate built-in tools (strings) from custom tools.
@@ -315,7 +314,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         # Normalize to sequence
         if isinstance(tools, str):
             tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, (ToolProtocol, MutableMapping)) or callable(tools):
+        elif isinstance(tools, (FunctionTool, MutableMapping)) or callable(tools):
             tools_list = [tools]
         else:
             tools_list = list(tools)
@@ -456,7 +455,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
 
     def _prepare_tools(
         self,
-        tools: list[ToolProtocol | MutableMapping[str, Any]],
+        tools: list[FunctionTool | MutableMapping[str, Any]],
     ) -> tuple[Any, list[str]]:
         """Convert Agent Framework tools to SDK MCP server.
 
@@ -474,7 +473,8 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                 sdk_tools.append(self._function_tool_to_sdk_mcp_tool(tool))
                 # Claude Agent SDK convention: MCP tools use format "mcp__{server}__{tool}"
                 tool_names.append(f"mcp__{TOOLS_MCP_SERVER_NAME}__{tool.name}")
-            elif isinstance(tool, ToolProtocol):
+            else:
+                # Non-FunctionTool items (e.g., dict-based hosted tools) cannot be converted to SDK MCP tools
                 logger.debug(f"Unsupported tool type: {type(tool)}")
 
         if not sdk_tools:

@@ -22,13 +22,11 @@ from typing import (
     Final,
     Generic,
     Literal,
-    Protocol,
     Union,
     cast,
     get_args,
     get_origin,
     overload,
-    runtime_checkable,
 )
 
 from opentelemetry.metrics import Histogram, NoOpHistogram
@@ -73,7 +71,6 @@ __all__ = [
     "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
     "FunctionInvocationConfiguration",
     "FunctionTool",
-    "ToolProtocol",
     "tool",
     "use_function_invocation",
 ]
@@ -146,73 +143,6 @@ def _parse_inputs(
 
 
 # region Tools
-@runtime_checkable
-class ToolProtocol(Protocol):
-    """Represents a generic tool.
-
-    This protocol defines the interface that all tools must implement to be compatible
-    with the agent framework. It is implemented by FunctionTool and dict-based tools
-    from client factory methods (e.g., OpenAIResponsesClient.get_code_interpreter_tool()).
-
-    Since each connector needs to parse tools differently, users can pass a dict to
-    specify a service-specific tool when no abstraction is available.
-
-    Attributes:
-        name: The name of the tool.
-        description: A description of the tool, suitable for use in describing the purpose to a model.
-        additional_properties: Additional properties associated with the tool.
-    """
-
-    name: str
-    """The name of the tool."""
-    description: str
-    """A description of the tool, suitable for use in describing the purpose to a model."""
-    additional_properties: dict[str, Any] | None
-    """Additional properties associated with the tool."""
-
-    def __str__(self) -> str:
-        """Return a string representation of the tool."""
-        ...
-
-
-class BaseTool(SerializationMixin):
-    """Base class for AI tools, providing common attributes and methods.
-
-    Used as the base class for FunctionTool.
-
-    Since each connector needs to parse tools differently, this class is not exposed directly to end users.
-    In most cases, users can pass a dict to specify a service-specific tool when no abstraction is available.
-    """
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        description: str = "",
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the BaseTool.
-
-        Keyword Args:
-            name: The name of the tool.
-            description: A description of the tool.
-            additional_properties: Additional properties associated with the tool.
-            **kwargs: Additional keyword arguments.
-        """
-        self.name = name
-        self.description = description
-        self.additional_properties = additional_properties
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def __str__(self) -> str:
-        """Return a string representation of the tool."""
-        if self.description:
-            return f"{self.__class__.__name__}(name={self.name}, description={self.description})"
-        return f"{self.__class__.__name__}(name={self.name})"
 
 
 def _default_histogram() -> Histogram:
@@ -252,11 +182,16 @@ class EmptyInputModel(BaseModel):
     """An empty input model for functions with no parameters."""
 
 
-class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
+class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
     parameter validation and JSON schema generation.
+
+    Attributes:
+        name: The name of the tool.
+        description: A description of the tool, suitable for use in describing the purpose to a model.
+        additional_properties: Additional properties associated with the tool.
 
     Examples:
         .. code-block:: python
@@ -295,7 +230,12 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram", "_cached_parameters"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {
+        "additional_properties",
+        "input_model",
+        "_invocation_duration_histogram",
+        "_cached_parameters",
+    }
 
     def __init__(
         self,
@@ -328,12 +268,14 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
                 If not provided, it will be inferred from the function signature.
             **kwargs: Additional keyword arguments.
         """
-        super().__init__(
-            name=name,
-            description=description,
-            additional_properties=additional_properties,
-            **kwargs,
-        )
+        # Core attributes (formerly from BaseTool)
+        self.name = name
+        self.description = description
+        self.additional_properties = additional_properties
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+        # FunctionTool-specific attributes
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
@@ -356,6 +298,12 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
                 if param.kind == inspect.Parameter.VAR_KEYWORD:
                     self._forward_runtime_kwargs = True
                     break
+
+    def __str__(self) -> str:
+        """Return a string representation of the tool."""
+        if self.description:
+            return f"{self.__class__.__name__}(name={self.name}, description={self.description})"
+        return f"{self.__class__.__name__}(name={self.name})"
 
     @property
     def declaration_only(self) -> bool:
@@ -559,10 +507,10 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
 
 def _tools_to_dict(
     tools: (
-        ToolProtocol
+        FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None
     ),
 ) -> list[str | dict[str, Any]] | None:
@@ -1114,7 +1062,7 @@ class FunctionInvocationConfiguration(SerializationMixin):
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_consecutive_errors_per_request: int = DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
         terminate_on_unknown_calls: bool = False,
-        additional_tools: Sequence[ToolProtocol] | None = None,
+        additional_tools: Sequence[FunctionTool] | None = None,
         include_detailed_errors: bool = False,
     ) -> None:
         """Initialize FunctionInvocationConfiguration.
@@ -1324,10 +1272,10 @@ async def _auto_invoke_function(
 
 
 def _get_tool_map(
-    tools: "ToolProtocol \
+    tools: "FunctionTool \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
-    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]",
 ) -> dict[str, FunctionTool[Any, Any]]:
     tool_list: dict[str, FunctionTool[Any, Any]] = {}
     for tool_item in tools if isinstance(tools, list) else [tools]:
@@ -1345,10 +1293,10 @@ async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
     function_calls: Sequence["Content"],
-    tools: "ToolProtocol \
+    tools: "FunctionTool \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
-    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]",
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> tuple[Sequence["Content"], bool]:
@@ -1467,8 +1415,8 @@ def _extract_tools(options: dict[str, Any] | None) -> Any:
         options: The options dict containing chat options.
 
     Returns:
-        ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] |
-        Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None
+        FunctionTool | Callable[..., Any] | MutableMapping[str, Any] |
+        Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] | None
     """
     if options and isinstance(options, dict):
         return options.get("tools")

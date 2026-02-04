@@ -17,7 +17,6 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     Content,
-    ToolProtocol,
     prepare_function_call_results,
     tool,
 )
@@ -174,15 +173,18 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     """Test that unsupported tool types are handled correctly."""
     client = OpenAIChatClient()
 
-    # Create a mock ToolProtocol that's not a FunctionTool
-    unsupported_tool = MagicMock(spec=ToolProtocol)
-    unsupported_tool.__class__.__name__ = "UnsupportedAITool"
+    # Create a random object that's not a FunctionTool, dict, or callable
+    # This simulates an unsupported tool type that should be ignored
+    class UnsupportedTool:
+        pass
 
-    # This should ignore the unsupported ToolProtocol and return empty list
+    unsupported_tool = UnsupportedTool()
+
+    # This should ignore the unsupported tool and return empty dict
     result = client._prepare_tools_for_openai([unsupported_tool])  # type: ignore
     assert result == {}
 
-    # Also test with a non-ToolProtocol that should be converted to dict
+    # Also test with a dict-based tool that should be passed through
     dict_tool = {"type": "function", "name": "test"}
     result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
     assert result["tools"] == [dict_tool]

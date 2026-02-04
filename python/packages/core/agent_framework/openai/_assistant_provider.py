@@ -11,7 +11,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 from .._agents import ChatAgent
 from .._memory import ContextProvider
 from .._middleware import Middleware
-from .._tools import FunctionTool, ToolProtocol
+from .._tools import FunctionTool
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
@@ -41,10 +41,10 @@ TOptions_co = TypeVar(
 )
 
 _ToolsType = (
-    ToolProtocol
+    FunctionTool
     | Callable[..., Any]
     | MutableMapping[str, Any]
-    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
 )
 
 
@@ -492,7 +492,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         self,
         assistant_tools: list[Any],
         user_tools: _ToolsType | None,
-    ) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    ) -> list[FunctionTool | MutableMapping[str, Any]]:
         """Merge hosted tools from assistant with user-provided function tools.
 
         Args:
@@ -502,7 +502,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         Returns:
             A list of all tools (hosted tools + user function implementations).
         """
-        merged: list[ToolProtocol | MutableMapping[str, Any]] = []
+        merged: list[FunctionTool | MutableMapping[str, Any]] = []
 
         # Add hosted tools from assistant using shared conversion
         hosted_tools = from_assistant_tools(assistant_tools)
@@ -518,7 +518,7 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
     def _create_chat_agent_from_assistant(
         self,
         assistant: Assistant,
-        tools: list[ToolProtocol | MutableMapping[str, Any]] | None,
+        tools: list[FunctionTool | MutableMapping[str, Any]] | None,
         instructions: str | None,
         middleware: Sequence[Middleware] | None,
         context_provider: ContextProvider | None,

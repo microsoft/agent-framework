@@ -22,7 +22,6 @@ from agent_framework import (
     Content,
     FunctionTool,
     Role,
-    ToolProtocol,
     UsageDetails,
     get_logger,
     use_chat_middleware,
@@ -546,19 +545,12 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
             resp.append(fcc)
         return resp
 
-    def _prepare_tools_for_ollama(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _prepare_tools_for_ollama(self, tools: list[FunctionTool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         chat_tools: list[dict[str, Any]] = []
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case _:
-                        raise ServiceInvalidRequestError(
-                            "Unsupported tool type '"
-                            f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: FunctionTool."
-                        )
+            if isinstance(tool, FunctionTool):
+                chat_tools.append(tool.to_json_schema_spec())
             else:
+                # Pass through dict-based tools (e.g., hosted tools from factory methods)
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
