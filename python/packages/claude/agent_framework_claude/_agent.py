@@ -24,11 +24,13 @@ from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
     AssistantMessage,
-    ClaudeAgentOptions as SDKOptions,
     ClaudeSDKClient,
     ResultMessage,
     SdkMcpTool,
     create_sdk_mcp_server,
+)
+from claude_agent_sdk import (
+    ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
 from pydantic import ValidationError
