@@ -589,9 +589,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     }
                 else:
                     run_options["tool_choice"] = mode
-        else:
-            run_options.pop("parallel_tool_calls", None)
-            run_options.pop("tool_choice", None)
 
         # response format and text config
         response_format = options.get("response_format")

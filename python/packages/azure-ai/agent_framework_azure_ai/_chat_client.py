@@ -1032,10 +1032,10 @@ class AzureAIAgentClient(
             if agent_definition.tool_resources:
                 run_options["tool_resources"] = agent_definition.tool_resources
 
-        # Add run tools if tool_choice allows
-        tool_choice = options.get("tool_choice")
+        # Add run tools - always include tools if provided, regardless of tool_choice
+        # tool_choice="none" means the model won't call tools, but tools should still be available
         tools = options.get("tools")
-        if tool_choice is not None and tool_choice != "none" and tools:
+        if tools:
             tool_definitions.extend(to_azure_ai_agent_tools(tools, run_options))
 
             # Handle MCP tool resources

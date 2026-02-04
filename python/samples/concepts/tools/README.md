@@ -213,10 +213,10 @@ The `tool_choice` option controls how the model uses available tools:
 
 **Why `tool_choice="required"` returns immediately:**
 
-When you set `tool_choice="required"`, your intent is to force exactly one tool call. The framework respects this by:
-1. Getting the model's function call
-2. Executing the tool
-3. Returning the response with both the function call message and the function result
+When you set `tool_choice="required"`, your intent is to force one or more tool calls (not all models supports multiple, either by name or when using `required` without a name). The framework respects this by:
+1. Getting the model's function call(s)
+2. Executing the tool(s)
+3. Returning the response(s) with both the function call message(s) and the function result(s)
 
 This avoids an infinite loop (model forced to call tools → executes → model forced to call tools again) and gives you direct access to the tool result.
 
