@@ -2467,3 +2467,159 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: C
 
     # Verify the second streaming response is still in the queue (wasn't consumed)
     assert len(chat_client_base.streaming_responses) == 1
+
+
+async def test_conversation_id_updated_in_options_between_tool_iterations():
+    """Test that conversation_id is updated in options dict between tool invocation iterations.
+
+    This regression test ensures that when a tool call returns a new conversation_id,
+    subsequent API calls in the same function invocation loop use the updated conversation_id.
+    Without this fix, the old conversation_id would be used, causing "No tool call found"
+    errors when submitting tool results to APIs like OpenAI Responses.
+    """
+    from collections.abc import AsyncIterable, MutableSequence, Sequence
+    from typing import Any
+    from unittest.mock import patch
+
+    from agent_framework import (
+        BaseChatClient,
+        ChatMessage,
+        ChatResponse,
+        ChatResponseUpdate,
+        Content,
+        ResponseStream,
+        tool,
+    )
+    from agent_framework._middleware import ChatMiddlewareLayer
+    from agent_framework._tools import FunctionInvocationLayer
+
+    # Track the conversation_id passed to each call
+    conversation_ids_received: list[str | None] = []
+
+    class TrackingChatClient(
+        ChatMiddlewareLayer,
+        FunctionInvocationLayer,
+        BaseChatClient,
+    ):
+        def __init__(self) -> None:
+            super().__init__(function_middleware=[])
+            self.run_responses: list[ChatResponse] = []
+            self.streaming_responses: list[list[ChatResponseUpdate]] = []
+            self.call_count: int = 0
+
+        def _inner_get_response(
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            stream: bool,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            # Track what conversation_id was passed
+            conversation_ids_received.append(options.get("conversation_id"))
+
+            if stream:
+                return self._get_streaming_response(messages=messages, options=options, **kwargs)
+
+            async def _get() -> ChatResponse:
+                self.call_count += 1
+                if not self.run_responses:
+                    return ChatResponse(messages=ChatMessage(role="assistant", text="done"))
+                return self.run_responses.pop(0)
+
+            return _get()
+
+        def _get_streaming_response(
+            self,
+            *,
+            messages: MutableSequence[ChatMessage],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                self.call_count += 1
+                if not self.streaming_responses:
+                    yield ChatResponseUpdate(text="done", role="assistant", is_finished=True)
+                    return
+                response = self.streaming_responses.pop(0)
+                for update in response:
+                    yield update
+
+            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                return ChatResponse.from_chat_response_updates(updates)
+
+            return ResponseStream(_stream(), finalizer=_finalize)
+
+    @tool(name="test_func", approval_mode="never_require")
+    def test_func(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    # Test non-streaming: conversation_id should be updated after first response
+    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
+        client = TrackingChatClient()
+
+    # First response returns a function call WITH a new conversation_id
+    # Second response (after tool execution) should receive the updated conversation_id
+    client.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="test_func", arguments='{"arg1": "v1"}')],
+            ),
+            conversation_id="conv_after_first_call",
+        ),
+        ChatResponse(
+            messages=ChatMessage(role="assistant", text="done"),
+            conversation_id="conv_after_second_call",
+        ),
+    ]
+
+    # Start with initial conversation_id
+    await client.get_response(
+        "hello",
+        options={"tool_choice": "auto", "tools": [test_func], "conversation_id": "conv_initial"},
+    )
+
+    assert client.call_count == 2
+    # First call should receive the initial conversation_id
+    assert conversation_ids_received[0] == "conv_initial"
+    # Second call (after tool execution) MUST receive the updated conversation_id
+    assert conversation_ids_received[1] == "conv_after_first_call", (
+        "conversation_id should be updated in options after receiving new conversation_id from API"
+    )
+
+    # Test streaming version too
+    conversation_ids_received.clear()
+
+    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
+        streaming_client = TrackingChatClient()
+
+    streaming_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_2", name="test_func", arguments='{"arg1": "v2"}')],
+                role="assistant",
+                conversation_id="stream_conv_after_first",
+            ),
+        ],
+        [
+            ChatResponseUpdate(text="streaming done", role="assistant", is_finished=True),
+        ],
+    ]
+
+    response_stream = streaming_client.get_response(
+        "hello",
+        stream=True,
+        options={"tool_choice": "auto", "tools": [test_func], "conversation_id": "stream_conv_initial"},
+    )
+    updates = []
+    async for update in response_stream:
+        updates.append(update)
+
+    assert streaming_client.call_count == 2
+    # First call should receive the initial conversation_id
+    assert conversation_ids_received[0] == "stream_conv_initial"
+    # Second call (after tool execution) MUST receive the updated conversation_id
+    assert conversation_ids_received[1] == "stream_conv_after_first", (
+        "streaming: conversation_id should be updated in options after receiving new conversation_id from API"
+    )
