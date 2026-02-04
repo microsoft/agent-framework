@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from agent_framework import AgentThread, ChatMessage, ChatMessageStore, Role
+from agent_framework import AgentThread, ChatMessage, ChatMessageStore
 from agent_framework._threads import AgentThreadState, ChatMessageStoreState
 from agent_framework.exceptions import AgentThreadException
 
@@ -44,16 +44,16 @@ class MockChatMessageStore:
 def sample_messages() -> list[ChatMessage]:
     """Fixture providing sample chat messages for testing."""
     return [
-        ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-        ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
-        ChatMessage(role=Role.USER, text="How are you?", message_id="msg3"),
+        ChatMessage("user", ["Hello"], message_id="msg1"),
+        ChatMessage("assistant", ["Hi there!"], message_id="msg2"),
+        ChatMessage("user", ["How are you?"], message_id="msg3"),
     ]
 
 
 @pytest.fixture
 def sample_message() -> ChatMessage:
     """Fixture providing a single sample chat message for testing."""
-    return ChatMessage(role=Role.USER, text="Test message", message_id="test1")
+    return ChatMessage("user", ["Test message"], message_id="test1")
 
 
 class TestAgentThread:
@@ -178,7 +178,7 @@ class TestAgentThread:
 
     async def test_on_new_messages_with_existing_store(self, sample_message: ChatMessage) -> None:
         """Test _on_new_messages adds to existing message store."""
-        initial_messages = [ChatMessage(role=Role.USER, text="Initial", message_id="init1")]
+        initial_messages = [ChatMessage("user", ["Initial"], message_id="init1")]
         store = ChatMessageStore(initial_messages)
         thread = AgentThread(message_store=store)
 
@@ -226,7 +226,7 @@ class TestAgentThread:
         thread = AgentThread(message_store=store)
         serialized_data: dict[str, Any] = {
             "service_thread_id": None,
-            "chat_message_store_state": {"messages": [ChatMessage(role="user", text="test")]},
+            "chat_message_store_state": {"messages": [ChatMessage("user", ["test"])]},
         }
 
         await thread.update_from_thread_state(serialized_data)
@@ -449,7 +449,7 @@ class TestThreadState:
 
     def test_init_with_chat_message_store_state_object(self) -> None:
         """Test AgentThreadState initialization with ChatMessageStoreState object."""
-        store_state = ChatMessageStoreState(messages=[ChatMessage(role=Role.USER, text="test")])
+        store_state = ChatMessageStoreState(messages=[ChatMessage("user", ["test"])])
         state = AgentThreadState(chat_message_store_state=store_state)
 
         assert state.service_thread_id is None

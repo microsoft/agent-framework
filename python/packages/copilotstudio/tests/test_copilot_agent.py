@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content, Role
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import CopilotClient
 
@@ -131,7 +131,7 @@ class TestCopilotStudioAgent:
         content = response.messages[0].contents[0]
         assert content.type == "text"
         assert content.text == "Test response"
-        assert response.messages[0].role == Role.ASSISTANT
+        assert response.messages[0].role == "assistant"
 
     async def test_run_with_chat_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with ChatMessage."""
@@ -143,7 +143,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        chat_message = ChatMessage(role=Role.USER, contents=[Content.from_text("test message")])
+        chat_message = ChatMessage("user", [Content.from_text("test message")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)
@@ -151,7 +151,7 @@ class TestCopilotStudioAgent:
         content = response.messages[0].contents[0]
         assert content.type == "text"
         assert content.text == "Test response"
-        assert response.messages[0].role == Role.ASSISTANT
+        assert response.messages[0].role == "assistant"
 
     async def test_run_with_thread(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with existing thread."""

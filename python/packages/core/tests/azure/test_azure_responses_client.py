@@ -221,14 +221,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name == "tools" or option_name == "tool_choice":
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+            messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -245,7 +245,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name == "response_format" else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -293,7 +293,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
 
@@ -318,7 +318,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None
@@ -367,7 +367,7 @@ async def test_integration_client_file_search_streaming() -> None:
         )
 
         assert response is not None
-        full_response = await ChatResponse.from_chat_response_generator(response)
+        full_response = await ChatResponse.from_update_generator(response)
         assert "sunny" in full_response.text.lower()
         assert "75" in full_response.text
     finally:

@@ -3,10 +3,11 @@
 import asyncio
 import uuid
 
+from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0Provider
 from azure.identity.aio import AzureCliCredential
-from agent_framework import tool
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

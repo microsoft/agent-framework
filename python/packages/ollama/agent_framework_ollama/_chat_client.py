@@ -21,7 +21,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -442,12 +441,12 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
 
     def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
-            Role.SYSTEM.value: self._format_system_message,
-            Role.USER.value: self._format_user_message,
-            Role.ASSISTANT.value: self._format_assistant_message,
-            Role.TOOL.value: self._format_tool_message,
+            "system": self._format_system_message,
+            "user": self._format_user_message,
+            "assistant": self._format_assistant_message,
+            "tool": self._format_tool_message,
         }
-        return message_converters[message.role.value](message)
+        return message_converters[message.role](message)
 
     def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
@@ -516,8 +515,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
-            role=Role.ASSISTANT,
-            ai_model_id=response.model,
+            role="assistant",
+            model_id=response.model,
             created_at=response.created_at,
         )
 
@@ -525,7 +524,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
+            messages=[ChatMessage("assistant", contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(

@@ -566,7 +566,7 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
 
 async def test_executor_handles_non_streaming_agent():
     """Test executor can handle agents with only run() method (no run_stream)."""
-    from agent_framework import AgentResponse, AgentThread, ChatMessage, Content, Role
+    from agent_framework import AgentResponse, AgentThread, ChatMessage, Content
 
     class NonStreamingAgent:
         """Agent with only run() method - does NOT satisfy full AgentProtocol."""
@@ -577,9 +577,7 @@ async def test_executor_handles_non_streaming_agent():
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentResponse(
-                messages=[
-                    ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=f"Processed: {messages}")])
-                ],
+                messages=[ChatMessage("assistant", [Content.from_text(text=f"Processed: {messages}")])],
                 response_id="test_123",
             )
 

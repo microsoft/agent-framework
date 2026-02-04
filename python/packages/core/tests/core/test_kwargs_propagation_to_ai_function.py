@@ -49,7 +49,7 @@ class TestKwargsPropagationToFunctionTool:
                     ]
                 )
             # Second call: return final response
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="Done!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["Done!"])])
 
         # Wrap the function with function invocation decorator
         wrapped = _handle_function_calls_response(mock_get_response)
@@ -101,7 +101,7 @@ class TestKwargsPropagationToFunctionTool:
                         )
                     ]
                 )
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="Completed!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["Completed!"])])
 
         wrapped = _handle_function_calls_response(mock_get_response)
 
@@ -149,7 +149,7 @@ class TestKwargsPropagationToFunctionTool:
                         )
                     ]
                 )
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="All done!")])
+            return ChatResponse(messages=[ChatMessage("assistant", ["All done!"])])
 
         wrapped = _handle_function_calls_response(mock_get_response)
 
@@ -196,13 +196,10 @@ class TestKwargsPropagationToFunctionTool:
                             arguments='{"value": "streaming-test"}',
                         )
                     ],
-                    is_finished=True,
                 )
             else:
                 # Second call: return final response
-                yield ChatResponseUpdate(
-                    text=Content.from_text(text="Stream complete!"), role="assistant", is_finished=True
-                )
+                yield ChatResponseUpdate(contents=[Content.from_text(text="Stream complete!")], role="assistant")
 
         wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
 

@@ -13,7 +13,6 @@ from agent_framework import (
     RequestInfoEvent,
     WorkflowEvent,
     WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -269,7 +268,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         text = message.text or ""
         if not text.strip():
             continue
-        speaker = message.author_name or message.role.value
+        speaker = message.author_name or message.role
         lines.append(f"{speaker}: {text}")
     return "\n".join(lines)
 

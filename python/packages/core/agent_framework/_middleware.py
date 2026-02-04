@@ -429,7 +429,7 @@ class ChatMiddleware(ABC):
                     # Add system prompt to messages
                     from agent_framework import ChatMessage
 
-                    context.messages.insert(0, ChatMessage(role="system", content=self.system_prompt))
+                    context.messages.insert(0, ChatMessage("system", [self.system_prompt]))
 
                     # Continue execution
                     await next(context)

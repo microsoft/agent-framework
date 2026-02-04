@@ -760,7 +760,7 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(Content.from_text(text=""))
 
-        chat_message = ChatMessage(role=Role.USER, contents=contents)
+        chat_message = ChatMessage("user", contents)
 
         logger.info(f"Created ChatMessage with {len(contents)} contents:")
         for idx, content in enumerate(contents):

@@ -6,12 +6,10 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Executor,
-    Role,
     SequentialBuilder,
     Workflow,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -64,7 +62,7 @@ async def run_workflow(workflow: Workflow, query: str) -> None:
     if outputs:
         messages: list[ChatMessage] = outputs[0]
         for message in messages:
-            name = message.author_name or ("assistant" if message.role == Role.ASSISTANT else "user")
+            name = message.author_name or ("assistant" if message.role == "assistant" else "user")
             print(f"{name}: {message.text}")
     else:
         raise RuntimeError("No outputs received from the workflow.")
