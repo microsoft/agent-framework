@@ -31,8 +31,8 @@ from ._shared_state import SharedState
 if TYPE_CHECKING:
     from ._executor import Executor
 
-T_Out = TypeVar("T_Out", default=Never)
-T_W_Out = TypeVar("T_W_Out", default=Never)
+OutT = TypeVar("OutT", default=Never)
+W_OutT = TypeVar("W_OutT", default=Never)
 
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ def infer_output_types_from_ctx_annotation(
     if origin is None:
         return [], []
 
-    # Expecting WorkflowContext[T_Out, T_W_Out]
+    # Expecting WorkflowContext[OutT, W_OutT]
     if origin is not WorkflowContext:
         return [], []
 
@@ -75,7 +75,7 @@ def infer_output_types_from_ctx_annotation(
     if not args:
         return [], []
 
-    # WorkflowContext[T_Out] -> message_types from T_Out, no workflow output types
+    # WorkflowContext[OutT] -> message_types from OutT, no workflow output types
     if len(args) == 1:
         t = args[0]
         t_origin = get_origin(t)
@@ -90,10 +90,10 @@ def infer_output_types_from_ctx_annotation(
             return [], []
         return [t], []
 
-    # WorkflowContext[T_Out, T_W_Out] -> message_types from T_Out, workflow_output_types from T_W_Out
+    # WorkflowContext[OutT, W_OutT] -> message_types from OutT, workflow_output_types from W_OutT
     t_out, t_w_out = args[:2]  # Take first two args in case there are more
 
-    # Process T_Out for message_types
+    # Process OutT for message_types
     message_types: list[type[Any] | UnionType] = []
     t_out_origin = get_origin(t_out)
     if t_out is Any:
@@ -104,7 +104,7 @@ def infer_output_types_from_ctx_annotation(
         else:
             message_types = [t_out]
 
-    # Process T_W_Out for workflow_output_types
+    # Process W_OutT for workflow_output_types
     workflow_output_types: list[type[Any] | UnionType] = []
     t_w_out_origin = get_origin(t_w_out)
     if t_w_out is Any:
@@ -176,7 +176,7 @@ def validate_workflow_context_annotation(
             return isinstance(x, type) or get_origin(x) is not None or x is Never
 
         for i, type_arg in enumerate(type_args):
-            param_description = "T_Out" if i == 0 else "T_W_Out"
+            param_description = "OutT" if i == 0 else "W_OutT"
 
             # Allow Any explicitly
             if type_arg is Any:
@@ -216,7 +216,7 @@ _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
 )
 
 
-class WorkflowContext(Generic[T_Out, T_W_Out]):
+class WorkflowContext(Generic[OutT, W_OutT]):
     """Execution context that enables executors to interact with workflows and other executors.
 
     ## Overview
@@ -235,8 +235,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         async def log_handler(message: str, ctx: WorkflowContext) -> None:
             print(f"Received: {message}")  # Only side effects
 
-    ### WorkflowContext[T_Out]
-    Enables sending messages of type T_Out to other executors:
+    ### WorkflowContext[OutT]
+    Enables sending messages of type OutT to other executors:
 
     .. code-block:: python
 
@@ -244,8 +244,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             result = len(message)
             await ctx.send_message(result)  # Send int to downstream executors
 
-    ### WorkflowContext[T_Out, T_W_Out]
-    Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
+    ### WorkflowContext[OutT, W_OutT]
+    Enables both sending messages (OutT) and yielding workflow outputs (W_OutT):
 
     .. code-block:: python
 
@@ -317,7 +317,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """
         return self._request_id
 
-    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
+    async def send_message(self, message: OutT, target_id: str | None = None) -> None:
         """Send a message to the workflow context.
 
         Args:
@@ -349,7 +349,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
             await self._runner_context.send_message(msg)
 
-    async def yield_output(self, output: T_W_Out) -> None:
+    async def yield_output(self, output: W_OutT) -> None:
         """Set the output of the workflow.
 
         Args:

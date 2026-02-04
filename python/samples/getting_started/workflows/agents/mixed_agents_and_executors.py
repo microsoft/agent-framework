@@ -11,7 +11,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential

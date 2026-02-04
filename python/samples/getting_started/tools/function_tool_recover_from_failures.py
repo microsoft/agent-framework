@@ -3,8 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import FunctionCallContent, FunctionResultContent
-from agent_framework import tool
+from agent_framework import FunctionCallContent, FunctionResultContent, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -13,6 +12,7 @@ Tool exceptions handled by returning the error for the agent to recover from.
 Shows how a tool that throws an exception creates gracefull recovery and can keep going.
 The LLM decides whether to retry the call or to respond with something else, based on the exception.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")

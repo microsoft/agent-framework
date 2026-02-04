@@ -4,7 +4,7 @@
 
 from unittest.mock import Mock
 
-from agent_framework import AgentResponseUpdate, Content, Role
+from agent_framework import AgentResponseUpdate, Content
 from chatkit.types import (
     ThreadItemAddedEvent,
     ThreadItemDoneEvent,
@@ -34,7 +34,7 @@ class TestStreamAgentResponse:
         """Test streaming single text update."""
 
         async def single_update_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello world")])
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Hello world")])
 
         events = []
         async for event in stream_agent_response(single_update_stream(), thread_id="test_thread"):
@@ -59,8 +59,8 @@ class TestStreamAgentResponse:
         """Test streaming multiple text updates."""
 
         async def multiple_updates_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello ")])
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="world!")])
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Hello ")])
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="world!")])
 
         events = []
         async for event in stream_agent_response(multiple_updates_stream(), thread_id="test_thread"):
@@ -91,7 +91,7 @@ class TestStreamAgentResponse:
             return f"custom_{item_type}_123"
 
         async def single_update_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[Content.from_text(text="Test")])
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Test")])
 
         events = []
         async for event in stream_agent_response(
@@ -107,8 +107,8 @@ class TestStreamAgentResponse:
         """Test streaming updates with empty content."""
 
         async def empty_content_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[])
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=None)
+            yield AgentResponseUpdate(role="assistant", contents=[])
+            yield AgentResponseUpdate(role="assistant", contents=None)
 
         events = []
         async for event in stream_agent_response(empty_content_stream(), thread_id="test_thread"):
@@ -131,7 +131,7 @@ class TestStreamAgentResponse:
         non_text_content.text = None
 
         async def non_text_stream():
-            yield AgentResponseUpdate(role=Role.ASSISTANT, contents=[non_text_content])
+            yield AgentResponseUpdate(role="assistant", contents=[non_text_content])
 
         events = []
         async for event in stream_agent_response(non_text_stream(), thread_id="test_thread"):

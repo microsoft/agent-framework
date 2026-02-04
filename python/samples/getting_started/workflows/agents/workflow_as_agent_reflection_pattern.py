@@ -11,11 +11,9 @@ from agent_framework import (
     ChatMessage,
     Content,
     Executor,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
@@ -81,7 +79,7 @@ class Reviewer(Executor):
         # Construct review instructions and context.
         messages = [
             ChatMessage(
-                role=Role.SYSTEM,
+                role="system",
                 text=(
                     "You are a reviewer for an AI agent. Provide feedback on the "
                     "exchange between a user and the agent. Indicate approval only if:\n"
@@ -98,7 +96,7 @@ class Reviewer(Executor):
         messages.extend(request.agent_messages)
 
         # Add explicit review instruction.
-        messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
+        messages.append(ChatMessage("user", ["Please review the agent's responses."]))
 
         print("Reviewer: Sending review request to LLM...")
         response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
@@ -127,7 +125,7 @@ class Worker(Executor):
         print("Worker: Received user messages, generating response...")
 
         # Initialize chat with system prompt.
-        messages = [ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant.")]
+        messages = [ChatMessage("system", ["You are a helpful assistant."])]
         messages.extend(user_messages)
 
         print("Worker: Calling LLM to generate response...")
@@ -162,7 +160,7 @@ class Worker(Executor):
 
             # Emit approved result to external consumer via AgentRunUpdateEvent.
             await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role=Role.ASSISTANT))
+                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role="assistant"))
             )
             return
 
@@ -170,9 +168,9 @@ class Worker(Executor):
         print("Worker: Regenerating response with feedback...")
 
         # Incorporate review feedback.
-        messages.append(ChatMessage(role=Role.SYSTEM, text=review.feedback))
+        messages.append(ChatMessage("system", [review.feedback]))
         messages.append(
-            ChatMessage(role=Role.SYSTEM, text="Please incorporate the feedback and regenerate the response.")
+            ChatMessage("system", ["Please incorporate the feedback and regenerate the response."])
         )
         messages.extend(request.user_messages)
 

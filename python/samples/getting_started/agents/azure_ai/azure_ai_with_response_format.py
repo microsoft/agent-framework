@@ -41,12 +41,13 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
 
-        if release_brief := result.try_parse_value(ReleaseBrief):
+        try:
+            release_brief = result.value
             print("Agent:")
             print(f"Feature: {release_brief.feature}")
             print(f"Benefit: {release_brief.benefit}")
             print(f"Launch date: {release_brief.launch_date}")
-        else:
+        except Exception:
             print(f"Failed to parse response: {result.text}")
 
 

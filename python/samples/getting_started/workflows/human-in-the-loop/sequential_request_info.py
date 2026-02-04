@@ -32,7 +32,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -109,7 +108,7 @@ async def main() -> None:
                             else event.data.full_conversation
                         )
                         for msg in recent:
-                            name = msg.author_name or msg.role.value
+                            name = msg.author_name or msg.role
                             text = (msg.text or "")[:150]
                             print(f"  [{name}]: {text}...")
                         print("-" * 40)
@@ -132,7 +131,7 @@ async def main() -> None:
                 if event.data:
                     messages: list[ChatMessage] = event.data[-3:]
                     for msg in messages:
-                        role = msg.role.value if msg.role else "unknown"
+                        role = msg.role if msg.role else "unknown"
                         print(f"[{role}]: {msg.text}")
                 workflow_complete = True
 

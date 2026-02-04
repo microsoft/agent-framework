@@ -16,7 +16,6 @@ from agent_framework import (
     Content,
     ContextProvider,
     FunctionTool,
-    Role,
     ToolProtocol,
     get_logger,
     normalize_messages,
@@ -628,7 +627,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                         text = delta.get("text", "")
                         if text:
                             yield AgentResponseUpdate(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 contents=[Content.from_text(text=text, raw_representation=message)],
                                 raw_representation=message,
                             )
@@ -636,7 +635,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                         thinking = delta.get("thinking", "")
                         if thinking:
                             yield AgentResponseUpdate(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
                                 raw_representation=message,
                             )

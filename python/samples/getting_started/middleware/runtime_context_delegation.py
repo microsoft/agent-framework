@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, tool, function_middleware
+from agent_framework import FunctionInvocationContext, function_middleware, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 

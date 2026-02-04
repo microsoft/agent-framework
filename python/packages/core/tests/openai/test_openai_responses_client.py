@@ -39,7 +39,6 @@ from agent_framework import (
     HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import (
@@ -215,7 +214,7 @@ def test_get_response_with_all_parameters() -> None:
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")],
+                messages=[ChatMessage("user", ["Test message"])],
                 options={
                     "include": ["message.output_text.logprobs"],
                     "instructions": "You are a helpful assistant",
@@ -261,7 +260,7 @@ def test_web_search_tool_with_location() -> None:
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="What's the weather?")],
+                messages=[ChatMessage("user", ["What's the weather?"])],
                 options={"tools": [web_search_tool], "tool_choice": "auto"},
             )
         )
@@ -278,7 +277,7 @@ def test_file_search_tool_with_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Search files")],
+                messages=[ChatMessage("user", ["Search files"])],
                 options={"tools": [file_search_tool]},
             )
         )
@@ -294,7 +293,7 @@ def test_code_interpreter_tool_variations() -> None:
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Run some code")],
+                messages=[ChatMessage("user", ["Run some code"])],
                 options={"tools": [code_tool_empty]},
             )
         )
@@ -307,7 +306,7 @@ def test_code_interpreter_tool_variations() -> None:
     with pytest.raises(ServiceResponseException):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Process these files")],
+                messages=[ChatMessage("user", ["Process these files"])],
                 options={"tools": [code_tool_with_files]},
             )
         )
@@ -327,7 +326,7 @@ def test_content_filter_exception() -> None:
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
-            asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Test message")]))
+            asyncio.run(client.get_response(messages=[ChatMessage("user", ["Test message"])]))
 
         assert "content error" in str(exc_info.value)
 
@@ -343,7 +342,7 @@ def test_hosted_file_search_tool_validation() -> None:
     with pytest.raises((ValueError, ServiceInvalidRequestError)):
         asyncio.run(
             client.get_response(
-                messages=[ChatMessage(role="user", text="Test")],
+                messages=[ChatMessage("user", ["Test"])],
                 options={"tools": [empty_file_search_tool]},
             )
         )
@@ -364,9 +363,9 @@ def test_chat_message_parsing_with_function_calls() -> None:
     function_result = Content.from_function_result(call_id="test-call-id", result="Function executed successfully")
 
     messages = [
-        ChatMessage(role="user", text="Call a function"),
-        ChatMessage(role="assistant", contents=[function_call]),
-        ChatMessage(role="tool", contents=[function_result]),
+        ChatMessage("user", ["Call a function"]),
+        ChatMessage("assistant", [function_call]),
+        ChatMessage("tool", [function_result]),
     ]
 
     # This should exercise the message parsing logic - will fail due to invalid API key
@@ -392,7 +391,7 @@ async def test_response_format_parse_path() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")],
+            messages=[ChatMessage("user", ["Test message"])],
             options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
@@ -419,7 +418,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")],
+            messages=[ChatMessage("user", ["Test message"])],
             options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
@@ -442,7 +441,7 @@ async def test_bad_request_error_non_content_filter() -> None:
     with patch.object(client.client.responses, "parse", side_effect=mock_error):
         with pytest.raises(ServiceResponseException) as exc_info:
             await client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")],
+                messages=[ChatMessage("user", ["Test message"])],
                 options={"response_format": OutputStruct},
             )
 
@@ -463,7 +462,7 @@ async def test_streaming_content_filter_exception_handling() -> None:
         mock_create.side_effect.code = "content_filter"
 
         with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
-            response_stream = client.get_streaming_response(messages=[ChatMessage(role="user", text="Test")])
+            response_stream = client.get_streaming_response(messages=[ChatMessage("user", ["Test"])])
             async for _ in response_stream:
                 break
 
@@ -658,7 +657,7 @@ def test_prepare_content_for_opentool_approval_response() -> None:
         function_call=function_call,
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response, {})
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_001"
@@ -675,7 +674,7 @@ def test_prepare_content_for_openai_error_content() -> None:
         error_details="Invalid parameter",
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, error_content, {})
+    result = client._prepare_content_for_openai("assistant", error_content, {})
 
     # ErrorContent should return empty dict (logged but not sent)
     assert result == {}
@@ -693,7 +692,7 @@ def test_prepare_content_for_openai_usage_content() -> None:
         }
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, usage_content, {})
+    result = client._prepare_content_for_openai("assistant", usage_content, {})
 
     # UsageContent should return empty dict (logged but not sent)
     assert result == {}
@@ -707,7 +706,7 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
         vector_store_id="vs_123",
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, vector_store_content, {})
+    result = client._prepare_content_for_openai("assistant", vector_store_content, {})
 
     # HostedVectorStoreContent should return empty dict (logged but not sent)
     assert result == {}
@@ -807,7 +806,7 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
         function_call=function_call,
     )
 
-    message = ChatMessage(role="user", contents=[approval_response])
+    message = ChatMessage("user", [approval_response])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -829,7 +828,7 @@ def test_chat_message_with_error_content() -> None:
         error_code="TEST_ERR",
     )
 
-    message = ChatMessage(role="assistant", contents=[error_content])
+    message = ChatMessage("assistant", [error_content])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -854,7 +853,7 @@ def test_chat_message_with_usage_content() -> None:
         }
     )
 
-    message = ChatMessage(role="assistant", contents=[usage_content])
+    message = ChatMessage("assistant", [usage_content])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -877,7 +876,7 @@ def test_hosted_file_content_preparation() -> None:
         name="document.pdf",
     )
 
-    result = client._prepare_content_for_openai(Role.USER, hosted_file, {})
+    result = client._prepare_content_for_openai("user", hosted_file, {})
 
     assert result["type"] == "input_file"
     assert result["file_id"] == "file_abc123"
@@ -900,7 +899,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
         function_call=mcp_call,
     )
 
-    result = client._prepare_content_for_openai(Role.ASSISTANT, approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response, {})
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_mcp_001"
@@ -1358,14 +1357,14 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     # Patch the create call to return the two mocked responses in sequence
     with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
         # First call: get the approval request
-        response = await client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")])
+        response = await client.get_response(messages=[ChatMessage("user", ["Trigger approval"])])
         assert response.messages[0].contents[0].type == "function_approval_request"
         req = response.messages[0].contents[0]
         assert req.id == "approval-1"
 
         # Build a user approval and send it (include required function_call)
         approval = Content.from_function_approval_response(approved=True, id=req.id, function_call=req.function_call)
-        approval_message = ChatMessage(role="user", contents=[approval])
+        approval_message = ChatMessage("user", [approval])
         _ = await client.get_response(messages=[approval_message])
 
         # Ensure two calls were made and the second includes the mcp_approval_response
@@ -1469,7 +1468,7 @@ def test_streaming_response_basic_structure() -> None:
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
-    assert response.role == Role.ASSISTANT
+    assert response.role == "assistant"
     assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
@@ -1620,7 +1619,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
 def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="test message")]
+    messages = [ChatMessage("user", ["test message"])]
 
     mock_response = MagicMock()
     original_error_message = "Request rate limit exceeded"
@@ -1645,7 +1644,7 @@ def test_service_response_exception_includes_original_error_details() -> None:
 def test_get_streaming_response_with_response_format() -> None:
     """Test get_streaming_response with response_format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Test streaming with format")]
+    messages = [ChatMessage("user", ["Test streaming with format"])]
 
     # It will fail due to invalid API key, but exercises the code path
     with pytest.raises(ServiceResponseException):
@@ -1667,7 +1666,7 @@ def test_prepare_content_for_openai_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._prepare_content_for_openai(Role.USER, image_content_with_detail, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_with_detail, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
@@ -1675,7 +1674,7 @@ def test_prepare_content_for_openai_image_content() -> None:
 
     # Test image content without additional properties (defaults)
     image_content_basic = Content.from_uri(uri="https://example.com/basic.png", media_type="image/png")
-    result = client._prepare_content_for_openai(Role.USER, image_content_basic, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_basic, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
     assert result["file_id"] is None
@@ -1687,14 +1686,14 @@ def test_prepare_content_for_openai_audio_content() -> None:
 
     # Test WAV audio content
     wav_content = Content.from_uri(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
-    result = client._prepare_content_for_openai(Role.USER, wav_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", wav_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
     mp3_content = Content.from_uri(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
-    result = client._prepare_content_for_openai(Role.USER, mp3_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", mp3_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
@@ -1705,12 +1704,12 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
 
     # Test unsupported audio format
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
-    result = client._prepare_content_for_openai(Role.USER, unsupported_audio, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", unsupported_audio, {})  # type: ignore
     assert result == {}
 
     # Test non-media content
     text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
-    result = client._prepare_content_for_openai(Role.USER, text_uri_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", text_uri_content, {})  # type: ignore
     assert result == {}
 
 
@@ -1775,7 +1774,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._prepare_content_for_openai(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
+    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
     assert result["summary"]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
@@ -2091,7 +2090,7 @@ def test_parse_response_from_openai_image_generation_fallback():
 
 async def test_prepare_options_store_parameter_handling() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [ChatMessage("user", ["Test message"])]
 
     test_conversation_id = "test-conversation-123"
     chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
@@ -2117,7 +2116,7 @@ async def test_prepare_options_store_parameter_handling() -> None:
 async def test_conversation_id_precedence_kwargs_over_options() -> None:
     """When both kwargs and options contain conversation_id, kwargs wins."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
 
     # options has a stale response id, kwargs carries the freshest one
     opts = {"conversation_id": "resp_old_123"}
@@ -2224,14 +2223,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
         elif option_name.startswith("response_format"):
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+            messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -2248,7 +2247,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name.startswith("response_format") else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await openai_responses_client.get_response(
@@ -2296,7 +2295,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
 
@@ -2321,7 +2320,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
         else:
             response = await client.get_response(**content)
         assert response.text is not None

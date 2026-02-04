@@ -11,7 +11,6 @@ from agent_framework import (
     AgentRunContext,
     ChatMessage,
     Content,
-    Role,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -35,9 +34,9 @@ then replaces its result with a custom "perfect weather" message. For streaming 
 it creates a custom async generator that yields the override message in chunks.
 """
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
-
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -75,7 +74,7 @@ async def weather_override_middleware(
         else:
             # For non-streaming: just replace with the string message
             custom_message = "".join(chunks)
-            context.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
+            context.result = AgentResponse(messages=[ChatMessage("assistant", [custom_message])])
 
 
 async def main() -> None:

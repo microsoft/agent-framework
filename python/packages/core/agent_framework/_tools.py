@@ -1831,7 +1831,6 @@ def _replace_approval_contents_with_results(
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
         Content,
-        Role,
     )
 
     result_idx = 0
@@ -1861,7 +1860,7 @@ def _replace_approval_contents_with_results(
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
-                        msg.role = Role.TOOL
+                        msg.role = "tool"
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1869,7 +1868,7 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = Role.TOOL
+                    msg.role = "tool"
 
         # Remove approval requests that were duplicates (in reverse order to preserve indices)
         for idx in reversed(contents_to_remove):
@@ -1988,13 +1987,12 @@ def _handle_function_calls_response(
                     if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
-                        from ._types import Role
 
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                        if response.messages and response.messages[0].role == "assistant":
                             response.messages[0].contents.extend(function_call_results)
                         else:
                             # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            result_message = ChatMessage("assistant", function_call_results)
                             response.messages.append(result_message)
                         return response
                     if any(fccr.type == "function_call" for fccr in function_call_results):
@@ -2005,7 +2003,7 @@ def _handle_function_calls_response(
                     # This allows middleware to short-circuit the tool loop without another LLM call
                     if should_terminate:
                         # Add tool results to response and return immediately without calling LLM again
-                        result_message = ChatMessage(role="tool", contents=function_call_results)
+                        result_message = ChatMessage("tool", function_call_results)
                         response.messages.append(result_message)
                         if fcc_messages:
                             for msg in reversed(fcc_messages):
@@ -2026,7 +2024,7 @@ def _handle_function_calls_response(
                         errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
+                    result_message = ChatMessage("tool", function_call_results)
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,
                     # one with function call contents
@@ -2162,7 +2160,7 @@ def _handle_function_calls_streaming_response(
                 # Depending on the prompt, the message may contain both function call
                 # content and others
 
-                response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
+                response: "ChatResponse" = ChatResponse.from_updates(all_updates)
                 # get the function calls (excluding ones that already have results)
                 function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
                 function_calls = [
@@ -2206,15 +2204,14 @@ def _handle_function_calls_streaming_response(
                     if any(fccr.type == "function_approval_request" for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
-                        from ._types import Role
 
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                        if response.messages and response.messages[0].role == "assistant":
                             response.messages[0].contents.extend(function_call_results)
                             # Yield the approval requests as part of the assistant message
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                         else:
                             # Fallback: create new assistant message (shouldn't normally happen)
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            result_message = ChatMessage("assistant", function_call_results)
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                             response.messages.append(result_message)
                         return
@@ -2243,7 +2240,7 @@ def _handle_function_calls_streaming_response(
                         errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_call_results)
+                    result_message = ChatMessage("tool", function_call_results)
                     yield ChatResponseUpdate(contents=function_call_results, role="tool")
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,

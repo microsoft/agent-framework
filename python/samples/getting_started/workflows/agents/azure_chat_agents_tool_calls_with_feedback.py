@@ -16,7 +16,6 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -50,9 +49,9 @@ Prerequisites:
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
-
 def fetch_product_brief(
     product_name: Annotated[str, Field(description="Product name to look up.")],
 ) -> str:
@@ -68,8 +67,8 @@ def fetch_product_brief(
     }
     return briefs.get(product_name.lower(), f"No stored brief for '{product_name}'.")
 
-@tool(approval_mode="never_require")
 
+@tool(approval_mode="never_require")
 def get_brand_voice_profile(
     voice_name: Annotated[str, Field(description="Brand or campaign voice to emulate.")],
 ) -> str:
@@ -149,7 +148,7 @@ class Coordinator(Executor):
             await ctx.send_message(
                 AgentExecutorRequest(
                     messages=original_request.conversation
-                    + [ChatMessage(Role.USER, text="The draft is approved as-is.")],
+                    + [ChatMessage("user", text="The draft is approved as-is.")],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -164,7 +163,7 @@ class Coordinator(Executor):
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(ChatMessage(Role.USER, text=instruction))
+        conversation.append(ChatMessage("user", text=instruction))
         await ctx.send_message(
             AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_id
         )

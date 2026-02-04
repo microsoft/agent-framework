@@ -642,7 +642,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
-            user_message = ChatMessage(role="user", text=input_text)
+            user_message = ChatMessage("user", [input_text])
             await state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
@@ -711,7 +711,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "Agent '%s': No messages in response, creating simple assistant message",
                 agent_name,
             )
-            assistant_message = ChatMessage(role="assistant", text=accumulated_response)
+            assistant_message = ChatMessage("assistant", [accumulated_response])
             await state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:

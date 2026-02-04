@@ -35,7 +35,6 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -164,7 +163,7 @@ async def main() -> None:
                 if event.data:
                     messages: list[ChatMessage] = event.data
                     for msg in messages:
-                        role = msg.role.value.capitalize()
+                        role = msg.role.capitalize()
                         name = msg.author_name or "unknown"
                         text = (msg.text or "")[:200]
                         print(f"[{role}][{name}]: {text}...")

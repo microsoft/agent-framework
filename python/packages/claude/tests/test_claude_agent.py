@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
+from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -375,7 +375,7 @@ class TestClaudeAgentRunStream:
                 updates.append(update)
             # StreamEvent yields text deltas
             assert len(updates) == 2
-            assert updates[0].role == Role.ASSISTANT
+            assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
@@ -632,7 +632,7 @@ class TestFormatPrompt:
         """Test formatting user message."""
         agent = ClaudeAgent()
         msg = ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
@@ -642,9 +642,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="How are you?")]),
+            ChatMessage("user", [Content.from_text(text="Hi")]),
+            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
+            ChatMessage("user", [Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

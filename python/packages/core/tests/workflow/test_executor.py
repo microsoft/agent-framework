@@ -537,7 +537,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     async def mutator(messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
         # The handler mutates the input list by appending new messages
         original_len = len(messages)
-        messages.append(ChatMessage(role="assistant", text="Added by executor"))
+        messages.append(ChatMessage("assistant", ["Added by executor"]))
         await ctx.send_message(messages)
         # Verify mutation happened
         assert len(messages) == original_len + 1
@@ -545,7 +545,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     workflow = WorkflowBuilder().set_start_executor(mutator).build()
 
     # Run with a single user message
-    input_messages = [ChatMessage(role="user", text="hello")]
+    input_messages = [ChatMessage("user", ["hello"])]
     events = await workflow.run(input_messages)
 
     # Find the invoked event for the Mutator executor

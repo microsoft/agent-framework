@@ -6,7 +6,7 @@ from collections.abc import MutableSequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
@@ -85,7 +85,7 @@ class TextSearchContextProvider(ContextProvider):
         return Context(
             messages=[
                 ChatMessage(
-                    role=Role.USER, text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)
+                    role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)
                 )
             ]
         )
