@@ -90,6 +90,13 @@ sequenceDiagram
             end
 
             FIL->>FIL: Append tool results to messages
+
+            alt tool_choice == "required"
+                Note right of FIL: Return immediately with function call + result
+                FIL-->>CMP: ChatResponse
+            else tool_choice == "auto" or other
+                Note right of FIL: Continue loop for text response
+            end
         else No function_calls
             FIL-->>CMP: ChatResponse
         end
@@ -192,6 +199,46 @@ This layer manages the tool execution loop:
 | `terminate_on_unknown_calls` | `False` | Raise error for unknown tools |
 | `additional_tools` | `[]` | Extra tools to register |
 | `include_detailed_errors` | `False` | Include exceptions in results |
+
+**`tool_choice` Behavior:**
+
+The `tool_choice` option controls how the model uses available tools:
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` | Model decides whether to call a tool or respond with text. After tool execution, the loop continues to get a text response. |
+| `"none"` | Model is prevented from calling tools, will only respond with text. |
+| `"required"` | Model **must** call a tool. After tool execution, returns immediately with the function call and result—**no additional model call** is made. |
+| `{"mode": "required", "required_function_name": "fn"}` | Model must call the specified function. Same return behavior as `"required"`. |
+
+**Why `tool_choice="required"` returns immediately:**
+
+When you set `tool_choice="required"`, your intent is to force exactly one tool call. The framework respects this by:
+1. Getting the model's function call
+2. Executing the tool
+3. Returning the response with both the function call message and the function result
+
+This avoids an infinite loop (model forced to call tools → executes → model forced to call tools again) and gives you direct access to the tool result.
+
+```python
+# With tool_choice="required", response contains function call + result only
+response = await client.get_response(
+    "What's the weather?",
+    options={"tool_choice": "required", "tools": [get_weather]}
+)
+
+# response.messages contains:
+# [0] Assistant message with function_call content
+# [1] Tool message with function_result content
+# (No text response from model)
+
+# To get a text response after tool execution, use tool_choice="auto"
+response = await client.get_response(
+    "What's the weather?",
+    options={"tool_choice": "auto", "tools": [get_weather]}
+)
+# response.text contains the model's interpretation of the weather data
+```
 
 ### 4. Function Middleware Layer (`FunctionMiddlewarePipeline`)
 
