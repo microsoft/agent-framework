@@ -72,7 +72,7 @@ class TestMultimodalWorkflowInput:
 
         # Verify result is ChatMessage
         assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
-        assert result.role == "user"
+        assert result.role.value == "user"
 
         # Verify contents
         assert len(result.contents) == 2, f"Expected 2 contents, got {len(result.contents)}"

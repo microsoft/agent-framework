@@ -602,8 +602,8 @@ async def test_workflow_output_event_with_list_data(mapper: MessageMapper, test_
 
     # Sequential/Concurrent workflows often output list[ChatMessage]
     messages = [
-        ChatMessage("user", [Content.from_text(text="Hello")]),
-        ChatMessage("assistant", [Content.from_text(text="World")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="World")]),
     ]
     event = WorkflowOutputEvent(data=messages, executor_id="complete")
     events = await mapper.convert_event(event, test_request)
