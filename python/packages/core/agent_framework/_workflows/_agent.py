@@ -423,23 +423,7 @@ class WorkflowAgent(BaseAgent):
 
         for output_event in output_events:
             if isinstance(output_event, RequestInfoEvent):
-                # Store the pending request for later correlation
-                self.pending_requests[output_event.request_id] = output_event
-
-                args = self.RequestInfoFunctionArgs(
-                    request_id=output_event.request_id, data=output_event.data
-                ).to_dict()
-
-                function_call = Content.from_function_call(
-                    call_id=output_event.request_id,
-                    name=self.REQUEST_INFO_FUNCTION_NAME,
-                    arguments=args,
-                )
-                approval_request = Content.from_function_approval_request(
-                    id=output_event.request_id,
-                    function_call=function_call,
-                    additional_properties={"request_id": output_event.request_id},
-                )
+                function_call, approval_request = self._process_request_info_event(output_event)
                 messages.append(
                     ChatMessage(
                         contents=[function_call, approval_request],
@@ -584,22 +568,8 @@ class WorkflowAgent(BaseAgent):
                     )
                 ]
 
-            case RequestInfoEvent(request_id=request_id):
-                # Store the pending request for later correlation
-                self.pending_requests[request_id] = event
-
-                args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
-
-                function_call = Content.from_function_call(
-                    call_id=request_id,
-                    name=self.REQUEST_INFO_FUNCTION_NAME,
-                    arguments=args,
-                )
-                approval_request = Content.from_function_approval_request(
-                    id=request_id,
-                    function_call=function_call,
-                    additional_properties={"request_id": request_id},
-                )
+            case RequestInfoEvent():
+                function_call, approval_request = self._process_request_info_event(event)
                 return [
                     AgentResponseUpdate(
                         contents=[function_call, approval_request],
@@ -615,6 +585,24 @@ class WorkflowAgent(BaseAgent):
                 pass
 
         return []
+
+    def _process_request_info_event(self, event: RequestInfoEvent) -> tuple[Content, Content]:
+        """Process a RequestInfoEvent by adding it to pending requests."""
+        # Store the pending request for later correlation
+        self.pending_requests[event.request_id] = event
+
+        args = self.RequestInfoFunctionArgs(request_id=event.request_id, data=event.data).to_dict()
+        function_call = Content.from_function_call(
+            call_id=event.request_id,
+            name=self.REQUEST_INFO_FUNCTION_NAME,
+            arguments=args,
+        )
+        approval_request = Content.from_function_approval_request(
+            id=event.request_id,
+            function_call=function_call,
+            additional_properties={"request_id": event.request_id},
+        )
+        return function_call, approval_request
 
     def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
         """Extract function responses from input messages."""
