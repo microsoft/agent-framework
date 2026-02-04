@@ -2195,8 +2195,11 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     errors_in_a_row = result["errors_in_a_row"]
 
                     if response.conversation_id is not None:
+                        # For conversation-based APIs, the server already has the function call message.
+                        # Only send the new function result message (added by _handle_function_call_results).
                         prepped_messages.clear()
-                        prepped_messages.extend(response.messages)
+                        if response.messages:
+                            prepped_messages.append(response.messages[-1])
                     else:
                         prepped_messages.extend(response.messages)
                     continue
@@ -2298,8 +2301,11 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     return
 
                 if response.conversation_id is not None:
+                    # For conversation-based APIs, the server already has the function call message.
+                    # Only send the new function result message (the last one added by _handle_function_call_results).
                     prepped_messages.clear()
-                    prepped_messages.extend(response.messages)
+                    if response.messages:
+                        prepped_messages.append(response.messages[-1])
                 else:
                     prepped_messages.extend(response.messages)
                 continue
