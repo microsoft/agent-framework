@@ -22,7 +22,7 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         var options = new AgentRunOptions
@@ -46,7 +46,7 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
@@ -68,7 +68,7 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
