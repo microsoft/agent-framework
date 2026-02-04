@@ -342,9 +342,9 @@ async def test_function_invocation_scenarios(
         func_call = Content.from_function_call(call_id="1", name=function_name, arguments='{"arg1": "value1"}')
         completion = ChatMessage(role="assistant", text="done")
 
-        chat_client_base.run_responses = [ChatResponse(messages=ChatMessage(role="assistant", contents=[func_call]))] + (
-            [] if approval_required else [ChatResponse(messages=completion)]
-        )
+        chat_client_base.run_responses = [
+            ChatResponse(messages=ChatMessage(role="assistant", contents=[func_call]))
+        ] + ([] if approval_required else [ChatResponse(messages=completion)])
 
         chat_client_base.streaming_responses = [
             [
@@ -562,7 +562,9 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     for msg in all_messages:
         for content in msg.contents:
             if content.type == "function_result":
-                assert msg.role.value == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
+                assert msg.role.value == "tool", (
+                    f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
+                )
 
 
 async def test_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):

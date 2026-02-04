@@ -1090,7 +1090,7 @@ class TestWorkflowAgentMergeUpdates:
         ]
 
         # Compare using role.value for Role enum
-        actual_sequence_normalized = [(t, r.value if hasattr(r, 'value') else r) for t, r in content_sequence]
+        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]
 
         assert actual_sequence_normalized == expected_sequence, (
             f"FunctionResultContent should come immediately after FunctionCallContent. "

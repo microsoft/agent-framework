@@ -22,6 +22,7 @@ from agent_framework import (
     Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
+    Role,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -929,7 +930,7 @@ def test_prepare_options_with_image_content(mock_async_openai: MagicMock) -> Non
 
     # Create message with image content
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role="user", text=image_content)]
+    messages = [ChatMessage(role="user", contents=[image_content])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, {})  # type: ignore
