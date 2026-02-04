@@ -915,12 +915,8 @@ async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ServiceResponseException),
     ):
-
-        async def consume_stream():
-            async for _ in client._inner_get_streaming_response(messages=messages, options={}):  # type: ignore
-                pass
-
-        await consume_stream()
+        async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
+            pass
 
 
 # region Integration Tests

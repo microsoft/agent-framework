@@ -71,11 +71,13 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
     @wraps(original_get_response)
     def response_wrapper(
         self, *args: Any, stream: bool = False, **kwargs: Any
-    ) -> Awaitable[ChatResponse] | AsyncIterable[ChatResponseUpdate]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
-            return _stream_wrapper_impl(self, original_get_response, *args, **kwargs)
-        else:
-            return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
+            stream_response = original_get_response(self, *args, stream=True, **kwargs)
+            if isinstance(stream_response, ResponseStream):
+                return ResponseStream.wrap(stream_response, map_update=_map_update)
+            return ResponseStream(_stream_wrapper_impl(stream_response))
+        return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
 
     async def _response_wrapper_impl(self, original_func: Any, *args: Any, **kwargs: Any) -> ChatResponse:
         """Non-streaming wrapper implementation."""
@@ -85,13 +87,17 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
                 _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
         return response  # type: ignore[no-any-return]
 
-    async def _stream_wrapper_impl(
-        self, original_func: Any, *args: Any, **kwargs: Any
-    ) -> AsyncIterable[ChatResponseUpdate]:
+    async def _stream_wrapper_impl(stream: Any) -> AsyncIterable[ChatResponseUpdate]:
         """Streaming wrapper implementation."""
-        async for update in original_func(self, *args, stream=True, **kwargs):
+        if isinstance(stream, Awaitable):
+            stream = await stream
+        async for update in stream:
             _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
             yield update
+
+    def _map_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
+        return update
 
     chat_client.get_response = response_wrapper  # type: ignore[assignment]
     return chat_client
@@ -233,9 +239,10 @@ class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUI
         """Register a declaration-only placeholder so function invocation skips execution."""
 
         config = getattr(self, "function_invocation_configuration", None)
-        if not config:
+        if not isinstance(config, dict):
             return
-        if any(getattr(tool, "name", None) == tool_name for tool in config.additional_tools):
+        additional_tools = list(config.get("additional_tools", []))
+        if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
             return
 
         placeholder: FunctionTool[Any, Any] = FunctionTool(
@@ -243,7 +250,8 @@ class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUI
             description="Server-managed tool placeholder (AG-UI)",
             func=None,
         )
-        config.additional_tools = list(config.additional_tools) + [placeholder]
+        additional_tools.append(placeholder)
+        config["additional_tools"] = additional_tools
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
         self._registered_server_tools = registered  # type: ignore[attr-defined]
@@ -443,3 +451,14 @@ class AGUIChatClient(FunctionInvokingChatClient[TAGUIChatOptions], Generic[TAGUI
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
                 yield update
+
+    def get_streaming_response(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Legacy helper for streaming responses."""
+        stream = self.get_response(messages, stream=True, **kwargs)
+        if not isinstance(stream, ResponseStream):
+            raise ValueError("Expected ResponseStream for streaming response.")
+        return stream

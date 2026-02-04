@@ -42,6 +42,12 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose thread id helper."""
         return self._get_thread_id(options)
 
+    def get_streaming_response(
+        self, messages: str | ChatMessage | list[str] | list[ChatMessage], **kwargs: Any
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Expose streaming response helper."""
+        return super().get_streaming_response(messages, **kwargs)
+
     async def inner_get_response(
         self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
     ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
