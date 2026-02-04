@@ -654,10 +654,11 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                     }
                     error_msg = error_messages.get(message.error, f"Claude API error: {message.error}")
                     # Extract any error details from content blocks
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            error_msg = f"{error_msg}: {block.text}"
-                            break
+                    if message.content:
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                error_msg = f"{error_msg}: {block.text}"
+                                break
                     raise ServiceException(error_msg)
             elif isinstance(message, ResultMessage):
                 # Check for errors in result message
