@@ -58,7 +58,7 @@ AIAgent agent = new AzureOpenAIClient(
     });
 
 // Invoke the agent and output the text result.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("I need to pick up milk from the supermarket.", session) + "\n");
 Console.WriteLine(await agent.RunAsync("I need to take Sally for soccer practice.", session) + "\n");
 Console.WriteLine(await agent.RunAsync("I need to make a dentist appointment for Jimmy.", session) + "\n");

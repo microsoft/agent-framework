@@ -1367,7 +1367,7 @@ class MagenticBuilder:
 
         - `.with_plan_review()` - Review and approve/revise plans before execution
         - `.with_human_input_on_stall()` - Intervene when workflow stalls
-        - Tool approval via `FunctionApprovalRequestContent` - Approve individual tool calls
+        - Tool approval via `function_approval_request` - Approve individual tool calls
 
         These emit `MagenticHumanInterventionRequest` events that provide structured
         decision options (APPROVE, REVISE, CONTINUE, REPLAN, GUIDANCE) appropriate

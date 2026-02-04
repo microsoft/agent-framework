@@ -21,7 +21,7 @@ public static class FunctionTriggers
 
         // Get the spam detection agent
         DurableAIAgent spamDetectionAgent = context.GetAgent("SpamDetectionAgent");
-        AgentSession spamSession = await spamDetectionAgent.GetNewSessionAsync();
+        AgentSession spamSession = await spamDetectionAgent.CreateSessionAsync();
 
         // Step 1: Check if the email is spam
         AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
@@ -43,7 +43,7 @@ public static class FunctionTriggers
 
         // Generate and send response for legitimate email
         DurableAIAgent emailAssistantAgent = context.GetAgent("EmailAssistantAgent");
-        AgentSession emailSession = await emailAssistantAgent.GetNewSessionAsync();
+        AgentSession emailSession = await emailAssistantAgent.CreateSessionAsync();
 
         AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
             message:

@@ -14,7 +14,7 @@ of MCP-related actions.
 
 import asyncio
 
-from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework.github import GitHubCopilotAgent
 from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
 
 
@@ -49,9 +49,9 @@ async def main() -> None:
         },
     }
 
-    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
         default_options={
-            "instructions": "You are a helpful assistant with access to the local filesystem and Microsoft Learn.",
             "on_permission_request": prompt_permission,
             "mcp_servers": mcp_servers,
         },

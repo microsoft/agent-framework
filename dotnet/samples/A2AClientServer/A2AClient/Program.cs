@@ -42,7 +42,7 @@ public static class Program
         // Create the Host agent
         var hostAgent = new HostClientAgent(loggerFactory);
         await hostAgent.InitializeAgentAsync(modelId, apiKey, agentUrls!.Split(";"));
-        AgentSession session = await hostAgent.Agent!.GetNewSessionAsync(cancellationToken);
+        AgentSession session = await hostAgent.Agent!.CreateSessionAsync(cancellationToken);
         try
         {
             while (true)

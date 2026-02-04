@@ -95,7 +95,7 @@ public sealed class FunctionTriggers
         AIAgent agentProxy = durableClient.AsDurableAgentProxy(context, "TravelPlanner");
 
         // Create a new agent session
-        AgentSession session = await agentProxy.GetNewSessionAsync(cancellationToken);
+        AgentSession session = await agentProxy.CreateSessionAsync(cancellationToken);
         string agentSessionId = session.GetService<AgentSessionId>().ToString();
 
         this._logger.LogInformation("Creating new agent session: {AgentSessionId}", agentSessionId);

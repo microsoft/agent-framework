@@ -499,6 +499,33 @@ class TestClaudeAgentToolConversion:
         assert sdk_tool.input_schema is not None
         assert "properties" in sdk_tool.input_schema  # type: ignore[operator]
 
+    def test_function_tool_to_sdk_mcp_tool_preserves_defs_for_nested_types(self) -> None:
+        """Test that $defs is preserved for tools with nested Pydantic models."""
+        from pydantic import BaseModel
+
+        class Address(BaseModel):
+            street: str
+            city: str
+
+        class Person(BaseModel):
+            name: str
+            address: Address
+
+        @tool
+        def create_person(person: Person) -> str:
+            """Create a person with address."""
+            return f"{person.name} lives at {person.address.street}, {person.address.city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(create_person)  # type: ignore[reportPrivateUsage]
+
+        # Verify $defs is preserved in the schema
+        assert sdk_tool.input_schema is not None
+        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
+        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        # Verify the nested reference exists in properties
+        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
 
