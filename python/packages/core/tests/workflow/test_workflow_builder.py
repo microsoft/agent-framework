@@ -21,7 +21,12 @@ from agent_framework import (
 
 
 class DummyAgent(BaseAgent):
-    async def run(self, messages=None, *, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl(messages)
+
+    async def _run_impl(self, messages=None) -> AgentResponse:
         norm: list[ChatMessage] = []
         if messages:
             for m in messages:  # type: ignore[iteration-over-optional]
@@ -31,7 +36,7 @@ class DummyAgent(BaseAgent):
                     norm.append(ChatMessage("user", [m]))
         return AgentResponse(messages=norm)
 
-    async def run_stream(self, messages=None, *, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
+    async def _run_stream_impl(self):  # type: ignore[override]
         # Minimal async generator
         yield AgentResponseUpdate()
 

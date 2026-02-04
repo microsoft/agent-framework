@@ -3,7 +3,7 @@
 """Tests for AGUIChatClient."""
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any
 
 from agent_framework import (
@@ -43,12 +43,6 @@ class TestableAGUIChatClient(AGUIChatClient):
     def get_thread_id(self, options: dict[str, Any]) -> str:
         """Expose thread id helper."""
         return self._get_thread_id(options)
-
-    def get_streaming_response(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage], **kwargs: Any
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Expose streaming response helper."""
-        return super().get_streaming_response(messages, **kwargs)
 
     def inner_get_response(
         self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
@@ -166,7 +160,7 @@ class TestAGUIChatClient:
         assert thread_id.startswith("thread_")
         assert len(thread_id) > 7
 
-    async def test_get_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
+    async def test_get_response_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test streaming response method."""
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -285,7 +279,7 @@ class TestAGUIChatClient:
         messages = [ChatMessage(role="user", text="Test server tool execution")]
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client.get_streaming_response(messages):
+        async for update in client.get_response(messages, stream=True):
             updates.append(update)
 
         function_calls = [
@@ -326,7 +320,9 @@ class TestAGUIChatClient:
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
 
-        async for _ in client.get_streaming_response(messages, options={"tool_choice": "auto", "tools": [client_tool]}):
+        async for _ in client.get_response(
+            messages, stream=True, options={"tool_choice": "auto", "tools": [client_tool]}
+        ):
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:

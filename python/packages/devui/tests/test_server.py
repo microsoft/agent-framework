@@ -349,7 +349,7 @@ class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
 
-    def run_stream(self, input_str):
+    def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
         return f"Weather in {input_str} is sunny"
 """)
 

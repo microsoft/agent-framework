@@ -1969,14 +1969,16 @@ class TestMiddlewareWithProtocolOnlyAgent:
                 self.description = "Test agent"
                 self.middleware = [TrackingMiddleware()]
 
-            async def run(self, messages=None, *, thread=None, **kwargs) -> AgentResponse:
+            async def run(
+                self, messages=None, *, stream: bool = False, thread=None, **kwargs
+            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+                if stream:
+
+                    async def _stream():
+                        yield AgentResponseUpdate()
+
+                    return _stream()
                 return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
-
-            def run_stream(self, messages=None, *, thread=None, **kwargs) -> AsyncIterable[AgentResponseUpdate]:
-                async def _stream():
-                    yield AgentResponseUpdate()
-
-                return _stream()
 
             def get_new_thread(self, **kwargs):
                 return None

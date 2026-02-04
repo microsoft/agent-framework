@@ -347,13 +347,13 @@ def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent
         a2a_agent._prepare_message_for_a2a(message)
 
 
-async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """Test run_stream() method with immediate Message response."""
+async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test run(stream=True) method with immediate Message response."""
     mock_a2a_client.add_message_response("msg-stream-123", "Streaming response from agent!", "agent")
 
     # Collect streaming updates
     updates: list[AgentResponseUpdate] = []
-    async for update in a2a_agent.run_stream("Hello agent"):
+    async for update in a2a_agent.run("Hello agent", stream=True):
         updates.append(update)
 
     # Verify streaming response

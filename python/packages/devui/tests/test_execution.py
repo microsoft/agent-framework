@@ -769,9 +769,13 @@ class StreamingAgent:
     name = "Streaming Test Agent"
     description = "Test agent for streaming"
 
-    async def run_stream(self, input_str):
-        for i, word in enumerate(f"Processing {input_str}".split()):
-            yield f"word_{i}: {word} "
+    async def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
+        if stream:
+            async def _stream():
+                for i, word in enumerate(f"Processing {input_str}".split()):
+                    yield f"word_{i}: {word} "
+            return _stream()
+        return f"Processing {input_str}"
 """)
 
             discovery = EntityDiscovery(str(temp_path))
