@@ -503,9 +503,10 @@ class RedisProvider(ContextProvider):
 
         messages: list[dict[str, Any]] = []
         for message in messages_list:
-            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
+            role_value = message.role.value if hasattr(message.role, "value") else message.role
+            if role_value in {"user", "assistant", "system"} and message.text and message.text.strip():
                 shaped: dict[str, Any] = {
-                    "role": message.role,
+                    "role": role_value,
                     "content": message.text,
                     "conversation_id": self._conversation_id,
                     "message_id": message.message_id,
@@ -541,7 +542,7 @@ class RedisProvider(ContextProvider):
         )
 
         return Context(
-            messages=[ChatMessage("user", [f"{self.context_prompt}\n{line_separated_memories}"])]
+            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )
