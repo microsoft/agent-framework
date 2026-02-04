@@ -25,13 +25,8 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
         var session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
-        var options = new AgentRunOptions()
-        {
-            ResponseFormat = NewChatResponseFormat.ForJsonSchema<CityInfo>(AgentAbstractionsJsonUtilities.DefaultOptions)
-        };
-
         // Act
-        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "Provide information about the capital of France."), session, options);
+        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "Provide information about the capital of France."), session);
 
         // Assert
         Assert.NotNull(response);
