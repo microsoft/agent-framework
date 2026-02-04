@@ -96,17 +96,19 @@ internal sealed class DurableEdgeMap
     }
 
     /// <summary>
-    /// Enqueues an initial input message to the start executor.
+    /// Enqueues the initial workflow input to the start executor.
     /// </summary>
-    /// <param name="message">The initial input message.</param>
-    /// <param name="inputTypeName">The type name of the message.</param>
+    /// <param name="message">The serialized initial input message.</param>
     /// <param name="messageQueues">The message queues to enqueue into.</param>
-    internal void EnqueueInput(
+    /// <remarks>
+    /// This method is used only at workflow startup to provide input to the first executor.
+    /// No input type hint is required because the start executor determines its expected input type from its own <c>InputTypes</c> configuration.
+    /// </remarks>
+    internal void EnqueueInitialInput(
         string message,
-        string? inputTypeName,
         Dictionary<string, Queue<DurableMessageEnvelope>> messageQueues)
     {
-        DurableMessageEnvelope envelope = DurableMessageEnvelope.Create(message, inputTypeName);
+        DurableMessageEnvelope envelope = DurableMessageEnvelope.Create(message, inputTypeName: null);
         EnqueueMessage(messageQueues, this._startExecutorId, envelope);
     }
 

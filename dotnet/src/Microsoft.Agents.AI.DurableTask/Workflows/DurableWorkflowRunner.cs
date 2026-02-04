@@ -99,8 +99,7 @@ internal sealed class DurableWorkflowRunner
         // Convert input to string for the message queue - serialize if not already a string
         string inputString = initialInput is string s ? s : JsonSerializer.Serialize(initialInput);
 
-        // Pass null for inputTypeName - the start executor determines its input type from its own InputTypes
-        edgeMap.EnqueueInput(inputString, inputTypeName: null, state.MessageQueues);
+        edgeMap.EnqueueInitialInput(inputString, state.MessageQueues);
 
         for (int superstep = 1; superstep <= MaxSupersteps; superstep++)
         {
