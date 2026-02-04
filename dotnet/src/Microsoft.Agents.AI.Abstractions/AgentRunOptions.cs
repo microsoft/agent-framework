@@ -105,4 +105,21 @@ public class AgentRunOptions
     /// it can be ignored.
     /// </remarks>
     public ChatResponseFormat? ResponseFormat { get; set; }
+
+    /// <summary>
+    /// Produces a clone of the current <see cref="AgentRunOptions"/> instance.
+    /// </summary>
+    /// <returns>
+    /// A clone of the current <see cref="AgentRunOptions"/> instance.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The clone will have the same values for all properties as the original instance. Any collections, like <see cref="AdditionalProperties"/>,
+    /// are shallow-cloned, meaning a new collection instance is created, but any references contained by the collections are shared with the original.
+    /// </para>
+    /// <para>
+    /// Derived types should override <see cref="Clone"/> to return an instance of the derived type.
+    /// </para>
+    /// </remarks>
+    public virtual AgentRunOptions Clone() => new(this);
 }

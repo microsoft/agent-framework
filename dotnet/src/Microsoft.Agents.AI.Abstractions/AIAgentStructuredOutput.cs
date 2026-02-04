@@ -127,23 +127,10 @@ public abstract partial class AIAgent
     {
         var responseFormat = NewChatResponseFormat.ForJsonSchema<T>(serializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        AgentRunOptions effectiveOptions;
-        if (options is null)
-        {
-            effectiveOptions = new AgentRunOptions();
-        }
-        else if (options.GetType() == typeof(AgentRunOptions))
-        {
-            effectiveOptions = new AgentRunOptions(options);
-        }
-        else
-        {
-            effectiveOptions = options;
-        }
+        options = options?.Clone() ?? new AgentRunOptions();
+        options.ResponseFormat = responseFormat;
 
-        effectiveOptions.ResponseFormat = responseFormat;
-
-        AgentResponse response = await this.RunAsync(messages, session, effectiveOptions, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
         return new AgentResponse<T>(response, responseFormat);
     }
     #endregion
@@ -271,10 +258,10 @@ public abstract partial class AIAgent
 
         var responseFormat = NewChatResponseFormat.ForJsonSchema(resultType, serializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        AgentRunOptions effectiveOptions = options ?? new AgentRunOptions();
-        effectiveOptions.ResponseFormat = responseFormat;
+        options = options?.Clone() ?? new AgentRunOptions();
+        options.ResponseFormat = responseFormat;
 
-        AgentResponse response = await this.RunAsync(messages, session, effectiveOptions, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
 
         return new AgentResponse<object>(response, responseFormat);
     }
