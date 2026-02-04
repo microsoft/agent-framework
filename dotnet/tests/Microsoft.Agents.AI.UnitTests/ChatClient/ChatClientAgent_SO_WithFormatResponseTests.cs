@@ -41,7 +41,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
         });
 
         // Act
-        AgentResponse agentResponse = await agent.RunAsync(messages: [new(ChatRole.User, "Hello")]);
+        await agent.RunAsync(messages: [new(ChatRole.User, "Hello")]);
 
         // Assert
         Assert.NotNull(capturedResponseFormat);
@@ -49,7 +49,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
     }
 
     [Fact]
-    public async Task RunAsync_ResponseFormatProvidedAtAgentInvokation_IsPropagatedToChatClientAsync()
+    public async Task RunAsync_ResponseFormatProvidedAtAgentInvocation_IsPropagatedToChatClientAsync()
     {
         // Arrange
         ChatResponseFormat? capturedResponseFormat = null;
@@ -76,7 +76,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
         };
 
         // Act
-        AgentResponse agentResponse = await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
+        await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
 
         // Assert
         Assert.NotNull(capturedResponseFormat);
@@ -84,7 +84,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
     }
 
     [Fact]
-    public async Task RunAsync_ResponseFormatProvidedAtAgentInvokation_OverridesOneProvidedAtAgentInitializationAsync()
+    public async Task RunAsync_ResponseFormatProvidedAtAgentInvocation_OverridesOneProvidedAtAgentInitializationAsync()
     {
         // Arrange
         ChatResponseFormat? capturedResponseFormat = null;
@@ -118,7 +118,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
         };
 
         // Act
-        AgentResponse agentResponse = await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
+        await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
 
         // Assert
         Assert.NotNull(capturedResponseFormat);
@@ -159,7 +159,7 @@ public partial class ChatClientAgent_SO_WithFormatResponseTests
         };
 
         // Act
-        AgentResponse agentResponse = await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
+        await agent.RunAsync(messages: [new(ChatRole.User, "Hello")], options: runOptions);
 
         // Assert
         Assert.NotNull(capturedResponseFormat);

@@ -11,7 +11,7 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRunTests<AIProjectClientStructuredOutputFixture<CityInfo>>(() => new AIProjectClientStructuredOutputFixture<CityInfo>())
 {
-    private const string NotSupported = "AIProjectClient does not support specifying structured output type at invokation time.";
+    private const string NotSupported = "AIProjectClient does not support specifying structured output type at invocation time.";
 
     /// <summary>
     /// Verifies that response format provided at agent initialization is used when invoking RunAsync.
