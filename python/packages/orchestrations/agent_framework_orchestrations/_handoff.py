@@ -46,7 +46,7 @@ from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._base_group_chat_orchestrator import TerminationCondition
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import WorkflowEvent
-from agent_framework._workflows._orchestrator_helpers import clean_conversation_for_handoff
+from agent_framework._workflows._orchestrator_helpers import clean_conversation
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -399,7 +399,7 @@ class HandoffAgentExecutor(AgentExecutor):
             return
 
         # Remove function call related content from the agent response for full conversation history
-        cleaned_response = clean_conversation_for_handoff(response.messages)
+        cleaned_response = clean_conversation(response.messages)
         # Append the agent response to the full conversation history. This list removes
         # function call related content such that the result stays consistent regardless
         # of which agent yields the final output.
