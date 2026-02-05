@@ -12,6 +12,7 @@ When contributing to this repository, please follow these guidelines:
 
 Here are some general guidelines that apply to all code.
 
+- All new files must be saved with UTF-8 encoding with BOM (Byte Order Mark). This is required for `dotnet format` to work correctly.
 - The top of all *.cs files should have a copyright notice: `// Copyright (c) Microsoft. All rights reserved.`
 - All public methods and classes should have XML documentation comments.
 - After adding, modifying or deleting code, run `dotnet build`, and then fix any reported build errors.
