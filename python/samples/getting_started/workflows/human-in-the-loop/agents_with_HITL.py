@@ -204,8 +204,9 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream(
-        "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting."
+    stream = workflow.run(
+        "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
+        stream=True,
     )
 
     pending_responses = await process_event_stream(stream)

@@ -39,13 +39,13 @@ async def main():
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
+    # Agents adapt to workflow mode: run(stream=True) for incremental updates, run() for complete responses.
     workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
     # Track the last author to format streaming output.
     last_author: str | None = None
 
-    events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+    events = workflow.run("Create a slogan for a new electric SUV that is affordable and fun to drive.", stream=True)
     async for event in events:
         # The outputs of the workflow are whatever the agents produce. So the events are expected to
         # contain `AgentResponseUpdate` from the agents in the workflow.

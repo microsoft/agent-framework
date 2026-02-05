@@ -36,7 +36,7 @@ Show how to integrate a human step in the middle of an LLM workflow by using
 Demonstrate:
 - Alternating turns between an AgentExecutor and a human, driven by events.
 - Using Pydantic response_format to enforce structured JSON output from the agent instead of regex parsing.
-- Driving the loop in application code with run_stream and responses parameter.
+- Driving the loop in application code with run and responses parameter.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -206,7 +206,7 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream("start")
+    stream = workflow.run("start", stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

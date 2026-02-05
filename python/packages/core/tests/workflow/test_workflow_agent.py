@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import uuid
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import Awaitable, Sequence
 from typing import Any
 
 import pytest
@@ -17,6 +17,7 @@ from agent_framework import (
     ChatMessageStore,
     Content,
     Executor,
+    ResponseStream,
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
@@ -626,30 +627,47 @@ class TestWorkflowAgent:
             def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(
+            def run(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
+                stream: bool = False,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+                if stream:
+                    return self._run_stream(messages=messages, thread=thread, **kwargs)
+                return self._run(messages=messages, thread=thread, **kwargs)
+
+            async def _run(
+                self,
+                messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+                *,
+                stream: bool = False,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
+
                 return AgentResponse(
                     messages=[ChatMessage("assistant", [self._response_text])],
                 )
 
-            async def run_stream(
+            def _run_stream(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
-            ) -> AsyncIterable[AgentResponseUpdate]:
-                for word in self._response_text.split():
-                    yield AgentResponseUpdate(
-                        contents=[Content.from_text(text=word + " ")],
-                        role="assistant",
-                        author_name=self.name,
-                    )
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+                async def _iter():
+                    for word in self._response_text.split():
+                        yield AgentResponseUpdate(
+                            contents=[Content.from_text(text=word + " ")],
+                            role="assistant",
+                            author_name=self.name,
+                        )
+
+                return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
         async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
@@ -699,27 +717,47 @@ class TestWorkflowAgent:
             def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(
+            def run(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
+                stream: bool = False,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+                if stream:
+                    return self._run_stream(messages=messages, thread=thread, **kwargs)
+                return self._run(messages=messages, thread=thread, **kwargs)
+
+            async def _run(
+                self,
+                messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+                *,
+                stream: bool = False,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
-                return AgentResponse(messages=[ChatMessage("assistant", [self._response_text])])
 
-            async def run_stream(
+                return AgentResponse(
+                    messages=[ChatMessage("assistant", [self._response_text])],
+                )
+
+            def _run_stream(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
-            ) -> AsyncIterable[AgentResponseUpdate]:
-                yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=self._response_text)],
-                    role="assistant",
-                    author_name=self.name,
-                )
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+                async def _iter():
+                    for word in self._response_text.split():
+                        yield AgentResponseUpdate(
+                            contents=[Content.from_text(text=word + " ")],
+                            role="assistant",
+                            author_name=self.name,
+                        )
+
+                return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
         async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:

@@ -4,8 +4,8 @@ This worker registers two agents - a weather assistant and a math assistant - ea
 with their own specialized tools. This demonstrates how to host multiple agents
 with different capabilities in a single worker process.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -15,6 +15,7 @@ import logging
 import os
 from typing import Any
 
+from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -28,6 +29,7 @@ WEATHER_AGENT_NAME = "WeatherAgent"
 MATH_AGENT_NAME = "MathAgent"
 
 
+@tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
     logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
@@ -41,11 +43,10 @@ def get_weather(location: str) -> dict[str, Any]:
     return result
 
 
+@tool
 def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
     """Calculate tip amount and total bill."""
-    logger.info(
-        f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})"
-    )
+    logger.info(f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})")
     tip = bill_amount * (tip_percentage / 100)
     total = bill_amount + tip
     result = {
@@ -60,7 +61,7 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 def create_weather_agent():
     """Create the Weather agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Weather agent with weather tool
     """
@@ -73,7 +74,7 @@ def create_weather_agent():
 
 def create_math_agent():
     """Create the Math agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Math agent with calculation tools
     """
@@ -85,17 +86,15 @@ def create_math_agent():
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -112,16 +111,16 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with multiple agents registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents registered
     """

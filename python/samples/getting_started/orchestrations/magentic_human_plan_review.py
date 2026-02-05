@@ -142,7 +142,7 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream(task)
+    stream = workflow.run(task, stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

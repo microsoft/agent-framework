@@ -159,7 +159,20 @@ class MockAgent(BaseAgent):
         self.streaming_chunks = streaming_chunks or [response_text]
         self.call_count = 0
 
-    async def run(
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        self.call_count += 1
+        if stream:
+            return self._run_stream(messages=messages, thread=thread, **kwargs)
+        return self._run(messages=messages, thread=thread, **kwargs)
+
+    async def _run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -169,16 +182,20 @@ class MockAgent(BaseAgent):
         self.call_count += 1
         return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=self.response_text)])])
 
-    async def run_stream(
+    def _run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
-        for chunk in self.streaming_chunks:
-            yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role="assistant")
+
+        async def _iter():
+            for chunk in self.streaming_chunks:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)], role="assistant")
+
+        return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
 class MockToolCallingAgent(BaseAgent):
@@ -188,55 +205,69 @@ class MockToolCallingAgent(BaseAgent):
         super().__init__(**kwargs)
         self.call_count = 0
 
-    async def run(
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        self.call_count += 1
+        if stream:
+            return self._run_stream(messages=messages, thread=thread, **kwargs)
+        return self._run(messages=messages, thread=thread, **kwargs)
+
+    async def _run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        self.call_count += 1
         return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
 
-    async def run_stream(
+    def _run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        self.call_count += 1
-        # First: text
-        yield AgentResponseUpdate(
-            contents=[Content.from_text(text="Let me search for that...")],
-            role="assistant",
-        )
-        # Second: tool call
-        yield AgentResponseUpdate(
-            contents=[
-                Content.from_function_call(
-                    call_id="call_123",
-                    name="search",
-                    arguments={"query": "weather"},
-                )
-            ],
-            role="assistant",
-        )
-        # Third: tool result
-        yield AgentResponseUpdate(
-            contents=[
-                Content.from_function_result(
-                    call_id="call_123",
-                    result={"temperature": 72, "condition": "sunny"},
-                )
-            ],
-            role="tool",
-        )
-        # Fourth: final text
-        yield AgentResponseUpdate(
-            contents=[Content.from_text(text="The weather is sunny, 72°F.")],
-            role="assistant",
-        )
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def _iter() -> AsyncIterable[AgentResponseUpdate]:
+            # First: text
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="Let me search for that...")],
+                role="assistant",
+            )
+            # Second: tool call
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_123",
+                        name="search",
+                        arguments={"query": "weather"},
+                    )
+                ],
+                role="assistant",
+            )
+            # Third: tool result
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_function_result(
+                        call_id="call_123",
+                        result={"temperature": 72, "condition": "sunny"},
+                    )
+                ],
+                role="tool",
+            )
+            # Fourth: final text
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="The weather is sunny, 72°F.")],
+                role="assistant",
+            )
+
+        return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
 # =============================================================================
