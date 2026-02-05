@@ -66,20 +66,20 @@ AIAgent agent = azureOpenAIClient
         // Since we are using ChatCompletion which stores chat history locally, we can also add a message removal policy
         // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that
         // we don't bloat chat history with all the search result messages.
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
+        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider(ctx.SerializedState, ctx.JsonSerializerOptions)
             .WithAIContextProviderMessageRemoval()),
     });
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
+Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));
 
 Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
+Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", session));
 
 Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", session));
 
 // Produces some sample search documents.
 // Each one contains a source name and link, which the agent can use to cite sources in its responses.

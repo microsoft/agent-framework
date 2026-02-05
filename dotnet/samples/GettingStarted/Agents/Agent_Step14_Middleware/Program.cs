@@ -45,7 +45,7 @@ var middlewareEnabledAgent = originalAgent
     .Use(GuardrailMiddleware, null)
     .Build();
 
-var thread = await middlewareEnabledAgent.GetNewThreadAsync();
+var session = await middlewareEnabledAgent.CreateSessionAsync();
 
 Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
 var guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
@@ -65,7 +65,7 @@ var options = new ChatClientAgentRunOptions(new()
     Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
 });
 
-var functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", thread, options);
+var functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", session, options);
 Console.WriteLine($"Function calling response: {functionCallResponse}");
 
 // Special per-request middleware agent.
@@ -89,7 +89,7 @@ var response = await originalAgent // Using per-request middleware pipeline with
     .Use(PerRequestFunctionCallingMiddleware)
     .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
-    .RunAsync("What's the current time and the weather in Seattle?", thread, optionsWithApproval);
+    .RunAsync("What's the current time and the weather in Seattle?", session, optionsWithApproval);
 
 Console.WriteLine($"Per-request middleware response: {response}");
 
@@ -131,13 +131,13 @@ async ValueTask<object?> PerRequestFunctionCallingMiddleware(AIAgent agent, Func
 }
 
 // This middleware redacts PII information from input and output messages.
-async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact PII information from input messages
     var filteredMessages = FilterMessages(messages);
     Console.WriteLine("Pii Middleware - Filtered Messages Pre-Run");
 
-    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken).ConfigureAwait(false);
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken).ConfigureAwait(false);
 
     // Redact PII information from output messages
     response.Messages = FilterMessages(response.Messages);
@@ -171,7 +171,7 @@ async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Agent
 }
 
 // This middleware enforces guardrails by redacting certain keywords from input and output messages.
-async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact keywords from input messages
     var filteredMessages = FilterMessages(messages);
@@ -179,7 +179,7 @@ async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages,
     Console.WriteLine("Guardrail Middleware - Filtered messages Pre-Run");
 
     // Proceed with the agent run
-    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken);
 
     // Redact keywords from output messages
     response.Messages = FilterMessages(response.Messages);
@@ -208,30 +208,27 @@ async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages,
 }
 
 // This middleware handles Human in the loop console interaction for any user approval required during function calling.
-async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
-    var response = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+    AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
-    var userInputRequests = response.UserInputRequests.ToList();
+    // For simplicity, we are assuming here that only function approvals are pending.
+    List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 
-    while (userInputRequests.Count > 0)
+    while (approvalRequests.Count > 0)
     {
         // Ask the user to approve each function call request.
-        // For simplicity, we are assuming here that only function approval requests are being made.
-
         // Pass the user input responses back to the agent for further processing.
-        response.Messages = userInputRequests
-            .OfType<FunctionApprovalRequestContent>()
-            .Select(functionApprovalRequest =>
+        response.Messages = approvalRequests
+            .ConvertAll(functionApprovalRequest =>
             {
                 Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
                 return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
-            })
-            .ToList();
+            });
 
-        response = await innerAgent.RunAsync(response.Messages, thread, options, cancellationToken);
+        response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
 
-        userInputRequests = response.UserInputRequests.ToList();
+        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
     }
 
     return response;

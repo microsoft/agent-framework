@@ -42,8 +42,8 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     services: serviceProvider);
 
 // Invoke the agent and output the text result.
-AgentThread thread = await agent.GetNewThreadAsync();
-Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", thread));
+AgentSession session = await agent.CreateSessionAsync();
+Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", session));
 
 // Cleanup by agent name removes the agent version created.
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

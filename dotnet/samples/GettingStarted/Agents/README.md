@@ -33,7 +33,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output with a simple agent](./Agent_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
 |[Persisted conversations with a simple agent](./Agent_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
-|[3rd party thread storage with a simple agent](./Agent_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
+|[3rd party chat history storage with a simple agent](./Agent_Step07_3rdPartyChatHistoryStorage/)|This sample demonstrates how to store chat history in a 3rd party storage solution|
 |[Observability with a simple agent](./Agent_Step08_Observability/)|This sample demonstrates how to add telemetry to a simple agent|
 |[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|

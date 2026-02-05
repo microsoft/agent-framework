@@ -12,13 +12,14 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     Agent,
     CodeInterpreterToolDefinition,
 )
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 
 from agent_framework_azure_ai import (
@@ -222,7 +223,7 @@ async def test_create_agent_with_tools(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -366,7 +367,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_agent.tools = [mock_function_tool]
     mock_agents_client.get_agent = AsyncMock(return_value=mock_agent)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -464,7 +465,77 @@ def test_as_agent_with_hosted_tools(
 
     assert isinstance(agent, ChatAgent)
     # Should have HostedCodeInterpreterTool in the default_options tools
-    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.default_options.get("tools") or []))
+    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.default_options.get("tools") or []))  # type: ignore
+
+
+def test_as_agent_with_dict_function_tools_validates(
+    azure_ai_unit_test_env: dict[str, str],
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test as_agent validates dict-format function tools require implementations."""
+    # Dict-based function tool (as returned by some Azure AI SDK operations)
+    dict_function_tool = {  # type: ignore
+        "type": "function",
+        "function": {
+            "name": "dict_based_function",
+            "description": "A function defined as dict",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    mock_agent = MagicMock(spec=Agent)
+    mock_agent.id = "agent-id"
+    mock_agent.name = "Agent"
+    mock_agent.description = None
+    mock_agent.instructions = None
+    mock_agent.model = "gpt-4"
+    mock_agent.temperature = None
+    mock_agent.top_p = None
+    mock_agent.tools = [dict_function_tool]
+
+    provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
+
+    with pytest.raises(ServiceInitializationError) as exc_info:
+        provider.as_agent(mock_agent)
+
+    assert "dict_based_function" in str(exc_info.value)
+
+
+def test_as_agent_with_dict_function_tools_provided(
+    azure_ai_unit_test_env: dict[str, str],
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test as_agent succeeds when dict-format function tools have implementations provided."""
+    dict_function_tool = {  # type: ignore
+        "type": "function",
+        "function": {
+            "name": "dict_based_function",
+            "description": "A function defined as dict",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    mock_agent = MagicMock(spec=Agent)
+    mock_agent.id = "agent-id"
+    mock_agent.name = "Agent"
+    mock_agent.description = None
+    mock_agent.instructions = None
+    mock_agent.model = "gpt-4"
+    mock_agent.temperature = None
+    mock_agent.top_p = None
+    mock_agent.tools = [dict_function_tool]
+
+    @tool
+    def dict_based_function() -> str:
+        """A function implementation."""
+        return "result"
+
+    provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
+
+    agent = provider.as_agent(mock_agent, tools=dict_based_function)
+
+    assert isinstance(agent, ChatAgent)
+    assert agent.id == "agent-id"
 
 
 # endregion
@@ -483,9 +554,9 @@ def test_to_azure_ai_agent_tools_empty() -> None:
 
 
 def test_to_azure_ai_agent_tools_function() -> None:
-    """Test converting AIFunction to Azure tool definition."""
+    """Test converting FunctionTool to Azure tool definition."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -729,8 +800,6 @@ def test_from_azure_ai_agent_tools_unknown_dict() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_agent() -> None:
     """Integration test: Create an agent using the provider."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -753,8 +822,6 @@ async def test_integration_create_agent() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_get_agent() -> None:
     """Integration test: Get an existing agent using the provider."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -779,8 +846,6 @@ async def test_integration_get_agent() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_and_run() -> None:
     """Integration test: Create an agent and run a conversation."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,

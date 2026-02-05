@@ -192,7 +192,7 @@ public static class PersistentAgentsClientExtensions
             Description = options.Description ?? persistentAgentMetadata.Description,
             ChatOptions = options.ChatOptions,
             AIContextProviderFactory = options.AIContextProviderFactory,
-            ChatMessageStoreFactory = options.ChatMessageStoreFactory,
+            ChatHistoryProviderFactory = options.ChatHistoryProviderFactory,
             UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs
         };
 

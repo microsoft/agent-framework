@@ -355,7 +355,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public async Task MapAGUIAgent_ProducesCorrectThreadAndRunIds_InAllEventsAsync()
+    public async Task MapAGUIAgent_ProducesCorrectSessionAndRunIds_InAllEventsAsync()
     {
         // Arrange
         DefaultHttpContext httpContext = new();
@@ -425,20 +425,30 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentThread());
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions));
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
-        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            if (session is not TestInMemoryAgentSession testSession)
+            {
+                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            }
+
+            return testSession.Serialize(jsonSerializerOptions);
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -496,17 +506,20 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         };
     }
 
-    private sealed class TestInMemoryAgentThread : InMemoryAgentThread
+    private sealed class TestInMemoryAgentSession : InMemoryAgentSession
     {
-        public TestInMemoryAgentThread()
+        public TestInMemoryAgentSession()
             : base()
         {
         }
 
-        public TestInMemoryAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThreadState, jsonSerializerOptions, null)
+        public TestInMemoryAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
+            : base(serializedSessionState, jsonSerializerOptions, null)
         {
         }
+
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => base.Serialize(jsonSerializerOptions);
     }
 
     private sealed class TestAgent : AIAgent
@@ -515,20 +528,30 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Test agent";
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentThread());
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions));
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
-        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            if (session is not TestInMemoryAgentSession testSession)
+            {
+                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            }
+
+            return testSession.Serialize(jsonSerializerOptions);
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {

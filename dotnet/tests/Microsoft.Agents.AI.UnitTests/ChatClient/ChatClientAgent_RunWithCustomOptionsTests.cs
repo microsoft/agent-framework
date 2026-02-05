@@ -19,7 +19,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
     #region RunAsync Tests
 
     [Fact]
-    public async Task RunAsync_WithThreadAndOptions_CallsBaseMethodAsync()
+    public async Task RunAsync_WithSessionAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -30,11 +30,11 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse result = await agent.RunAsync(thread, options);
+        AgentResponse result = await agent.RunAsync(session, options);
 
         // Assert
         Assert.NotNull(result);
@@ -59,11 +59,11 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse result = await agent.RunAsync("Test message", thread, options);
+        AgentResponse result = await agent.RunAsync("Test message", session, options);
 
         // Assert
         Assert.NotNull(result);
@@ -88,12 +88,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse result = await agent.RunAsync(message, thread, options);
+        AgentResponse result = await agent.RunAsync(message, session, options);
 
         // Assert
         Assert.NotNull(result);
@@ -118,12 +118,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Message 1"), new(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse result = await agent.RunAsync(messages, thread, options);
+        AgentResponse result = await agent.RunAsync(messages, session, options);
 
         // Assert
         Assert.NotNull(result);
@@ -168,7 +168,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
     #region RunStreamingAsync Tests
 
     [Fact]
-    public async Task RunStreamingAsync_WithThreadAndOptions_CallsBaseMethodAsync()
+    public async Task RunStreamingAsync_WithSessionAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -179,12 +179,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync(thread, options))
+        await foreach (var update in agent.RunStreamingAsync(session, options))
         {
             updates.Add(update);
         }
@@ -211,12 +211,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync("Test message", thread, options))
+        await foreach (var update in agent.RunStreamingAsync("Test message", session, options))
         {
             updates.Add(update);
         }
@@ -243,13 +243,13 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync(message, thread, options))
+        await foreach (var update in agent.RunStreamingAsync(message, session, options))
         {
             updates.Add(update);
         }
@@ -276,13 +276,13 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Message 1"), new ChatMessage(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync(messages, thread, options))
+        await foreach (var update in agent.RunStreamingAsync(messages, session, options))
         {
             updates.Add(update);
         }
@@ -313,7 +313,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
     #region RunAsync{T} Tests
 
     [Fact]
-    public async Task RunAsyncOfT_WithThreadAndOptions_CallsBaseMethodAsync()
+    public async Task RunAsyncOfT_WithSessionAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -324,11 +324,11 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(session, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentResponse);
@@ -354,11 +354,11 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>("Test message", session, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentResponse);
@@ -384,12 +384,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(message, session, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentResponse);
@@ -415,12 +415,12 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Message 1"), new(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
         // Act
-        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(messages, session, JsonContext_WithCustomRunOptions.Default.Options, options);
 
         // Assert
         Assert.NotNull(agentResponse);

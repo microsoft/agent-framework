@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 public class AIAgentTests
 {
     private readonly Mock<AIAgent> _agentMock;
-    private readonly Mock<AgentThread> _agentThreadMock;
+    private readonly Mock<AgentSession> _agentSessionMock;
     private readonly AgentResponse _invokeResponse;
     private readonly List<AgentResponseUpdate> _invokeStreamingResponses = [];
 
@@ -27,7 +27,7 @@ public class AIAgentTests
     /// </summary>
     public AIAgentTests()
     {
-        this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
+        this._agentSessionMock = new Mock<AgentSession>(MockBehavior.Strict);
 
         this._invokeResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
         this._invokeStreamingResponses.Add(new AgentResponseUpdate(ChatRole.Assistant, "Hi"));
@@ -37,7 +37,7 @@ public class AIAgentTests
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._invokeResponse);
@@ -45,7 +45,7 @@ public class AIAgentTests
             .Protected()
             .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(this._invokeStreamingResponses));
@@ -63,7 +63,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        var response = await this._agentMock.Object.RunAsync(this._agentThreadMock.Object, options, cancellationToken);
+        var response = await this._agentMock.Object.RunAsync(this._agentSessionMock.Object, options, cancellationToken);
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
@@ -72,7 +72,7 @@ public class AIAgentTests
             .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
@@ -90,7 +90,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        var response = await this._agentMock.Object.RunAsync(Message, this._agentThreadMock.Object, options, cancellationToken);
+        var response = await this._agentMock.Object.RunAsync(Message, this._agentSessionMock.Object, options, cancellationToken);
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
@@ -99,7 +99,7 @@ public class AIAgentTests
             .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
@@ -117,7 +117,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        var response = await this._agentMock.Object.RunAsync(message, this._agentThreadMock.Object, options, cancellationToken);
+        var response = await this._agentMock.Object.RunAsync(message, this._agentSessionMock.Object, options, cancellationToken);
         Assert.Equal(this._invokeResponse, response);
 
         // Verify that the mocked method was called with the expected parameters
@@ -126,7 +126,7 @@ public class AIAgentTests
             .Verify<Task<AgentResponse>>("RunCoreAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
@@ -143,7 +143,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        await foreach (var response in this._agentMock.Object.RunStreamingAsync(this._agentThreadMock.Object, options, cancellationToken))
+        await foreach (var response in this._agentMock.Object.RunStreamingAsync(this._agentSessionMock.Object, options, cancellationToken))
         {
             // Assert
             Assert.Contains(response, this._invokeStreamingResponses);
@@ -155,7 +155,7 @@ public class AIAgentTests
             .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => !messages.Any()),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
@@ -173,7 +173,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        await foreach (var response in this._agentMock.Object.RunStreamingAsync(Message, this._agentThreadMock.Object, options, cancellationToken))
+        await foreach (var response in this._agentMock.Object.RunStreamingAsync(Message, this._agentSessionMock.Object, options, cancellationToken))
         {
             // Assert
             Assert.Contains(response, this._invokeStreamingResponses);
@@ -185,7 +185,7 @@ public class AIAgentTests
             .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First().Text == Message),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
@@ -203,7 +203,7 @@ public class AIAgentTests
         var cancellationToken = default(CancellationToken);
 
         // Act
-        await foreach (var response in this._agentMock.Object.RunStreamingAsync(message, this._agentThreadMock.Object, options, cancellationToken))
+        await foreach (var response in this._agentMock.Object.RunStreamingAsync(message, this._agentSessionMock.Object, options, cancellationToken))
         {
             // Assert
             Assert.Contains(response, this._invokeStreamingResponses);
@@ -215,9 +215,136 @@ public class AIAgentTests
             .Verify<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 Times.Once(),
                 ItExpr.Is<IEnumerable<ChatMessage>>(messages => messages.Count() == 1 && messages.First() == message),
-                ItExpr.Is<AgentThread?>(t => t == this._agentThreadMock.Object),
+                ItExpr.Is<AgentSession?>(t => t == this._agentSessionMock.Object),
                 ItExpr.Is<AgentRunOptions?>(o => o == options),
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
+    }
+
+    /// <summary>
+    /// Theory data for RunAsync overloads.
+    /// </summary>
+    public static TheoryData<string> RunAsyncOverloads => new()
+    {
+        "NoMessage",
+        "StringMessage",
+        "ChatMessage",
+        "MessagesCollection"
+    };
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreAsync for all RunAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunAsync_SetsCurrentRunContext_AccessibleFromRunCoreAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+            });
+
+        // Act
+        switch (overload)
+        {
+            case "NoMessage":
+                await agentMock.Object.RunAsync(session, options);
+                break;
+            case "StringMessage":
+                await agentMock.Object.RunAsync("Hello", session, options);
+                break;
+            case "ChatMessage":
+                await agentMock.Object.RunAsync(new ChatMessage(ChatRole.User, "Hello"), session, options);
+                break;
+            case "MessagesCollection":
+                await agentMock.Object.RunAsync([new ChatMessage(ChatRole.User, "Hello")], session, options);
+                break;
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreStreamingAsync for all RunStreamingAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunStreamingAsync_SetsCurrentRunContext_AccessibleFromRunCoreStreamingAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "Response")]);
+            });
+
+        // Act
+        IAsyncEnumerable<AgentResponseUpdate> stream = overload switch
+        {
+            "NoMessage" => agentMock.Object.RunStreamingAsync(session, options),
+            "StringMessage" => agentMock.Object.RunStreamingAsync("Hello", session, options),
+            "ChatMessage" => agentMock.Object.RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"), session, options),
+            "MessagesCollection" => agentMock.Object.RunStreamingAsync(new[] { new ChatMessage(ChatRole.User, "Hello") }, session, options),
+            _ => throw new InvalidOperationException($"Unknown overload: {overload}")
+        };
+
+        await foreach (AgentResponseUpdate _ in stream)
+        {
+            // Consume the stream
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
     }
 
     [Fact]
@@ -364,10 +491,78 @@ public class AIAgentTests
 
     #endregion
 
+    #region Name and Description Property Tests
+
     /// <summary>
-    /// Typed mock thread.
+    /// Verify that Name property returns the value from the derived class.
     /// </summary>
-    public abstract class TestAgentThread : AgentThread;
+    [Fact]
+    public void Name_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Equal("TestAgentName", name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns the value from the derived class.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Equal("TestAgentDescription", description);
+    }
+
+    /// <summary>
+    /// Verify that Name property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Name_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Null(name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Null(description);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Typed mock session for testing purposes.
+    /// </summary>
+    private sealed class TestAgentSession : AgentSession;
 
     private sealed class MockAgent : AIAgent
     {
@@ -378,22 +573,63 @@ public class AIAgentTests
 
         protected override string? IdCore { get; }
 
-        public override async ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        public override async ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
+        public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+    }
+
+    private sealed class MockAgentWithName : AIAgent
+    {
+        private readonly string? _name;
+        private readonly string? _description;
+
+        public MockAgentWithName(string? name, string? description)
+        {
+            this._name = name;
+            this._description = description;
+        }
+
+        public override string? Name => this._name;
+        public override string? Description => this._description;
+
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();

@@ -35,7 +35,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         // Create request JSON with forwardedProps (per AG-UI protocol spec)
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test forwarded props" }],
                 "forwardedProps": { "customProp": "customValue", "sessionId": "test-session-123" }
@@ -63,7 +63,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test nested props" }],
                 "forwardedProps": {
@@ -100,7 +100,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test array props" }],
                 "forwardedProps": {
@@ -137,7 +137,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test empty props" }],
                 "forwardedProps": {}
@@ -162,7 +162,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test no props" }]
             }
@@ -187,7 +187,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test response" }],
                 "forwardedProps": { "customProp": "value" }
@@ -233,7 +233,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 
         const string RequestJson = """
             {
-                "threadId": "thread-123",
+                "threadId": "session-123",
                 "runId": "run-456",
                 "messages": [{ "id": "msg-1", "role": "user", "content": "test mixed types" }],
                 "forwardedProps": {
@@ -303,14 +303,14 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
     public JsonElement ReceivedForwardedProperties { get; private set; }
 
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -334,23 +334,36 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentThread());
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
-    private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        public FakeInMemoryAgentThread()
+        if (session is not FakeInMemoryAgentSession fakeSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return fakeSession.Serialize(jsonSerializerOptions);
+    }
+
+    private sealed class FakeInMemoryAgentSession : InMemoryAgentSession
+    {
+        public FakeInMemoryAgentSession()
             : base()
         {
         }
 
-        public FakeInMemoryAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThread, jsonSerializerOptions)
+        public FakeInMemoryAgentSession(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
+            : base(serializedSession, jsonSerializerOptions)
         {
         }
+
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => base.Serialize(jsonSerializerOptions);
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;

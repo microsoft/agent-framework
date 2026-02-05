@@ -382,10 +382,13 @@ public class AgentExtensionsTests
             this._exceptionToThrow = exceptionToThrow;
         }
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public override string? Name { get; }
@@ -398,7 +401,7 @@ public class AgentExtensionsTests
 
         protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
         {
@@ -417,11 +420,11 @@ public class AgentExtensionsTests
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            var response = await this.RunAsync(messages, thread, options, cancellationToken);
+            var response = await this.RunAsync(messages, session, options, cancellationToken);
             foreach (var update in response.ToAgentResponseUpdates())
             {
                 yield return update;

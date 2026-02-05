@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime
 
+from agent_framework import tool
 from agent_framework.ollama import OllamaChatClient
 
 """
@@ -18,6 +19,8 @@ https://ollama.com/
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_time():
     """Get the current time."""
     return f"The current time is {datetime.now().strftime('%I:%M %p')}."

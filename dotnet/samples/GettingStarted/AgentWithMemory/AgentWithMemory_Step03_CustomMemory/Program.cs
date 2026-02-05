@@ -24,10 +24,10 @@ ChatClient chatClient = new AzureOpenAIClient(
     .GetChatClient(deploymentName);
 
 // Create the agent and provide a factory to add our custom memory component to
-// all threads created by the agent. Here each new memory component will have its own
-// user info object, so each thread will have its own memory.
+// all sessions created by the agent. Here each new memory component will have its own
+// user info object, so each session will have its own memory.
 // In real world applications/services, where the user info would be persisted in a database,
-// and preferably shared between multiple threads used by the same user, ensure that the
+// and preferably shared between multiple sessions used by the same user, ensure that the
 // factory reads the user id from the current context and scopes the memory component
 // and its storage to that user id.
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
@@ -36,47 +36,47 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
     AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions))
 });
 
-// Create a new thread for the conversation.
-AgentThread thread = await agent.GetNewThreadAsync();
+// Create a new session for the conversation.
+AgentSession session = await agent.CreateSessionAsync();
 
-Console.WriteLine(">> Use thread with blank memory\n");
+Console.WriteLine(">> Use session with blank memory\n");
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", thread));
-Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", thread));
-Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
+Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", session));
+Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
+Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
 
-// We can serialize the thread. The serialized state will include the state of the memory component.
-var threadElement = thread.Serialize();
+// We can serialize the session. The serialized state will include the state of the memory component.
+JsonElement sesionElement = agent.SerializeSession(session);
 
-Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
+Console.WriteLine("\n>> Use deserialized session with previously created memories\n");
 
-// Later we can deserialize the thread and continue the conversation with the previous memory component state.
-var deserializedThread = await agent.DeserializeThreadAsync(threadElement);
-Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedThread));
+// Later we can deserialize the session and continue the conversation with the previous memory component state.
+var deserializedSession = await agent.DeserializeSessionAsync(sesionElement);
+Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedSession));
 
 Console.WriteLine("\n>> Read memories from memory component\n");
 
-// It's possible to access the memory component via the thread's GetService method.
-var userInfo = deserializedThread.GetService<UserInfoMemory>()?.UserInfo;
+// It's possible to access the memory component via the session's GetService method.
+var userInfo = deserializedSession.GetService<UserInfoMemory>()?.UserInfo;
 
 // Output the user info that was captured by the memory component.
 Console.WriteLine($"MEMORY - User Name: {userInfo?.UserName}");
 Console.WriteLine($"MEMORY - User Age: {userInfo?.UserAge}");
 
-Console.WriteLine("\n>> Use new thread with previously created memories\n");
+Console.WriteLine("\n>> Use new session with previously created memories\n");
 
-// It is also possible to set the memories in a memory component on an individual thread.
-// This is useful if we want to start a new thread, but have it share the same memories as a previous thread.
-var newThread = await agent.GetNewThreadAsync();
-if (userInfo is not null && newThread.GetService<UserInfoMemory>() is UserInfoMemory newThreadMemory)
+// It is also possible to set the memories in a memory component on an individual session.
+// This is useful if we want to start a new session, but have it share the same memories as a previous session.
+var newSession = await agent.CreateSessionAsync();
+if (userInfo is not null && newSession.GetService<UserInfoMemory>() is UserInfoMemory newSessionMemory)
 {
-    newThreadMemory.UserInfo = userInfo;
+    newSessionMemory.UserInfo = userInfo;
 }
 
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
-Console.WriteLine(await agent.RunAsync("What is my name and age?", newThread));
+Console.WriteLine(await agent.RunAsync("What is my name and age?", newSession));
 
 namespace SampleApp
 {

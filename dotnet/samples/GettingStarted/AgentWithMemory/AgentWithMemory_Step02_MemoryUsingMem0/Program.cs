@@ -2,7 +2,7 @@
 
 // This sample shows how to use the Mem0Provider to persist and recall memories for an agent.
 // The sample stores conversation messages in a Mem0 service and retrieves relevant memories
-// for subsequent invocations, even across new threads.
+// for subsequent invocations, even across new sessions.
 
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -32,7 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
         AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
-            // If each thread should have its own Mem0 scope, you can create a new id per thread here:
+            // If each session should have its own Mem0 scope, you can create a new id per session here:
             // ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ThreadId = Guid.NewGuid().ToString() })
             // In this case we are storing memories scoped by application and user instead so that memories are retained across threads.
             ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ApplicationId = "getting-started-agents", UserId = "sample-user" })
@@ -40,25 +40,25 @@ AIAgent agent = new AzureOpenAIClient(
             : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions))
     });
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
-Mem0Provider mem0Provider = thread.GetService<Mem0Provider>()!;
+Mem0Provider mem0Provider = session.GetService<Mem0Provider>()!;
 await mem0Provider.ClearStoredMemoriesAsync();
 
-Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", thread));
-Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", thread));
+Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
+Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
 
 Console.WriteLine("\nWaiting briefly for Mem0 to index the new memories...\n");
 await Task.Delay(TimeSpan.FromSeconds(2));
 
-Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", thread));
+Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
-Console.WriteLine("\n>> Serialize and deserialize the thread to demonstrate persisted state\n");
-JsonElement serializedThread = thread.Serialize();
-AgentThread restoredThread = await agent.DeserializeThreadAsync(serializedThread);
-Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredThread));
+Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
+JsonElement serializedSession = agent.SerializeSession(session);
+AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
+Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 
-Console.WriteLine("\n>> Start a new thread that shares the same Mem0 scope\n");
-AgentThread newThread = await agent.GetNewThreadAsync();
-Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newThread));
+Console.WriteLine("\n>> Start a new session that shares the same Mem0 scope\n");
+AgentSession newSession = await agent.CreateSessionAsync();
+Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));

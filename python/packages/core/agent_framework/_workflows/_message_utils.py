@@ -4,7 +4,7 @@
 
 from collections.abc import Sequence
 
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage
 
 
 def normalize_messages_input(
@@ -22,7 +22,7 @@ def normalize_messages_input(
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage(role=Role.USER, text=messages)]
+        return [ChatMessage("user", [messages])]
 
     if isinstance(messages, ChatMessage):
         return [messages]
@@ -30,7 +30,7 @@ def normalize_messages_input(
     normalized: list[ChatMessage] = []
     for item in messages:
         if isinstance(item, str):
-            normalized.append(ChatMessage(role=Role.USER, text=item))
+            normalized.append(ChatMessage("user", [item]))
         elif isinstance(item, ChatMessage):
             normalized.append(item)
         else:

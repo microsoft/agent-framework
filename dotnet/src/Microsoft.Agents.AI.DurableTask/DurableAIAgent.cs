@@ -30,44 +30,65 @@ public sealed class DurableAIAgent : AIAgent
     }
 
     /// <summary>
-    /// Creates a new agent thread for this agent using a random session ID.
+    /// Creates a new agent session for this agent using a random session ID.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A value task that represents the asynchronous operation. The task result contains a new agent thread.</returns>
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a new agent session.</returns>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         AgentSessionId sessionId = this._context.NewAgentSessionId(this._agentName);
-        return ValueTask.FromResult<AgentThread>(new DurableAgentThread(sessionId));
+        return ValueTask.FromResult<AgentSession>(new DurableAgentSession(sessionId));
     }
 
     /// <summary>
-    /// Deserializes an agent thread from JSON.
+    /// Serializes an agent session to JSON.
     /// </summary>
-    /// <param name="serializedThread">The serialized thread data.</param>
+    /// <param name="session">The session to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
+    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return durableSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <summary>
+    /// Deserializes an agent session from JSON.
+    /// </summary>
+    /// <param name="serializedState">The serialized session data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A value task that represents the asynchronous operation. The task result contains the deserialized agent thread.</returns>
-    public override ValueTask<AgentThread> DeserializeThreadAsync(
-        JsonElement serializedThread,
+    /// <returns>A value task that represents the asynchronous operation. The task result contains the deserialized agent session.</returns>
+    public override ValueTask<AgentSession> DeserializeSessionAsync(
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentThread>(DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions));
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
     }
 
     /// <summary>
     /// Runs the agent with messages and returns the response.
     /// </summary>
     /// <param name="messages">The messages to send to the agent.</param>
-    /// <param name="thread">The agent thread to use.</param>
+    /// <param name="session">The agent session to use.</param>
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The response from the agent.</returns>
     /// <exception cref="AgentNotRegisteredException">Thrown when the agent has not been registered.</exception>
-    /// <exception cref="ArgumentException">Thrown when the provided thread is not valid for a durable agent.</exception>
+    /// <exception cref="ArgumentException">Thrown when the provided session is not valid for a durable agent.</exception>
     /// <exception cref="NotSupportedException">Thrown when cancellation is requested (cancellation is not supported for durable agents).</exception>
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
@@ -76,13 +97,13 @@ public sealed class DurableAIAgent : AIAgent
             throw new NotSupportedException("Cancellation is not supported for durable agents.");
         }
 
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not DurableAgentThread durableThread)
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
-                "The provided thread is not valid for a durable agent. " +
-                "Create a new thread using GetNewThreadAsync or provide a thread previously created by this agent.",
-                paramName: nameof(thread));
+                "The provided session is not valid for a durable agent. " +
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
+                paramName: nameof(session));
         }
 
         IList<string>? enableToolNames = null;
@@ -108,7 +129,7 @@ public sealed class DurableAIAgent : AIAgent
         try
         {
             return await this._context.Entities.CallEntityAsync<AgentResponse>(
-                durableThread.SessionId,
+                durableSession.SessionId,
                 nameof(AgentEntity.Run),
                 request);
         }
@@ -126,19 +147,19 @@ public sealed class DurableAIAgent : AIAgent
     /// as a single update.
     /// </remarks>
     /// <param name="messages">The messages to send to the agent.</param>
-    /// <param name="thread">The agent thread to use.</param>
+    /// <param name="session">The agent session to use.</param>
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A streaming response enumerable.</returns>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Streaming is not supported for durable agents, so we just return the full response
         // as a single update.
-        AgentResponse response = await this.RunAsync(messages, thread, options, cancellationToken);
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken);
         foreach (AgentResponseUpdate update in response.ToAgentResponseUpdates())
         {
             yield return update;
@@ -149,7 +170,7 @@ public sealed class DurableAIAgent : AIAgent
     /// Runs the agent with a message and returns the deserialized output as an instance of <typeparamref name="T"/>.
     /// </summary>
     /// <param name="message">The message to send to the agent.</param>
-    /// <param name="thread">The agent thread to use.</param>
+    /// <param name="session">The agent session to use.</param>
     /// <param name="serializerOptions">Optional JSON serializer options.</param>
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -164,14 +185,14 @@ public sealed class DurableAIAgent : AIAgent
     /// <returns>The output from the agent.</returns>
     public async Task<AgentResponse<T>> RunAsync<T>(
         string message,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return await this.RunAsync<T>(
             messages: [new ChatMessage(ChatRole.User, message) { CreatedAt = DateTimeOffset.UtcNow }],
-            thread,
+            session,
             serializerOptions,
             options,
             cancellationToken);
@@ -181,7 +202,7 @@ public sealed class DurableAIAgent : AIAgent
     /// Runs the agent with messages and returns the deserialized output as an instance of <typeparamref name="T"/>.
     /// </summary>
     /// <param name="messages">The messages to send to the agent.</param>
-    /// <param name="thread">The agent thread to use.</param>
+    /// <param name="session">The agent session to use.</param>
     /// <param name="serializerOptions">Optional JSON serializer options.</param>
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -198,7 +219,7 @@ public sealed class DurableAIAgent : AIAgent
     [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050", Justification = "Fallback to reflection-based deserialization is intentional for library flexibility with user-defined types.")]
     public async Task<AgentResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -223,7 +244,7 @@ public sealed class DurableAIAgent : AIAgent
         // Create the JSON schema for the response type
         durableOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>();
 
-        AgentResponse response = await this.RunAsync(messages, thread, durableOptions, cancellationToken);
+        AgentResponse response = await this.RunAsync(messages, session, durableOptions, cancellationToken);
 
         // Deserialize the response text to the requested type
         if (string.IsNullOrEmpty(response.Text))

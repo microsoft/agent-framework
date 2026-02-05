@@ -48,9 +48,9 @@ public class WeatherForecastAgent : DelegatingAIAgent
     {
     }
 
-    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var response = await base.RunCoreAsync(messages, thread, options, cancellationToken);
+        var response = await base.RunCoreAsync(messages, session, options, cancellationToken);
 
         // If the agent returned a valid structured output response
         // we might be able to enhance the response with an adaptive card.

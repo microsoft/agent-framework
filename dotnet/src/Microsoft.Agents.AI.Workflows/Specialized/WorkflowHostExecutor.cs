@@ -79,7 +79,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                 // serialization because we will be relying on the parent workflow's checkpoint manager to do that,
                 // if needed. For our purposes, all we need is to keep a faithful representation of the checkpointed
                 // objects so we can emit them back to the parent workflow on checkpoint creation.
-                this._checkpointManager = new InMemoryCheckpointManager();
+                this._checkpointManager ??= new InMemoryCheckpointManager();
             }
 
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
@@ -124,7 +124,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
                 if (incomingMessage != null)
                 {
-                    await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellationToken).ConfigureAwait(false);
+                    await runHandle.EnqueueMessageUntypedAsync(incomingMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
             }
             else if (incomingMessage != null)
@@ -132,7 +132,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                 runHandle = await activeRunner.BeginStreamAsync(ExecutionMode.Subworkflow, cancellationToken)
                                               .ConfigureAwait(false);
 
-                await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellationToken).ConfigureAwait(false);
+                await runHandle.EnqueueMessageUntypedAsync(incomingMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -198,6 +198,13 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                     {
                         resultTask = this._joinContext.SendMessageAsync(this.Id, outputEvent.Data).AsTask();
                     }
+
+                    if (this._joinContext != null &&
+                        this._options.AutoYieldOutputHandlerResultObject
+                        && outputEvent.Data != null)
+                    {
+                        resultTask = this._joinContext.YieldOutputAsync(this.Id, outputEvent.Data).AsTask();
+                    }
                     break;
                 case RequestHaltEvent requestHaltEvent:
                     resultTask = this._joinContext?.ForwardWorkflowEventAsync(new RequestHaltEvent()).AsTask() ?? Task.CompletedTask;
@@ -231,9 +238,10 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
         this._joinContext = Throw.IfNull(joinContext);
     }
 
+    private const string CheckpointManagerStateKey = nameof(CheckpointManager);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await context.QueueStateUpdateAsync(nameof(CheckpointManager), this._checkpointManager, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(CheckpointManagerStateKey, this._checkpointManager, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -242,7 +250,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
 
-        InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(nameof(InMemoryCheckpointManager), cancellationToken: cancellationToken).ConfigureAwait(false) ?? new();
+        InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(CheckpointManagerStateKey, cancellationToken: cancellationToken).ConfigureAwait(false) ?? new();
         if (this._checkpointManager == manager)
         {
             // We are restoring in the context of the same run; not need to rebuild the entire execution stack.
@@ -254,7 +262,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             await this.ResetAsync().ConfigureAwait(false);
         }
 
-        StreamingRun run = await this.EnsureRunSendMessageAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.EnsureRunSendMessageAsync(resume: true, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ResetAsync()
@@ -273,15 +281,10 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             this._activeRunner = null;
         }
 
-        if (this._joinContext != null)
+        if (this._joinContext != null && this._joinId != null)
         {
-            if (this._joinId != null)
-            {
-                await this._joinContext.DetachSuperstepAsync(this._joinId).ConfigureAwait(false);
-                this._joinId = null;
-            }
-
-            this._joinContext = null;
+            await this._joinContext.DetachSuperstepAsync(this._joinId).ConfigureAwait(false);
+            this._joinId = null;
         }
     }
 

@@ -22,12 +22,12 @@ public abstract class ChatClientAgentRunStreamingTests<TAgentFixture>(Func<TAgen
     {
         // Arrange
         var agent = await this.Fixture.CreateChatClientAgentAsync(instructions: "Always respond with 'Computer says no', even if there was no user input.");
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.CreateSessionAsync();
         await using var agentCleanup = new AgentCleanup(agent, this.Fixture);
-        await using var threadCleanup = new ThreadCleanup(thread, this.Fixture);
+        await using var sessionCleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
-        var responseUpdates = await agent.RunStreamingAsync(thread).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync(session).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -53,14 +53,14 @@ public abstract class ChatClientAgentRunStreamingTests<TAgentFixture>(Func<TAgen
                 AIFunctionFactory.Create(MenuPlugin.GetSpecials),
                 AIFunctionFactory.Create(MenuPlugin.GetItemPrice)
             ]);
-        var thread = await agent.GetNewThreadAsync();
+        var session = await agent.CreateSessionAsync();
 
         foreach (var questionAndAnswer in questionsAndAnswers)
         {
             // Act
             var responseUpdates = await agent.RunStreamingAsync(
                 new ChatMessage(ChatRole.User, questionAndAnswer.Question),
-                thread).ToListAsync();
+                session).ToListAsync();
 
             // Assert
             var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));

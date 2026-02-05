@@ -81,7 +81,7 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_WithNullThread_CreatesNewThreadAsync()
+    public async Task RunAsync_WithNullSession_CreatesNewSessionAsync()
     {
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
@@ -95,7 +95,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        AgentResponse response = await agent.RunAsync(messages, thread: null);
+        AgentResponse response = await agent.RunAsync(messages, session: null);
 
         // Assert
         Assert.NotNull(response);
@@ -152,7 +152,7 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithNullThread_CreatesNewThreadAsync()
+    public async Task RunStreamingAsync_WithNullSession_CreatesNewSessionAsync()
     {
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
@@ -167,7 +167,7 @@ public sealed class AGUIAgentTests
 
         // Act
         List<AgentResponseUpdate> updates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session: null))
         {
             // Consume the stream
             updates.Add(update);
@@ -228,12 +228,12 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
         List<AgentResponseUpdate> updates = [];
-        await foreach (var update in agent.RunStreamingAsync(messages, thread))
+        await foreach (var update in agent.RunStreamingAsync(messages, session))
         {
             updates.Add(update);
         }
@@ -244,21 +244,21 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task DeserializeThread_WithValidState_ReturnsChatClientAgentThreadAsync()
+    public async Task DeserializeSession_WithValidState_ReturnsChatClientAgentSessionAsync()
     {
         // Arrange
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentThread originalThread = await agent.GetNewThreadAsync();
-        JsonElement serialized = originalThread.Serialize();
+        AgentSession originalSession = await agent.CreateSessionAsync();
+        JsonElement serialized = agent.SerializeSession(originalSession);
 
         // Act
-        AgentThread deserialized = await agent.DeserializeThreadAsync(serialized);
+        AgentSession deserialized = await agent.DeserializeSessionAsync(serialized);
 
         // Assert
         Assert.NotNull(deserialized);
-        Assert.IsType<ChatClientAgentThread>(deserialized);
+        Assert.IsType<ChatClientAgentSession>(deserialized);
     }
 
     private HttpClient CreateMockHttpClient(BaseEvent[] events)
@@ -462,7 +462,7 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_UpdatesThreadWithToolMessages_AfterCompletionAsync()
+    public async Task RunStreamingAsync_UpdatesSessionWithToolMessages_AfterCompletionAsync()
     {
         // Arrange
         AIFunction testTool = AIFunctionFactory.Create(() => "Result", "TestTool");
@@ -487,12 +487,12 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
         List<AgentResponseUpdate> updates = [];
-        await foreach (var update in agent.RunStreamingAsync(messages, thread))
+        await foreach (var update in agent.RunStreamingAsync(messages, session))
         {
             updates.Add(update);
         }
@@ -682,11 +682,11 @@ public sealed class AGUIAgentTests
         // Arrange
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
-            new RunStartedEvent { ThreadId = "server-thread-456", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "server-session-456", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "server-thread-456", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "server-session-456", RunId = "run1" }
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
@@ -700,8 +700,8 @@ public sealed class AGUIAgentTests
             updates.Add(update);
         }
 
-        // Assert - Should use thread ID from server
-        Assert.All(updates, u => Assert.Equal("server-thread-456", u.ConversationId));
+        // Assert - Should use session ID from server
+        Assert.All(updates, u => Assert.Equal("server-session-456", u.ConversationId));
     }
 
     [Fact]
@@ -802,18 +802,18 @@ public sealed class AGUIAgentTests
     [Fact]
     public async Task GetStreamingResponseAsync_UsesServerThreadId_WhenDifferentFromClientAsync()
     {
-        // Arrange - Server returns different thread ID
+        // Arrange - Server returns different session ID
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
-            new RunStartedEvent { ThreadId = "server-generated-thread", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "server-generated-session", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "server-generated-thread", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "server-generated-session", RunId = "run1" }
         ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
-        var options = new ChatOptions { ConversationId = "client-thread-123" };
+        var options = new ChatOptions { ConversationId = "client-session-123" };
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -824,7 +824,7 @@ public sealed class AGUIAgentTests
         }
 
         // Assert - Should use client's conversation ID (we provided it explicitly)
-        Assert.All(updates, u => Assert.Equal("client-thread-123", u.ConversationId));
+        Assert.All(updates, u => Assert.Equal("client-session-123", u.ConversationId));
     }
 
     [Fact]
@@ -947,7 +947,7 @@ public sealed class AGUIAgentTests
         }
 
         // Act - Second turn with conversation history including function call
-        // The thread ID should be extracted from the function call in the conversation history
+        // The session ID should be extracted from the function call in the conversation history
         options.ConversationId = conversationId;
         List<ChatResponseUpdate> secondTurnUpdates = [];
         await foreach (var update in chatClient.GetStreamingResponseAsync(conversation, options))
@@ -1017,7 +1017,7 @@ public sealed class AGUIAgentTests
     [Fact]
     public async Task GetStreamingResponseAsync_HandlesEmptyThreadId_GracefullyAsync()
     {
-        // Arrange - Server returns empty thread ID
+        // Arrange - Server returns empty session ID
         using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = string.Empty, RunId = "run1" },
@@ -1037,7 +1037,7 @@ public sealed class AGUIAgentTests
             updates.Add(update);
         }
 
-        // Assert - Should generate a conversation ID even with empty server thread ID
+        // Assert - Should generate a conversation ID even with empty server session ID
         Assert.NotEmpty(updates);
         Assert.All(updates, u => Assert.NotNull(u.ConversationId));
         Assert.All(updates, u => Assert.NotEmpty(u.ConversationId!));
@@ -1048,23 +1048,23 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         var handler = new TestDelegatingHandler();
-        // First turn: server returns thread-A
+        // First turn: server returns session-A
         handler.AddResponse(
         [
-            new RunStartedEvent { ThreadId = "thread-A", RunId = "run1" },
+            new RunStartedEvent { ThreadId = "session-A", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "First" },
             new TextMessageEndEvent { MessageId = "msg1" },
-            new RunFinishedEvent { ThreadId = "thread-A", RunId = "run1" }
+            new RunFinishedEvent { ThreadId = "session-A", RunId = "run1" }
         ]);
-        // Second turn: provide thread-A but server returns thread-B
+        // Second turn: provide session-A but server returns session-B
         handler.AddResponse(
         [
-            new RunStartedEvent { ThreadId = "thread-B", RunId = "run2" },
+            new RunStartedEvent { ThreadId = "session-B", RunId = "run2" },
             new TextMessageStartEvent { MessageId = "msg2", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg2", Delta = "Second" },
             new TextMessageEndEvent { MessageId = "msg2" },
-            new RunFinishedEvent { ThreadId = "thread-B", RunId = "run2" }
+            new RunFinishedEvent { ThreadId = "session-B", RunId = "run2" }
         ]);
         using HttpClient httpClient = new(handler);
 
@@ -1087,8 +1087,8 @@ public sealed class AGUIAgentTests
         }
 
         // Assert - Should use client-provided conversation ID, not server's changed ID
-        Assert.Equal("thread-A", firstConversationId);
-        Assert.Equal("thread-A", secondConversationId); // Client overrides server's thread-B
+        Assert.Equal("session-A", firstConversationId);
+        Assert.Equal("session-A", secondConversationId); // Client overrides server's session-B
     }
 
     [Fact]

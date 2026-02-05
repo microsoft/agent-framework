@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict
+from typing import Any, Generic, Literal
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -14,20 +14,18 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
-    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -41,18 +39,23 @@ from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region OpenAI Chat Options TypedDict
@@ -72,7 +75,7 @@ class Prediction(TypedDict, total=False):
     content: str | list[PredictionTextContent]
 
 
-class OpenAIChatOptions(ChatOptions, total=False):
+class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """OpenAI-specific chat options dict.
 
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.
@@ -198,7 +201,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
-                    case AIFunction():
+                    case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
                     case HostedWebSearchTool():
                         web_search_options = (
@@ -280,11 +283,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
-        finish_reason: FinishReason | None = None
+        finish_reason: str | None = None
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = FinishReason(value=choice.finish_reason)
+                finish_reason = choice.finish_reason
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -292,7 +295,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
-            messages.append(ChatMessage(role="assistant", contents=contents))
+            messages.append(ChatMessage("assistant", contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -312,7 +315,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
         if chunk.usage:
             return ChatResponseUpdate(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=[
                     Content.from_usage(
                         usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
@@ -324,12 +327,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 message_id=chunk.id,
             )
         contents: list[Content] = []
-        finish_reason: FinishReason | None = None
+        finish_reason: str | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
-                finish_reason = FinishReason(value=choice.finish_reason)
+                finish_reason = choice.finish_reason
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -338,7 +341,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
-            role=Role.ASSISTANT,
+            role="assistant",
             model_id=chunk.model,
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
@@ -425,7 +428,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        Role.TOOL messages need to be formatted different than system/user/assistant messages:
+        "tool" messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -454,9 +457,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 continue
 
             args: dict[str, Any] = {
-                "role": message.role.value if isinstance(message.role, Role) else message.role,
+                "role": message.role,
             }
-            if message.author_name and message.role != Role.TOOL:
+            if message.author_name and message.role != "tool":
                 args["name"] = message.author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]

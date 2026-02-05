@@ -39,17 +39,17 @@ internal sealed class AFAgentApplication : AgentApplication
         await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
 
         // Get the conversation history from turn state.
-        JsonElement threadElementStart = turnState.GetValue<JsonElement>("conversation.chatHistory");
+        JsonElement sessionElementStart = turnState.GetValue<JsonElement>("conversation.chatHistory");
 
-        // Deserialize the conversation history into an AgentThread, or create a new one if none exists.
-        AgentThread agentThread = threadElementStart.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null
-            ? await this._agent.DeserializeThreadAsync(threadElementStart, JsonUtilities.DefaultOptions, cancellationToken)
-            : await this._agent.GetNewThreadAsync(cancellationToken);
+        // Deserialize the conversation history into an AgentSession, or create a new one if none exists.
+        AgentSession agentSession = sessionElementStart.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null
+            ? await this._agent.DeserializeSessionAsync(sessionElementStart, JsonUtilities.DefaultOptions, cancellationToken)
+            : await this._agent.CreateSessionAsync(cancellationToken);
 
         ChatMessage chatMessage = HandleUserInput(turnContext);
 
         // Invoke the WeatherForecastAgent to process the message
-        AgentResponse agentResponse = await this._agent.RunAsync(chatMessage, agentThread, cancellationToken: cancellationToken);
+        AgentResponse agentResponse = await this._agent.RunAsync(chatMessage, agentSession, cancellationToken: cancellationToken);
 
         // Check for any user input requests in the response
         // and turn them into adaptive cards in the streaming response.
@@ -80,8 +80,8 @@ internal sealed class AFAgentApplication : AgentApplication
         }
 
         // Serialize and save the updated conversation history back to turn state.
-        JsonElement threadElementEnd = agentThread.Serialize(JsonUtilities.DefaultOptions);
-        turnState.SetValue("conversation.chatHistory", threadElementEnd);
+        JsonElement sessionElementEnd = this._agent.SerializeSession(agentSession, JsonUtilities.DefaultOptions);
+        turnState.SetValue("conversation.chatHistory", sessionElementEnd);
 
         // End the streaming response
         await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
@@ -131,58 +131,54 @@ internal sealed class AFAgentApplication : AgentApplication
     }
 
     /// <summary>
-    /// When the agent returns any user input requests, this method converts them into adaptive cards that
+    /// When the agent returns any function approval requests, this method converts them into adaptive cards that
     /// asks the user to approve or deny the requests.
     /// </summary>
-    /// <param name="response">The <see cref="AgentResponse"/> that may contain the user input requests.</param>
+    /// <param name="response">The <see cref="AgentResponse"/> that may contain the function approval requests.</param>
     /// <param name="attachments">The list of <see cref="Attachment"/> to which the adaptive cards will be added.</param>
     private static void HandleUserInputRequests(AgentResponse response, ref List<Attachment>? attachments)
     {
-        var userInputRequests = response.UserInputRequests.ToList();
-        if (userInputRequests.Count > 0)
+        foreach (FunctionApprovalRequestContent functionApprovalRequest in response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>())
         {
-            foreach (var functionApprovalRequest in userInputRequests.OfType<FunctionApprovalRequestContent>())
+            var functionApprovalRequestJson = JsonSerializer.Serialize(functionApprovalRequest, JsonUtilities.DefaultOptions);
+
+            var card = new AdaptiveCard("1.5");
+            card.Body.Add(new AdaptiveTextBlock
             {
-                var functionApprovalRequestJson = JsonSerializer.Serialize(functionApprovalRequest, JsonUtilities.DefaultOptions);
+                Text = "Function Call Approval Required",
+                Size = AdaptiveTextSize.Large,
+                Weight = AdaptiveTextWeight.Bolder,
+                HorizontalAlignment = AdaptiveHorizontalAlignment.Center
+            });
+            card.Body.Add(new AdaptiveTextBlock
+            {
+                Text = $"Function: {functionApprovalRequest.FunctionCall.Name}"
+            });
+            card.Body.Add(new AdaptiveActionSet()
+            {
+                Actions =
+                [
+                    new AdaptiveSubmitAction
+                    {
+                        Id = "Approve",
+                        Title = "Approve",
+                        Data = new { type = "functionApproval", approved = true, requestJson = functionApprovalRequestJson }
+                    },
+                    new AdaptiveSubmitAction
+                    {
+                        Id = "Deny",
+                        Title = "Deny",
+                        Data = new { type = "functionApproval", approved = false, requestJson = functionApprovalRequestJson }
+                    }
+                ]
+            });
 
-                var card = new AdaptiveCard("1.5");
-                card.Body.Add(new AdaptiveTextBlock
-                {
-                    Text = "Function Call Approval Required",
-                    Size = AdaptiveTextSize.Large,
-                    Weight = AdaptiveTextWeight.Bolder,
-                    HorizontalAlignment = AdaptiveHorizontalAlignment.Center
-                });
-                card.Body.Add(new AdaptiveTextBlock
-                {
-                    Text = $"Function: {functionApprovalRequest.FunctionCall.Name}"
-                });
-                card.Body.Add(new AdaptiveActionSet()
-                {
-                    Actions =
-                    [
-                        new AdaptiveSubmitAction
-                        {
-                            Id = "Approve",
-                            Title = "Approve",
-                            Data = new { type = "functionApproval", approved = true, requestJson = functionApprovalRequestJson }
-                        },
-                        new AdaptiveSubmitAction
-                        {
-                            Id = "Deny",
-                            Title = "Deny",
-                            Data = new { type = "functionApproval", approved = false, requestJson = functionApprovalRequestJson }
-                        }
-                    ]
-                });
-
-                attachments ??= [];
-                attachments.Add(new Attachment()
-                {
-                    ContentType = "application/vnd.microsoft.card.adaptive",
-                    Content = card.ToJson(),
-                });
-            }
+            attachments ??= [];
+            attachments.Add(new Attachment()
+            {
+                ContentType = "application/vnd.microsoft.card.adaptive",
+                Content = card.ToJson(),
+            });
         }
     }
 }

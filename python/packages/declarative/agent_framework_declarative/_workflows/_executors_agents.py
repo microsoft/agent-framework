@@ -348,7 +348,7 @@ class AgentExternalInputResponse:
 class ExternalLoopState:
     """State saved for external loop resumption.
 
-    Stored in shared_state to allow the response_handler to
+    Stored in workflow state to allow the response_handler to
     continue the loop with the same configuration.
     """
 
@@ -534,7 +534,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             return "Conversation.messages"
 
         # Evaluate the conversation ID expression
-        evaluated_id = await state.eval_if_expression(conversation_id_expr)
+        evaluated_id = state.eval_if_expression(conversation_id_expr)
         if not evaluated_id:
             return "Conversation.messages"
 
@@ -555,11 +555,11 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         # Evaluate arguments
         evaluated_args: dict[str, Any] = {}
         for key, value in arguments.items():
-            evaluated_args[key] = await state.eval_if_expression(value)
+            evaluated_args[key] = state.eval_if_expression(value)
 
         # Evaluate messages/input
         if messages_expr:
-            evaluated_input: Any = await state.eval_if_expression(messages_expr)
+            evaluated_input: Any = state.eval_if_expression(messages_expr)
             if isinstance(evaluated_input, str):
                 return evaluated_input
             if isinstance(evaluated_input, list) and evaluated_input:
@@ -581,17 +581,17 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         # 1. Local.input / Local.userInput (explicit turn state)
         # 2. System.LastMessage.Text (previous agent's response)
         # 3. Workflow.Inputs (first agent gets workflow inputs)
-        input_text: str = str(await state.get("Local.input") or await state.get("Local.userInput") or "")
+        input_text: str = str(state.get("Local.input") or state.get("Local.userInput") or "")
         if not input_text:
             # Try System.LastMessage.Text (used by external loop and agent chaining)
-            last_message: Any = await state.get("System.LastMessage")
+            last_message: Any = state.get("System.LastMessage")
             if isinstance(last_message, dict):
                 last_msg_dict = cast(dict[str, Any], last_message)
                 text_val: Any = last_msg_dict.get("Text", "")
                 input_text = str(text_val) if text_val else ""
         if not input_text:
             # Fall back to workflow inputs (for first agent in chain)
-            inputs: Any = await state.get("Workflow.Inputs")
+            inputs: Any = state.get("Workflow.Inputs")
             if isinstance(inputs, dict):
                 inputs_dict = cast(dict[str, Any], inputs)
                 # If single input, use its value directly
@@ -643,11 +643,11 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         # Add user input to conversation history first (via state.append only)
         if input_text:
             user_message = ChatMessage(role="user", text=input_text)
-            await state.append(messages_path, user_message)
+            state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
         # Note: We get a fresh copy to avoid mutation issues
-        conversation_history: list[ChatMessage] = await state.get(messages_path) or []
+        conversation_history: list[ChatMessage] = state.get(messages_path) or []
 
         # Build messages list for agent (use history if available, otherwise just input)
         messages_for_agent: list[ChatMessage] | str = conversation_history if conversation_history else input_text
@@ -704,7 +704,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     role,
                     content_types,
                 )
-                await state.append(messages_path, msg)
+                state.append(messages_path, msg)
         elif accumulated_response:
             # No messages returned, create a simple assistant message
             logger.debug(
@@ -712,24 +712,24 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 agent_name,
             )
             assistant_message = ChatMessage(role="assistant", text=accumulated_response)
-            await state.append(messages_path, assistant_message)
+            state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:
         # - Graph mode: Agent.response, Agent.name
         # - Interpreter mode: Agent.text, Agent.messages, Agent.toolCalls
-        await state.set("Agent.response", accumulated_response)
-        await state.set("Agent.name", agent_name)
-        await state.set("Agent.text", accumulated_response)
-        await state.set("Agent.messages", all_messages if all_messages else [])
-        await state.set("Agent.toolCalls", tool_calls if tool_calls else [])
+        state.set("Agent.response", accumulated_response)
+        state.set("Agent.name", agent_name)
+        state.set("Agent.text", accumulated_response)
+        state.set("Agent.messages", all_messages if all_messages else [])
+        state.set("Agent.toolCalls", tool_calls if tool_calls else [])
 
         # Store System.LastMessage for externalLoop.when condition evaluation
-        await state.set("System.LastMessage", {"Text": accumulated_response})
+        state.set("System.LastMessage", {"Text": accumulated_response})
 
         # Store in output variables (.NET style)
         if messages_var:
             output_path = _normalize_variable_path(messages_var)
-            await state.set(output_path, all_messages if all_messages else accumulated_response)
+            state.set(output_path, all_messages if all_messages else accumulated_response)
 
         if response_obj_var:
             output_path = _normalize_variable_path(response_obj_var)
@@ -737,14 +737,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             try:
                 parsed = _extract_json_from_response(accumulated_response) if accumulated_response else None
                 logger.debug(f"InvokeAzureAgent: parsed responseObject for '{output_path}': type={type(parsed)}")
-                await state.set(output_path, parsed)
+                state.set(output_path, parsed)
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"InvokeAzureAgent: failed to parse JSON for '{output_path}': {e}, storing as string")
-                await state.set(output_path, accumulated_response)
+                state.set(output_path, accumulated_response)
 
         # Store in result property (Python style)
         if result_property:
-            await state.set(result_property, accumulated_response)
+            state.set(result_property, accumulated_response)
 
         return accumulated_response, all_messages, tool_calls
 
@@ -788,7 +788,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         agent: Any = self._agents.get(agent_name) if self._agents else None
         if agent is None:
             try:
-                agent_registry: dict[str, Any] | None = await ctx.shared_state.get(AGENT_REGISTRY_KEY)
+                agent_registry: dict[str, Any] | None = ctx.state.get(AGENT_REGISTRY_KEY)
             except KeyError:
                 agent_registry = {}
             agent = agent_registry.get(agent_name) if agent_registry else None
@@ -796,9 +796,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if agent is None:
             error_msg = f"Agent '{agent_name}' not found in registry"
             logger.error(f"InvokeAzureAgent: {error_msg}")
-            await state.set("Agent.error", error_msg)
+            state.set("Agent.error", error_msg)
             if result_property:
-                await state.set(result_property, {"error": error_msg})
+                state.set(result_property, {"error": error_msg})
             raise AgentInvocationError(agent_name, "not found in registry")
 
         iteration = 0
@@ -820,14 +820,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}': {e}")
-            await state.set("Agent.error", str(e))
+            state.set("Agent.error", str(e))
             if result_property:
-                await state.set(result_property, {"error": str(e)})
+                state.set(result_property, {"error": str(e)})
             raise AgentInvocationError(agent_name, str(e)) from e
 
         # Check external loop condition
         if external_loop_when:
-            should_continue = await state.eval(external_loop_when)
+            should_continue = state.eval(external_loop_when)
             should_continue = bool(should_continue) if should_continue is not None else False
 
             logger.debug(
@@ -848,7 +848,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     messages_path=messages_path,
                     max_iterations=max_iterations,
                 )
-                await ctx.shared_state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
+                ctx.state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
 
                 # Emit request for external input - workflow will yield here
                 request = AgentExternalInputRequest(
@@ -883,12 +883,11 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             "handle_external_input_response: resuming with user_input='%s'",
             response.user_input[:100] if response.user_input else None,
         )
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         # Retrieve saved loop state
-        try:
-            loop_state: ExternalLoopState = await ctx.shared_state.get(EXTERNAL_LOOP_STATE_KEY)
-        except KeyError:
+        loop_state: ExternalLoopState | None = ctx.state.get(EXTERNAL_LOOP_STATE_KEY)
+        if loop_state is None:
             logger.error("InvokeAzureAgent: external loop state not found, cannot resume")
             await ctx.send_message(ActionComplete())
             return
@@ -910,12 +909,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         input_text = response.user_input
 
         # Store the user input in state for condition evaluation
-        await state.set("Local.userInput", input_text)
-        await state.set("System.LastMessage", {"Text": input_text})
+        state.set("Local.userInput", input_text)
+        state.set("System.LastMessage", {"Text": input_text})
 
         # Check if we should continue BEFORE invoking the agent
         # This matches .NET behavior where the condition checks the user's input
-        should_continue = await state.eval(external_loop_when)
+        should_continue = state.eval(external_loop_when)
         should_continue = bool(should_continue) if should_continue is not None else False
 
         logger.debug(
@@ -926,7 +925,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if not should_continue:
             # User input caused loop to exit - clean up and complete
             with contextlib.suppress(KeyError):
-                await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+                ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
             await ctx.send_message(ActionComplete())
             return
 
@@ -934,7 +933,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         agent: Any = self._agents.get(agent_name) if self._agents else None
         if agent is None:
             try:
-                agent_registry: dict[str, Any] | None = await ctx.shared_state.get(AGENT_REGISTRY_KEY)
+                agent_registry: dict[str, Any] | None = ctx.state.get(AGENT_REGISTRY_KEY)
             except KeyError:
                 agent_registry = {}
             agent = agent_registry.get(agent_name) if agent_registry else None
@@ -960,12 +959,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}' during loop: {e}")
-            await state.set("Agent.error", str(e))
+            state.set("Agent.error", str(e))
             raise AgentInvocationError(agent_name, str(e)) from e
 
         # Re-evaluate the condition AFTER the agent responds
         # This is critical: the agent's response may have set NeedsTicket=true or IsResolved=true
-        should_continue = await state.eval(external_loop_when)
+        should_continue = state.eval(external_loop_when)
         should_continue = bool(should_continue) if should_continue is not None else False
 
         logger.debug(
@@ -980,7 +979,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "(sending ActionComplete to continue workflow)"
             )
             with contextlib.suppress(KeyError):
-                await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+                ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
             await ctx.send_message(ActionComplete())
             return
 
@@ -988,7 +987,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if iteration < max_iterations:
             # Update loop state for next iteration
             loop_state.iteration = iteration + 1
-            await ctx.shared_state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
+            ctx.state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
 
             # Emit another request for external input
             request = AgentExternalInputRequest(
@@ -1007,7 +1006,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         # Loop complete - clean up and send completion
         with contextlib.suppress(KeyError):
-            await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+            ctx.state.delete(EXTERNAL_LOOP_STATE_KEY)
 
         await ctx.send_message(ActionComplete())
 
@@ -1035,7 +1034,7 @@ class InvokeToolExecutor(DeclarativeActionExecutor):
 
         # Get tools registry
         try:
-            tool_registry: dict[str, Any] | None = await ctx.shared_state.get(TOOL_REGISTRY_KEY)
+            tool_registry: dict[str, Any] | None = ctx.state.get(TOOL_REGISTRY_KEY)
         except KeyError:
             tool_registry = {}
 
@@ -1044,18 +1043,18 @@ class InvokeToolExecutor(DeclarativeActionExecutor):
         if tool is None:
             error_msg = f"Tool '{tool_name}' not found in registry"
             if output_property:
-                await state.set(output_property, {"error": error_msg})
+                state.set(output_property, {"error": error_msg})
             await ctx.send_message(ActionComplete())
             return
 
         # Build parameters
         params: dict[str, Any] = {}
         for param_name, param_expression in parameters.items():
-            params[param_name] = await state.eval_if_expression(param_expression)
+            params[param_name] = state.eval_if_expression(param_expression)
 
         # Add main input if specified
         if input_expr:
-            params["input"] = await state.eval_if_expression(input_expr)
+            params["input"] = state.eval_if_expression(input_expr)
 
         try:
             # Invoke the tool
@@ -1068,11 +1067,11 @@ class InvokeToolExecutor(DeclarativeActionExecutor):
 
                 # Store result
                 if output_property:
-                    await state.set(output_property, result)
+                    state.set(output_property, result)
 
         except Exception as e:
             if output_property:
-                await state.set(output_property, {"error": str(e)})
+                state.set(output_property, {"error": str(e)})
             await ctx.send_message(ActionComplete())
             return
 

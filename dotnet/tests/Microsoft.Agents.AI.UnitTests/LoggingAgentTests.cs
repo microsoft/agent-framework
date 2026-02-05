@@ -80,7 +80,7 @@ public class LoggingAgentTests
 
         var innerAgent = new TestAIAgent
         {
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
                 return new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
@@ -123,7 +123,7 @@ public class LoggingAgentTests
 
         var innerAgent = new TestAIAgent
         {
-            RunAsyncFunc = async (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = async (messages, session, options, cancellationToken) =>
             {
                 await Task.Yield();
                 return new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
@@ -165,7 +165,7 @@ public class LoggingAgentTests
 
         var innerAgent = new TestAIAgent
         {
-            RunAsyncFunc = (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = (messages, session, options, cancellationToken) =>
                 throw new OperationCanceledException()
         };
 
@@ -195,7 +195,7 @@ public class LoggingAgentTests
 
         var innerAgent = new TestAIAgent
         {
-            RunAsyncFunc = (messages, thread, options, cancellationToken) =>
+            RunAsyncFunc = (messages, session, options, cancellationToken) =>
                 throw new InvalidOperationException("Test exception")
         };
 
@@ -229,7 +229,7 @@ public class LoggingAgentTests
         };
 
         static async IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
             yield return new AgentResponseUpdate(ChatRole.Assistant, "Test");
@@ -278,7 +278,7 @@ public class LoggingAgentTests
         };
 
         static async IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
             yield return new AgentResponseUpdate(ChatRole.Assistant, "Update 1");
@@ -318,7 +318,7 @@ public class LoggingAgentTests
         };
 
         static async IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
             throw new OperationCanceledException();
@@ -365,7 +365,7 @@ public class LoggingAgentTests
         };
 
         static async IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
             throw new InvalidOperationException("Test exception");

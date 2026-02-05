@@ -11,8 +11,7 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
-    TextContent,
+    Content,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -67,7 +66,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             # Echo the last user message
             last_user_message = None
             for message in reversed(messages):
-                if message.role == Role.USER:
+                if message.role == "user":
                     last_user_message = message
                     break
 
@@ -76,7 +75,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
+        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
 
         return ChatResponse(
             messages=[response_message],
@@ -102,8 +101,8 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             # Stream character by character
             for char in response_text:
                 yield ChatResponseUpdate(
-                    contents=[TextContent(text=char)],
-                    role=Role.ASSISTANT,
+                    contents=[Content.from_text(text=char)],
+                    role="assistant",
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
                     model_id="echo-model-v1",
                 )

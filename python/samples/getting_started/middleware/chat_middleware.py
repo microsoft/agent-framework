@@ -10,8 +10,8 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
-    Role,
     chat_middleware,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -36,6 +36,8 @@ The example covers:
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -61,7 +63,7 @@ class InputObserverMiddleware(ChatMiddleware):
 
         for i, message in enumerate(context.messages):
             content = message.text if message.text else str(message.contents)
-            print(f"  Message {i + 1} ({message.role.value}): {content}")
+            print(f"  Message {i + 1} ({message.role}): {content}")
 
         print(f"[InputObserverMiddleware] Total messages: {len(context.messages)}")
 
@@ -70,7 +72,7 @@ class InputObserverMiddleware(ChatMiddleware):
         modified_count = 0
 
         for message in context.messages:
-            if message.role == Role.USER and message.text:
+            if message.role == "user" and message.text:
                 original_text = message.text
                 updated_text = original_text
 
@@ -78,7 +80,7 @@ class InputObserverMiddleware(ChatMiddleware):
                     updated_text = self.replacement
                     print(f"[InputObserverMiddleware] Updated: '{original_text}' -> '{updated_text}'")
 
-                modified_message = ChatMessage(role=message.role, text=updated_text)
+                modified_message = ChatMessage(message.role, [updated_text])
                 modified_messages.append(modified_message)
                 modified_count += 1
             else:
@@ -116,7 +118,7 @@ async def security_and_override_middleware(
                     context.result = ChatResponse(
                         messages=[
                             ChatMessage(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "
                                 "sensitive data.",

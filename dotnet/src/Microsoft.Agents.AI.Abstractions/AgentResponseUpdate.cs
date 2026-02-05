@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -95,13 +94,6 @@ public class AgentResponseUpdate
     [JsonIgnore]
     public string Text => this._contents is not null ? this._contents.ConcatText() : string.Empty;
 
-    /// <summary>Gets the user input requests associated with the response.</summary>
-    /// <remarks>
-    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
-    /// </remarks>
-    [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.OfType<UserInputRequestContent>() ?? [];
-
     /// <summary>Gets or sets the agent run response update content items.</summary>
     [AllowNull]
     public IList<AIContent> Contents
@@ -155,7 +147,7 @@ public class AgentResponseUpdate
     /// except for the last update, for which the token will be <see langword="null"/>.
     /// <para>
     /// This property should be used for stream resumption, where the continuation token of the latest received update should be
-    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentSession?, AgentRunOptions?, System.Threading.CancellationToken)"/>
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>

@@ -144,14 +144,17 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentThread());
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(System.Text.Json.JsonElement serializedThread,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentThread());
+        public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedState,
+            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
+
+        public override System.Text.Json.JsonElement SerializeSession(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default)
         {
@@ -162,7 +165,7 @@ public class InProcessExecutionTests
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
+            AgentSession? session = null,
             AgentRunOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -190,7 +193,7 @@ public class InProcessExecutionTests
     }
 
     /// <summary>
-    /// Simple thread implementation for SimpleTestAgent.
+    /// Simple session implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentThread : InMemoryAgentThread;
+    private sealed class SimpleTestAgentSession : InMemoryAgentSession;
 }

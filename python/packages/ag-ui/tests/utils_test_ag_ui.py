@@ -20,9 +20,6 @@ from agent_framework import (
 )
 from agent_framework._clients import TOptions_co
 
-from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
-from agent_framework_ag_ui._orchestrators import ExecutionContext
-
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -59,7 +56,7 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
             contents.extend(update.contents)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[ChatMessage("assistant", contents)],
             response_id="stub-response",
         )
 
@@ -125,14 +122,3 @@ class StubAgent(AgentProtocol):
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         return AgentThread()
-
-
-class TestExecutionContext(ExecutionContext):
-    """ExecutionContext helper that allows setting messages for tests."""
-
-    def set_messages(self, messages: list[ChatMessage], *, normalize: bool = True) -> None:
-        if normalize:
-            self._messages = _deduplicate_messages(_sanitize_tool_history(messages))
-        else:
-            self._messages = messages
-        self._snapshot_messages = None

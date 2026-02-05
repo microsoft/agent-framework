@@ -18,27 +18,27 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
-// Start a new thread for the agent conversation.
-AgentThread thread = await agent.GetNewThreadAsync();
+// Start a new session for the agent conversation.
+AgentSession session = await agent.CreateSessionAsync();
 
-// Run the agent with a new thread.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
+// Run the agent with a new session.
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
-// Serialize the thread state to a JsonElement, so it can be stored for later use.
-JsonElement serializedThread = thread.Serialize();
+// Serialize the session state to a JsonElement, so it can be stored for later use.
+JsonElement serializedSession = agent.SerializeSession(session);
 
-// Save the serialized thread to a temporary file (for demonstration purposes).
+// Save the serialized session to a temporary file (for demonstration purposes).
 string tempFilePath = Path.GetTempFileName();
-await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedThread));
+await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedSession));
 
-// Load the serialized thread from the temporary file (for demonstration purposes).
-JsonElement reloadedSerializedThread = JsonElement.Parse(await File.ReadAllTextAsync(tempFilePath))!;
+// Load the serialized session from the temporary file (for demonstration purposes).
+JsonElement reloadedSerializedSession = JsonElement.Parse(await File.ReadAllTextAsync(tempFilePath))!;
 
-// Deserialize the thread state after loading from storage.
-AgentThread resumedThread = await agent.DeserializeThreadAsync(reloadedSerializedThread);
+// Deserialize the session state after loading from storage.
+AgentSession resumedSession = await agent.DeserializeSessionAsync(reloadedSerializedSession);
 
-// Run the agent again with the resumed thread.
-Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
+// Run the agent again with the resumed session.
+Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedSession));
 
 // Cleanup by agent name removes the agent version created.
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

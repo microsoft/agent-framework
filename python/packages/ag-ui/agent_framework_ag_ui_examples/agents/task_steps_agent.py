@@ -18,7 +18,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallStartEvent,
 )
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, ai_function
+from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -39,7 +39,7 @@ class TaskStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.PENDING, description="The status of the step")
 
 
-@ai_function
+@tool
 def generate_task_steps(steps: list[TaskStep]) -> str:
     """Generate a list of task steps for completing a task.
 

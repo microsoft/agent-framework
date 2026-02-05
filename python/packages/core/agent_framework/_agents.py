@@ -3,7 +3,7 @@
 import inspect
 import re
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from itertools import chain
@@ -13,8 +13,8 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
-    TypedDict,
     cast,
+    overload,
     runtime_checkable,
 )
 from uuid import uuid4
@@ -31,36 +31,38 @@ from ._memory import Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
-from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionTool, ToolProtocol
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     normalize_messages,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_instrumentation
 
-if TYPE_CHECKING:
-    from ._types import ChatOptions
-
-
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
+
+if TYPE_CHECKING:
+    from ._types import ChatOptions
+
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 logger = get_logger("agent_framework")
@@ -89,8 +91,10 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         if value is None:
             continue
         if key == "tools" and result.get("tools"):
-            # Combine tool lists
-            result["tools"] = list(result["tools"]) + list(value)
+            # Combine tool lists, avoiding duplicates by name
+            existing_names = {getattr(t, "name", None) for t in result["tools"]}
+            unique_new = [t for t in value if getattr(t, "name", None) not in existing_names]
+            result["tools"] = list(result["tools"]) + unique_new
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts
             result["logit_bias"] = {**result["logit_bias"], **value}
@@ -206,7 +210,7 @@ class AgentProtocol(Protocol):
 
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -237,7 +241,7 @@ class AgentProtocol(Protocol):
 
     def run_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -415,8 +419,8 @@ class BaseAgent(SerializationMixin):
         stream_callback: Callable[[AgentResponseUpdate], None]
         | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
-    ) -> AIFunction[BaseModel, str]:
-        """Create an AIFunction tool that wraps this agent.
+    ) -> FunctionTool[BaseModel, str]:
+        """Create a FunctionTool that wraps this agent.
 
         Keyword Args:
             name: The name for the tool. If None, uses the agent's name.
@@ -427,7 +431,7 @@ class BaseAgent(SerializationMixin):
             stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
 
         Returns:
-            An AIFunction that can be used as a tool by other agents.
+            A FunctionTool that can be used as a tool by other agents.
 
         Raises:
             TypeError: If the agent does not implement AgentProtocol.
@@ -487,13 +491,14 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_updates(response_updates).text
 
-        agent_tool: AIFunction[BaseModel, str] = AIFunction(
+        agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
             input_model=input_model,  # type: ignore
+            approval_mode="never_require",
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
@@ -619,6 +624,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 provider-specific options including temperature, max_tokens, model_id,
                 tool_choice, and provider-specific options like reasoning_effort.
                 You can also create your own TypedDict for custom chat clients.
+                Note: response_format typing does not flow into run outputs when set via default_options.
                 These can be overridden at runtime via the ``options`` parameter of ``run()`` and ``run_stream()``.
             tools: The tools to use for the request.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
@@ -654,6 +660,14 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
+        tools_ = cast(
+            ToolProtocol
+            | Callable[..., Any]
+            | MutableMapping[str, Any]
+            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+            | None,
+            tools_,
+        )
 
         # Handle instructions - named parameter takes precedence over options
         instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
@@ -739,9 +753,10 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         ):  # type: ignore[reportAttributeAccessIssue, attr-defined]
             self.chat_client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
+    @overload
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -749,9 +764,38 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | None = None,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> AgentResponse[TResponseModelT]: ...
+
+    @overload
+    async def run(
+        self,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]: ...
+
+    async def run(
+        self,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        options: TOptions_co | Mapping[str, Any] | "ChatOptions[Any]" | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
         """Run the agent with the given messages and options.
 
         Note:
@@ -781,6 +825,14 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
+        tools_ = cast(
+            ToolProtocol
+            | Callable[..., Any]
+            | MutableMapping[str, Any]
+            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+            | None,
+            tools_,
+        )
 
         input_messages = normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
@@ -857,19 +909,26 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             response.messages,
             **{k: v for k, v in kwargs.items() if k != "thread"},
         )
+        response_format = co.get("response_format")
+        if not (
+            response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        ):
+            response_format = None
+
         return AgentResponse(
             messages=response.messages,
             response_id=response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
             value=response.value,
+            response_format=response_format,
             raw_representation=response,
             additional_properties=response.additional_properties,
         )
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         tools: ToolProtocol
@@ -877,7 +936,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: TOptions_co | None = None,
+        options: TOptions_co | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Stream the agent with the given messages and options.
@@ -985,9 +1044,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_chat_response_updates(
-            response_updates, output_format_type=co.get("response_format")
-        )
+        response = ChatResponse.from_updates(response_updates, output_format_type=co.get("response_format"))
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
         await self._notify_thread_of_new_messages(
@@ -1211,7 +1268,19 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         Raises:
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
-        chat_options = deepcopy(self.default_options) if self.default_options else {}
+        # Create a shallow copy of options and deep copy non-tool values
+        # Tools containing HTTP clients or other non-copyable objects cannot be deep copied
+        if self.default_options:
+            chat_options: dict[str, Any] = {}
+            for key, value in self.default_options.items():
+                if key == "tools":
+                    # Keep tool references as-is (don't deep copy)
+                    chat_options[key] = list(value) if value else []
+                else:
+                    # Deep copy other options to prevent mutation
+                    chat_options[key] = deepcopy(value)
+        else:
+            chat_options = {}
         thread = thread or self.get_new_thread()
         if thread.service_thread_id and thread.context_provider:
             await thread.context_provider.thread_created(thread.service_thread_id)
@@ -1235,7 +1304,7 @@ class ChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 if context.instructions:
                     chat_options["instructions"] = (
                         context.instructions
-                        if not chat_options.get("instructions")
+                        if "instructions" not in chat_options
                         else f"{chat_options['instructions']}\n{context.instructions}"
                     )
         thread_messages.extend(input_messages or [])

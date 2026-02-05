@@ -7,13 +7,11 @@ from agent_framework import (
     AgentResponse,
     ChatAgent,
     ChatMessage,
-    FunctionCallContent,
-    FunctionResultContent,
+    Content,
     HandoffAgentUserRequest,
     HandoffBuilder,
-    Role,
     WorkflowAgent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -38,19 +36,23 @@ Key Concepts:
 """
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# See:
+# samples/getting_started/tools/function_tool_with_approval.py
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
     """Simulated function to process a refund for a given order number."""
     return f"Refund processed successfully for order {order_number}."
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def check_order_status(order_number: Annotated[str, "Order number to check status for"]) -> str:
     """Simulated function to check the status of a given order number."""
     return f"Order {order_number} is currently being processed and will ship in 2 business days."
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def process_return(order_number: Annotated[str, "Order number to process return for"]) -> str:
     """Simulated function to process a return for a given order number."""
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
@@ -117,9 +119,9 @@ def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAg
     pending_requests: dict[str, HandoffAgentUserRequest] = {}
     for message in response.messages:
         if message.text:
-            print(f"- {message.author_name or message.role.value}: {message.text}")
+            print(f"- {message.author_name or message.role}: {message.text}")
         for content in message.contents:
-            if isinstance(content, FunctionCallContent):
+            if content.type == "function_call":
                 if isinstance(content.arguments, dict):
                     request = WorkflowAgent.RequestInfoFunctionArgs.from_dict(content.arguments)
                 elif isinstance(content.arguments, str):
@@ -128,6 +130,7 @@ def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAg
                     raise ValueError("Invalid arguments type. Expecting a request info structure for this sample.")
                 if isinstance(request.data, HandoffAgentUserRequest):
                     pending_requests[request.request_id] = request.data
+
     return pending_requests
 
 
@@ -196,11 +199,6 @@ async def main() -> None:
     # 1. The termination condition is met, OR
     # 2. We run out of scripted responses
     while pending_requests:
-        for request in pending_requests.values():
-            for message in request.agent_response.messages:
-                if message.text:
-                    print(f"- {message.author_name or message.role.value}: {message.text}")
-
         if not scripted_responses:
             # No more scripted responses; terminate the workflow
             responses = {req_id: HandoffAgentUserRequest.terminate() for req_id in pending_requests}
@@ -214,9 +212,9 @@ async def main() -> None:
             responses = {req_id: HandoffAgentUserRequest.create_response(user_response) for req_id in pending_requests}
 
         function_results = [
-            FunctionResultContent(call_id=req_id, result=response) for req_id, response in responses.items()
+            Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
         ]
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=function_results))
+        response = await agent.run(ChatMessage("tool", function_results))
         pending_requests = handle_response_and_requests(response)
 
 

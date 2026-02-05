@@ -60,23 +60,26 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     protected override string? IdCore => id;
     public override string? Name => id;
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-        => new(new HelloAgentThread());
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        => new(new HelloAgentSession());
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new HelloAgentThread());
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new HelloAgentSession());
 
-    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
+
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentResponseUpdate> update = [
-            await this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
+            await this.RunCoreStreamingAsync(messages, session, options, cancellationToken)
                       .SingleAsync(cancellationToken)
                       .ConfigureAwait(false)];
 
         return update.ToAgentResponse();
     }
 
-    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         yield return new(ChatRole.Assistant, "Hello World!")
         {
@@ -87,4 +90,4 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     }
 }
 
-internal sealed class HelloAgentThread() : InMemoryAgentThread();
+internal sealed class HelloAgentSession() : InMemoryAgentSession();

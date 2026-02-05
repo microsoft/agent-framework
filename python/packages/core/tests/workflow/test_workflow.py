@@ -2,9 +2,9 @@
 
 import asyncio
 import tempfile
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -13,8 +13,6 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunEvent,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatMessage,
@@ -23,7 +21,6 @@ from agent_framework import (
     FileCheckpointStorage,
     Message,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowCheckpointException,
     WorkflowContext,
@@ -90,7 +87,7 @@ class MockExecutorRequestApproval(Executor):
     @handler
     async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext) -> None:
         """A mock handler that requests approval."""
-        await ctx.set_shared_state(self.id, message.data)
+        ctx.set_state(self.id, message.data)
         await ctx.request_info(MockRequest(prompt="Mock approval request"), ApprovalMessage)
 
     @response_handler
@@ -101,7 +98,7 @@ class MockExecutorRequestApproval(Executor):
         ctx: WorkflowContext[NumberMessage, int],
     ) -> None:
         """A mock handler that processes the approval response."""
-        data = await ctx.get_shared_state(self.id)
+        data = ctx.get_state(self.id)
         assert isinstance(data, int)
         if response.approved:
             await ctx.yield_output(data)
@@ -371,7 +368,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            shared_state={},
+            state={},
             iteration_count=0,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
@@ -406,7 +403,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            shared_state={},
+            state={},
             iteration_count=0,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
@@ -439,7 +436,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
         test_checkpoint = WorkflowCheckpoint(
             workflow_id="test-workflow",
             messages={},
-            shared_state={},
+            state={},
             pending_request_info_events={
                 "request_123": RequestInfoEvent(
                     request_id="request_123",
@@ -483,7 +480,7 @@ class StateTrackingMessage:
 
 
 class StateTrackingExecutor(Executor):
-    """An executor that tracks state in shared state to test context reset behavior."""
+    """An executor that tracks state in workflow state to test context reset behavior."""
 
     @handler
     async def handle_message(
@@ -491,19 +488,16 @@ class StateTrackingExecutor(Executor):
         message: StateTrackingMessage,
         ctx: WorkflowContext[StateTrackingMessage, list[str]],
     ) -> None:
-        """Handle the message and track it in shared state."""
-        # Get existing messages from shared state
-        try:
-            existing_messages = await ctx.get_shared_state("processed_messages")
-        except KeyError:
-            existing_messages = []
+        """Handle the message and track it in workflow state."""
+        # Get existing messages from workflow state
+        existing_messages = ctx.get_state("processed_messages") or []
 
         # Record this message
         message_record = f"{message.run_id}:{message.data}"
         existing_messages.append(message_record)  # type: ignore
 
-        # Update shared state
-        await ctx.set_shared_state("processed_messages", existing_messages)
+        # Update workflow state
+        ctx.set_state("processed_messages", existing_messages)
 
         # Yield output
         await ctx.yield_output(existing_messages.copy())  # type: ignore
@@ -514,7 +508,7 @@ async def test_workflow_multiple_runs_no_state_collision():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        # Create executor that tracks state in shared state
+        # Create executor that tracks state in workflow state
         state_executor = StateTrackingExecutor(id="state_executor")
 
         # Build workflow with checkpointing
@@ -863,17 +857,17 @@ class _StreamingTestAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - returns complete response."""
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -885,7 +879,7 @@ class _StreamingTestAgent(BaseAgent):
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that run() emits AgentRunEvent while run_stream() emits AgentRunUpdateEvent."""
+    """Test that run() and run_stream() both emits WorkflowOutputEvents correctly with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
@@ -895,15 +889,17 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     result = await workflow.run("test message")
 
     # Filter for agent events (result is a list of events)
-    agent_run_events = [e for e in result if isinstance(e, AgentRunEvent)]
-    agent_update_events = [e for e in result if isinstance(e, AgentRunUpdateEvent)]
+    agent_response = [e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)]
+    agent_response_updates = [
+        e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+    ]
 
-    # In non-streaming mode, should have AgentRunEvent, no AgentRunUpdateEvent
-    assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
-    assert len(agent_update_events) == 0, "Expected no AgentRunUpdateEvent in non-streaming mode"
-    assert agent_run_events[0].executor_id == "agent_exec"
-    assert agent_run_events[0].data is not None
-    assert agent_run_events[0].data.messages[0].text == "Hello World"
+    # In non-streaming mode, should have AgentResponse, no AgentResponseUpdate
+    assert len(agent_response) == 1, "Expected exactly one AgentResponse in non-streaming mode"
+    assert len(agent_response_updates) == 0, "Expected no AgentResponseUpdate in non-streaming mode"
+    assert agent_response[0].executor_id == "agent_exec"
+    assert agent_response[0].data is not None
+    assert agent_response[0].data.messages[0].text == "Hello World"
 
     # Test streaming mode with run_stream()
     stream_events: list[WorkflowEvent] = []
@@ -911,22 +907,31 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    stream_agent_run_events = [e for e in stream_events if isinstance(e, AgentRunEvent)]
-    stream_agent_update_events = [e for e in stream_events if isinstance(e, AgentRunUpdateEvent)]
+    agent_response = [
+        cast(AgentResponse, e.data)  # type: ignore
+        for e in stream_events
+        if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
+    ]
+    agent_response_updates = [
+        e.data for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+    ]
 
-    # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
-    assert len(stream_agent_run_events) == 0, "Expected no AgentRunEvent in streaming mode"
-    assert len(stream_agent_update_events) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
+    # In streaming mode, should have AgentResponseUpdate, no AgentResponse
+    assert len(agent_response) == 0, "Expected no AgentResponse in streaming mode"
+    assert len(agent_response_updates) > 0, "Expected AgentResponseUpdate events in streaming mode"
 
     # Verify we got incremental updates (one per character in "Hello World")
-    assert len(stream_agent_update_events) == len("Hello World"), "Expected one update per character"
+    assert len(agent_response_updates) == len("Hello World"), "Expected one update per character"
 
     # Verify the updates build up to the full message
-    accumulated_text = "".join(
-        e.data.contents[0].text
-        for e in stream_agent_update_events
-        if e.data and e.data.contents and e.data.contents[0].text
-    )
+    accumulated_text = "".join([
+        e.contents[0].text
+        for e in agent_response_updates
+        if e.contents
+        and isinstance(e.contents[0], Content)
+        and e.contents[0].type == "text"
+        and e.contents[0].text is not None
+    ])
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"
 
 
@@ -975,3 +980,253 @@ async def test_workflow_run_stream_parameter_validation(
 
     # Invalid combinations already tested in test_workflow_run_parameter_validation
     # This test ensures streaming works correctly for valid parameters
+
+
+# region Output executor filtering tests
+
+
+class OutputProducerExecutor(Executor):
+    """An executor that produces a unique output value for testing output filtering."""
+
+    def __init__(self, id: str, output_value: int) -> None:
+        super().__init__(id=id)
+        self.output_value = output_value
+
+    @handler
+    async def handle_message(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+        await ctx.yield_output(self.output_value)
+
+
+class PassthroughExecutor(Executor):
+    """An executor that passes through messages and produces an output."""
+
+    def __init__(self, id: str, output_value: int) -> None:
+        super().__init__(id=id)
+        self.output_value = output_value
+
+    @handler
+    async def handle_message(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+        await ctx.yield_output(self.output_value)
+        await ctx.send_message(message)
+
+
+async def test_output_executors_empty_yields_all_outputs() -> None:
+    """Test that when _output_executors is empty (default), all outputs are yielded."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=10)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
+
+    # Build workflow with a -> b
+    workflow = WorkflowBuilder().set_start_executor(executor_a).add_edge(executor_a, executor_b).build()
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Both executors' outputs should be present
+    assert len(outputs) == 2
+    assert outputs == [10, 20]
+
+    output_events = [event for event in result if isinstance(event, WorkflowOutputEvent)]
+    assert len(output_events) == 2
+    assert output_events[0].executor_id == "executor_a"
+    assert output_events[1].executor_id == "executor_b"
+
+
+async def test_output_executors_filters_outputs_non_streaming() -> None:
+    """Test that only outputs from specified executors are yielded in non-streaming mode."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=10)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
+
+    # Build workflow with a -> b
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .with_output_from([executor_b])
+        .build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only executor_b's output should be present
+    assert len(outputs) == 1
+    assert outputs[0] == 20
+
+    output_events = [event for event in result if isinstance(event, WorkflowOutputEvent)]
+    assert len(output_events) == 1
+    assert output_events[0].executor_id == "executor_b"
+
+
+async def test_output_executors_filters_outputs_streaming() -> None:
+    """Test that only outputs from specified executors are yielded in streaming mode."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=100)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=200)
+
+    # Build workflow with a -> b
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .with_output_from([executor_a])
+        .build()
+    )
+
+    # Collect outputs from streaming
+    output_events: list[WorkflowOutputEvent] = []
+    async for event in workflow.run_stream(NumberMessage(data=0)):
+        if isinstance(event, WorkflowOutputEvent):
+            output_events.append(event)
+
+    # Only executor_a's output should be present
+    assert len(output_events) == 1
+    assert output_events[0].data == 100
+    assert output_events[0].executor_id == "executor_a"
+
+
+async def test_output_executors_with_multiple_specified_executors() -> None:
+    """Test filtering with multiple executors in the output list."""
+    # Create three executors with pass-through to reach all of them
+    executor_a = PassthroughExecutor(id="executor_a", output_value=1)
+    executor_b = PassthroughExecutor(id="executor_b", output_value=2)
+    executor_c = OutputProducerExecutor(id="executor_c", output_value=3)
+
+    # Build workflow with a -> b -> c
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .add_edge(executor_b, executor_c)
+        .with_output_from([executor_a, executor_c])
+        .build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only executor_a and executor_c outputs should be present
+    assert len(outputs) == 2
+    assert 1 in outputs  # executor_a
+    assert 3 in outputs  # executor_c
+    assert 2 not in outputs  # executor_b should be filtered out
+
+
+async def test_output_executors_with_nonexistent_executor_id() -> None:
+    """Test that specifying a non-existent executor ID doesn't break the workflow."""
+    executor_a = OutputProducerExecutor(id="executor_a", output_value=42)
+
+    workflow = WorkflowBuilder().set_start_executor(executor_a).build()
+
+    # Set output_executors to an ID that doesn't exist
+    workflow._output_executors = ["nonexistent_executor"]  # type: ignore
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # No outputs should be yielded since the executor ID doesn't match
+    assert len(outputs) == 0
+
+
+async def test_output_executors_filtering_with_fan_in() -> None:
+    """Test output filtering in a fan-in workflow."""
+
+    class FanOutStartExecutor(Executor):
+        """Executor that sends messages to fan-out targets."""
+
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            await ctx.yield_output(999)  # This should be filtered out
+            await ctx.send_message(NumberMessage(data=5))
+
+    class FanOutTargetExecutor(Executor):
+        """Executor that processes fan-out messages."""
+
+        def __init__(self, id: str, increment: int) -> None:
+            super().__init__(id=id)
+            self.increment = increment
+
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            await ctx.yield_output(888)  # This should be filtered out
+            await ctx.send_message(NumberMessage(data=message.data + self.increment))
+
+    # Create executors for fan-in pattern
+    executor_start = FanOutStartExecutor(id="executor_start")
+    executor_a = FanOutTargetExecutor(id="executor_a", increment=10)
+    executor_b = FanOutTargetExecutor(id="executor_b", increment=20)
+    aggregator = AggregatorExecutor(id="aggregator")
+
+    # Build fan-in workflow: start -> [a, b] -> aggregator
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_start)
+        .add_fan_out_edges(executor_start, [executor_a, executor_b])
+        .add_fan_in_edges([executor_a, executor_b], aggregator)
+        .with_output_from([aggregator])
+        .build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only aggregator output should be present
+    # executor_a sends 5+10=15, executor_b sends 5+20=25, aggregator sums: 15+25=40
+    assert len(outputs) == 1
+    assert outputs[0] == 40
+
+
+async def test_output_executors_filtering_with_send_responses() -> None:
+    """Test output filtering works correctly with send_responses method."""
+    executor = MockExecutorRequestApproval(id="approval_executor")
+
+    workflow = WorkflowBuilder().set_start_executor(executor).with_output_from([executor]).build()
+
+    # Run workflow which will request approval
+    result = await workflow.run(NumberMessage(data=42))
+
+    # Get request info events
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+
+    # Send approval response
+    responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
+    response_result = await workflow.send_responses(responses)
+    outputs = response_result.get_outputs()
+
+    # Output should be yielded since approval_executor is in output_executors
+    assert len(outputs) == 1
+    assert outputs[0] == 42
+
+
+async def test_output_executors_filtering_with_send_responses_streaming() -> None:
+    """Test output filtering works correctly with send_responses_streaming method."""
+    executor = MockExecutorRequestApproval(id="approval_executor")
+
+    workflow = WorkflowBuilder().set_start_executor(executor).build()
+
+    # Run workflow which will request approval
+    events_list: list[WorkflowEvent] = []
+    async for event in workflow.run_stream(NumberMessage(data=99)):
+        events_list.append(event)
+
+    # Get request info events
+    request_events = [e for e in events_list if isinstance(e, RequestInfoEvent)]
+    assert len(request_events) == 1
+
+    # Set output_executors to exclude the approval executor
+    workflow._output_executors = ["other_executor"]  # type: ignore
+
+    # Send approval response via streaming
+    responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
+    output_events: list[WorkflowOutputEvent] = []
+    async for event in workflow.send_responses_streaming(responses):
+        if isinstance(event, WorkflowOutputEvent):
+            output_events.append(event)
+
+    # No outputs should be yielded since approval_executor is not in output_executors
+    assert len(output_events) == 0
+
+
+# endregion

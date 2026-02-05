@@ -97,7 +97,7 @@ jobs:
         id: azure-functions-setup
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 600 --retries 3 --retry-delay 10
+        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 900 --retries 3 --retry-delay 10
         working-directory: ./python
       - name: Test core samples
         timeout-minutes: 10

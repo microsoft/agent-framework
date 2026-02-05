@@ -285,11 +285,11 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
         evaluated_input = ctx.state.eval_if_expression(input_messages)
         if evaluated_input:
             if isinstance(evaluated_input, str):
-                messages.append(ChatMessage(role="user", text=evaluated_input))
+                messages.append(ChatMessage("user", [evaluated_input]))
             elif isinstance(evaluated_input, list):
                 for msg_item in evaluated_input:  # type: ignore
                     if isinstance(msg_item, str):
-                        messages.append(ChatMessage(role="user", text=msg_item))
+                        messages.append(ChatMessage("user", [msg_item]))
                     elif isinstance(msg_item, ChatMessage):
                         messages.append(msg_item)
                     elif isinstance(msg_item, dict) and "content" in msg_item:
@@ -297,11 +297,11 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                         role: str = str(item_dict.get("role", "user"))
                         content: str = str(item_dict.get("content", ""))
                         if role == "user":
-                            messages.append(ChatMessage(role="user", text=content))
+                            messages.append(ChatMessage("user", [content]))
                         elif role == "assistant":
-                            messages.append(ChatMessage(role="assistant", text=content))
+                            messages.append(ChatMessage("assistant", [content]))
                         elif role == "system":
-                            messages.append(ChatMessage(role="system", text=content))
+                            messages.append(ChatMessage("system", [content]))
 
     # Evaluate and include input arguments
     evaluated_args: dict[str, Any] = {}
@@ -348,7 +348,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                         tool_calls.extend(chunk.tool_calls)
 
                 # Build consolidated response from updates
-                response = AgentResponse.from_agent_run_response_updates(updates)
+                response = AgentResponse.from_updates(updates)
                 text = response.text
                 response_messages = response.messages
 
@@ -361,7 +361,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                 # Add to conversation history
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
 
                 # Store in output variables (.NET style)
                 if output_messages_var:
@@ -414,7 +414,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                 # Add to conversation history
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
 
                 # Store in output variables (.NET style)
                 if output_messages_var:
@@ -560,7 +560,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
     # Add input as user message if provided
     if input_value:
         if isinstance(input_value, str):
-            messages.append(ChatMessage(role="user", text=input_value))
+            messages.append(ChatMessage("user", [input_value]))
         elif isinstance(input_value, ChatMessage):
             messages.append(input_value)
 
@@ -581,14 +581,14 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                     )
 
             # Build consolidated response from updates
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_updates(updates)
             text = response.text
             response_messages = response.messages
 
             ctx.state.set_agent_result(text=text, messages=response_messages)
 
             if text:
-                ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
 
             if output_path:
                 ctx.state.set(output_path, text)
@@ -607,7 +607,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
             ctx.state.set_agent_result(text=text, messages=response_messages)
 
             if text:
-                ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
 
             if output_path:
                 ctx.state.set(output_path, text)

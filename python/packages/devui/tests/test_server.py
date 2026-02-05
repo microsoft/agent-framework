@@ -384,7 +384,7 @@ async def test_checkpoint_api_endpoints(test_entities_dir):
     checkpoint = WorkflowCheckpoint(
         checkpoint_id="test_checkpoint_1",
         workflow_id="test_workflow",
-        shared_state={"key": "value"},
+        state={"key": "value"},
         iteration_count=1,
     )
     await storage.save_checkpoint(checkpoint)

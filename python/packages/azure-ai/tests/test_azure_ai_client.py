@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -21,7 +22,7 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
@@ -34,6 +35,7 @@ from azure.ai.projects.models import (
     ResponseTextFormatConfigurationJsonSchema,
     WebSearchPreviewTool,
 )
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
 from openai.types.responses.response import Response as OpenAIResponse
@@ -296,16 +298,16 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are a helpful assistant.")]),
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="System response")]),
+        ChatMessage("system", [Content.from_text(text="You are a helpful assistant.")]),
+        ChatMessage("user", [Content.from_text(text="Hello")]),
+        ChatMessage("assistant", [Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
 
     assert len(result_messages) == 2
-    assert result_messages[0].role == Role.USER
-    assert result_messages[1].role == Role.ASSISTANT
+    assert result_messages[0].role == "user"
+    assert result_messages[1].role == "assistant"
     assert instructions == "You are a helpful assistant."
 
 
@@ -316,8 +318,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
+        ChatMessage("user", [Content.from_text(text="Hello")]),
+        ChatMessage("assistant", [Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -417,7 +419,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -451,7 +453,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -490,7 +492,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -579,6 +581,107 @@ async def test_close_client_when_should_close_false(mock_project_client: MagicMo
     mock_project_client.close.assert_not_called()
 
 
+async def test_configure_azure_monitor_success(mock_project_client: MagicMock) -> None:
+    """Test configure_azure_monitor successfully configures Azure Monitor."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Mock the telemetry connection string retrieval
+    mock_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
+    )
+
+    mock_configure = MagicMock()
+    mock_views = MagicMock(return_value=[])
+    mock_resource = MagicMock()
+    mock_enable = MagicMock()
+
+    with (
+        patch.dict(
+            "sys.modules",
+            {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)},
+        ),
+        patch("agent_framework.observability.create_metric_views", mock_views),
+        patch("agent_framework.observability.create_resource", return_value=mock_resource),
+        patch("agent_framework.observability.enable_instrumentation", mock_enable),
+    ):
+        await client.configure_azure_monitor(enable_sensitive_data=True)
+
+        # Verify connection string was retrieved
+        mock_project_client.telemetry.get_application_insights_connection_string.assert_called_once()
+
+        # Verify Azure Monitor was configured
+        mock_configure.assert_called_once()
+        call_kwargs = mock_configure.call_args[1]
+        assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
+
+        # Verify instrumentation was enabled with sensitive data flag
+        mock_enable.assert_called_once_with(enable_sensitive_data=True)
+
+
+async def test_configure_azure_monitor_resource_not_found(mock_project_client: MagicMock) -> None:
+    """Test configure_azure_monitor handles ResourceNotFoundError gracefully."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Mock the telemetry to raise ResourceNotFoundError
+    mock_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        side_effect=ResourceNotFoundError("No Application Insights found")
+    )
+
+    # Should not raise, just log warning and return
+    await client.configure_azure_monitor()
+
+    # Verify connection string retrieval was attempted
+    mock_project_client.telemetry.get_application_insights_connection_string.assert_called_once()
+
+
+async def test_configure_azure_monitor_import_error(mock_project_client: MagicMock) -> None:
+    """Test configure_azure_monitor raises ImportError when azure-monitor-opentelemetry is not installed."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Mock the telemetry connection string retrieval
+    mock_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        return_value="InstrumentationKey=test-key"
+    )
+
+    # Mock the import to fail
+    with (
+        patch.dict(sys.modules, {"azure.monitor.opentelemetry": None}),
+        patch("builtins.__import__", side_effect=ImportError("No module named 'azure.monitor.opentelemetry'")),
+        pytest.raises(ImportError, match="azure-monitor-opentelemetry is required"),
+    ):
+        await client.configure_azure_monitor()
+
+
+async def test_configure_azure_monitor_with_custom_resource(mock_project_client: MagicMock) -> None:
+    """Test configure_azure_monitor uses custom resource when provided."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    mock_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        return_value="InstrumentationKey=test-key"
+    )
+
+    custom_resource = MagicMock()
+    mock_configure = MagicMock()
+
+    with (
+        patch.dict(
+            "sys.modules",
+            {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)},
+        ),
+        patch("agent_framework.observability.create_metric_views") as mock_views,
+        patch("agent_framework.observability.create_resource") as mock_create_resource,
+        patch("agent_framework.observability.enable_instrumentation"),
+    ):
+        mock_views.return_value = []
+
+        await client.configure_azure_monitor(resource=custom_resource)
+
+        # Verify custom resource was used, not create_resource
+        mock_create_resource.assert_not_called()
+        call_kwargs = mock_configure.call_args[1]
+        assert call_kwargs["resource"] is custom_resource
+
+
 async def test_agent_creation_with_instructions(
     mock_project_client: MagicMock,
 ) -> None:
@@ -591,14 +694,35 @@ async def test_agent_creation_with_instructions(
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
 
-    run_options = {"model": "test-model", "instructions": "Option instructions. "}
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Option instructions. "}
     messages_instructions = "Message instructions. "
 
-    await client._get_agent_reference_or_create(run_options, messages_instructions)  # type: ignore
+    await client._get_agent_reference_or_create(run_options, messages_instructions, chat_options)  # type: ignore
 
     # Verify agent was created with combined instructions
     call_args = mock_project_client.agents.create_version.call_args
     assert call_args[1]["definition"].instructions == "Message instructions. Option instructions. "
+
+
+async def test_agent_creation_with_instructions_from_chat_options(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with instructions passed only via chat_options."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Chat options instructions."}
+
+    await client._get_agent_reference_or_create(run_options, None, chat_options)  # type: ignore
+
+    call_args = mock_project_client.agents.create_version.call_args
+    assert call_args[1]["definition"].instructions == "Chat options instructions."
 
 
 async def test_agent_creation_with_additional_args(
@@ -675,8 +799,6 @@ async def test_use_latest_version_agent_not_found(
     mock_project_client: MagicMock,
 ) -> None:
     """Test _get_agent_reference_or_create when use_latest_version=True but agent doesn't exist."""
-    from azure.core.exceptions import ResourceNotFoundError
-
     client = create_test_azure_ai_client(mock_project_client, agent_name="non-existing-agent", use_latest_version=True)
 
     # Mock ResourceNotFoundError when trying to retrieve agent
@@ -846,7 +968,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (
@@ -970,6 +1092,128 @@ def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     assert result == "resp_parsed_12345"
 
 
+def test_prepare_mcp_tool_basic() -> None:
+    """Test _prepare_mcp_tool with basic HostedMCPTool."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP Server",
+        url="https://example.com/mcp",
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["server_label"] == "Test_MCP_Server"
+    assert result["server_url"] == "https://example.com/mcp"
+
+
+def test_prepare_mcp_tool_with_description() -> None:
+    """Test _prepare_mcp_tool with description."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        description="A test MCP server",
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["server_description"] == "A test MCP server"
+
+
+def test_prepare_mcp_tool_with_project_connection_id() -> None:
+    """Test _prepare_mcp_tool with project_connection_id in additional_properties."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        additional_properties={"project_connection_id": "conn-123"},
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["project_connection_id"] == "conn-123"
+    assert "headers" not in result  # headers should not be set when project_connection_id is present
+
+
+def test_prepare_mcp_tool_with_headers() -> None:
+    """Test _prepare_mcp_tool with headers (no project_connection_id)."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        headers={"Authorization": "Bearer token123"},
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["headers"] == {"Authorization": "Bearer token123"}
+
+
+def test_prepare_mcp_tool_with_allowed_tools() -> None:
+    """Test _prepare_mcp_tool with allowed_tools."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        allowed_tools=["tool1", "tool2"],
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert set(result["allowed_tools"]) == {"tool1", "tool2"}
+
+
+def test_prepare_mcp_tool_with_approval_mode_always_require() -> None:
+    """Test _prepare_mcp_tool with string approval_mode 'always_require'."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode="always_require",
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["require_approval"] == "always"
+
+
+def test_prepare_mcp_tool_with_approval_mode_never_require() -> None:
+    """Test _prepare_mcp_tool with string approval_mode 'never_require'."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode="never_require",
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert result["require_approval"] == "never"
+
+
+def test_prepare_mcp_tool_with_dict_approval_mode_always() -> None:
+    """Test _prepare_mcp_tool with dict approval_mode containing always_require_approval."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode={"always_require_approval": {"dangerous_tool", "risky_tool"}},
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert "require_approval" in result
+    assert "always" in result["require_approval"]
+    assert set(result["require_approval"]["always"]["tool_names"]) == {"dangerous_tool", "risky_tool"}
+
+
+def test_prepare_mcp_tool_with_dict_approval_mode_never() -> None:
+    """Test _prepare_mcp_tool with dict approval_mode containing never_require_approval."""
+    mcp_tool = HostedMCPTool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode={"never_require_approval": {"safe_tool"}},
+    )
+
+    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
+
+    assert "require_approval" in result
+    assert "never" in result["require_approval"]
+    assert set(result["require_approval"]["never"]["tool_names"]) == {"safe_tool"}
+
+
 def test_from_azure_ai_tools() -> None:
     """Test from_azure_ai_tools."""
     # Test MCP tool
@@ -1025,6 +1269,7 @@ def test_from_azure_ai_tools() -> None:
 # region Integration Tests
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -1109,10 +1354,10 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+        messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
     else:
         # Generic prompt for simple options
-        messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+        messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value, "tools": [get_weather]}
@@ -1126,7 +1371,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name == "response_format" else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -1212,11 +1457,11 @@ async def test_integration_agent_options(
             # Prepare test message
             if option_name.startswith("response_format"):
                 # Use prompt that works well with structured output
-                messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-                messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+                messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+                messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
             else:
                 # Generic prompt for simple options
-                messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+                messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
             # Build options dict
             options = {option_name: option_value}
@@ -1229,9 +1474,7 @@ async def test_integration_agent_options(
                 )
 
                 output_format = option_value if option_name.startswith("response_format") else None
-                response = await ChatResponse.from_chat_response_generator(
-                    response_gen, output_format_type=output_format
-                )
+                response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
             else:
                 # Test non-streaming mode
                 response = await client.get_response(
@@ -1273,7 +1516,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
             else:
                 response = await client.get_response(**content)
 
@@ -1298,7 +1541,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
             else:
                 response = await client.get_response(**content)
             assert response.text is not None

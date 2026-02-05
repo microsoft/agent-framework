@@ -22,8 +22,7 @@ from agent_framework import (
     Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    Role,
-    ai_function,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantsClient
@@ -405,7 +404,7 @@ async def test_process_stream_events_thread_run_created(mock_async_openai: Magic
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == Role.ASSISTANT
+    assert update.role == "assistant"
     assert update.contents == []
     assert update.raw_representation == mock_response.data
 
@@ -449,7 +448,7 @@ async def test_process_stream_events_message_delta_text(mock_async_openai: Magic
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == Role.ASSISTANT
+    assert update.role == "assistant"
     assert update.text == "Hello from assistant"
     assert update.raw_representation == mock_message_delta
 
@@ -488,7 +487,7 @@ async def test_process_stream_events_requires_action(mock_async_openai: MagicMoc
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == Role.ASSISTANT
+    assert update.role == "assistant"
     assert len(update.contents) == 1
     assert update.contents[0] == test_function_content
     assert update.raw_representation == mock_run
@@ -568,7 +567,7 @@ async def test_process_stream_events_run_completed_with_usage(
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role == Role.ASSISTANT
+    assert update.role == "assistant"
     assert len(update.contents) == 1
 
     # Check the usage content
@@ -609,6 +608,81 @@ def test_parse_function_calls_from_assistants_basic(mock_async_openai: MagicMock
     assert contents[0].arguments == {"location": "Seattle"}
 
 
+def test_parse_run_step_with_code_interpreter_tool_call(mock_async_openai: MagicMock) -> None:
+    """Test _parse_run_step_tool_call with code_interpreter type creates CodeInterpreterToolCallContent."""
+    client = create_test_openai_assistants_client(
+        mock_async_openai,
+        model_id="test-model",
+        assistant_id="test-assistant",
+    )
+
+    # Mock a run with required_action containing code_interpreter tool call
+    mock_run = MagicMock()
+    mock_run.id = "run_123"
+    mock_run.status = "requires_action"
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.id = "call_code_123"
+    mock_tool_call.type = "code_interpreter"
+    mock_code_interpreter = MagicMock()
+    mock_code_interpreter.input = "print('Hello, World!')"
+    mock_tool_call.code_interpreter = mock_code_interpreter
+
+    mock_required_action = MagicMock()
+    mock_required_action.submit_tool_outputs = MagicMock()
+    mock_required_action.submit_tool_outputs.tool_calls = [mock_tool_call]
+    mock_run.required_action = mock_required_action
+
+    # Parse the run step
+    contents = client._parse_function_calls_from_assistants(mock_run, "response_123")
+
+    # Should have CodeInterpreterToolCallContent
+    assert len(contents) == 1
+    assert contents[0].type == "code_interpreter_tool_call"
+    assert contents[0].call_id == '["response_123", "call_code_123"]'
+    assert contents[0].inputs is not None
+    assert len(contents[0].inputs) == 1
+    assert contents[0].inputs[0].type == "text"
+    assert contents[0].inputs[0].text == "print('Hello, World!')"
+
+
+def test_parse_run_step_with_mcp_tool_call(mock_async_openai: MagicMock) -> None:
+    """Test _parse_run_step_tool_call with mcp type creates MCPServerToolCallContent."""
+    client = create_test_openai_assistants_client(
+        mock_async_openai,
+        model_id="test-model",
+        assistant_id="test-assistant",
+    )
+
+    # Mock a run with required_action containing mcp tool call
+    mock_run = MagicMock()
+    mock_run.id = "run_456"
+    mock_run.status = "requires_action"
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.id = "call_mcp_456"
+    mock_tool_call.type = "mcp"
+    mock_tool_call.name = "fetch_data"
+    mock_tool_call.server_label = "DataServer"
+    mock_tool_call.args = {"key": "value"}
+
+    mock_required_action = MagicMock()
+    mock_required_action.submit_tool_outputs = MagicMock()
+    mock_required_action.submit_tool_outputs.tool_calls = [mock_tool_call]
+    mock_run.required_action = mock_required_action
+
+    # Parse the run step
+    contents = client._parse_function_calls_from_assistants(mock_run, "response_456")
+
+    # Should have MCPServerToolCallContent
+    assert len(contents) == 1
+    assert contents[0].type == "mcp_server_tool_call"
+    assert contents[0].call_id == '["response_456", "call_mcp_456"]'
+    assert contents[0].tool_name == "fetch_data"
+    assert contents[0].server_name == "DataServer"
+    assert contents[0].arguments == {"key": "value"}
+
+
 def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     """Test _prepare_options with basic chat options."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
@@ -621,7 +695,7 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
         "top_p": 0.9,
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -634,13 +708,13 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     assert tool_results is None
 
 
-def test_prepare_options_with_ai_function_tool(mock_async_openai: MagicMock) -> None:
-    """Test _prepare_options with AIFunction tool."""
+def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with a FunctionTool."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a simple function for testing and decorate it
-    @ai_function
+    @tool(approval_mode="never_require")
     def test_function(query: str) -> str:
         """A test function."""
         return f"Result for {query}"
@@ -650,7 +724,7 @@ def test_prepare_options_with_ai_function_tool(mock_async_openai: MagicMock) -> 
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -675,7 +749,7 @@ def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> 
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Calculate something")]
+    messages = [ChatMessage("user", ["Calculate something"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -695,7 +769,7 @@ def test_prepare_options_tool_choice_none(mock_async_openai: MagicMock) -> None:
         "tool_choice": "none",
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -716,7 +790,7 @@ def test_prepare_options_required_function(mock_async_openai: MagicMock) -> None
         "tool_choice": tool_choice,
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage("user", ["Hello"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -742,7 +816,7 @@ def test_prepare_options_with_file_search_tool(mock_async_openai: MagicMock) -> 
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Search for information")]
+    messages = [ChatMessage("user", ["Search for information"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -767,7 +841,7 @@ def test_prepare_options_with_mapping_tool(mock_async_openai: MagicMock) -> None
         "tool_choice": "auto",
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Use custom tool")]
+    messages = [ChatMessage("user", ["Use custom tool"])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
@@ -789,7 +863,7 @@ def test_prepare_options_with_pydantic_response_format(mock_async_openai: MagicM
         model_config = ConfigDict(extra="forbid")
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
-    messages = [ChatMessage(role=Role.USER, text="Test")]
+    messages = [ChatMessage("user", ["Test"])]
     options = {"response_format": TestResponse}
 
     run_options, _ = chat_client._prepare_options(messages, options)  # type: ignore
@@ -805,8 +879,8 @@ def test_prepare_options_with_system_message(mock_async_openai: MagicMock) -> No
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=Role.USER, text="Hello"),
+        ChatMessage("system", ["You are a helpful assistant."]),
+        ChatMessage("user", ["Hello"]),
     ]
 
     # Call the method
@@ -826,7 +900,7 @@ def test_prepare_options_with_image_content(mock_async_openai: MagicMock) -> Non
 
     # Create message with image content
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role=Role.USER, contents=[image_content])]
+    messages = [ChatMessage("user", [image_content])]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, {})  # type: ignore
@@ -923,6 +997,7 @@ def test_update_agent_name_and_description_none(mock_async_openai: MagicMock) ->
     assert chat_client.assistant_name is None
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -945,7 +1020,7 @@ async def test_get_response() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
         response = await openai_assistants_client.get_response(messages=messages)
@@ -963,7 +1038,7 @@ async def test_get_response_tools() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
         response = await openai_assistants_client.get_response(
@@ -991,7 +1066,7 @@ async def test_streaming() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
         response = openai_assistants_client.get_streaming_response(messages=messages)
@@ -1015,7 +1090,7 @@ async def test_streaming_tools() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
         response = openai_assistants_client.get_streaming_response(
@@ -1043,7 +1118,7 @@ async def test_with_existing_assistant() -> None:
     # First create an assistant to use in the test
     async with OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL) as temp_client:
         # Get the assistant ID by triggering assistant creation
-        messages = [ChatMessage(role="user", text="Hello")]
+        messages = [ChatMessage("user", ["Hello"])]
         await temp_client.get_response(messages=messages)
         assistant_id = temp_client.assistant_id
 
@@ -1054,7 +1129,7 @@ async def test_with_existing_assistant() -> None:
             assert isinstance(openai_assistants_client, ChatClientProtocol)
             assert openai_assistants_client.assistant_id == assistant_id
 
-            messages = [ChatMessage(role="user", text="What can you do?")]
+            messages = [ChatMessage("user", ["What can you do?"])]
 
             # Test that the client can be used to get a response
             response = await openai_assistants_client.get_response(messages=messages)
@@ -1073,7 +1148,7 @@ async def test_file_search() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = await openai_assistants_client.get_response(
@@ -1099,7 +1174,7 @@ async def test_file_search_streaming() -> None:
         assert isinstance(openai_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         file_id, vector_store = await create_vector_store(openai_assistants_client)
         response = openai_assistants_client.get_streaming_response(

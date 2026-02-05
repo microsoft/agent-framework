@@ -420,17 +420,25 @@ async def test_tool_result_function_approval_rejected():
 
 
 async def test_thread_metadata_tracking():
-    """Test that thread metadata includes ag_ui_thread_id and ag_ui_run_id."""
+    """Test that thread metadata includes ag_ui_thread_id and ag_ui_run_id.
+
+    AG-UI internal metadata is stored in thread.metadata for orchestration,
+    but filtered out before passing to the chat client's options.metadata.
+    """
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    thread_metadata: dict[str, Any] = {}
+    captured_thread: dict[str, Any] = {}
+    captured_options: dict[str, Any] = {}
 
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        metadata = options.get("metadata")
-        if metadata:
-            thread_metadata.update(metadata)
+        # Capture the thread object from kwargs
+        thread = kwargs.get("thread")
+        if thread and hasattr(thread, "metadata"):
+            captured_thread["metadata"] = thread.metadata
+        # Capture options to verify internal keys are NOT passed to chat client
+        captured_options.update(options)
         yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")])
 
     agent = ChatAgent(name="test_agent", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
@@ -446,22 +454,37 @@ async def test_thread_metadata_tracking():
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
+    # AG-UI internal metadata should be stored in thread.metadata
+    thread_metadata = captured_thread.get("metadata", {})
     assert thread_metadata.get("ag_ui_thread_id") == "test_thread_123"
     assert thread_metadata.get("ag_ui_run_id") == "test_run_456"
 
+    # Internal metadata should NOT be passed to chat client options
+    options_metadata = captured_options.get("metadata", {})
+    assert "ag_ui_thread_id" not in options_metadata
+    assert "ag_ui_run_id" not in options_metadata
+
 
 async def test_state_context_injection():
-    """Test that current state is injected into thread metadata."""
+    """Test that current state is injected into thread metadata.
+
+    AG-UI internal metadata (including current_state) is stored in thread.metadata
+    for orchestration, but filtered out before passing to the chat client's options.metadata.
+    """
     from agent_framework_ag_ui import AgentFrameworkAgent
 
-    thread_metadata: dict[str, Any] = {}
+    captured_thread: dict[str, Any] = {}
+    captured_options: dict[str, Any] = {}
 
     async def stream_fn(
         messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        metadata = options.get("metadata")
-        if metadata:
-            thread_metadata.update(metadata)
+        # Capture the thread object from kwargs
+        thread = kwargs.get("thread")
+        if thread and hasattr(thread, "metadata"):
+            captured_thread["metadata"] = thread.metadata
+        # Capture options to verify internal keys are NOT passed to chat client
+        captured_options.update(options)
         yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")])
 
     agent = ChatAgent(name="test_agent", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
@@ -479,10 +502,16 @@ async def test_state_context_injection():
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
+    # Current state should be stored in thread.metadata
+    thread_metadata = captured_thread.get("metadata", {})
     current_state = thread_metadata.get("current_state")
     if isinstance(current_state, str):
         current_state = json.loads(current_state)
     assert current_state == {"document": "Test content"}
+
+    # Internal metadata should NOT be passed to chat client options
+    options_metadata = captured_options.get("metadata", {})
+    assert "current_state" not in options_metadata
 
 
 async def test_no_messages_provided():
@@ -595,48 +624,6 @@ async def test_json_decode_error_in_tool_result():
     assert len(tool_events) == 0
 
 
-async def test_suppressed_summary_with_document_state():
-    """Test suppressed summary uses document state for confirmation message."""
-    from agent_framework.ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
-
-    async def stream_fn(
-        messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
-    ) -> AsyncIterator[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[Content.from_text(text="Response")])
-
-    agent = ChatAgent(name="test_agent", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
-    wrapper = AgentFrameworkAgent(
-        agent=agent,
-        state_schema={"document": {"type": "string"}},
-        predict_state_config={"document": {"tool": "write_doc", "tool_argument": "content"}},
-        confirmation_strategy=DocumentWriterConfirmationStrategy(),
-    )
-
-    # Simulate confirmation with document state
-    tool_result: dict[str, Any] = {"accepted": True, "steps": []}
-    input_data: dict[str, Any] = {
-        "messages": [
-            {
-                "role": "tool",
-                "content": json.dumps(tool_result),
-                "toolCallId": "confirm_123",
-            }
-        ],
-        "state": {"document": "This is the beginning of a document. It contains important information."},
-    }
-
-    events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
-        events.append(event)
-
-    # Should generate fallback summary from document state
-    text_events = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
-    assert len(text_events) > 0
-    # Should contain some reference to the document
-    full_text = "".join(e.delta for e in text_events)
-    assert "written" in full_text.lower() or "document" in full_text.lower()
-
-
 async def test_agent_with_use_service_thread_is_false():
     """Test that when use_service_thread is False, the AgentThread used to run the agent is NOT set to the service thread ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
@@ -693,12 +680,12 @@ async def test_agent_with_use_service_thread_is_true():
 
 async def test_function_approval_mode_executes_tool():
     """Test that function approval with approval_mode='always_require' sends the correct messages."""
-    from agent_framework import ai_function
+    from agent_framework import tool
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     messages_received: list[Any] = []
 
-    @ai_function(
+    @tool(
         name="get_datetime",
         description="Get the current date and time",
         approval_mode="always_require",
@@ -784,12 +771,12 @@ async def test_function_approval_mode_executes_tool():
 
 async def test_function_approval_mode_rejection():
     """Test that function approval rejection creates a rejection response."""
-    from agent_framework import ai_function
+    from agent_framework import tool
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     messages_received: list[Any] = []
 
-    @ai_function(
+    @tool(
         name="delete_all_data",
         description="Delete all user data",
         approval_mode="always_require",

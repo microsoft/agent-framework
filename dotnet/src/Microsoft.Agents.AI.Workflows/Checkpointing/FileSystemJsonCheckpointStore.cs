@@ -125,6 +125,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             JsonSerializer.Serialize(this._indexFile!, key, KeyTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
+            await this._indexFile!.FlushAsync(CancellationToken.None).ConfigureAwait(false);
 
             return key;
         }

@@ -28,35 +28,45 @@ namespace SampleApp
     {
         public override string? Name => "UpperCaseParrotAgent";
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-            => new(new CustomAgentThread());
+        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+            => new(new CustomAgentSession());
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new CustomAgentThread(serializedThread, jsonSerializerOptions));
-
-        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            // Create a thread if the user didn't supply one.
-            thread ??= await this.GetNewThreadAsync(cancellationToken);
-
-            if (thread is not CustomAgentThread typedThread)
+            if (session is not CustomAgentSession typedSession)
             {
-                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+                throw new ArgumentException($"The provided session is not of type {nameof(CustomAgentSession)}.", nameof(session));
+            }
+
+            return typedSession.Serialize(jsonSerializerOptions);
+        }
+
+        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentSession(serializedState, jsonSerializerOptions));
+
+        protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            // Create a session if the user didn't supply one.
+            session ??= await this.CreateSessionAsync(cancellationToken);
+
+            if (session is not CustomAgentSession typedSession)
+            {
+                throw new ArgumentException($"The provided session is not of type {nameof(CustomAgentSession)}.", nameof(session));
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatMessageStore.InvokingContext(messages);
-            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
-            // Notify the thread of the input and output messages.
-            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            // Notify the session of the input and output messages.
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
-            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
+            await typedSession.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             return new AgentResponse
             {
@@ -66,29 +76,29 @@ namespace SampleApp
             };
         }
 
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            // Create a thread if the user didn't supply one.
-            thread ??= await this.GetNewThreadAsync(cancellationToken);
+            // Create a session if the user didn't supply one.
+            session ??= await this.CreateSessionAsync(cancellationToken);
 
-            if (thread is not CustomAgentThread typedThread)
+            if (session is not CustomAgentSession typedSession)
             {
-                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+                throw new ArgumentException($"The provided session is not of type {nameof(CustomAgentSession)}.", nameof(session));
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatMessageStore.InvokingContext(messages);
-            var storeMessages = await typedThread.MessageStore.InvokingAsync(invokingContext, cancellationToken);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
-            // Notify the thread of the input and output messages.
-            var invokedContext = new ChatMessageStore.InvokedContext(messages, storeMessages)
+            // Notify the session of the input and output messages.
+            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
-            await typedThread.MessageStore.InvokedAsync(invokedContext, cancellationToken);
+            await typedSession.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             foreach (var message in responseMessages)
             {
@@ -128,14 +138,17 @@ namespace SampleApp
             });
 
         /// <summary>
-        /// A thread type for our custom agent that only supports in memory storage of messages.
+        /// A session type for our custom agent that only supports in memory storage of messages.
         /// </summary>
-        internal sealed class CustomAgentThread : InMemoryAgentThread
+        internal sealed class CustomAgentSession : InMemoryAgentSession
         {
-            internal CustomAgentThread() { }
+            internal CustomAgentSession() { }
 
-            internal CustomAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
-                : base(serializedThreadState, jsonSerializerOptions) { }
+            internal CustomAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedSessionState, jsonSerializerOptions) { }
+
+            internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+                => base.Serialize(jsonSerializerOptions);
         }
     }
 }

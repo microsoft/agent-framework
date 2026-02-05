@@ -10,6 +10,7 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
+from collections.abc import Generator
 from typing import Any
 
 import azure.functions as func
@@ -44,7 +45,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 
 # 4. Orchestration that runs the agent sequentially on a shared thread for chaining behaviour.
 @app.orchestration_trigger(context_name="context")
-def single_agent_orchestration(context: DurableOrchestrationContext):
+def single_agent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, str]:
     """Run the writer agent twice on the same thread to mirror chaining behaviour."""
 
     writer = app.get_agent(context, WRITER_AGENT_NAME)
@@ -116,12 +117,6 @@ async def get_orchestration_status(
         )
 
     status = await client.get_status(instance_id)
-    if status is None:
-        return func.HttpResponse(
-            body=json.dumps({"error": "Instance not found"}),
-            status_code=404,
-            mimetype="application/json",
-        )
 
     response_data: dict[str, Any] = {
         "instanceId": status.instance_id,

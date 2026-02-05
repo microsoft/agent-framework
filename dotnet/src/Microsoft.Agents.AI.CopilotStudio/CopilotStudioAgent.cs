@@ -42,43 +42,56 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-        => new(new CopilotStudioAgentThread());
+    public sealed override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentSession());
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// Get a new <see cref="AgentSession"/> instance using an existing conversation id, to continue that conversation.
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public ValueTask<AgentThread> GetNewThreadAsync(string conversationId)
-        => new(new CopilotStudioAgentThread() { ConversationId = conversationId });
+    /// <returns>A new <see cref="AgentSession"/> instance.</returns>
+    public ValueTask<AgentSession> CreateSessionAsync(string conversationId)
+        => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions));
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        Throw.IfNull(session);
+
+        if (session is not CopilotStudioAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new CopilotStudioAgentSession(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messages);
 
-        // Ensure that we have a valid thread to work with.
-        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not CopilotStudioAgentThread typedThread)
+        // Ensure that we have a valid session to work with.
+        // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
         }
 
-        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: false, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: false, this._logger);
         var responseMessagesList = new List<ChatMessage>();
         await foreach (var message in responseMessages.ConfigureAwait(false))
         {
@@ -98,26 +111,26 @@ public class CopilotStudioAgent : AIAgent
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messages);
 
-        // Ensure that we have a valid thread to work with.
-        // If the thread ID is null, we need to start a new conversation and set the thread ID accordingly.
+        // Ensure that we have a valid session to work with.
+        // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
 
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not CopilotStudioAgentThread typedThread)
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
         }
 
-        typedThread.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
+        typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedThread.ConversationId, cancellationToken), streaming: true, this._logger);
+        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: true, this._logger);
 
         // Enumerate the response messages
         await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))

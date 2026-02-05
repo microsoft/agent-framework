@@ -7,6 +7,9 @@
 - Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
 - Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
 - Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067));
+- Renamed AgentThread to AgentSession ([#3430](https://github.com/microsoft/agent-framework/pull/3430))
+- Moved AgentSession.Serialize to AIAgent.SerializeSession ([#3650](https://github.com/microsoft/agent-framework/pull/3650))
+- Renamed serializedSession parameter to serializedState on DeserializeSessionAsync for consistency ([#3681](https://github.com/microsoft/agent-framework/pull/3681))
 
 ## v1.0.0-preview.251204.1
 
