@@ -78,11 +78,11 @@ internal sealed class StructuredOutputAgent : DelegatingAIAgent
     {
         ChatResponseFormat responseFormat = options?.ResponseFormat
             ?? this._agentOptions?.ChatOptions?.ResponseFormat
-            ?? throw new InvalidOperationException($"Response format must be '{nameof(ChatResponseFormatJson)}', but none was specified.");
+            ?? throw new InvalidOperationException($"A response format of type '{nameof(ChatResponseFormatJson)}' must be specified, but none was specified.");
 
         if (responseFormat is not ChatResponseFormatJson jsonResponseFormat)
         {
-            throw new NotSupportedException($"Response format must be '{nameof(ChatResponseFormatJson)}', but was '{responseFormat.GetType().Name}'.");
+            throw new NotSupportedException($"A response format of type '{nameof(ChatResponseFormatJson)}' must be specified, but was '{responseFormat.GetType().Name}'.");
         }
 
         var chatOptions = this._agentOptions?.ChatOptions?.Clone() ?? new ChatOptions();

@@ -20,8 +20,8 @@ public static class AIAgentBuilderExtensions
     /// The chat client used to transform text responses into structured JSON format.
     /// If <see langword="null"/>, the chat client will be resolved from the service provider.
     /// </param>
-    /// <param name="configure">
-    /// An optional callback that provides additional configuration of the <see cref="StructuredOutputAgentOptions"/> instance.
+    /// <param name="optionsFactory">
+    /// An optional factory function that returns the <see cref="StructuredOutputAgentOptions"/> instance to use.
     /// This allows for fine-tuning the structured output behavior such as setting the response format or system message.
     /// </param>
     /// <returns>The <see cref="AIAgentBuilder"/> with structured output capabilities added, enabling method chaining.</returns>
@@ -35,20 +35,12 @@ public static class AIAgentBuilderExtensions
     public static AIAgentBuilder UseStructuredOutput(
         this AIAgentBuilder builder,
         IChatClient? chatClient = null,
-        Action<StructuredOutputAgentOptions>? configure = null) =>
+        Func<StructuredOutputAgentOptions>? optionsFactory = null) =>
         Throw.IfNull(builder).Use((innerAgent, services) =>
         {
             chatClient ??= services?.GetService<IChatClient>()
                 ?? throw new InvalidOperationException($"No {nameof(IChatClient)} was provided and none could be resolved from the service provider. Either provide an {nameof(IChatClient)} explicitly or register one in the dependency injection container.");
 
-            StructuredOutputAgentOptions? options = null;
-
-            if (configure is not null)
-            {
-                options = new StructuredOutputAgentOptions();
-                configure(options);
-            }
-
-            return new StructuredOutputAgent(innerAgent, chatClient, options);
+            return new StructuredOutputAgent(innerAgent, chatClient, optionsFactory?.Invoke());
         });
 }

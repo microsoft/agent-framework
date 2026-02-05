@@ -19,8 +19,10 @@ public sealed class StructuredOutputAgentOptions
     /// used by the agent.
     /// </summary>
     /// <remarks>
-    /// The <see cref="ChatOptions.ResponseFormat"/> should be set to a <see cref="ChatResponseFormatJson"/>
-    /// instance to specify the expected JSON schema for the structured output.
+    /// This property is optional. The <see cref="ChatOptions.ResponseFormat"/> should be set to a
+    /// <see cref="ChatResponseFormatJson"/> instance to specify the expected JSON schema for the structured output.
+    /// Note that if <see cref="AgentRunOptions.ResponseFormat"/> is provided when running the agent,
+    /// it will take precedence and override the <see cref="ChatOptions.ResponseFormat"/> specified here.
     /// </remarks>
     public ChatOptions? ChatOptions { get; set; }
 }

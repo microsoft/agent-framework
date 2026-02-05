@@ -85,23 +85,26 @@ public sealed class AIAgentBuilderExtensionsTests
     }
 
     [Fact]
-    public void UseStructuredOutput_WithConfigure_AppliesConfiguration()
+    public void UseStructuredOutput_WithOptionsFactory_AppliesConfiguration()
     {
         // Arrange
         AIAgentBuilder builder = this._innerAgent.AsBuilder();
-        bool configureInvoked = false;
+        bool factoryInvoked = false;
 
         // Act
         AIAgent agent = builder.UseStructuredOutput(
             this._chatClientMock.Object,
-            options =>
+            () =>
             {
-                configureInvoked = true;
-                options.ChatClientSystemMessage = "Custom system message";
+                factoryInvoked = true;
+                return new StructuredOutputAgentOptions
+                {
+                    ChatClientSystemMessage = "Custom system message"
+                };
             }).Build();
 
         // Assert
-        Assert.True(configureInvoked);
+        Assert.True(factoryInvoked);
         Assert.IsType<StructuredOutputAgent>(agent);
     }
 }
