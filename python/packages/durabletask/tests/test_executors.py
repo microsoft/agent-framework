@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentResponse, Role
+from agent_framework import AgentResponse
 from durabletask.entities import EntityInstanceId
 from durabletask.task import Task
 from pydantic import BaseModel
@@ -241,7 +241,7 @@ class TestClientAgentExecutorFireAndForget:
         # Verify it contains an acceptance message
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
-        assert result.messages[0].role == Role.SYSTEM
+        assert result.messages[0].role == "system"
         # Check message contains key information
         message_text = result.messages[0].text
         assert "accepted" in message_text.lower()
@@ -294,7 +294,7 @@ class TestOrchestrationAgentExecutorFireAndForget:
         response = result.get_result()
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.SYSTEM
+        assert response.messages[0].role == "system"
         assert "test-789" in response.messages[0].text
 
     def test_orchestration_blocking_mode_calls_call_entity(self, mock_orchestration_context: Mock) -> None:
@@ -392,7 +392,7 @@ class TestDurableAgentTask:
         result = task.get_result()
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
-        assert result.messages[0].role == Role.ASSISTANT
+        assert result.messages[0].role == "assistant"
 
     def test_durable_agent_task_propagates_failure(self, configure_failed_entity_task: Any) -> None:
         """Verify DurableAgentTask propagates task failures."""
@@ -519,8 +519,8 @@ class TestDurableAgentTask:
         result = task.get_result()
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 2
-        assert result.messages[0].role == Role.ASSISTANT
-        assert result.messages[1].role == Role.ASSISTANT
+        assert result.messages[0].role == "assistant"
+        assert result.messages[1].role == "assistant"
 
     def test_durable_agent_task_is_not_complete_initially(self, mock_entity_task: Mock) -> None:
         """Verify DurableAgentTask is not complete when first created."""

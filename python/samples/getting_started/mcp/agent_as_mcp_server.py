@@ -3,8 +3,8 @@
 from typing import Annotated, Any
 
 import anyio
-from agent_framework.openai import OpenAIResponsesClient
 from agent_framework import tool
+from agent_framework.openai import OpenAIResponsesClient
 
 """
 This sample demonstrates how to expose an Agent as an MCP server.
@@ -31,6 +31,7 @@ with the following configuration:
 ```
 """
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_specials() -> Annotated[str, "Returns the specials from the menu."]:
@@ -39,6 +40,7 @@ def get_specials() -> Annotated[str, "Returns the specials from the menu."]:
         Special Salad: Cobb Salad
         Special Drink: Chai Tea
         """
+
 
 @tool(approval_mode="never_require")
 def get_item_price(

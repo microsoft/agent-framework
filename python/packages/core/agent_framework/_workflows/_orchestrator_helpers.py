@@ -8,7 +8,7 @@ No inheritance required - just import and call.
 
 import logging
 
-from .._types import ChatMessage, Role
+from .._types import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
 
     Removes:
     - function_approval_request and function_call from assistant messages
-    - Tool response messages (Role.TOOL)
+    - Tool response messages (role="tool")
     - Messages with only tool calls and no text
 
     Preserves:
@@ -40,7 +40,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
     cleaned: list[ChatMessage] = []
     for msg in conversation:
         # Skip tool response messages entirely
-        if msg.role == Role.TOOL:
+        if msg.role == "tool":
             continue
 
         # Check for tool-related content
@@ -85,11 +85,11 @@ def create_completion_message(
         reason: Reason for completion (for default text generation)
 
     Returns:
-        ChatMessage with ASSISTANT role
+        ChatMessage with assistant role
     """
     message_text = text or f"Conversation {reason}."
     return ChatMessage(
-        role=Role.ASSISTANT,
-        text=message_text,
+        "assistant",
+        [message_text],
         author_name=author_name,
     )

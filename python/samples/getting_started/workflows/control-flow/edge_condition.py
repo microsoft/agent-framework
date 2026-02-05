@@ -9,12 +9,10 @@ from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutorResponse,
     ChatAgent,  # Output from an AgentExecutor
     ChatMessage,
-    Role,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
-    tool,
-)
+    )
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
@@ -125,7 +123,7 @@ async def to_email_assistant_request(
     """
     # Bridge executor. Converts a structured DetectionResult into a ChatMessage and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_response.text)
-    user_msg = ChatMessage(Role.USER, text=detection.email_content)
+    user_msg = ChatMessage("user", text=detection.email_content)
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -189,7 +187,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[ChatMessage("user", text=email)], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

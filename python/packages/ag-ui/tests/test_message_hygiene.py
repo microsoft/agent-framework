@@ -25,9 +25,7 @@ def test_sanitize_tool_history_injects_confirm_changes_result() -> None:
 
     sanitized = _sanitize_tool_history(messages)
 
-    tool_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "tool"
-    ]
+    tool_messages = [msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "tool"]
     assert len(tool_messages) == 1
     assert str(tool_messages[0].contents[0].call_id) == "call_confirm_123"
     assert tool_messages[0].contents[0].result == "Confirmed"

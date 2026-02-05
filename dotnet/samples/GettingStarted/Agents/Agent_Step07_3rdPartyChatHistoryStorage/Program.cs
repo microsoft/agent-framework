@@ -2,7 +2,9 @@
 
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
-// This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
+// This sample shows how to create and use a simple AI agent with custom ChatHistoryProvider that stores chat history in a custom storage location.
+// The state of the custom ChatHistoryProvider (SessionDbKey) is stored with the agent session, so that when the session is resumed later,
+// the chat history can be retrieved from the custom storage location.
 
 using System.Text.Json;
 using Azure.AI.OpenAI;
@@ -47,7 +49,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session
 // Serialize the session state, so it can be stored for later use.
 // Since the chat history is stored in the vector store, the serialized session
 // only contains the guid that the messages are stored under in the vector store.
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 
 Console.WriteLine("\n--- Serialized session ---\n");
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, new JsonSerializerOptions { WriteIndented = true }));

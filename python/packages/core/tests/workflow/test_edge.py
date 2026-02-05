@@ -10,7 +10,6 @@ from agent_framework import (
     Executor,
     InProcRunnerContext,
     Message,
-    SharedState,
     WorkflowContext,
     handler,
 )
@@ -24,6 +23,7 @@ from agent_framework._workflows._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from agent_framework._workflows._edge_runner import create_edge_runner
+from agent_framework._workflows._shared_state import SharedState
 from agent_framework.observability import EdgeGroupDeliveryStatus
 
 # Add for test

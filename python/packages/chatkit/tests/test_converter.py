@@ -5,7 +5,7 @@
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage
 from chatkit.types import UserMessageTextContent
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -44,7 +44,7 @@ class TestThreadItemConverter:
 
         assert len(result) == 1
         assert isinstance(result[0], ChatMessage)
-        assert result[0].role == Role.USER
+        assert result[0].role == "user"
         assert result[0].text == "Hello, how can you help me?"
 
     async def test_to_agent_input_empty_text(self, converter):
@@ -117,7 +117,7 @@ class TestThreadItemConverter:
         result = converter.hidden_context_to_input(hidden_item)
 
         assert isinstance(result, ChatMessage)
-        assert result.role == Role.SYSTEM
+        assert result.role == "system"
         assert result.text == "<HIDDEN_CONTEXT>This is hidden context information</HIDDEN_CONTEXT>"
 
     def test_tag_to_message_content(self, converter):
@@ -234,7 +234,7 @@ class TestThreadItemConverter:
 
         assert len(result) == 1
         message = result[0]
-        assert message.role == Role.USER
+        assert message.role == "user"
         assert len(message.contents) == 2
 
         # First content should be text
@@ -303,7 +303,7 @@ class TestThreadItemConverter:
 
         result = converter.task_to_input(task_item)
         assert isinstance(result, ChatMessage)
-        assert result.role == Role.USER
+        assert result.role == "user"
         assert "Analysis: Analyzed the data" in result.text
         assert "<Task>" in result.text
 
@@ -385,7 +385,7 @@ class TestThreadItemConverter:
 
         result = converter.widget_to_input(widget_item)
         assert isinstance(result, ChatMessage)
-        assert result.role == Role.USER
+        assert result.role == "user"
         assert "widget_1" in result.text
         assert "graphical UI widget" in result.text
 
@@ -418,5 +418,5 @@ class TestSimpleToAgentInput:
 
         assert len(result) == 1
         assert isinstance(result[0], ChatMessage)
-        assert result[0].role == Role.USER
+        assert result[0].role == "user"
         assert result[0].text == "Test message"

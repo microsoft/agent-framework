@@ -106,7 +106,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
         .with_checkpointing(checkpoint_storage)
         .with_termination_condition(
             # Terminate after 5 user messages for this demo
-            lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 5
+            lambda conv: sum(1 for msg in conv if msg.role == "user") >= 5
         )
         .build()
     )
@@ -285,7 +285,7 @@ async def resume_with_responses(
                 # Now safe to cast event.data to list[ChatMessage]
                 conversation = cast(list[ChatMessage], event.data)
                 for msg in conversation[-3:]:  # Show last 3 messages
-                    author = msg.author_name or msg.role.value
+                    author = msg.author_name or msg.role
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text
                     print(f"  {author}: {text}")
 

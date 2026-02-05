@@ -36,7 +36,7 @@ public sealed class GitHubCopilotAgentSession : AgentSession
     }
 
     /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         State state = new()
         {

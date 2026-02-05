@@ -55,7 +55,7 @@ await Task.Delay(TimeSpan.FromSeconds(2));
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
 Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 

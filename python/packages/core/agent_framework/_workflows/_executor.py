@@ -116,8 +116,8 @@ class Executor(RequestInfoMixin, DictConvertible):
             async def log_message(self, msg: str, ctx: WorkflowContext) -> None:
                 print(f"Received: {msg}")  # Only logging, no outputs
 
-    ### WorkflowContext[T_Out]
-    Enables sending messages of type T_Out via `ctx.send_message()`:
+    ### WorkflowContext[OutT]
+    Enables sending messages of type OutT via `ctx.send_message()`:
 
     .. code-block:: python
 
@@ -126,8 +126,8 @@ class Executor(RequestInfoMixin, DictConvertible):
             async def handler(self, msg: str, ctx: WorkflowContext[int]) -> None:
                 await ctx.send_message(42)  # Can send int messages
 
-    ### WorkflowContext[T_Out, T_W_Out]
-    Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
+    ### WorkflowContext[OutT, W_OutT]
+    Enables both sending messages (OutT) and yielding workflow outputs (W_OutT):
 
     .. code-block:: python
 

@@ -24,8 +24,11 @@ internal sealed class TestAIAgent : AIAgent
 
     public override string? Description => this.DescriptionFunc?.Invoke() ?? base.Description;
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(this.DeserializeSessionFunc(serializedSession, jsonSerializerOptions));
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => throw new NotImplementedException();
+
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(this.DeserializeSessionFunc(serializedState, jsonSerializerOptions));
 
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(this.CreateSessionFunc());
