@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Chat history reduction, e.g. where messages needs to be summarized or truncated to reduce the size.</description></item>
 /// </list>
 /// An <see cref="AgentSession"/> is always constructed by an <see cref="AIAgent"/> so that the <see cref="AIAgent"/>
-/// can attach any necessary behaviors to the <see cref="AgentSession"/>. See the <see cref="AIAgent.GetNewSessionAsync(System.Threading.CancellationToken)"/>
+/// can attach any necessary behaviors to the <see cref="AgentSession"/>. See the <see cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
 /// and <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> methods for more information.
 /// </para>
 /// <para>
@@ -36,13 +36,13 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentSession"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
-/// The <see cref="AgentSession"/> provides the <see cref="Serialize(JsonSerializerOptions?)"/> method to serialize the session to a
+/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSession(AgentSession, JsonSerializerOptions?)"/> method to serialize the session to a
 /// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the session.
 /// </para>
 /// </remarks>
 /// <seealso cref="AIAgent"/>
-/// <seealso cref="AIAgent.GetNewSessionAsync(System.Threading.CancellationToken)"/>
+/// <seealso cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
 /// <seealso cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/>
 public abstract class AgentSession
 {
@@ -52,14 +52,6 @@ public abstract class AgentSession
     protected AgentSession()
     {
     }
-
-    /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        => default;
 
     /// <summary>Asks the <see cref="AgentSession"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

@@ -4,8 +4,9 @@ import asyncio
 import json
 from typing import Annotated, Any
 
-from agent_framework import ChatMessage, SequentialBuilder, WorkflowOutputEvent, tool
+from agent_framework import ChatMessage, WorkflowOutputEvent, tool
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from pydantic import Field
 
 """
@@ -15,8 +16,8 @@ This sample demonstrates how to flow custom context (skill data, user tokens, et
 through any workflow pattern to @tool functions using the **kwargs pattern.
 
 Key Concepts:
-- Pass custom context as kwargs when invoking workflow.run_stream() or workflow.run()
-- kwargs are stored in SharedState and passed to all agent invocations
+- Pass custom context as kwargs when invoking workflow.run()
+- kwargs are stored in State and passed to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 - Works with Sequential, Concurrent, GroupChat, Handoff, and Magentic patterns
 
@@ -112,10 +113,10 @@ async def main() -> None:
     print("-" * 70)
 
     # Run workflow with kwargs - these will flow through to tools
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "Please get my user data and then call the users API endpoint.",
-        custom_data=custom_data,
-        user_token=user_token,
+        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        stream=True,
     ):
         if isinstance(event, WorkflowOutputEvent):
             output_data = event.data

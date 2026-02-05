@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import cast
 
 from agent_framework import (
+    AgentResponse,
     ChatAgent,
     ChatMessage,
     Content,
     FileCheckpointStorage,
+    HandoffAgentUserRequest,
     HandoffBuilder,
-    HandoffUserInputRequest,
     RequestInfoEvent,
     Workflow,
     WorkflowOutputEvent,
@@ -26,7 +27,7 @@ from azure.identity import AzureCliCredential
 Sample: Handoff Workflow with Tool Approvals + Checkpoint Resume
 
 Demonstrates the two-step pattern for resuming a handoff workflow from a checkpoint
-while handling both HandoffUserInputRequest prompts and function approval request Content
+while handling both HandoffAgentUserRequest prompts and function approval request Content
 for tool calls (e.g., submit_refund).
 
 Scenario:
@@ -38,7 +39,7 @@ Scenario:
 6. Workflow continues from the saved state.
 
 Pattern:
-- Step 1: workflow.run_stream(checkpoint_id=...) to restore checkpoint and pending requests.
+- Step 1: workflow.run(checkpoint_id=..., stream=True) to restore checkpoint and pending requests.
 - Step 2: workflow.send_responses_streaming(responses) to supply human replies and approvals.
 - Two-step approach is required because send_responses_streaming does not accept checkpoint_id.
 
@@ -102,11 +103,11 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
             name="checkpoint_handoff_demo",
             participants=[triage, refund, order],
         )
-        .set_coordinator("triage_agent")
+        .with_start_agent(triage)
         .with_checkpointing(checkpoint_storage)
         .with_termination_condition(
             # Terminate after 5 user messages for this demo
-            lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 5
+            lambda conv: sum(1 for msg in conv if msg.role == "user") >= 5
         )
         .build()
     )
@@ -114,36 +115,39 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow
     return workflow, triage, refund, order
 
 
-def _print_handoff_request(request: HandoffUserInputRequest, request_id: str) -> None:
+def _print_handoff_agent_user_request(response: AgentResponse) -> None:
+    """Display the agent's response messages when requesting user input."""
+    if not response.messages:
+        print("(No agent messages)")
+        return
+
+    print("\n[Agent is requesting your input...]")
+    for message in response.messages:
+        if not message.text:
+            continue
+        speaker = message.author_name or message.role
+        print(f"  {speaker}: {message.text}")
+
+
+def _print_handoff_request(request: HandoffAgentUserRequest, request_id: str) -> None:
     """Log pending handoff request details for debugging."""
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - User input needed")
     print(f"Request ID: {request_id}")
-    print(f"Awaiting agent: {request.awaiting_agent_id}")
-    print(f"Prompt: {request.prompt}")
+    print(f"Awaiting agent: {request.agent_response.agent_id}")
 
-    # Note: After checkpoint restore, conversation may be empty because it's not serialized
-    # to prevent duplication (the conversation is preserved in the coordinator's state).
-    # See issue #2667.
-    if request.conversation:
-        print("\nConversation so far:")
-        for msg in request.conversation[-3:]:
-            author = msg.author_name or msg.role.value
-            snippet = msg.text[:120] + "..." if len(msg.text) > 120 else msg.text
-            print(f"  {author}: {snippet}")
-    else:
-        print("\n(Conversation restored from checkpoint - context preserved in workflow state)")
+    _print_handoff_agent_user_request(request.agent_response)
 
     print(f"{'=' * 60}\n")
 
 
 def _print_function_approval_request(request: Content, request_id: str) -> None:
     """Log pending tool approval details for debugging."""
-    args = request.function_call.parse_arguments() or {}
+    args = request.function_call.parse_arguments() or {}  # type: ignore
     print(f"\n{'=' * 60}")
     print("WORKFLOW PAUSED - Tool approval required")
     print(f"Request ID: {request_id}")
-    print(f"Function: {request.function_call.name}")
+    print(f"Function: {request.function_call.name}")  # type: ignore
     print(f"Arguments:\n{json.dumps(args, indent=2)}")
     print(f"{'=' * 60}\n")
 
@@ -157,9 +161,9 @@ def _build_responses_for_requests(
     """Create response payloads for each pending request."""
     responses: dict[str, object] = {}
     for request in pending_requests:
-        if isinstance(request.data, HandoffUserInputRequest):
+        if isinstance(request.data, HandoffAgentUserRequest):
             if user_response is None:
-                raise ValueError("User response is required for HandoffUserInputRequest")
+                raise ValueError("User response is required for HandoffAgentUserRequest")
             responses[request.request_id] = user_response
         elif isinstance(request.data, Content) and request.data.type == "function_approval_request":
             if approve_tools is None:
@@ -186,10 +190,10 @@ async def run_until_user_input_needed(
 
     if initial_message:
         print(f"\nStarting workflow with: {initial_message}\n")
-        event_stream = workflow.run_stream(message=initial_message)  # type: ignore[attr-defined]
+        event_stream = workflow.run(message=initial_message, stream=True)  # type: ignore[attr-defined]
     elif checkpoint_id:
         print(f"\nResuming workflow from checkpoint: {checkpoint_id}\n")
-        event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)  # type: ignore[attr-defined]
+        event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)  # type: ignore[attr-defined]
     else:
         raise ValueError("Must provide either initial_message or checkpoint_id")
 
@@ -199,7 +203,7 @@ async def run_until_user_input_needed(
 
         elif isinstance(event, RequestInfoEvent):
             pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -253,10 +257,10 @@ async def resume_with_responses(
     # Step 1: Restore the checkpoint to load pending requests into memory
     # The checkpoint restoration re-emits pending RequestInfoEvents
     restored_requests: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id):  # type: ignore[attr-defined]
+    async for event in workflow.run(checkpoint_id=latest_checkpoint.checkpoint_id, stream=True):  # type: ignore[attr-defined]
         if isinstance(event, RequestInfoEvent):
             restored_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -279,17 +283,17 @@ async def resume_with_responses(
 
         elif isinstance(event, WorkflowOutputEvent):
             print("\n[Workflow Output Event - Conversation Update]")
-            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):
+            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
                 # Now safe to cast event.data to list[ChatMessage]
-                conversation = cast(list[ChatMessage], event.data)
+                conversation = cast(list[ChatMessage], event.data)  # type: ignore
                 for msg in conversation[-3:]:  # Show last 3 messages
-                    author = msg.author_name or msg.role.value
+                    author = msg.author_name or msg.role
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text
                     print(f"  {author}: {text}")
 
         elif isinstance(event, RequestInfoEvent):
             new_pending_requests.append(event)
-            if isinstance(event.data, HandoffUserInputRequest):
+            if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
@@ -302,7 +306,7 @@ async def main() -> None:
     Demonstrate the checkpoint-based pause/resume pattern for handoff workflows.
 
     This sample shows:
-    1. Starting a workflow and getting a HandoffUserInputRequest
+    1. Starting a workflow and getting a HandoffAgentUserRequest
     2. Pausing (checkpoint is saved automatically)
     3. Resuming from checkpoint with a user response or tool approval (two-step pattern)
     4. Continuing the conversation until completion
@@ -361,8 +365,10 @@ async def main() -> None:
         print("\n>>> Simulating process restart...\n")
         workflow_step, _, _, _ = create_workflow(checkpoint_storage=storage)
 
-        needs_user_input = any(isinstance(req.data, HandoffUserInputRequest) for req in pending_requests)
-        needs_tool_approval = any(isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests)
+        needs_user_input = any(isinstance(req.data, HandoffAgentUserRequest) for req in pending_requests)
+        needs_tool_approval = any(
+            isinstance(req.data, Content) and req.data.type == "function_approval_request" for req in pending_requests
+        )
 
         user_response = None
         if needs_user_input:

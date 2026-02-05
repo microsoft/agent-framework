@@ -34,7 +34,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -77,7 +77,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -119,7 +119,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(complexState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -159,7 +159,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -210,7 +210,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -243,7 +243,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(emptyState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -280,7 +280,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.GetNewSessionAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -417,11 +417,21 @@ internal sealed class FakeStateAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is not FakeInMemoryAgentSession fakeSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return fakeSession.Serialize(jsonSerializerOptions);
+    }
 
     private sealed class FakeInMemoryAgentSession : InMemoryAgentSession
     {
@@ -434,6 +444,9 @@ internal sealed class FakeStateAgent : AIAgent
             : base(serializedSession, jsonSerializerOptions)
         {
         }
+
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => base.Serialize(jsonSerializerOptions);
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;

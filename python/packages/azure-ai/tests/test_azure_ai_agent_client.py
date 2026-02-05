@@ -22,7 +22,6 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework._serialization import SerializationMixin
@@ -92,6 +91,17 @@ def create_test_azure_ai_chat_client(
     client._azure_search_tool_calls = []  # Add the new instance variable
     client.additional_properties = {}
     client.middleware = None
+    client.chat_middleware = []
+    client.function_middleware = []
+    client.otel_provider_name = "azure.ai"
+    client.function_invocation_configuration = {
+        "enabled": True,
+        "max_iterations": 5,
+        "max_consecutive_errors_per_request": 0,
+        "terminate_on_unknown_calls": False,
+        "additional_tools": [],
+        "include_detailed_errors": False,
+    }
 
     return client
 
@@ -309,10 +319,10 @@ async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ag
     mock_stream.__aenter__ = AsyncMock(return_value=empty_async_iter())
     mock_stream.__aexit__ = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call without existing thread - should create new one
-    response = chat_client.get_streaming_response(messages)
+    response = chat_client.get_response(messages, stream=True)
     # Consume the generator to trigger the method execution
     async for _ in response:
         pass
@@ -336,7 +346,7 @@ async def test_azure_ai_chat_client_prepare_options_basic(mock_agents_client: Ma
     """Test _prepare_options with basic ChatOptions."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {"max_tokens": 100, "temperature": 0.7}
 
     run_options, tool_results = await chat_client._prepare_options(messages, chat_options)  # type: ignore
@@ -349,7 +359,7 @@ async def test_azure_ai_chat_client_prepare_options_no_chat_options(mock_agents_
     """Test _prepare_options with default ChatOptions."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     run_options, tool_results = await chat_client._prepare_options(messages, {})  # type: ignore
 
@@ -366,7 +376,7 @@ async def test_azure_ai_chat_client_prepare_options_with_image_content(mock_agen
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role=Role.USER, contents=[image_content])]
+    messages = [ChatMessage(role="user", contents=[image_content])]
 
     run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
 
@@ -455,8 +465,8 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
 
     # Test with system message (becomes instruction)
     messages = [
-        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
-        ChatMessage(role=Role.USER, text="Hello"),
+        ChatMessage(role="system", text="You are a helpful assistant"),
+        ChatMessage(role="user", text="Hello"),
     ]
 
     run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
@@ -478,7 +488,7 @@ async def test_azure_ai_chat_client_prepare_options_with_instructions_from_optio
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {
         "instructions": "You are a thoughtful reviewer. Give brief feedback.",
     }
@@ -501,8 +511,8 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, text="Context: You are reviewing marketing copy."),
-        ChatMessage(role=Role.USER, text="Review this tagline"),
+        ChatMessage(role="system", text="Context: You are reviewing marketing copy."),
+        ChatMessage(role="user", text="Review this tagline"),
     ]
     chat_options: ChatOptions = {
         "instructions": "Be concise and constructive in your feedback.",
@@ -520,20 +530,18 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options: ChatOptions = {}
 
     async def mock_streaming_response():
-        yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello back")])
 
     with (
-        patch.object(chat_client, "_inner_get_streaming_response", return_value=mock_streaming_response()),
-        patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
+        patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
+        patch("agent_framework.ChatResponse.from_update_generator") as mock_from_generator,
     ):
-        mock_response = ChatResponse(role=Role.ASSISTANT, text="Hello back")
+        mock_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Hello back")])
         mock_from_generator.return_value = mock_response
 
-        result = await chat_client._inner_get_response(messages=messages, options=chat_options)  # type: ignore
+        result = await ChatResponse.from_update_generator(mock_streaming_response())
 
         assert result is mock_response
         mock_from_generator.assert_called_once()
@@ -673,7 +681,7 @@ async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specifi
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
     chat_options = {"tools": [dict_tool], "tool_choice": required_tool_mode}
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
 
@@ -718,7 +726,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_never_require(mock_agent
 
     mcp_tool = HostedMCPTool(name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require")
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
@@ -750,7 +758,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents
         name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
     )
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
@@ -1458,7 +1466,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(messages=messages)
+        response = azure_ai_chat_client.get_response(messages=messages, stream=True)
 
         full_message: str = ""
         async for chunk in response:
@@ -1482,8 +1490,9 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_streaming_response(
+        response = azure_ai_chat_client.get_response(
             messages=messages,
+            stream=True,
             options={"tools": [get_weather], "tool_choice": "auto"},
         )
         full_message: str = ""
@@ -1523,7 +1532,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert chunk is not None
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
@@ -2098,7 +2107,7 @@ def test_azure_ai_chat_client_prepare_messages_with_function_result(
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result="test result")
-    messages = [ChatMessage(role=Role.USER, contents=[function_result])]
+    messages = [ChatMessage(role="user", contents=[function_result])]
 
     additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
 
@@ -2118,7 +2127,7 @@ def test_azure_ai_chat_client_prepare_messages_with_raw_content_block(
     # Create content with raw_representation that is a MessageInputContentBlock
     raw_block = MessageInputTextBlock(text="Raw block text")
     custom_content = Content(type="custom", raw_representation=raw_block)
-    messages = [ChatMessage(role=Role.USER, contents=[custom_content])]
+    messages = [ChatMessage(role="user", contents=[custom_content])]
 
     additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
 

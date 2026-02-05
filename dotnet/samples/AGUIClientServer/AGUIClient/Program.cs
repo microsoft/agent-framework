@@ -88,7 +88,7 @@ public static class Program
             description: "AG-UI Client Agent",
             tools: [changeBackground, readClientClimateSensors]);
 
-        AgentSession session = await agent.GetNewSessionAsync(cancellationToken);
+        AgentSession session = await agent.CreateSessionAsync(cancellationToken);
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
         try
         {

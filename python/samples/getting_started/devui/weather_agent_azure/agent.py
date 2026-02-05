@@ -12,12 +12,13 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     Role,
     TextContent,
-    tool,
     chat_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
@@ -53,11 +54,11 @@ async def security_filter_middleware(
                     "or other sensitive data."
                 )
 
-                if context.is_streaming:
+                if context.stream:
                     # Streaming mode: return async generator
                     async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[TextContent(text=error_message)],
+                            contents=[Content.from_text(text=error_message)],
                             role=Role.ASSISTANT,
                         )
 

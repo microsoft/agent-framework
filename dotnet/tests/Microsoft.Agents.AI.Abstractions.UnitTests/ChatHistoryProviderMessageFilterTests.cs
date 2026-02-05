@@ -16,6 +16,9 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public sealed class ChatHistoryProviderMessageFilterTests
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
+
     [Fact]
     public void Constructor_WithNullInnerProvider_ThrowsArgumentNullException()
     {
@@ -59,7 +62,7 @@ public sealed class ChatHistoryProviderMessageFilterTests
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi there!")
         };
-        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Test")]);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test")]);
 
         innerProviderMock
             .Setup(s => s.InvokingAsync(context, It.IsAny<CancellationToken>()))
@@ -88,7 +91,7 @@ public sealed class ChatHistoryProviderMessageFilterTests
             new(ChatRole.Assistant, "Hi there!"),
             new(ChatRole.User, "How are you?")
         };
-        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Test")]);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test")]);
 
         innerProviderMock
             .Setup(s => s.InvokingAsync(context, It.IsAny<CancellationToken>()))
@@ -118,7 +121,7 @@ public sealed class ChatHistoryProviderMessageFilterTests
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi there!")
         };
-        var context = new ChatHistoryProvider.InvokingContext([new ChatMessage(ChatRole.User, "Test")]);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test")]);
 
         innerProviderMock
             .Setup(s => s.InvokingAsync(context, It.IsAny<CancellationToken>()))
@@ -147,7 +150,7 @@ public sealed class ChatHistoryProviderMessageFilterTests
         var requestMessages = new List<ChatMessage> { new(ChatRole.User, "Hello") };
         var chatHistoryProviderMessages = new List<ChatMessage> { new(ChatRole.System, "System") };
         var responseMessages = new List<ChatMessage> { new(ChatRole.Assistant, "Response") };
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, chatHistoryProviderMessages)
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, chatHistoryProviderMessages)
         {
             ResponseMessages = responseMessages
         };
@@ -162,7 +165,7 @@ public sealed class ChatHistoryProviderMessageFilterTests
         ChatHistoryProvider.InvokedContext InvokedFilter(ChatHistoryProvider.InvokedContext ctx)
         {
             var modifiedRequestMessages = ctx.RequestMessages.Select(m => new ChatMessage(m.Role, $"[FILTERED] {m.Text}")).ToList();
-            return new ChatHistoryProvider.InvokedContext(modifiedRequestMessages, ctx.ChatHistoryProviderMessages)
+            return new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, modifiedRequestMessages, ctx.ChatHistoryProviderMessages)
             {
                 ResponseMessages = ctx.ResponseMessages,
                 AIContextProviderMessages = ctx.AIContextProviderMessages,

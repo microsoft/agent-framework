@@ -20,7 +20,7 @@ public class CopilotStudioFixture : IAgentFixture
 {
     public AIAgent Agent { get; private set; } = null!;
 
-    public Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session) =>
+    public Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session) =>
         throw new NotSupportedException("CopilotStudio doesn't allow retrieval of chat history.");
 
     public Task DeleteSessionAsync(AgentSession session) =>

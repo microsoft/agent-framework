@@ -86,7 +86,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public sealed override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
         => new(new GitHubCopilotAgentSession());
 
     /// <summary>
@@ -94,15 +94,28 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// </summary>
     /// <param name="sessionId">The session id to continue.</param>
     /// <returns>A new <see cref="AgentSession"/> instance.</returns>
-    public ValueTask<AgentSession> GetNewSessionAsync(string sessionId)
+    public ValueTask<AgentSession> CreateSessionAsync(string sessionId)
         => new(new GitHubCopilotAgentSession() { SessionId = sessionId });
 
     /// <inheritdoc/>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not GitHubCopilotAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GitHubCopilotAgentSession(serializedSession, jsonSerializerOptions));
+        => new(new GitHubCopilotAgentSession(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override Task<AgentResponse> RunCoreAsync(
@@ -122,7 +135,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         _ = Throw.IfNull(messages);
 
         // Ensure we have a valid session
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not GitHubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(

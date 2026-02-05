@@ -41,15 +41,15 @@ async def make_context(
     executor_id: str = "exec",
 ) -> AsyncIterator[tuple[WorkflowContext[object], "InProcRunnerContext"]]:
     from agent_framework._workflows._runner_context import InProcRunnerContext
-    from agent_framework._workflows._shared_state import SharedState
+    from agent_framework._workflows._state import State
 
     mock_executor = MockExecutor(executor_id)
     runner_ctx = InProcRunnerContext()
-    shared_state = SharedState()
+    state = State()
     workflow_ctx: WorkflowContext[object] = WorkflowContext(
         mock_executor,
         ["source"],
-        shared_state,
+        state,
         runner_ctx,
     )
     try:

@@ -8,6 +8,8 @@
 // This pattern is inspired by OpenAI's background mode for the Responses API, which allows clients
 // to disconnect and reconnect to ongoing agent responses without losing messages.
 
+#pragma warning disable IDE0002 // Simplify Member Access
+
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;

@@ -59,14 +59,14 @@ async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentResponse:
             )
 
             # Add the assistant message with the approval request
-            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
 
             # Get user approval
             user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
             # Add the user's approval response
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         # Run again with all the context
@@ -88,7 +88,7 @@ async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None
         user_input_requests: list[Any] = []
 
         # Stream the response
-        async for chunk in agent.run_stream(current_input):
+        async for chunk in agent.run(current_input, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
 
@@ -109,23 +109,23 @@ async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None
                 )
 
                 # Add the assistant message with the approval request
-                new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+                new_inputs.append(ChatMessage("assistant", [user_input_needed]))
 
                 # Get user approval
                 user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
                 # Add the user's approval response
                 new_inputs.append(
-                    ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                    ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
                 )
 
             # Update input with all the context for next iteration
             current_input = new_inputs
 
 
-async def run_weather_agent_with_approval(is_streaming: bool) -> None:
+async def run_weather_agent_with_approval(stream: bool) -> None:
     """Example showing AI function with approval requirement."""
-    print(f"\n=== Weather Agent with Approval Required ({'Streaming' if is_streaming else 'Non-Streaming'}) ===\n")
+    print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
@@ -136,7 +136,7 @@ async def run_weather_agent_with_approval(is_streaming: bool) -> None:
         query = "Can you give me an update of the weather in LA and Portland and detailed weather for Seattle?"
         print(f"User: {query}")
 
-        if is_streaming:
+        if stream:
             print(f"\n{agent.name}: ", end="", flush=True)
             await handle_approvals_streaming(query, agent)
             print()
@@ -148,8 +148,8 @@ async def run_weather_agent_with_approval(is_streaming: bool) -> None:
 async def main() -> None:
     print("=== Demonstration of a tool with approvals ===\n")
 
-    await run_weather_agent_with_approval(is_streaming=False)
-    await run_weather_agent_with_approval(is_streaming=True)
+    await run_weather_agent_with_approval(stream=False)
+    await run_weather_agent_with_approval(stream=True)
 
 
 if __name__ == "__main__":

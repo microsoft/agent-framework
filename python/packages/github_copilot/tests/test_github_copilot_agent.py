@@ -13,7 +13,6 @@ from agent_framework import (
     AgentThread,
     ChatMessage,
     Content,
-    Role,
 )
 from agent_framework.exceptions import ServiceException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
@@ -135,12 +134,52 @@ class TestGitHubCopilotAgentInit:
         agent = GitHubCopilotAgent(tools=[my_tool])
         assert len(agent._tools) == 1  # type: ignore
 
-    def test_init_with_instructions(self) -> None:
-        """Test initialization with custom instructions."""
+    def test_init_with_instructions_parameter(self) -> None:
+        """Test initialization with instructions parameter."""
+        agent = GitHubCopilotAgent(instructions="You are a helpful assistant.")
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "You are a helpful assistant.",
+        }
+
+    def test_init_with_system_message_in_default_options(self) -> None:
+        """Test initialization with system_message object in default_options."""
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-            default_options={"instructions": "You are a helpful assistant."}
+            default_options={"system_message": {"mode": "append", "content": "You are a helpful assistant."}}
         )
-        assert agent._instructions == "You are a helpful assistant."  # type: ignore
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "You are a helpful assistant.",
+        }
+
+    def test_init_with_system_message_replace_mode(self) -> None:
+        """Test initialization with system_message in replace mode."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"system_message": {"mode": "replace", "content": "Custom system prompt."}}
+        )
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "replace",
+            "content": "Custom system prompt.",
+        }
+
+    def test_instructions_parameter_takes_precedence_for_content(self) -> None:
+        """Test that direct instructions parameter takes precedence for content but preserves mode."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            instructions="Direct instructions",
+            default_options={"system_message": {"mode": "replace", "content": "Options system_message"}},
+        )
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "replace",
+            "content": "Direct instructions",
+        }
+
+    def test_instructions_parameter_defaults_to_append_mode(self) -> None:
+        """Test that instructions parameter defaults to append mode when no system_message provided."""
+        agent = GitHubCopilotAgent(instructions="Direct instructions")
+        assert agent._default_options.get("system_message") == {  # type: ignore
+            "mode": "append",
+            "content": "Direct instructions",
+        }
 
 
 class TestGitHubCopilotAgentLifecycle:
@@ -242,7 +281,7 @@ class TestGitHubCopilotAgentRun:
 
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.ASSISTANT
+        assert response.messages[0].role == "assistant"
         assert response.messages[0].contents[0].text == "Test response"
 
     async def test_run_chat_message(
@@ -255,7 +294,7 @@ class TestGitHubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        chat_message = ChatMessage(role=Role.USER, contents=[Content.from_text("Hello")])
+        chat_message = ChatMessage(role="user", contents=[Content.from_text("Hello")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)
@@ -323,10 +362,10 @@ class TestGitHubCopilotAgentRun:
         mock_client.start.assert_called_once()
 
 
-class TestGitHubCopilotAgentRunStream:
-    """Test cases for run_stream method."""
+class TestGitHubCopilotAgentRunStreaming:
+    """Test cases for run(stream=True) method."""
 
-    async def test_run_stream_basic(
+    async def test_run_streaming_basic(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -345,15 +384,15 @@ class TestGitHubCopilotAgentRunStream:
 
         agent = GitHubCopilotAgent(client=mock_client)
         responses: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             responses.append(update)
 
         assert len(responses) == 1
         assert isinstance(responses[0], AgentResponseUpdate)
-        assert responses[0].role == Role.ASSISTANT
+        assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
 
-    async def test_run_stream_with_thread(
+    async def test_run_streaming_with_thread(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -370,12 +409,12 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
         thread = AgentThread()
 
-        async for _ in agent.run_stream("Hello", thread=thread):
+        async for _ in agent.run("Hello", thread=thread, stream=True):
             pass
 
         assert thread.service_thread_id == mock_session.session_id
 
-    async def test_run_stream_error(
+    async def test_run_streaming_error(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -392,16 +431,16 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
 
         with pytest.raises(ServiceException, match="session error"):
-            async for _ in agent.run_stream("Hello"):
+            async for _ in agent.run("Hello", stream=True):
                 pass
 
-    async def test_run_stream_auto_starts(
+    async def test_run_streaming_auto_starts(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         session_idle_event: SessionEvent,
     ) -> None:
-        """Test that run_stream auto-starts the agent if not started."""
+        """Test that run(stream=True) auto-starts the agent if not started."""
 
         def mock_on(handler: Any) -> Any:
             handler(session_idle_event)
@@ -412,7 +451,7 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
         assert agent._started is False  # type: ignore
 
-        async for _ in agent.run_stream("Hello"):
+        async for _ in agent.run("Hello", stream=True):
             pass
 
         assert agent._started is True  # type: ignore
@@ -462,10 +501,10 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that session config includes instructions."""
-        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+        """Test that session config includes instructions from direct parameter."""
+        agent = GitHubCopilotAgent(
+            instructions="You are a helpful assistant.",
             client=mock_client,
-            default_options={"instructions": "You are a helpful assistant."},
         )
         await agent.start()
 
@@ -475,6 +514,31 @@ class TestGitHubCopilotAgentSessionManagement:
         config = call_args[0][0]
         assert config["system_message"]["mode"] == "append"
         assert config["system_message"]["content"] == "You are a helpful assistant."
+
+    async def test_runtime_options_take_precedence_over_default(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime options from run() take precedence over default_options."""
+        agent = GitHubCopilotAgent(
+            instructions="Default instructions",
+            client=mock_client,
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {
+            "system_message": {"mode": "replace", "content": "Runtime instructions"}
+        }
+        await agent._get_or_create_session(  # type: ignore
+            AgentThread(),
+            runtime_options=runtime_options,
+        )
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        assert config["system_message"]["mode"] == "replace"
+        assert config["system_message"]["content"] == "Runtime instructions"
 
     async def test_session_config_includes_streaming_flag(
         self,

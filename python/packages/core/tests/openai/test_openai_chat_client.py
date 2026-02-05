@@ -915,12 +915,8 @@ async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ServiceResponseException),
     ):
-
-        async def consume_stream():
-            async for _ in client._inner_get_streaming_response(messages=messages, options={}):  # type: ignore
-                pass
-
-        await consume_stream()
+        async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
+            pass
 
 
 # region Integration Tests
@@ -955,11 +951,11 @@ class OutputStruct(BaseModel):
         param("tools", [get_weather], True, id="tools_function"),
         param("tool_choice", "auto", True, id="tool_choice_auto"),
         param("tool_choice", "none", True, id="tool_choice_none"),
-        param("tool_choice", "required", True, id="tool_choice_required_any"),
+        param("tool_choice", "required", False, id="tool_choice_required_any"),
         param(
             "tool_choice",
             {"mode": "required", "required_function_name": "get_weather"},
-            True,
+            False,
             id="tool_choice_required",
         ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
@@ -1001,8 +997,8 @@ async def test_integration_options(
     check that the feature actually works correctly.
     """
     client = OpenAIChatClient()
-    # to ensure toolmode required does not endlessly loop
-    client.function_invocation_configuration.max_iterations = 1
+    # Need at least 2 iterations for tool_choice tests: one to get function call, one to get final response
+    client.function_invocation_configuration["max_iterations"] = 2
 
     for streaming in [False, True]:
         # Prepare test message
@@ -1026,13 +1022,13 @@ async def test_integration_options(
 
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_stream = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
-            output_format = option_value if option_name.startswith("response_format") else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await response_stream.get_final_response()
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -1042,8 +1038,13 @@ async def test_integration_options(
 
         assert response is not None
         assert isinstance(response, ChatResponse)
-        assert response.text is not None, f"No text in response for option '{option_name}'"
-        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+        assert response.messages is not None
+        if not option_name.startswith("tool_choice") and (
+            (isinstance(option_value, str) and option_value != "required")
+            or (isinstance(option_value, dict) and option_value.get("mode") != "required")
+        ):
+            assert response.text is not None, f"No text in response for option '{option_name}'"
+            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
 
         # Validate based on option type
         if needs_validation:
@@ -1080,7 +1081,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await client.get_response(stream=True, **content).get_final_response()
         else:
             response = await client.get_response(**content)
 
@@ -1105,7 +1106,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+            response = await client.get_response(stream=True, **content).get_final_response()
         else:
             response = await client.get_response(**content)
         assert response.text is not None

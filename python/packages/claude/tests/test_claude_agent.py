@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
+from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -312,7 +312,7 @@ class TestClaudeAgentRun:
 
 
 class TestClaudeAgentRunStream:
-    """Tests for ClaudeAgent run_stream method."""
+    """Tests for ClaudeAgent streaming run method."""
 
     @staticmethod
     async def _create_async_generator(items: list[Any]) -> Any:
@@ -332,7 +332,7 @@ class TestClaudeAgentRunStream:
         return mock_client
 
     async def test_run_stream_yields_updates(self) -> None:
-        """Test run_stream yields AgentResponseUpdate objects."""
+        """Test run(stream=True) yields AgentResponseUpdate objects."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -371,13 +371,68 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             updates: list[AgentResponseUpdate] = []
-            async for update in agent.run_stream("Hello"):
+            async for update in agent.run("Hello", stream=True):
                 updates.append(update)
-            # StreamEvent yields text deltas
+            # StreamEvent yields text deltas (2 events)
             assert len(updates) == 2
-            assert updates[0].role == Role.ASSISTANT
+            assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+
+    async def test_run_stream_raises_on_assistant_message_error(self) -> None:
+        """Test run raises ServiceException when AssistantMessage has an error."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        messages = [
+            AssistantMessage(
+                content=[TextBlock(text="Error details from API")],
+                model="claude-sonnet",
+                error="invalid_request",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="error-session",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run("Hello", stream=True):
+                    pass
+            assert "Invalid request to Claude API" in str(exc_info.value)
+            assert "Error details from API" in str(exc_info.value)
+
+    async def test_run_stream_raises_on_result_message_error(self) -> None:
+        """Test run raises ServiceException when ResultMessage.is_error is True."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import ResultMessage
+
+        messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Model 'claude-sonnet-4.5' not found",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run("Hello", stream=True):
+                    pass
+            assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
 
 
 # region Test ClaudeAgent Session Management
@@ -499,6 +554,33 @@ class TestClaudeAgentToolConversion:
         assert sdk_tool.input_schema is not None
         assert "properties" in sdk_tool.input_schema  # type: ignore[operator]
 
+    def test_function_tool_to_sdk_mcp_tool_preserves_defs_for_nested_types(self) -> None:
+        """Test that $defs is preserved for tools with nested Pydantic models."""
+        from pydantic import BaseModel
+
+        class Address(BaseModel):
+            street: str
+            city: str
+
+        class Person(BaseModel):
+            name: str
+            address: Address
+
+        @tool
+        def create_person(person: Person) -> str:
+            """Create a person with address."""
+            return f"{person.name} lives at {person.address.street}, {person.address.city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(create_person)  # type: ignore[reportPrivateUsage]
+
+        # Verify $defs is preserved in the schema
+        assert sdk_tool.input_schema is not None
+        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
+        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        # Verify the nested reference exists in properties
+        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
 
@@ -605,7 +687,7 @@ class TestFormatPrompt:
         """Test formatting user message."""
         agent = ClaudeAgent()
         msg = ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
@@ -615,9 +697,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="How are you?")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="Hi")]),
+            ChatMessage(role="assistant", contents=[Content.from_text(text="Hello!")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

@@ -239,7 +239,7 @@ async def run_agent_framework_example(task: str) -> str:
     )
 
     final_response = ""
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, list) and len(data) > 0:

@@ -4,10 +4,12 @@
 
 In a real application, these would call actual weather and events APIs.
 """
-
 from typing import Annotated
 
+from agent_framework import tool
 
+
+@tool
 def get_weather_forecast(
     destination: Annotated[str, "The destination city or location"],
     date: Annotated[str, 'The date for the forecast (e.g., "2025-01-15" or "next Monday")'],
@@ -64,6 +66,7 @@ Low: {low_f}°F ({low_c}°C)
 Recommendation: {recommendation}"""
 
 
+@tool
 def get_local_events(
     destination: Annotated[str, "The destination city or location"],
     date: Annotated[str, 'The date to search for events (e.g., "2025-01-15" or "next week")'],
@@ -153,13 +156,12 @@ def _get_weather_recommendation(condition: str) -> str:
 
     if "rain" in condition_lower or "drizzle" in condition_lower:
         return "Bring an umbrella and waterproof jacket. Consider indoor activities for backup."
-    elif "fog" in condition_lower:
+    if "fog" in condition_lower:
         return "Morning visibility may be limited. Plan outdoor sightseeing for afternoon."
-    elif "cold" in condition_lower:
+    if "cold" in condition_lower:
         return "Layer up with warm clothing. Hot drinks and cozy cafés recommended."
-    elif "hot" in condition_lower or "warm" in condition_lower:
+    if "hot" in condition_lower or "warm" in condition_lower:
         return "Stay hydrated and use sunscreen. Plan strenuous activities for cooler morning hours."
-    elif "thunder" in condition_lower or "storm" in condition_lower:
+    if "thunder" in condition_lower or "storm" in condition_lower:
         return "Keep an eye on weather updates. Have indoor alternatives ready."
-    else:
-        return "Pleasant conditions expected. Great day for outdoor exploration!"
+    return "Pleasant conditions expected. Great day for outdoor exploration!"

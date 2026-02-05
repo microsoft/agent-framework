@@ -31,7 +31,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
 ]
 
@@ -44,7 +43,7 @@ packages = ["agent_framework_ag_ui", "agent_framework_ag_ui_examples"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests/ag_ui"]
 pythonpath = ["."]
 
 [tool.ruff]
@@ -62,7 +61,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 
 [tool.pyright]
-exclude = ["tests", "examples"]
+exclude = ["tests", "tests/ag_ui", "examples"]
 typeCheckingMode = "basic"
 
 [tool.poe]
@@ -71,4 +70,4 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ag_ui"
-test = "pytest --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered tests"
+test = "pytest --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered tests/ag_ui"

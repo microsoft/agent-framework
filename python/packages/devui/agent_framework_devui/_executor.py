@@ -326,37 +326,23 @@ class AgentFrameworkExecutor:
             # but is_connected stays True. Detect and reconnect before execution.
             await self._ensure_mcp_connections(agent)
 
-            # Check if agent supports streaming
-            if hasattr(agent, "run_stream") and callable(agent.run_stream):
-                # Use Agent Framework's native streaming with optional thread
+            # Agent must have run() method - use stream=True for streaming
+            if hasattr(agent, "run") and callable(agent.run):
+                # Use Agent Framework's run() with stream=True for streaming
                 if thread:
-                    async for update in agent.run_stream(user_message, thread=thread):
+                    async for update in agent.run(user_message, stream=True, thread=thread):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
                 else:
-                    async for update in agent.run_stream(user_message):
+                    async for update in agent.run(user_message, stream=True):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
-            elif hasattr(agent, "run") and callable(agent.run):
-                # Non-streaming agent - use run() and yield complete response
-                logger.info("Agent lacks run_stream(), using run() method (non-streaming)")
-                if thread:
-                    response = await agent.run(user_message, thread=thread)
-                else:
-                    response = await agent.run(user_message)
-
-                # Yield trace events before response
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
-
-                # Yield the complete response (mapper will convert to streaming events)
-                yield response
             else:
-                raise ValueError("Agent must implement either run() or run_stream() method")
+                raise ValueError("Agent must implement run() method")
 
             # Emit agent lifecycle completion event
             from .models._openai_custom import AgentCompletedEvent
@@ -426,7 +412,7 @@ class AgentFrameworkExecutor:
 
             # Get session-scoped checkpoint storage (InMemoryCheckpointStorage from conv_data)
             # Each conversation has its own storage instance, providing automatic session isolation.
-            # This storage is passed to workflow.run_stream() which sets it as runtime override,
+            # This storage is passed to workflow.run(stream=True) which sets it as runtime override,
             # ensuring all checkpoint operations (save/load) use THIS conversation's storage.
             # The framework guarantees runtime storage takes precedence over build-time storage.
             checkpoint_storage = self.checkpoint_manager.get_checkpoint_storage(conversation_id)
@@ -478,15 +464,17 @@ class AgentFrameworkExecutor:
                 # NOTE: Two-step approach for stateless HTTP (framework limitation):
                 # 1. Restore checkpoint to load pending requests into workflow's in-memory state
                 # 2. Then send responses using send_responses_streaming
-                # Future: Framework should support run_stream(checkpoint_id, responses) in single call
+                # Future: Framework should support run(stream=True, checkpoint_id, responses) in single call
                 # (checkpoint_id is guaranteed to exist due to earlier validation)
                 logger.debug(f"Restoring checkpoint {checkpoint_id} then sending HIL responses")
 
                 try:
                     # Step 1: Restore checkpoint to populate workflow's in-memory pending requests
                     restored = False
-                    async for _event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for _event in workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
                         restored = True
                         break  # Stop immediately after restoration, don't process events
@@ -545,8 +533,10 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow from checkpoint {checkpoint_id} in session {conversation_id}")
 
                 try:
-                    async for event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for event in workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
                         if isinstance(event, RequestInfoEvent):
                             self._enrich_request_info_event_with_response_schema(event, workflow)
@@ -571,7 +561,7 @@ class AgentFrameworkExecutor:
 
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
 
-                async for event in workflow.run_stream(parsed_input, checkpoint_storage=checkpoint_storage):
+                async for event in workflow.run(parsed_input, stream=True, checkpoint_storage=checkpoint_storage):
                     if isinstance(event, RequestInfoEvent):
                         self._enrich_request_info_event_with_response_schema(event, workflow)
 
@@ -760,7 +750,7 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(Content.from_text(text=""))
 
-        chat_message = ChatMessage(role=Role.USER, contents=contents)
+        chat_message = ChatMessage(role="user", contents=contents)
 
         logger.info(f"Created ChatMessage with {len(contents)} contents:")
         for idx, content in enumerate(contents):

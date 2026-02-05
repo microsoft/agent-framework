@@ -202,7 +202,7 @@ class ChatMessageStore:
             store = ChatMessageStore()
 
             # Add messages
-            message = ChatMessage(role="user", content="Hello")
+            message = ChatMessage(role="user", text="Hello")
             await store.add_messages([message])
 
             # Retrieve messages

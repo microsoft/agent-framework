@@ -5,7 +5,7 @@ import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider, Role
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider
 from agent_framework._logging import get_logger
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
@@ -524,10 +524,13 @@ class AzureAISearchContextProvider(ContextProvider):
         # Convert to list and filter to USER/ASSISTANT messages with text only
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
 
+        def get_role_value(role: str | Any) -> str:
+            return role.value if hasattr(role, "value") else str(role)
+
         filtered_messages = [
             msg
             for msg in messages_list
-            if msg and msg.text and msg.text.strip() and msg.role in [Role.USER, Role.ASSISTANT]
+            if msg and msg.text and msg.text.strip() and get_role_value(msg.role) in ["user", "assistant"]
         ]
 
         if not filtered_messages:
@@ -548,8 +551,8 @@ class AzureAISearchContextProvider(ContextProvider):
             return Context()
 
         # Create context messages: first message with prompt, then one message per result part
-        context_messages = [ChatMessage(role=Role.USER, text=self.context_prompt)]
-        context_messages.extend([ChatMessage(role=Role.USER, text=part) for part in search_result_parts])
+        context_messages = [ChatMessage(role="user", text=self.context_prompt)]
+        context_messages.extend([ChatMessage(role="user", text=part) for part in search_result_parts])
 
         return Context(messages=context_messages)
 
@@ -921,7 +924,7 @@ class AzureAISearchContextProvider(ContextProvider):
             # Medium/low reasoning uses messages with conversation history
             kb_messages = [
                 KnowledgeBaseMessage(
-                    role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                    role=msg.role if hasattr(msg.role, "value") else str(msg.role),
                     content=[KnowledgeBaseMessageTextContent(text=msg.text)],
                 )
                 for msg in messages

@@ -120,10 +120,14 @@ class Mem0Provider(ContextProvider):
         )
         messages_list = [*request_messages_list, *response_messages_list]
 
+        # Extract role value - it may be a Role enum or a string
+        def get_role_value(role: Any) -> str:
+            return role.value if hasattr(role, "value") else str(role)
+
         messages: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.text}
+            {"role": get_role_value(message.role), "content": message.text}
             for message in messages_list
-            if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
+            if get_role_value(message.role) in {"user", "assistant", "system"} and message.text and message.text.strip()
         ]
 
         if messages:

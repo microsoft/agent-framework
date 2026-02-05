@@ -41,12 +41,12 @@ def get_client(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -68,25 +68,25 @@ def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temper
         orchestrator="multi_agent_concurrent_orchestration",
         input=prompt,
     )
-    
+
     logger.info(f"Orchestration started with instance ID: {instance_id}")
     logger.debug("Waiting for orchestration to complete...")
-    
+
     # Retrieve the final state
     metadata = client.wait_for_orchestration_completion(
         instance_id=instance_id,
     )
-    
+
     if metadata and metadata.runtime_status.name == "COMPLETED":
         result = metadata.serialized_output
-        
+
         logger.debug("Orchestration completed successfully!")
-                
+
         # Parse and display the result
         if result:
             result_json = json.loads(result) if isinstance(result, str) else result
             logger.info("Orchestration Results:\n%s", json.dumps(result_json, indent=2))
-        
+
     elif metadata:
         logger.error(f"Orchestration ended with status: {metadata.runtime_status.name}")
         if metadata.serialized_output:
@@ -98,10 +98,10 @@ def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temper
 async def main() -> None:
     """Main entry point for the client application."""
     logger.debug("Starting Durable Task Multi-Agent Orchestration Client...")
-    
+
     # Create client using helper function
     client = get_client()
-    
+
     try:
         run_client(client)
     except Exception as e:

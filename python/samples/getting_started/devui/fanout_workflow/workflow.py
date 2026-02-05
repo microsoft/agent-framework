@@ -25,7 +25,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from pydantic import BaseModel, Field
 from typing_extensions import Never
@@ -190,9 +189,9 @@ class DataIngestion(Executor):
             timestamp=asyncio.get_event_loop().time(),
         )
 
-        # Store both batch data and original request in shared state
-        await ctx.set_shared_state(f"batch_{batch.batch_id}", batch)
-        await ctx.set_shared_state(f"request_{batch.batch_id}", request)
+        # Store both batch data and original request in workflow state
+        ctx.set_state(f"batch_{batch.batch_id}", batch)
+        ctx.set_state(f"request_{batch.batch_id}", request)
 
         await ctx.send_message(batch)
 
@@ -205,7 +204,7 @@ class SchemaValidator(Executor):
     async def validate_schema(self, batch: DataBatch, ctx: WorkflowContext[ValidationReport]) -> None:
         """Perform schema validation with processing delay."""
         # Check if schema validation is enabled
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
         if not request or not request.enable_schema_validation:
             return
 
@@ -241,7 +240,7 @@ class DataQualityValidator(Executor):
     async def validate_quality(self, batch: DataBatch, ctx: WorkflowContext[ValidationReport]) -> None:
         """Perform data quality validation."""
         # Check if quality validation is enabled
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
         if not request or not request.enable_quality_validation:
             return
 
@@ -283,7 +282,7 @@ class SecurityValidator(Executor):
     async def validate_security(self, batch: DataBatch, ctx: WorkflowContext[ValidationReport]) -> None:
         """Perform security validation."""
         # Check if security validation is enabled
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
         if not request or not request.enable_security_validation:
             return
 
@@ -324,7 +323,7 @@ class ValidationAggregator(Executor):
             return
 
         batch_id = reports[0].batch_id
-        request = await ctx.get_shared_state(f"request_{batch_id}")
+        request = ctx.get_state(f"request_{batch_id}")
 
         await asyncio.sleep(1)  # Aggregation processing time
 
@@ -354,8 +353,8 @@ class ValidationAggregator(Executor):
             )
             return
 
-        # Retrieve original batch from shared state
-        batch_data = await ctx.get_shared_state(f"batch_{batch_id}")
+        # Retrieve original batch from workflow state
+        batch_data = ctx.get_state(f"batch_{batch_id}")
         if batch_data:
             await ctx.send_message(batch_data)
         else:
@@ -376,7 +375,7 @@ class DataNormalizer(Executor):
     @handler
     async def normalize_data(self, batch: DataBatch, ctx: WorkflowContext[TransformationResult]) -> None:
         """Perform data normalization."""
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
 
         # Check if normalization is enabled
         if not request or "normalize" not in request.transformations:
@@ -421,7 +420,7 @@ class DataEnrichment(Executor):
     @handler
     async def enrich_data(self, batch: DataBatch, ctx: WorkflowContext[TransformationResult]) -> None:
         """Perform data enrichment."""
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
 
         # Check if enrichment is enabled
         if not request or "enrich" not in request.transformations:
@@ -465,7 +464,7 @@ class DataAggregator(Executor):
     @handler
     async def aggregate_data(self, batch: DataBatch, ctx: WorkflowContext[TransformationResult]) -> None:
         """Perform data aggregation."""
-        request = await ctx.get_shared_state(f"request_{batch.batch_id}")
+        request = ctx.get_state(f"request_{batch.batch_id}")
 
         # Check if aggregation is enabled
         if not request or "aggregate" not in request.transformations:
@@ -626,12 +625,12 @@ class FinalProcessor(Executor):
 
 # Workflow Builder Helper
 class WorkflowSetupHelper:
-    """Helper class to set up the complex workflow with shared state management."""
+    """Helper class to set up the complex workflow with state management."""
 
     @staticmethod
     async def store_batch_data(batch: DataBatch, ctx: WorkflowContext) -> None:
-        """Store batch data in shared state for later retrieval."""
-        await ctx.set_shared_state(f"batch_{batch.batch_id}", batch)
+        """Store batch data in workflow state for later retrieval."""
+        ctx.set_state(f"batch_{batch.batch_id}", batch)
 
 
 # Create the workflow instance

@@ -56,13 +56,14 @@ async def main() -> None:
 
         result1 = await agent.run(query1)
 
-        if weather := result1.try_parse_value(WeatherInfo):
+        try:
+            weather = result1.value
             print("Agent:")
             print(f"  Location: {weather.location}")
             print(f"  Temperature: {weather.temperature}")
             print(f"  Conditions: {weather.conditions}")
             print(f"  Recommendation: {weather.recommendation}")
-        else:
+        except Exception:
             print(f"Failed to parse response: {result1.text}")
 
         # Request 2: Override response_format at runtime with CityInfo
@@ -72,12 +73,13 @@ async def main() -> None:
 
         result2 = await agent.run(query2, options={"response_format": CityInfo})
 
-        if city := result2.try_parse_value(CityInfo):
+        try:
+            city = result2.value
             print("Agent:")
             print(f"  City: {city.city_name}")
             print(f"  Population: {city.population}")
             print(f"  Country: {city.country}")
-        else:
+        except Exception:
             print(f"Failed to parse response: {result2.text}")
 
 

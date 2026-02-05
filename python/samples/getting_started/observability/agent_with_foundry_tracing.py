@@ -7,8 +7,7 @@ from random import randint
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent
-from agent_framework import tool
+from agent_framework import ChatAgent, tool
 from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -31,6 +30,7 @@ So ensure you have the `azure-monitor-opentelemetry` package installed.
 dotenv.load_dotenv()
 
 logger = logging.getLogger(__name__)
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -87,10 +87,7 @@ async def main():
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

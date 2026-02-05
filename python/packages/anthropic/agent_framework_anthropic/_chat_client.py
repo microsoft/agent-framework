@@ -1,34 +1,37 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
     BaseChatClient,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
+    FinishReasonLiteral,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
+    ResponseStream,
     TextSpanRegion,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
+from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
     BetaContentBlock,
@@ -59,6 +62,7 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore # pragma: no cover
+
 
 __all__ = [
     "AnthropicChatOptions",
@@ -172,20 +176,20 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Role and Finish Reason Maps
 
 
-ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+ROLE_MAP: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "tool_use": FinishReason.TOOL_CALLS,
-    "end_turn": FinishReason.STOP,
-    "refusal": FinishReason.CONTENT_FILTER,
-    "pause_turn": FinishReason.STOP,
+FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "end_turn": "stop",
+    "refusal": "content_filter",
+    "pause_turn": "stop",
 }
 
 
@@ -225,11 +229,14 @@ class AnthropicSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptions]):
-    """Anthropic Chat client."""
+class AnthropicClient(
+    ChatMiddlewareLayer[TAnthropicOptions],
+    FunctionInvocationLayer[TAnthropicOptions],
+    ChatTelemetryLayer[TAnthropicOptions],
+    BaseChatClient[TAnthropicOptions],
+    Generic[TAnthropicOptions],
+):
+    """Anthropic Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -240,6 +247,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
         additional_beta_flags: list[str] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -254,6 +263,8 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -324,7 +335,11 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             )
 
         # Initialize parent
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
@@ -336,42 +351,40 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
     # region Get response methods
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         run_options = self._prepare_options(messages, options, **kwargs)
-        # execute
-        message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-        # process
-        return self._process_message(message, options)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options = self._prepare_options(messages, options, **kwargs)
-        # execute and process
-        async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-            parsed_chunk = self._process_stream_event(chunk)
-            if parsed_chunk:
-                yield parsed_chunk
+        if stream:
+            # Streaming mode
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                    parsed_chunk = self._process_stream_event(chunk)
+                    if parsed_chunk:
+                        yield parsed_chunk
+
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            return self._process_message(message, options)
+
+        return _get_response()
 
     # region Prep methods
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create run options for the Anthropic client based on messages and options.
@@ -415,7 +428,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             run_options["system"] = messages[0].text
 
         # betas
@@ -445,7 +458,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
         run_options.update(kwargs)
         return run_options
 
-    def _prepare_betas(self, options: dict[str, Any]) -> set[str]:
+    def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:
         """Prepare the beta flags for the Anthropic API request.
 
         Args:
@@ -495,14 +508,14 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             "schema": schema,
         }
 
-    def _prepare_messages_for_anthropic(self, messages: MutableSequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_anthropic(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare a list of ChatMessages for the Anthropic client.
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
@@ -527,7 +540,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": content.get_data_bytes_as_str(),  # type: ignore[attr-defined]
+                                "data": _get_data_bytes_as_str(content),  # type: ignore[attr-defined]
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -566,7 +579,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             "content": a_content,
         }
 
-    def _prepare_tools_for_anthropic(self, options: dict[str, Any]) -> dict[str, Any] | None:
+    def _prepare_tools_for_anthropic(self, options: Mapping[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
         Args:
@@ -659,7 +672,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
 
     # region Response Processing Methods
 
-    def _process_message(self, message: BetaMessage, options: dict[str, Any]) -> ChatResponse:
+    def _process_message(self, message: BetaMessage, options: Mapping[str, Any]) -> ChatResponse:
         """Process the response from the Anthropic client.
 
         Args:
@@ -673,7 +686,7 @@ class AnthropicClient(BaseChatClient[TAnthropicOptions], Generic[TAnthropicOptio
             response_id=message.id,
             messages=[
                 ChatMessage(
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,
                 )

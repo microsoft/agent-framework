@@ -11,7 +11,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowOutputEvent,
     handler,
-    tool,
 )
 from typing_extensions import Never
 
@@ -92,7 +91,7 @@ async def main() -> None:
 
     print("Running workflow with executor I/O observation...\n")
 
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         if isinstance(event, ExecutorInvokedEvent):
             # The input message received by the executor is in event.data
             print(f"[INVOKED] {event.executor_id}")
