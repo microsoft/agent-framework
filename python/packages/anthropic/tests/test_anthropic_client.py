@@ -489,7 +489,7 @@ async def test_prepare_options_filters_internal_kwargs(mock_anthropic_client: Ma
     """
     chat_client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {}
 
     # Simulate internal kwargs that get passed through the middleware pipeline
