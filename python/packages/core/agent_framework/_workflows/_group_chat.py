@@ -47,6 +47,7 @@ from ._checkpoint import CheckpointStorage
 from ._conversation_state import decode_chat_messages, encode_chat_messages
 from ._executor import Executor
 from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -193,6 +194,8 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        # Remove tool-related content to prevent API errors from empty messages
+        messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
 
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
@@ -360,6 +363,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        # Remove tool-related content to prevent API errors from empty messages
+        messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
             return
