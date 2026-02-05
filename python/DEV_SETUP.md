@@ -254,6 +254,12 @@ Run MyPy type checking:
 uv run poe mypy
 ```
 
+#### `typing`
+Run both Pyright and MyPy type checking:
+```bash
+uv run poe typing
+```
+
 ### Code Validation
 
 #### `markdown-code-lint`

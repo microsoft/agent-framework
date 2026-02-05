@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +24,8 @@ namespace Microsoft.Agents.AI;
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class AIAgent
 {
+    private static readonly AsyncLocal<AgentRunContext?> s_currentContext = new();
+
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
         this.Name is { } name ? $"Id = {this.Id}, Name = {name}" : $"Id = {this.Id}";
@@ -75,6 +79,18 @@ public abstract class AIAgent
     /// which is particularly useful in multi-agent systems.
     /// </remarks>
     public virtual string? Description { get; }
+
+    /// <summary>
+    /// Gets or sets the <see cref="AgentRunContext"/> for the current agent run.
+    /// </summary>
+    /// <remarks>
+    /// This value flows across async calls.
+    /// </remarks>
+    public static AgentRunContext? CurrentRunContext
+    {
+        get => s_currentContext.Value;
+        protected set => s_currentContext.Value = value;
+    }
 
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
@@ -252,8 +268,11 @@ public abstract class AIAgent
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunCoreAsync(messages, session, options, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        return this.RunCoreAsync(messages, session, options, cancellationToken);
+    }
 
     /// <summary>
     /// Core implementation of the agent invocation logic with a collection of chat messages.
@@ -370,12 +389,22 @@ public abstract class AIAgent
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
     /// </para>
     /// </remarks>
-    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    public async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunCoreStreamingAsync(messages, session, options, cancellationToken);
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        AgentRunContext context = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        CurrentRunContext = context;
+        await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+
+            // Restore context again when resuming after the caller code executes.
+            CurrentRunContext = context;
+        }
+    }
 
     /// <summary>
     /// Core implementation of the agent streaming invocation logic with a collection of chat messages.

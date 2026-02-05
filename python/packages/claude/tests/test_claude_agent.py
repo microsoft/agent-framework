@@ -379,6 +379,61 @@ class TestClaudeAgentRunStream:
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
+    async def test_run_stream_raises_on_assistant_message_error(self) -> None:
+        """Test run_stream raises ServiceException when AssistantMessage has an error."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        messages = [
+            AssistantMessage(
+                content=[TextBlock(text="Error details from API")],
+                model="claude-sonnet",
+                error="invalid_request",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="error-session",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run_stream("Hello"):
+                    pass
+            assert "Invalid request to Claude API" in str(exc_info.value)
+            assert "Error details from API" in str(exc_info.value)
+
+    async def test_run_stream_raises_on_result_message_error(self) -> None:
+        """Test run_stream raises ServiceException when ResultMessage.is_error is True."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import ResultMessage
+
+        messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Model 'claude-sonnet-4.5' not found",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run_stream("Hello"):
+                    pass
+            assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
+
 
 # region Test ClaudeAgent Session Management
 

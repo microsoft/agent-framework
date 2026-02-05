@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    AgentResponseUpdate,
-    AgentRunUpdateEvent,
+    AgentResponse,
     ChatClientProtocol,
     ChatMessage,
-    Content,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -31,7 +29,6 @@ approved responses are emitted to the external consumer. The workflow completes 
 Key Concepts Demonstrated:
 - WorkflowAgent: Wraps a workflow to behave like a regular agent.
 - Cyclic workflow design (Worker ↔ Reviewer) for iterative improvement.
-- AgentRunUpdateEvent: Mechanism for emitting approved responses externally.
 - Structured output parsing for review feedback using Pydantic.
 - State management for pending requests and retry logic.
 
@@ -144,7 +141,9 @@ class Worker(Executor):
         self._pending_requests[request.request_id] = (request, messages)
 
     @handler
-    async def handle_review_response(self, review: ReviewResponse, ctx: WorkflowContext[ReviewRequest]) -> None:
+    async def handle_review_response(
+        self, review: ReviewResponse, ctx: WorkflowContext[ReviewRequest, AgentResponse]
+    ) -> None:
         print(f"Worker: Received review for request {review.request_id[:8]} - Approved: {review.approved}")
 
         if review.request_id not in self._pending_requests:
@@ -154,14 +153,8 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[Content] = []
-            for message in request.agent_messages:
-                contents.extend(message.contents)
-
-            # Emit approved result to external consumer via AgentRunUpdateEvent.
-            await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentResponseUpdate(contents=contents, role="assistant"))
-            )
+            # Emit approved result to external consumer
+            await ctx.yield_output(AgentResponse(messages=request.agent_messages))
             return
 
         print(f"Worker: Response not approved. Feedback: {review.feedback}")
@@ -169,9 +162,7 @@ class Worker(Executor):
 
         # Incorporate review feedback.
         messages.append(ChatMessage("system", [review.feedback]))
-        messages.append(
-            ChatMessage("system", ["Please incorporate the feedback and regenerate the response."])
-        )
+        messages.append(ChatMessage("system", ["Please incorporate the feedback and regenerate the response."]))
         messages.extend(request.user_messages)
 
         # Retry with updated prompt.
@@ -217,13 +208,13 @@ async def main() -> None:
     print("-" * 50)
 
     # Run agent in streaming mode to observe incremental updates.
-    async for event in agent.run_stream(
+    response = await agent.run(
         "Write code for parallel reading 1 million files on disk and write to a sorted output file."
-    ):
-        print(f"Agent Response: {event}")
+    )
 
-    print("=" * 50)
-    print("Workflow completed!")
+    print("-" * 50)
+    print("Final Approved Response:")
+    print(f"{response.agent_id}: {response.text}")
 
 
 if __name__ == "__main__":

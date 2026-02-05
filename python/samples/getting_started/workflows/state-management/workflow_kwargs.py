@@ -16,7 +16,7 @@ through any workflow pattern to @tool functions using the **kwargs pattern.
 
 Key Concepts:
 - Pass custom context as kwargs when invoking workflow.run_stream() or workflow.run()
-- kwargs are stored in SharedState and passed to all agent invocations
+- kwargs are stored in State and passed to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 - Works with Sequential, Concurrent, GroupChat, Handoff, and Magentic patterns
 

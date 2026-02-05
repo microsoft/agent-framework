@@ -20,7 +20,7 @@ from ._events import (
 from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import Message, MessageType, RunnerContext
-from ._shared_state import SharedState
+from ._state import State
 from ._typing_utils import is_instance_of, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
@@ -221,7 +221,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         self,
         message: Any,
         source_executor_ids: list[str],
-        shared_state: SharedState,
+        state: State,
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
@@ -234,7 +234,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         Args:
             message: The message to be processed by the executor.
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
-            shared_state: The shared state for the workflow.
+            state: The state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
@@ -262,7 +262,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             # Create the appropriate WorkflowContext based on handler specs
             context = self._create_context_for_handler(
                 source_executor_ids=source_executor_ids,
-                shared_state=shared_state,
+                state=state,
                 runner_context=runner_context,
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
@@ -295,7 +295,7 @@ class Executor(RequestInfoMixin, DictConvertible):
     def _create_context_for_handler(
         self,
         source_executor_ids: list[str],
-        shared_state: SharedState,
+        state: State,
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
@@ -305,7 +305,7 @@ class Executor(RequestInfoMixin, DictConvertible):
 
         Args:
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
-            shared_state: The shared state for the workflow.
+            state: The state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
@@ -318,7 +318,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         return WorkflowContext(
             executor=self,
             source_executor_ids=source_executor_ids,
-            shared_state=shared_state,
+            state=state,
             runner_context=runner_context,
             trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,

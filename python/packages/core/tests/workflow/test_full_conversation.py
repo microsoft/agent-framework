@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Any
 
 from pydantic import PrivateAttr
@@ -16,13 +16,13 @@ from agent_framework import (
     ChatMessage,
     Content,
     Executor,
-    SequentialBuilder,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
 )
+from agent_framework.orchestrations import SequentialBuilder
 
 
 class _SimpleAgent(BaseAgent):
@@ -34,7 +34,7 @@ class _SimpleAgent(BaseAgent):
 
     async def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -43,7 +43,7 @@ class _SimpleAgent(BaseAgent):
 
     async def run_stream(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -56,7 +56,7 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None
@@ -75,7 +75,13 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
-    wf = WorkflowBuilder().set_start_executor(agent_exec).add_edge(agent_exec, capturer).build()
+    wf = (
+        WorkflowBuilder()
+        .set_start_executor(agent_exec)
+        .add_edge(agent_exec, capturer)
+        .with_output_from([capturer])
+        .build()
+    )
 
     # Act: use run() instead of run_stream() to test non-streaming mode
     result = await wf.run("hello world")
@@ -103,7 +109,7 @@ class _CaptureAgent(BaseAgent):
 
     async def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -121,7 +127,7 @@ class _CaptureAgent(BaseAgent):
 
     async def run_stream(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,

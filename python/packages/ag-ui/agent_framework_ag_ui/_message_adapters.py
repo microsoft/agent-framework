@@ -44,7 +44,32 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                     confirm_changes_call = content
                     break
 
-            sanitized.append(msg)
+            # Filter out confirm_changes from assistant messages before sending to LLM.
+            # confirm_changes is a synthetic tool for the approval UI flow - the LLM shouldn't
+            # see it because it may contain stale function_arguments that confuse the model
+            # (e.g., showing 5 steps when only 2 were approved).
+            # When we filter out confirm_changes, we also remove it from tool_ids and don't
+            # set pending_confirm_changes_id, so no synthetic result is injected for it.
+            # This is required because OpenAI validates that every tool result has a matching
+            # tool call in the previous assistant message.
+            if confirm_changes_call:
+                filtered_contents = [
+                    c for c in (msg.contents or []) if not (c.type == "function_call" and c.name == "confirm_changes")
+                ]
+                if filtered_contents:
+                    # Create a new message without confirm_changes to avoid mutating the input
+                    filtered_msg = ChatMessage(role=msg.role, contents=filtered_contents)
+                    sanitized.append(filtered_msg)
+                # If no contents left after filtering, don't append anything
+
+                # Remove confirm_changes from tool_ids since we filtered it from the message
+                if confirm_changes_call.call_id:
+                    tool_ids.discard(str(confirm_changes_call.call_id))
+                # Don't set pending_confirm_changes_id - we don't want a synthetic result
+                confirm_changes_call = None
+            else:
+                sanitized.append(msg)
+
             pending_tool_call_ids = tool_ids if tool_ids else None
             pending_confirm_changes_id = (
                 str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
@@ -66,7 +91,7 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
             if approval_call_ids and pending_tool_call_ids:
                 pending_tool_call_ids -= approval_call_ids
                 logger.info(
-                    f"FunctionApprovalResponseContent found for call_ids={sorted(approval_call_ids)} - "
+                    f"function_approval_response content found for call_ids={sorted(approval_call_ids)} - "
                     "framework will handle execution"
                 )
 
@@ -93,6 +118,8 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                         user_text = content.text  # type: ignore[assignment]
                         break
 
+                if not user_text:
+                    continue
                 try:
                     parsed = json.loads(user_text)  # type: ignore[arg-type]
                     if "accepted" in parsed:
@@ -149,6 +176,10 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                     call_id = str(content.call_id)
                     if call_id in pending_tool_call_ids:
                         keep = True
+                        # Remove the call_id from pending since we now have its result.
+                        # This prevents duplicate synthetic "skipped" results from being
+                        # injected when a user message arrives later.
+                        pending_tool_call_ids.discard(call_id)
                         if call_id == pending_confirm_changes_id:
                             pending_confirm_changes_id = None
                         break
@@ -337,7 +368,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
     result: list[ChatMessage] = []
     for msg in messages:
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
-        # This path maps AG‑UI tool messages to FunctionResultContent with the correct tool_call_id
+        # This path maps AG‑UI tool messages to function_result content with the correct tool_call_id
         role_str = normalize_agui_role(msg.get("role", "user"))
         if role_str == "tool":
             # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
@@ -370,7 +401,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
             if is_approval:
                 # Look for the matching function call in previous messages to create
-                # a proper FunctionApprovalResponseContent. This enables the agent framework
+                # proper function_approval_response content. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
                 accepted = parsed.get("accepted", False) if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
@@ -447,11 +478,17 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                                 merged_args["steps"] = merged_steps
                         state_args = merged_args
 
-                        # Keep the original tool call and AG-UI snapshot in sync with approved args.
-                        updated_args = (
-                            json.dumps(merged_args) if isinstance(matching_func_call.arguments, str) else merged_args
+                        # Update the ChatMessage tool call with only enabled steps (for LLM context).
+                        # The LLM should only see the steps that were actually approved/executed.
+                        updated_args_for_llm = (
+                            json.dumps(filtered_args)
+                            if isinstance(matching_func_call.arguments, str)
+                            else filtered_args
                         )
-                        matching_func_call.arguments = updated_args
+                        matching_func_call.arguments = updated_args_for_llm
+
+                        # Update raw messages with all steps + status (for MESSAGES_SNAPSHOT display).
+                        # This allows the UI to show which steps were enabled/disabled.
                         _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
                         # Create a new FunctionCallContent with the modified arguments
                         func_call_for_approval = Content.from_function_call(
@@ -464,7 +501,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         # No modified arguments - use the original function call
                         func_call_for_approval = matching_func_call
 
-                    # Create FunctionApprovalResponseContent for the agent framework
+                    # Create function_approval_response content for the agent framework
                     approval_response = Content.from_function_approval_response(
                         approved=accepted,
                         id=str(approval_call_id),
@@ -488,7 +525,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 result.append(chat_msg)
                 continue
 
-            # Cast result_content to acceptable type for FunctionResultContent
+            # Cast result_content to acceptable type for function_result content
             func_result: str | dict[str, Any] | list[Any]
             if isinstance(result_content, str):
                 func_result = result_content
@@ -565,7 +602,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
         # Check if this message contains function approvals
         if "function_approvals" in msg and msg["function_approvals"]:
-            # Convert function approvals to FunctionApprovalResponseContent
+            # Convert function approvals to function_approval_response content
             approval_contents: list[Any] = []
             for approval in msg["function_approvals"]:
                 # Create FunctionCallContent with the modified arguments

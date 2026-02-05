@@ -25,7 +25,7 @@ from agent_framework._workflows._runner_context import (
     Message,
     RunnerContext,
 )
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._state import State
 
 
 @dataclass
@@ -48,7 +48,7 @@ class MockExecutor(Executor):
 
 
 def test_create_runner():
-    """Test creating a runner with edges and shared state."""
+    """Test creating a runner with edges and state."""
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
 
@@ -63,7 +63,7 @@ def test_create_runner():
         executor_b.id: executor_b,
     }
 
-    runner = Runner(edge_groups, executors, shared_state=SharedState(), ctx=InProcRunnerContext())
+    runner = Runner(edge_groups, executors, state=State(), ctx=InProcRunnerContext())
 
     assert runner.context is not None and isinstance(runner.context, RunnerContext)
 
@@ -83,16 +83,16 @@ async def test_runner_run_until_convergence():
         executor_a.id: executor_a,
         executor_b.id: executor_b,
     }
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, shared_state, ctx)
+    runner = Runner(edges, executors, state, ctx)
 
     result: int | None = None
     await executor_a.execute(
         MockMessage(data=0),
         ["START"],  # source_executor_ids
-        shared_state,  # shared_state
+        state,  # state
         ctx,  # runner_context
     )
     async for event in runner.run_until_convergence():
@@ -121,15 +121,15 @@ async def test_runner_run_until_convergence_not_completed():
         executor_a.id: executor_a,
         executor_b.id: executor_b,
     }
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, shared_state, ctx, max_iterations=5)
+    runner = Runner(edges, executors, state, ctx, max_iterations=5)
 
     await executor_a.execute(
         MockMessage(data=0),
         ["START"],  # source_executor_ids
-        shared_state,  # shared_state
+        state,  # state
         ctx,  # runner_context
     )
     with pytest.raises(
@@ -155,15 +155,15 @@ async def test_runner_already_running():
         executor_a.id: executor_a,
         executor_b.id: executor_b,
     }
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, shared_state, ctx)
+    runner = Runner(edges, executors, state, ctx)
 
     await executor_a.execute(
         MockMessage(data=0),
         ["START"],  # source_executor_ids
-        shared_state,  # shared_state
+        state,  # state
         ctx,  # runner_context
     )
 
@@ -178,7 +178,7 @@ async def test_runner_already_running():
 
 async def test_runner_emits_runner_completion_for_agent_response_without_targets():
     ctx = InProcRunnerContext()
-    runner = Runner([], {}, SharedState(), ctx)
+    runner = Runner([], {}, State(), ctx)
 
     await ctx.send_message(
         Message(
@@ -227,7 +227,7 @@ async def test_runner_cancellation_stops_active_executor():
         executor_a.id: executor_a,
         executor_b.id: executor_b,
     }
-    shared_state = SharedState()
+    shared_state = State()
     ctx = InProcRunnerContext()
 
     runner = Runner(edges, executors, shared_state, ctx)

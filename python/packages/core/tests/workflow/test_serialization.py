@@ -623,7 +623,7 @@ class TestSerializationWorkflowClasses:
 
         # These private runtime fields should not be in the serialized data
         assert "_runner_context" not in data
-        assert "_shared_state" not in data
+        assert "_state" not in data
         assert "_runner" not in data
 
     def test_workflow_name_description_serialization(self) -> None:
@@ -760,7 +760,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Verify that serialization excludes non-serializable fields
     assert "_runner_context" not in data
-    assert "_shared_state" not in data
+    assert "_state" not in data
     assert "_runner" not in data
 
     # Test that we can identify each edge group type by examining their structure

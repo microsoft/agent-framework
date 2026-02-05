@@ -25,7 +25,7 @@ class WorkflowCheckpointSummary:
 
 def get_checkpoint_summary(checkpoint: WorkflowCheckpoint) -> WorkflowCheckpointSummary:
     targets = sorted(checkpoint.messages.keys())
-    executor_ids = sorted(checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {}).keys())
+    executor_ids = sorted(checkpoint.state.get(EXECUTOR_STATE_KEY, {}).keys())
     pending_request_info_events = [
         RequestInfoEvent.from_dict(request) for request in checkpoint.pending_request_info_events.values()
     ]

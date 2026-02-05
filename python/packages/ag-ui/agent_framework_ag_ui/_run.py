@@ -45,6 +45,7 @@ from ._utils import (
     convert_agui_tools_to_agent_framework,
     generate_event_id,
     get_conversation_id_from_update,
+    get_role_value,
     make_json_safe,
 )
 
@@ -344,7 +345,7 @@ def _emit_tool_result(
     flow: FlowState,
     predictive_handler: PredictiveStateHandler | None = None,
 ) -> list[BaseEvent]:
-    """Emit ToolCallResult events for FunctionResultContent."""
+    """Emit ToolCallResult events for function_result content."""
     events: list[BaseEvent] = []
 
     # Cannot emit tool result without a call_id to associate it with
@@ -385,6 +386,13 @@ def _emit_tool_result(
     # After tool result, any subsequent text should start a new message
     flow.tool_call_id = None
     flow.tool_call_name = None
+
+    # Close any open text message before resetting message_id (issue #3568)
+    # This handles the case where a TextMessageStartEvent was emitted for tool-only
+    # messages (Feature #4) but needs to be closed before starting a new message
+    if flow.message_id:
+        logger.debug("Closing text message (issue #3568 fix): message_id=%s", flow.message_id)
+        events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None  # Reset so next text content starts a new message
 
     return events
@@ -454,8 +462,20 @@ def _emit_approval_request(
             "function_arguments": make_json_safe(func_call.parse_arguments()) or {},
             "steps": [{"description": f"Execute {func_name}", "status": "enabled"}],
         }
-        events.append(ToolCallArgsEvent(tool_call_id=confirm_id, delta=json.dumps(args)))
+        args_json = json.dumps(args)
+        events.append(ToolCallArgsEvent(tool_call_id=confirm_id, delta=args_json))
         events.append(ToolCallEndEvent(tool_call_id=confirm_id))
+
+        # Track confirm_changes in pending_tool_calls for MessagesSnapshotEvent
+        # The frontend needs to see this in the snapshot to render the confirmation dialog
+        confirm_entry = {
+            "id": confirm_id,
+            "type": "function",
+            "function": {"name": "confirm_changes", "arguments": args_json},
+        }
+        flow.pending_tool_calls.append(confirm_entry)
+        flow.tool_calls_by_id[confirm_id] = confirm_entry
+        flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
 
     flow.waiting_for_approval = True
     return events
@@ -496,7 +516,7 @@ def _is_confirm_changes_response(messages: list[Any]) -> bool:
 
     # Parse the content to check if it has the confirm_changes structure
     for content in last.contents:
-        if getattr(content, "type", None) == "text":
+        if getattr(content, "type", None) == "text" and content.text:
             try:
                 result = json.loads(content.text)
                 # confirm_changes results have 'accepted' and 'steps' keys
@@ -516,31 +536,34 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
     # Parse the approval content
     approval_text = ""
     for content in last.contents:
-        if getattr(content, "type", None) == "text":
+        if getattr(content, "type", None) == "text" and content.text:
             approval_text = content.text
             break
 
-    try:
-        result = json.loads(approval_text)
-        accepted = result.get("accepted", False)
-        steps = result.get("steps", [])
-
-        if accepted:
-            # Generate acceptance message with step descriptions
-            enabled_steps = [s for s in steps if s.get("status") == "enabled"]
-            if enabled_steps:
-                message_parts = [f"Executing {len(enabled_steps)} approved steps:\n\n"]
-                for i, step in enumerate(enabled_steps, 1):
-                    message_parts.append(f"{i}. {step.get('description', 'Step')}\n")
-                message_parts.append("\nAll steps completed successfully!")
-                message = "".join(message_parts)
-            else:
-                message = "Changes confirmed and applied successfully!"
-        else:
-            # Rejection message
-            message = "No problem! What would you like me to change about the plan?"
-    except json.JSONDecodeError:
+    if not approval_text:
         message = "Acknowledged."
+    else:
+        try:
+            result = json.loads(approval_text)
+            accepted = result.get("accepted", False)
+            steps = result.get("steps", [])
+
+            if accepted:
+                # Generate acceptance message with step descriptions
+                enabled_steps = [s for s in steps if s.get("status") == "enabled"]
+                if enabled_steps:
+                    message_parts = [f"Executing {len(enabled_steps)} approved steps:\n\n"]
+                    for i, step in enumerate(enabled_steps, 1):
+                        message_parts.append(f"{i}. {step.get('description', 'Step')}\n")
+                    message_parts.append("\nAll steps completed successfully!")
+                    message = "".join(message_parts)
+                else:
+                    message = "Changes confirmed and applied successfully!"
+            else:
+                # Rejection message
+                message = "No problem! What would you like me to change about the plan?"
+        except json.JSONDecodeError:
+            message = "Acknowledged."
 
     message_id = generate_event_id()
     events.append(TextMessageStartEvent(message_id=message_id, role="assistant"))
@@ -558,8 +581,8 @@ async def _resolve_approval_responses(
 ) -> None:
     """Execute approved function calls and replace approval content with results.
 
-    This modifies the messages list in place, replacing FunctionApprovalResponseContent
-    with FunctionResultContent containing the actual tool execution result.
+    This modifies the messages list in place, replacing function_approval_response
+    content with function_result content containing the actual tool execution result.
 
     Args:
         messages: List of messages (will be modified in place)
@@ -622,6 +645,53 @@ async def _resolve_approval_responses(
 
     _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
 
+    # Post-process: Convert user messages with function_result content to proper tool messages.
+    # After _replace_approval_contents_with_results, approved tool calls have their results
+    # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
+    # This transformation ensures the message history is valid for the LLM provider.
+    _convert_approval_results_to_tool_messages(messages)
+
+
+def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
+    """Convert function_result content in user messages to proper tool messages.
+
+    After approval processing, tool results end up in user messages. OpenAI and other
+    providers require tool results to be in role="tool" messages. This function
+    extracts function_result content from user messages and creates proper tool messages.
+
+    This modifies the messages list in place.
+
+    Args:
+        messages: List of ChatMessage objects to process
+    """
+    result: list[Any] = []
+
+    for msg in messages:
+        if get_role_value(msg) != "user":
+            result.append(msg)
+            continue
+
+        function_results = [c for c in (msg.contents or []) if getattr(c, "type", None) == "function_result"]
+        other_contents = [c for c in (msg.contents or []) if getattr(c, "type", None) != "function_result"]
+
+        if not function_results:
+            result.append(msg)
+            continue
+
+        logger.info(
+            f"Converting {len(function_results)} function_result content(s) from user message to tool message(s)"
+        )
+
+        # Tool messages first (right after the preceding assistant message per OpenAI requirements)
+        for func_result in function_results:
+            result.append(ChatMessage(role="tool", contents=[func_result]))
+
+        # Then user message with remaining content (if any)
+        if other_contents:
+            result.append(ChatMessage(role=msg.role, contents=other_contents))
+
+    messages[:] = result
+
 
 def _build_messages_snapshot(
     flow: FlowState,
@@ -630,25 +700,29 @@ def _build_messages_snapshot(
     """Build MessagesSnapshotEvent from current flow state."""
     all_messages = list(snapshot_messages)
 
-    # Add assistant message with tool calls
+    # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
         tool_call_message = {
             "id": flow.message_id or generate_event_id(),
             "role": "assistant",
             "tool_calls": flow.pending_tool_calls.copy(),
         }
-        if flow.accumulated_text:
-            tool_call_message["content"] = flow.accumulated_text
         all_messages.append(tool_call_message)
 
     # Add tool results
     all_messages.extend(flow.tool_results)
 
-    # Add text-only assistant message if no tool calls
-    if flow.accumulated_text and not flow.pending_tool_calls:
+    # Add text-only assistant message if there is accumulated text
+    # This is a separate message from the tool calls message to maintain
+    # the expected AG-UI protocol format (see issue #3619)
+    if flow.accumulated_text:
+        # Use a new ID for the content message if we had tool calls (separate message)
+        content_message_id = (
+            generate_event_id() if flow.pending_tool_calls else (flow.message_id or generate_event_id())
+        )
         all_messages.append(
             {
-                "id": flow.message_id or generate_event_id(),
+                "id": content_message_id,
                 "role": "assistant",
                 "content": flow.accumulated_text,
             }
@@ -827,6 +901,8 @@ async def run_agent_stream(
 
         # Emit events for each content item
         for content in update.contents:
+            content_type = getattr(content, "type", None)
+            logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
             for event in _emit_content(
                 content,
                 flow,
@@ -922,6 +998,20 @@ async def run_agent_stream(
                                     tool_call_id,
                                 )
 
+                        # Parse function arguments - skip confirm_changes if we can't parse
+                        # (we can't ask user to confirm something we can't properly display)
+                        try:
+                            function_arguments = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Failed to decode JSON arguments for confirm_changes tool '%s' "
+                                "(tool_call_id=%s). Skipping confirmation flow - cannot display "
+                                "malformed arguments to user for approval.",
+                                tool_name,
+                                tool_call_id,
+                            )
+                            continue  # Skip to next tool call without emitting confirm_changes
+
                         # Emit confirm_changes tool call
                         confirm_id = generate_event_id()
                         yield ToolCallStartEvent(
@@ -932,15 +1022,28 @@ async def run_agent_stream(
                         confirm_args = {
                             "function_name": tool_name,
                             "function_call_id": tool_call_id,
-                            "function_arguments": json.loads(tool_call.get("function", {}).get("arguments", "{}")),
+                            "function_arguments": function_arguments,
                             "steps": [{"description": f"Execute {tool_name}", "status": "enabled"}],
                         }
-                        yield ToolCallArgsEvent(tool_call_id=confirm_id, delta=json.dumps(confirm_args))
+                        confirm_args_json = json.dumps(confirm_args)
+                        yield ToolCallArgsEvent(tool_call_id=confirm_id, delta=confirm_args_json)
                         yield ToolCallEndEvent(tool_call_id=confirm_id)
+
+                        # Track confirm_changes in pending_tool_calls for MessagesSnapshotEvent
+                        # The frontend needs to see this in the snapshot to render the confirmation dialog
+                        confirm_entry = {
+                            "id": confirm_id,
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": confirm_args_json},
+                        }
+                        flow.pending_tool_calls.append(confirm_entry)
+                        flow.tool_calls_by_id[confirm_id] = confirm_entry
+                        flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
 
     # Close any open message
     if flow.message_id:
+        logger.debug(f"End of run: closing text message message_id={flow.message_id}")
         yield TextMessageEndEvent(message_id=flow.message_id)
 
     # Emit MessagesSnapshotEvent if we have tool calls or results

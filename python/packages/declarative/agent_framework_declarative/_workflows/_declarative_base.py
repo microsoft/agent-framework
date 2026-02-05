@@ -3,7 +3,7 @@
 """Base classes for graph-based declarative workflow executors.
 
 This module provides:
-- DeclarativeWorkflowState: Manages workflow variables via SharedState
+- DeclarativeWorkflowState: Manages workflow variables via State
 - DeclarativeActionExecutor: Base class for action executors
 - Message types for inter-executor communication
 
@@ -34,7 +34,7 @@ from agent_framework._workflows import (
     Executor,
     WorkflowContext,
 )
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._state import State
 from powerfx import Engine
 
 if sys.version_info >= (3, 11):
@@ -61,10 +61,10 @@ class ConversationData(TypedDict):
 
 
 class DeclarativeStateData(TypedDict, total=False):
-    """Structure for the declarative workflow state stored in SharedState.
+    """Structure for the declarative workflow state stored in State.
 
     This TypedDict defines the schema for workflow variables stored
-    under the DECLARATIVE_STATE_KEY in SharedState.
+    under the DECLARATIVE_STATE_KEY in State.
 
     Variable Scopes (matching .NET naming conventions):
         Inputs: Initial workflow inputs (read-only after initialization).
@@ -87,7 +87,7 @@ class DeclarativeStateData(TypedDict, total=False):
     _declarative_loop_state: dict[str, Any]
 
 
-# Key used in SharedState to store declarative workflow variables
+# Key used in State to store declarative workflow variables
 DECLARATIVE_STATE_KEY = "_declarative_workflow_state"
 
 
@@ -126,10 +126,10 @@ def _make_powerfx_safe(value: Any) -> Any:
 
 
 class DeclarativeWorkflowState:
-    """Manages workflow variables stored in SharedState.
+    """Manages workflow variables stored in State.
 
     This class provides the same interface as the interpreter-based WorkflowState
-    but stores all data in SharedState for checkpointing support.
+    but stores all data in State for checkpointing support.
 
     The state is organized into namespaces (matching .NET naming conventions):
     - Workflow.Inputs: Initial inputs (read-only)
@@ -140,15 +140,15 @@ class DeclarativeWorkflowState:
     - Conversation: Conversation history
     """
 
-    def __init__(self, shared_state: SharedState):
-        """Initialize with a SharedState instance.
+    def __init__(self, state: State):
+        """Initialize with a State instance.
 
         Args:
-            shared_state: The workflow's shared state for persistence
+            state: The workflow's state for persistence
         """
-        self._shared_state = shared_state
+        self._state = state
 
-    async def initialize(self, inputs: "Mapping[str, Any] | None" = None) -> None:
+    def initialize(self, inputs: "Mapping[str, Any] | None" = None) -> None:
         """Initialize the declarative state with inputs.
 
         Args:
@@ -168,23 +168,22 @@ class DeclarativeWorkflowState:
             "Conversation": {"messages": [], "history": []},
             "Custom": {},
         }
-        await self._shared_state.set(DECLARATIVE_STATE_KEY, state_data)
+        self._state.set(DECLARATIVE_STATE_KEY, state_data)
 
-    async def get_state_data(self) -> DeclarativeStateData:
-        """Get the full state data dict from shared state."""
-        try:
-            result: DeclarativeStateData = await self._shared_state.get(DECLARATIVE_STATE_KEY)
-            return result
-        except KeyError:
+    def get_state_data(self) -> DeclarativeStateData:
+        """Get the full state data dict from state."""
+        result = self._state.get(DECLARATIVE_STATE_KEY)
+        if result is None:
             # Initialize if not present
-            await self.initialize()
-            return cast(DeclarativeStateData, await self._shared_state.get(DECLARATIVE_STATE_KEY))
+            self.initialize()
+            result = self._state.get(DECLARATIVE_STATE_KEY)
+        return cast(DeclarativeStateData, result)
 
-    async def set_state_data(self, data: DeclarativeStateData) -> None:
-        """Set the full state data dict in shared state."""
-        await self._shared_state.set(DECLARATIVE_STATE_KEY, data)
+    def set_state_data(self, data: DeclarativeStateData) -> None:
+        """Set the full state data dict in state."""
+        self._state.set(DECLARATIVE_STATE_KEY, data)
 
-    async def get(self, path: str, default: Any = None) -> Any:
+    def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
         Args:
@@ -194,7 +193,7 @@ class DeclarativeWorkflowState:
         Returns:
             The value at the path, or default if not found
         """
-        state_data = await self.get_state_data()
+        state_data = self.get_state_data()
         parts = path.split(".")
         if not parts:
             return default
@@ -240,7 +239,7 @@ class DeclarativeWorkflowState:
 
         return obj  # type: ignore[return-value]
 
-    async def set(self, path: str, value: Any) -> None:
+    def set(self, path: str, value: Any) -> None:
         """Set a value in the state using a dot-notated path.
 
         Args:
@@ -250,7 +249,7 @@ class DeclarativeWorkflowState:
         Raises:
             ValueError: If attempting to set Workflow.Inputs (which is read-only)
         """
-        state_data = await self.get_state_data()
+        state_data = self.get_state_data()
         parts = path.split(".")
         if not parts:
             return
@@ -296,9 +295,9 @@ class DeclarativeWorkflowState:
 
         # Set the final value
         target[remaining[-1]] = value
-        await self.set_state_data(state_data)
+        self.set_state_data(state_data)
 
-    async def append(self, path: str, value: Any) -> None:
+    def append(self, path: str, value: Any) -> None:
         """Append a value to a list at the specified path.
 
         If the path doesn't exist, creates a new list with the value.
@@ -310,17 +309,17 @@ class DeclarativeWorkflowState:
             path: Dot-notated path to a list
             value: The value to append
         """
-        existing = await self.get(path)
+        existing = self.get(path)
         if existing is None:
-            await self.set(path, [value])
+            self.set(path, [value])
         elif isinstance(existing, list):
             existing_list: list[Any] = list(existing)  # type: ignore[arg-type]
             existing_list.append(value)
-            await self.set(path, existing_list)
+            self.set(path, existing_list)
         else:
             raise ValueError(f"Cannot append to non-list at path '{path}'")
 
-    async def eval(self, expression: str) -> Any:
+    def eval(self, expression: str) -> Any:
         """Evaluate a PowerFx expression with the current state.
 
         Expressions starting with '=' are evaluated as PowerFx.
@@ -354,16 +353,16 @@ class DeclarativeWorkflowState:
 
         # Handle custom functions not supported by PowerFx
         # First check if the entire formula is a custom function
-        result = await self._eval_custom_function(formula)
+        result = self._eval_custom_function(formula)
         if result is not None:
             return result
 
         # Pre-process nested custom functions (e.g., Upper(MessageText(...)))
         # Replace them with their evaluated results before sending to PowerFx
-        formula = await self._preprocess_custom_functions(formula)
+        formula = self._preprocess_custom_functions(formula)
 
         engine = Engine()
-        symbols = await self._to_powerfx_symbols()
+        symbols = self._to_powerfx_symbols()
         try:
             return engine.eval(formula, symbols=symbols)
         except ValueError as e:
@@ -375,7 +374,7 @@ class DeclarativeWorkflowState:
                 return None
             raise
 
-    async def _eval_custom_function(self, formula: str) -> Any | None:
+    def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.
 
         The standard PowerFx library supports these functions but the Python wrapper
@@ -404,7 +403,7 @@ class DeclarativeWorkflowState:
                     evaluated_args.append(arg[1:-1])
                 else:
                     # Variable reference - evaluate it
-                    result = await self.eval(f"={arg}")
+                    result = self.eval(f"={arg}")
                     evaluated_args.append(str(result) if result is not None else "")
             return "".join(evaluated_args)
 
@@ -413,14 +412,14 @@ class DeclarativeWorkflowState:
         if match:
             inner_expr = match.group(1).strip()
             # Evaluate the inner expression
-            text = await self.eval(f"={inner_expr}")
+            text = self.eval(f"={inner_expr}")
             return {"role": "user", "text": str(text) if text else ""}
 
         # AgentMessage(expr) - creates an assistant message dict
         match = re.match(r"AgentMessage\((.+)\)$", formula.strip())
         if match:
             inner_expr = match.group(1).strip()
-            text = await self.eval(f"={inner_expr}")
+            text = self.eval(f"={inner_expr}")
             return {"role": "assistant", "text": str(text) if text else ""}
 
         # MessageText(expr) - extracts text from the last message
@@ -428,11 +427,11 @@ class DeclarativeWorkflowState:
         if match:
             inner_expr = match.group(1).strip()
             # Reuse the helper method for consistent text extraction
-            return await self._eval_and_replace_message_text(inner_expr)
+            return self._eval_and_replace_message_text(inner_expr)
 
         return None
 
-    async def _preprocess_custom_functions(self, formula: str) -> str:
+    def _preprocess_custom_functions(self, formula: str) -> str:
         """Pre-process custom functions nested inside other PowerFx functions.
 
         Custom functions like MessageText() are not supported by the PowerFx engine.
@@ -509,7 +508,7 @@ class DeclarativeWorkflowState:
                 inner_expr = formula[paren_start + 1 : end - 1]
 
                 # Evaluate and get replacement
-                replacement = await handler(inner_expr)
+                replacement = handler(inner_expr)
 
                 # Replace in formula
                 if isinstance(replacement, str):
@@ -517,7 +516,7 @@ class DeclarativeWorkflowState:
                         # Store long strings in a temp variable to avoid PowerFx expression limit
                         temp_var_name = f"_TempMessageText{temp_var_counter}"
                         temp_var_counter += 1
-                        await self.set(f"Local.{temp_var_name}", replacement)
+                        self.set(f"Local.{temp_var_name}", replacement)
                         replacement_str = f"Local.{temp_var_name}"
                         logger.debug(
                             f"Stored long MessageText result ({len(replacement)} chars) "
@@ -534,7 +533,7 @@ class DeclarativeWorkflowState:
 
         return formula
 
-    async def _eval_and_replace_message_text(self, inner_expr: str) -> str:
+    def _eval_and_replace_message_text(self, inner_expr: str) -> str:
         """Evaluate MessageText() and return the text result.
 
         Args:
@@ -543,7 +542,7 @@ class DeclarativeWorkflowState:
         Returns:
             The extracted text from the messages
         """
-        messages: Any = await self.eval(f"={inner_expr}")
+        messages: Any = self.eval(f"={inner_expr}")
         if isinstance(messages, list) and messages:
             last_msg: Any = messages[-1]
             if isinstance(last_msg, dict):
@@ -603,13 +602,13 @@ class DeclarativeWorkflowState:
 
         return args
 
-    async def _to_powerfx_symbols(self) -> dict[str, Any]:
+    def _to_powerfx_symbols(self) -> dict[str, Any]:
         """Convert the current state to a PowerFx symbols dictionary.
 
         Uses .NET-style PascalCase names (System, Local, Workflow) matching
         the .NET declarative workflow implementation.
         """
-        state_data = await self.get_state_data()
+        state_data = self.get_state_data()
         local_data = state_data.get("Local", {})
         agent_data = state_data.get("Agent", {})
         conversation_data = state_data.get("Conversation", {})
@@ -642,19 +641,19 @@ class DeclarativeWorkflowState:
         result = _make_powerfx_safe(symbols)
         return cast(dict[str, Any], result)
 
-    async def eval_if_expression(self, value: Any) -> Any:
+    def eval_if_expression(self, value: Any) -> Any:
         """Evaluate a value if it's a PowerFx expression, otherwise return as-is."""
         if isinstance(value, str):
-            return await self.eval(value)
+            return self.eval(value)
         if isinstance(value, dict):
             value_dict: dict[str, Any] = dict(value)  # type: ignore[arg-type]
-            return {k: await self.eval_if_expression(v) for k, v in value_dict.items()}
+            return {k: self.eval_if_expression(v) for k, v in value_dict.items()}
         if isinstance(value, list):
             value_list: list[Any] = list(value)  # type: ignore[arg-type]
-            return [await self.eval_if_expression(item) for item in value_list]
+            return [self.eval_if_expression(item) for item in value_list]
         return value
 
-    async def interpolate_string(self, text: str) -> str:
+    def interpolate_string(self, text: str) -> str:
         """Interpolate {Variable.Path} references in a string.
 
         This handles template-style variable substitution like:
@@ -669,18 +668,18 @@ class DeclarativeWorkflowState:
         """
         import re
 
-        async def replace_var(match: re.Match[str]) -> str:
+        def replace_var(match: re.Match[str]) -> str:
             var_path: str = match.group(1)
-            value = await self.get(var_path)
+            value = self.get(var_path)
             return str(value) if value is not None else ""
 
         # Match {Variable.Path} patterns
         pattern = r"\{([A-Za-z][A-Za-z0-9_.]*)\}"
 
-        # re.sub doesn't support async, so we need to do it manually
+        # Replace all matches
         result = text
         for match in re.finditer(pattern, text):
-            replacement = await replace_var(match)
+            replacement = replace_var(match)
             result = result.replace(match.group(0), replacement, 1)
 
         return result
@@ -802,9 +801,9 @@ class DeclarativeActionExecutor(Executor):
         """Get the display name for logging."""
         return self._action_def.get("displayName")
 
-    def _get_state(self, shared_state: SharedState) -> DeclarativeWorkflowState:
+    def _get_state(self, state: State) -> DeclarativeWorkflowState:
         """Get the declarative workflow state wrapper."""
-        return DeclarativeWorkflowState(shared_state)
+        return DeclarativeWorkflowState(state)
 
     async def _ensure_state_initialized(
         self,
@@ -826,18 +825,18 @@ class DeclarativeActionExecutor(Executor):
         Returns:
             The initialized DeclarativeWorkflowState
         """
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         if isinstance(trigger, dict):
             # Structured inputs - use directly
-            await state.initialize(trigger)  # type: ignore
+            state.initialize(trigger)  # type: ignore
         elif isinstance(trigger, str):
             # String input - wrap in dict
-            await state.initialize({"input": trigger})
+            state.initialize({"input": trigger})
         elif not isinstance(
             trigger, (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl)
         ):
             # Any other type - convert to string like .NET's DefaultTransform
-            await state.initialize({"input": str(trigger)})
+            state.initialize({"input": str(trigger)})
 
         return state

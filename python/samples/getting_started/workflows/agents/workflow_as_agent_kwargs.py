@@ -18,7 +18,7 @@ Key Concepts:
 - Build a workflow using SequentialBuilder (or any builder pattern)
 - Expose the workflow as a reusable agent via workflow.as_agent()
 - Pass custom context as kwargs when invoking workflow_agent.run() or run_stream()
-- kwargs are stored in SharedState and propagated to all agent invocations
+- kwargs are stored in State and propagated to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 
 When to use workflow.as_agent():

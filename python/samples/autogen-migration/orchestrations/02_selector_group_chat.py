@@ -7,6 +7,8 @@ which agent should speak next based on the conversation context.
 
 import asyncio
 
+from agent_framework import AgentResponseUpdate, WorkflowOutputEvent
+
 
 async def run_autogen() -> None:
     """AutoGen's SelectorGroupChat with LLM-based speaker selection."""
@@ -59,7 +61,7 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's GroupChatBuilder with LLM-based speaker selection."""
-    from agent_framework import AgentRunUpdateEvent, GroupChatBuilder
+    from agent_framework import GroupChatBuilder
     from agent_framework.openai import OpenAIChatClient
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
@@ -100,7 +102,7 @@ async def run_agent_framework() -> None:
     print("[Agent Framework] Group chat conversation:")
     current_executor = None
     async for event in workflow.run_stream("How do I connect to a PostgreSQL database using Python?"):
-        if isinstance(event, AgentRunUpdateEvent):
+        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
                 if current_executor is not None:

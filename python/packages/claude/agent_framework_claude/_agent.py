@@ -23,15 +23,16 @@ from agent_framework import (
 from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
-    ClaudeAgentOptions as SDKOptions,
-)
-from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeSDKClient,
     ResultMessage,
     SdkMcpTool,
     create_sdk_mcp_server,
 )
-from claude_agent_sdk.types import StreamEvent
+from claude_agent_sdk import (
+    ClaudeAgentOptions as SDKOptions,
+)
+from claude_agent_sdk.types import StreamEvent, TextBlock
 from pydantic import ValidationError
 
 from ._settings import ClaudeAgentSettings
@@ -639,7 +640,33 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                                 contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
                                 raw_representation=message,
                             )
+            elif isinstance(message, AssistantMessage):
+                # Handle AssistantMessage - check for API errors
+                # Note: In streaming mode, the content was already yielded via StreamEvent,
+                # so we only check for errors here, not re-emit content.
+                if message.error:
+                    # Map error types to descriptive messages
+                    error_messages = {
+                        "authentication_failed": "Authentication failed with Claude API",
+                        "billing_error": "Billing error with Claude API",
+                        "rate_limit": "Rate limit exceeded for Claude API",
+                        "invalid_request": "Invalid request to Claude API",
+                        "server_error": "Claude API server error",
+                        "unknown": "Unknown error from Claude API",
+                    }
+                    error_msg = error_messages.get(message.error, f"Claude API error: {message.error}")
+                    # Extract any error details from content blocks
+                    if message.content:
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                error_msg = f"{error_msg}: {block.text}"
+                                break
+                    raise ServiceException(error_msg)
             elif isinstance(message, ResultMessage):
+                # Check for errors in result message
+                if message.is_error:
+                    error_msg = message.result or "Unknown error from Claude API"
+                    raise ServiceException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
 
         # Update thread with session ID

@@ -220,6 +220,133 @@ public class AIAgentTests
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
+    /// <summary>
+    /// Theory data for RunAsync overloads.
+    /// </summary>
+    public static TheoryData<string> RunAsyncOverloads => new()
+    {
+        "NoMessage",
+        "StringMessage",
+        "ChatMessage",
+        "MessagesCollection"
+    };
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreAsync for all RunAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunAsync_SetsCurrentRunContext_AccessibleFromRunCoreAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+            });
+
+        // Act
+        switch (overload)
+        {
+            case "NoMessage":
+                await agentMock.Object.RunAsync(session, options);
+                break;
+            case "StringMessage":
+                await agentMock.Object.RunAsync("Hello", session, options);
+                break;
+            case "ChatMessage":
+                await agentMock.Object.RunAsync(new ChatMessage(ChatRole.User, "Hello"), session, options);
+                break;
+            case "MessagesCollection":
+                await agentMock.Object.RunAsync([new ChatMessage(ChatRole.User, "Hello")], session, options);
+                break;
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreStreamingAsync for all RunStreamingAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunStreamingAsync_SetsCurrentRunContext_AccessibleFromRunCoreStreamingAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "Response")]);
+            });
+
+        // Act
+        IAsyncEnumerable<AgentResponseUpdate> stream = overload switch
+        {
+            "NoMessage" => agentMock.Object.RunStreamingAsync(session, options),
+            "StringMessage" => agentMock.Object.RunStreamingAsync("Hello", session, options),
+            "ChatMessage" => agentMock.Object.RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"), session, options),
+            "MessagesCollection" => agentMock.Object.RunStreamingAsync(new[] { new ChatMessage(ChatRole.User, "Hello") }, session, options),
+            _ => throw new InvalidOperationException($"Unknown overload: {overload}")
+        };
+
+        await foreach (AgentResponseUpdate _ in stream)
+        {
+            // Consume the stream
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
+    }
+
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
@@ -433,9 +560,9 @@ public class AIAgentTests
     #endregion
 
     /// <summary>
-    /// Typed mock session.
+    /// Typed mock session for testing purposes.
     /// </summary>
-    public abstract class TestAgentSession : AgentSession;
+    private sealed class TestAgentSession : AgentSession;
 
     private sealed class MockAgent : AIAgent
     {

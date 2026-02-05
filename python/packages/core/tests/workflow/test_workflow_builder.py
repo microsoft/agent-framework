@@ -15,6 +15,7 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowValidationError,
     handler,
 )
 
@@ -57,7 +58,7 @@ class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
     @handler
-    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage]) -> None:
+    async def mock_handler(self, message: MockMessage, ctx: WorkflowContext[MockMessage, MockMessage]) -> None:
         """A mock handler that does nothing."""
         pass
 
@@ -104,99 +105,23 @@ def test_workflow_builder_fluent_api():
     assert len(workflow.executors) == 6
 
 
-def test_add_agent_with_custom_parameters():
-    """Test adding an agent with custom parameters."""
-    agent = DummyAgent(id="agent_custom", name="custom_agent")
-    builder = WorkflowBuilder()
-
-    # Add agent with custom parameters
-    with pytest.deprecated_call():
-        result = builder.add_agent(agent, output_response=True, id="my_custom_id")
-
-    # Verify that add_agent returns the builder for chaining
-    assert result is builder
-
-    # Build workflow and verify executor is present
-    workflow = builder.set_start_executor(agent).build()
-    assert "my_custom_id" in workflow.executors
-
-    # Verify the executor was created with correct parameters
-    executor = workflow.executors["my_custom_id"]
-    assert isinstance(executor, AgentExecutor)
-    assert executor.id == "my_custom_id"
-    assert getattr(executor, "_output_response", False) is True
-
-
 def test_add_agent_reuses_same_wrapper():
     """Test that using the same agent instance multiple times reuses the same wrapper."""
-    agent = DummyAgent(id="agent_reuse", name="reuse_agent")
+    reuse_agent = DummyAgent(id="agent_reuse", name="reuse_agent")
+    agent_a = DummyAgent(id="agent_a", name="agent_a")
+
     builder = WorkflowBuilder()
-
-    # Add agent with specific parameters
-    with pytest.deprecated_call():
-        builder.add_agent(agent, output_response=True, id="agent_exec")
-
     # Use the same agent instance in add_edge - should reuse the same wrapper
-    builder.set_start_executor(agent)
+    builder.set_start_executor(reuse_agent)
+    builder.add_edge(reuse_agent, agent_a)
+    builder.add_edge(agent_a, reuse_agent)
 
     workflow = builder.build()
 
     # Verify only one executor exists for this agent
-    assert workflow.start_executor_id == "agent_exec"
-    assert "agent_exec" in workflow.executors
-    assert len([e for e in workflow.executors.values() if isinstance(e, AgentExecutor)]) == 1
-
-    # Verify the executor has the parameters from add_agent
-    start_executor = workflow.get_start_executor()
-    assert isinstance(start_executor, AgentExecutor)
-    assert getattr(start_executor, "_output_response", False) is True
-
-
-def test_add_agent_then_use_in_edges():
-    """Test that an agent added via add_agent can be used in edge definitions."""
-    agent1 = DummyAgent(id="agent1", name="first")
-    agent2 = DummyAgent(id="agent2", name="second")
-    builder = WorkflowBuilder()
-
-    # Add agents with specific settings
-    with pytest.deprecated_call():
-        builder.add_agent(agent1, output_response=False, id="exec1")
-        builder.add_agent(agent2, output_response=True, id="exec2")
-
-    # Use the same agent instances to create edges
-    workflow = builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
-
-    # Verify the executors maintain their settings
-    assert workflow.start_executor_id == "exec1"
-    assert "exec1" in workflow.executors
-    assert "exec2" in workflow.executors
-
-    e1 = workflow.executors["exec1"]
-    e2 = workflow.executors["exec2"]
-
-    assert isinstance(e1, AgentExecutor)
-    assert isinstance(e2, AgentExecutor)
-    assert getattr(e1, "_output_response", True) is False
-    assert getattr(e2, "_output_response", False) is True
-
-
-def test_add_agent_without_explicit_id_uses_agent_name():
-    """Test that add_agent uses agent name as id when no explicit id is provided."""
-    agent = DummyAgent(id="agent_x", name="named_agent")
-    builder = WorkflowBuilder()
-
-    with pytest.deprecated_call():
-        result = builder.add_agent(agent)
-
-    # Verify that add_agent returns the builder for chaining
-    assert result is builder
-
-    workflow = builder.set_start_executor(agent).build()
-    assert "named_agent" in workflow.executors
-
-    # Verify the executor id matches the agent name
-    executor = workflow.executors["named_agent"]
-    assert executor.id == "named_agent"
+    assert workflow.start_executor_id == "reuse_agent"
+    assert "reuse_agent" in workflow.executors
+    assert len([e for e in workflow.executors.values() if isinstance(e, AgentExecutor)]) == 2
 
 
 def test_add_agent_duplicate_id_raises_error():
@@ -205,13 +130,8 @@ def test_add_agent_duplicate_id_raises_error():
     agent2 = DummyAgent(id="agent2", name="first")  # Same name as agent1
     builder = WorkflowBuilder()
 
-    # Add first agent
-    with pytest.deprecated_call():
-        builder.add_agent(agent1)
-
-    # Adding second agent with same name should raise ValueError
-    with pytest.deprecated_call(), pytest.raises(ValueError, match="Duplicate executor ID"):
-        builder.add_agent(agent2)
+    with pytest.raises(ValueError, match="Duplicate executor ID"):
+        builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
 
 
 # Tests for new executor registration patterns
@@ -303,7 +223,7 @@ def test_register_duplicate_id_raises_error():
     builder.set_start_executor("MyExecutor1")
 
     # Registering second executor with same ID should raise ValueError
-    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been created."):
+    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been registered."):
         builder.build()
 
 
@@ -312,9 +232,7 @@ def test_register_agent_basic():
     builder = WorkflowBuilder()
 
     # Register an agent factory
-    result = builder.register_agent(
-        lambda: DummyAgent(id="agent_test", name="test_agent"), name="TestAgent", output_response=True
-    )
+    result = builder.register_agent(lambda: DummyAgent(id="agent_test", name="test_agent"), name="TestAgent")
 
     # Verify that register_agent returns the builder for chaining
     assert result is builder
@@ -323,7 +241,6 @@ def test_register_agent_basic():
     workflow = builder.set_start_executor("TestAgent").build()
     assert "test_agent" in workflow.executors
     assert isinstance(workflow.executors["test_agent"], AgentExecutor)
-    assert workflow.executors["test_agent"]._output_response is True  # type: ignore
 
 
 def test_register_agent_with_thread():
@@ -336,7 +253,6 @@ def test_register_agent_with_thread():
         lambda: DummyAgent(id="agent_with_thread", name="threaded_agent"),
         name="ThreadedAgent",
         agent_thread=custom_thread,
-        output_response=False,
     )
 
     # Build workflow and verify agent executor configuration
@@ -345,7 +261,6 @@ def test_register_agent_with_thread():
 
     assert isinstance(executor, AgentExecutor)
     assert executor.id == "threaded_agent"
-    assert executor._output_response is False  # type: ignore
     assert executor._agent_thread is custom_thread  # type: ignore
 
 
@@ -549,3 +464,151 @@ def test_register_agent_creates_unique_instances():
     # Verify that two different agent instances were created
     assert len(instance_ids) == 2
     assert instance_ids[0] != instance_ids[1]
+
+
+# region with_output_from tests
+
+
+def test_with_output_from_returns_builder():
+    """Test that with_output_from returns the builder for method chaining."""
+    executor_a = MockExecutor(id="executor_a")
+    builder = WorkflowBuilder()
+
+    result = builder.with_output_from([executor_a])
+
+    assert result is builder
+
+
+def test_with_output_from_with_executor_instances():
+    """Test with_output_from with direct executor instances."""
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .with_output_from([executor_b])
+        .build()
+    )
+
+    # Verify that the workflow was built with the correct output executors
+    assert workflow._output_executors == ["executor_b"]  # type: ignore
+
+
+def test_with_output_from_with_agent_instances():
+    """Test with_output_from with agent instances."""
+    agent_a = DummyAgent(id="agent_a", name="writer")
+    agent_b = DummyAgent(id="agent_b", name="reviewer")
+
+    workflow = (
+        WorkflowBuilder().set_start_executor(agent_a).add_edge(agent_a, agent_b).with_output_from([agent_b]).build()
+    )
+
+    # Verify that the workflow was built with the agent's name as output executor
+    assert workflow._output_executors == ["reviewer"]  # type: ignore
+
+
+def test_with_output_from_with_registered_names():
+    """Test with_output_from with registered factory names (strings)."""
+    workflow = (
+        WorkflowBuilder()
+        .register_executor(lambda: MockExecutor(id="ExecutorA"), name="ExecutorAFactory")
+        .register_executor(lambda: MockExecutor(id="ExecutorB"), name="ExecutorBFactory")
+        .set_start_executor("ExecutorAFactory")
+        .add_edge("ExecutorAFactory", "ExecutorBFactory")
+        .with_output_from(["ExecutorBFactory"])
+        .build()
+    )
+
+    # Verify that the workflow was built with the correct output executors
+    assert workflow._output_executors == ["ExecutorB"]  # type: ignore
+
+
+def test_with_output_from_with_multiple_executors():
+    """Test with_output_from with multiple executors."""
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+    executor_c = MockExecutor(id="executor_c")
+
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .add_edge(executor_b, executor_c)
+        .with_output_from([executor_a, executor_c])
+        .build()
+    )
+
+    # Verify that the workflow was built with both output executors
+    assert set(workflow._output_executors) == {"executor_a", "executor_c"}  # type: ignore
+
+
+def test_with_output_from_can_be_called_multiple_times():
+    """Test that calling with_output_from multiple times overwrites the previous setting."""
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .add_edge(executor_a, executor_b)
+        .with_output_from([executor_a])
+        .with_output_from([executor_b])  # This should overwrite the previous setting
+        .build()
+    )
+
+    # Verify that only the last setting is applied
+    assert workflow._output_executors == ["executor_b"]  # type: ignore
+
+
+def test_with_output_from_with_registered_agents():
+    """Test with_output_from with registered agent factory names."""
+    workflow = (
+        WorkflowBuilder()
+        .register_agent(lambda: DummyAgent(id="agent1", name="writer"), name="WriterAgent")
+        .register_agent(lambda: DummyAgent(id="agent2", name="reviewer"), name="ReviewerAgent")
+        .set_start_executor("WriterAgent")
+        .add_edge("WriterAgent", "ReviewerAgent")
+        .with_output_from(["ReviewerAgent"])
+        .build()
+    )
+
+    # Verify that the workflow was built with the agent's resolved name
+    assert workflow._output_executors == ["reviewer"]  # type: ignore
+
+
+def test_with_output_from_in_fluent_chain():
+    """Test that with_output_from works correctly in a fluent builder chain."""
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+    executor_c = MockExecutor(id="executor_c")
+
+    # Build workflow with with_output_from in the middle of the chain
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(executor_a)
+        .with_output_from([executor_c])  # Set early in the chain
+        .add_edge(executor_a, executor_b)
+        .add_edge(executor_b, executor_c)
+        .build()
+    )
+
+    # Verify that the setting persists through the chain
+    assert workflow._output_executors == ["executor_c"]  # type: ignore
+
+
+def test_with_output_from_with_invalid_executor_raises_validation_error():
+    """Test that with_output_from with an invalid executor raises an error."""
+    executor_a = MockExecutor(id="executor_a")
+
+    builder = WorkflowBuilder().set_start_executor(executor_a)
+
+    # Attempting to set output from an executor not in the workflow should raise an error
+    with pytest.raises(
+        WorkflowValidationError, match="Output executor 'executor_b' is not present in the workflow graph"
+    ):
+        builder.with_output_from([MockExecutor(id="executor_b")]).build()
+
+
+# endregion
