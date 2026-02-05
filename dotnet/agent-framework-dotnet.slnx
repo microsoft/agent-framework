@@ -98,6 +98,7 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/OpenAI/DeclarativeOpenAIAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AGUI/">
     <File Path="samples/GettingStarted/AGUI/README.md" />
