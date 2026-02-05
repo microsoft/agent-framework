@@ -848,33 +848,6 @@ class AgentSession:
         self.state: dict[str, Any] = {}  # Mutable state dict
 
 
-class ContextPluginRunner:
-    """Agent-owned runner that executes plugins with session state."""
-
-    def __init__(self, plugins: Sequence[ContextPlugin]):
-        self._plugins = list(plugins)
-
-    async def before_run(
-        self,
-        agent: "ChatAgent",
-        session: AgentSession,
-        context: SessionContext,
-    ) -> None:
-        """Run before_run for all plugins, passing the whole state dict."""
-        for plugin in self._plugins:
-            await plugin.before_run(agent, session, context, session.state)  # Dict is mutable, no return needed
-
-    async def after_run(
-        self,
-        agent: "ChatAgent",
-        session: AgentSession,
-        context: SessionContext,
-    ) -> None:
-        """Run after_run for all plugins in reverse order."""
-        for plugin in reversed(self._plugins):
-            await plugin.after_run(agent, session, context, session.state)  # Dict is mutable, no return needed
-
-
 class ChatAgent:
     def __init__(
         self,
@@ -883,7 +856,7 @@ class ChatAgent:
         context_plugins: Sequence[ContextPlugin] | None = None,
     ):
         # Agent owns the actual plugin instances
-        self._plugin_runner = ContextPluginRunner(list(context_plugins or []))
+        self._context_plugins = list(context_plugins or [])
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create lightweight session with just state."""
@@ -896,14 +869,16 @@ class ChatAgent:
         )
 
         # Before-run plugins
-        await self._plugin_runner.before_run(self, session, context)
+        for plugin in self._context_plugins:
+            await plugin.before_run(self, session, context, session.state)
 
         # assemble final input messages from context
 
         # ... actual running, i.e. `get_response` for ChatAgent ...
 
-        # After-run plugins
-        await self._plugin_runner.after_run(self, session, context)
+        # After-run plugins (reverse order)
+        for plugin in reversed(self._context_plugins):
+            await plugin.after_run(self, session, context, session.state)
 
 
 # Plugin that maintains state - modifies dict in place
