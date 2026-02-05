@@ -75,10 +75,14 @@ async def main() -> None:
     # 1) Build a simple fan out and fan in workflow
     workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: Dispatcher(id="dispatcher"), name="dispatcher")
-        .register_executor(lambda: Average(id="average"), name="average")
-        .register_executor(lambda: Sum(id="summation"), name="summation")
-        .register_executor(lambda: Aggregator(id="aggregator"), name="aggregator")
+        .register_executors(
+            {
+                "dispatcher": lambda: Dispatcher(id="dispatcher"),
+                "average": lambda: Average(id="average"),
+                "summation": lambda: Sum(id="summation"),
+                "aggregator": lambda: Aggregator(id="aggregator"),
+            }
+        )
         .set_start_executor("dispatcher")
         .add_fan_out_edges("dispatcher", ["average", "summation"])
         .add_fan_in_edges(["average", "summation"], "aggregator")

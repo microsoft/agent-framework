@@ -166,7 +166,7 @@ async def main() -> None:
     workflow = (
         WorkflowBuilder()
         .register_agent(create_guessing_agent, name="guessing_agent")
-        .register_executor(lambda: TurnManager(id="turn_manager"), name="turn_manager")
+        .register_executors({"turn_manager": lambda: TurnManager(id="turn_manager")})
         .set_start_executor("turn_manager")
         .add_edge("turn_manager", "guessing_agent")  # Ask agent to make/adjust a guess
         .add_edge("guessing_agent", "turn_manager")  # Agent's response comes back to coordinator

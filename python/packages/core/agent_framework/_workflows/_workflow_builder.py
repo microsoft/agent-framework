@@ -140,8 +140,10 @@ class WorkflowBuilder:
             # Build a workflow
             workflow = (
                 WorkflowBuilder()
-                .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
+                .register_executors({
+                    "UpperCase": lambda: UpperCaseExecutor(id="upper"),
+                    "Reverse": lambda: ReverseExecutor(id="reverse"),
+                })
                 .add_edge("UpperCase", "Reverse")
                 .set_start_executor("UpperCase")
                 .build()
@@ -260,78 +262,6 @@ class WorkflowBuilder:
             f"WorkflowBuilder expected an Executor or AgentProtocol instance; got {type(candidate).__name__}."
         )
 
-    def register_executor(self, factory_func: Callable[[], Executor], name: str | list[str]) -> Self:
-        """Register an executor factory function for lazy initialization.
-
-        This method allows you to register a factory function that creates an executor.
-        The executor will be instantiated only when the workflow is built, enabling
-        deferred initialization and potentially reducing startup time.
-
-        Args:
-            factory_func: A callable that returns an Executor instance when called.
-            name: The name(s) of the registered executor factory. This doesn't have to match
-                  the executor's ID, but it must be unique within the workflow.
-
-        Example:
-            .. code-block:: python
-                from typing_extensions import Never
-                from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
-
-
-                class UpperCaseExecutor(Executor):
-                    @handler
-                    async def process(self, text: str, ctx: WorkflowContext[str]) -> None:
-                        await ctx.send_message(text.upper())
-
-
-                class ReverseExecutor(Executor):
-                    @handler
-                    async def process(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
-                        await ctx.yield_output(text[::-1])
-
-
-                # Build a workflow
-                workflow = (
-                    WorkflowBuilder()
-                    .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                    .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
-                    .set_start_executor("UpperCase")
-                    .add_edge("UpperCase", "Reverse")
-                    .build()
-                )
-
-            If multiple names are provided, the same factory function will be registered under each name.
-
-            .. code-block:: python
-
-                from agent_framework import WorkflowBuilder, Executor, WorkflowContext, handler
-
-
-                class LoggerExecutor(Executor):
-                    @handler
-                    async def log(self, message: str, ctx: WorkflowContext) -> None:
-                        print(f"Log: {message}")
-
-
-                # Register the same executor factory under multiple names
-                workflow = (
-                    WorkflowBuilder()
-                    .register_executor(lambda: LoggerExecutor(id="logger"), name=["ExecutorA", "ExecutorB"])
-                    .set_start_executor("ExecutorA")
-                    .add_edge("ExecutorA", "ExecutorB")
-                    .build()
-        """
-        names = [name] if isinstance(name, str) else name
-
-        for n in names:
-            if n in self._executor_registry:
-                raise ValueError(f"An executor factory with the name '{n}' is already registered.")
-
-        for n in names:
-            self._executor_registry[n] = factory_func
-
-        return self
-
     def register_executors(self, executor_factories: dict[str, Callable[[], Executor]]) -> Self:
         """Register multiple executor factory functions for lazy initialization.
 
@@ -422,7 +352,7 @@ class WorkflowBuilder:
                 # Build a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ..., name="SomeOtherExecutor")
+                    .register_executors({"SomeOtherExecutor": lambda: ...})
                     .register_agent(
                         lambda: AnthropicAgent(name="writer", model="claude-3-5-sonnet-20241022"),
                         name="WriterAgent",
@@ -524,7 +454,7 @@ class WorkflowBuilder:
 
             Note: If instances are provided for both source and target, they will be shared across
                 all workflow instances created from the built Workflow. To avoid this, consider
-                registering the executors and agents using `register_executor` and `register_agent`
+                registering the executors and agents using `register_executors` and `register_agent`
                 and referencing them by factory name for lazy initialization instead.
 
         Returns:
@@ -552,8 +482,10 @@ class WorkflowBuilder:
                 # Connect executors with an edge
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="a"),
+                        "ProcessorB": lambda: ProcessorB(id="b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .build()
@@ -561,8 +493,10 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="a"),
+                        "ProcessorB": lambda: ProcessorB(id="b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB", condition=only_large_numbers)
                     .set_start_executor("ProcessorA")
                     .build()
@@ -608,7 +542,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -639,9 +573,11 @@ class WorkflowBuilder:
                 # Broadcast to multiple validators
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: DataSource(id="source"), name="DataSource")
-                    .register_executor(lambda: ValidatorA(id="val_a"), name="ValidatorA")
-                    .register_executor(lambda: ValidatorB(id="val_b"), name="ValidatorB")
+                    .register_executors({
+                        "DataSource": lambda: DataSource(id="source"),
+                        "ValidatorA": lambda: ValidatorA(id="val_a"),
+                        "ValidatorB": lambda: ValidatorB(id="val_b"),
+                    })
                     .add_fan_out_edges("DataSource", ["ValidatorA", "ValidatorB"])
                     .set_start_executor("DataSource")
                     .build()
@@ -696,7 +632,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and case targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -732,9 +668,11 @@ class WorkflowBuilder:
                 # Route based on score value
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Evaluator(id="eval"), name="Evaluator")
-                    .register_executor(lambda: HighScoreHandler(id="high"), name="HighScoreHandler")
-                    .register_executor(lambda: LowScoreHandler(id="low"), name="LowScoreHandler")
+                    .register_executors({
+                        "Evaluator": lambda: Evaluator(id="eval"),
+                        "HighScoreHandler": lambda: HighScoreHandler(id="high"),
+                        "LowScoreHandler": lambda: LowScoreHandler(id="low"),
+                    })
                     .add_switch_case_edge_group(
                         "Evaluator",
                         [
@@ -802,7 +740,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -846,9 +784,11 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: TaskDispatcher(id="dispatcher"), name="TaskDispatcher")
-                    .register_executor(lambda: WorkerA(id="worker_a"), name="WorkerA")
-                    .register_executor(lambda: WorkerB(id="worker_b"), name="WorkerB")
+                    .register_executors({
+                        "TaskDispatcher": lambda: TaskDispatcher(id="dispatcher"),
+                        "WorkerA": lambda: WorkerA(id="worker_a"),
+                        "WorkerB": lambda: WorkerB(id="worker_b"),
+                    })
                     .add_multi_selection_edge_group(
                         "TaskDispatcher",
                         ["WorkerA", "WorkerB"],
@@ -909,7 +849,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for sources and target, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -935,9 +875,11 @@ class WorkflowBuilder:
                 # Collect results from multiple producers
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Producer(id="prod_1"), name="Producer1")
-                    .register_executor(lambda: Producer(id="prod_2"), name="Producer2")
-                    .register_executor(lambda: Aggregator(id="agg"), name="Aggregator")
+                    .register_executors({
+                        "Producer1": lambda: Producer(id="prod_1"),
+                        "Producer2": lambda: Producer(id="prod_2"),
+                        "Aggregator": lambda: Aggregator(id="agg"),
+                    })
                     .add_fan_in_edges(["Producer1", "Producer2"], "Aggregator")
                     .set_start_executor("Producer1")
                     .build()
@@ -981,7 +923,7 @@ class WorkflowBuilder:
 
         Note: If executor instances are provided, they will be shared across all workflow instances created
               from the built Workflow. To avoid this, consider registering the executors and agents using
-              `register_executor` and `register_agent` and referencing them by factory name for lazy
+              `register_executors` and `register_agent` and referencing them by factory name for lazy
               initialization instead.
 
         Example:
@@ -1012,9 +954,11 @@ class WorkflowBuilder:
                 # Chain executors in sequence
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Step1(id="step1"), name="step1")
-                    .register_executor(lambda: Step2(id="step2"), name="step2")
-                    .register_executor(lambda: Step3(id="step3"), name="step3")
+                    .register_executors({
+                        "step1": lambda: Step1(id="step1"),
+                        "step2": lambda: Step2(id="step2"),
+                        "step3": lambda: Step3(id="step3"),
+                    })
                     .add_chain(["step1", "step2", "step3"])
                     .set_start_executor("step1")
                     .build()
@@ -1076,8 +1020,10 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: EntryPoint(id="entry"), name="EntryPoint")
-                    .register_executor(lambda: Processor(id="proc"), name="Processor")
+                    .register_executors({
+                        "EntryPoint": lambda: EntryPoint(id="entry"),
+                        "Processor": lambda: Processor(id="proc"),
+                    })
                     .add_edge("EntryPoint", "Processor")
                     .set_start_executor("EntryPoint")
                     .build()
@@ -1134,8 +1080,10 @@ class WorkflowBuilder:
                 workflow = (
                     WorkflowBuilder()
                     .set_max_iterations(500)
-                    .register_executor(lambda: StepA(id="step_a"), name="StepA")
-                    .register_executor(lambda: StepB(id="step_b"), name="StepB")
+                    .register_executors({
+                        "StepA": lambda: StepA(id="step_a"),
+                        "StepB": lambda: StepB(id="step_b"),
+                    })
                     .add_edge("StepA", "StepB")
                     .add_edge("StepB", "StepA")  # Cycle
                     .set_start_executor("StepA")
@@ -1184,8 +1132,10 @@ class WorkflowBuilder:
                 storage = FileCheckpointStorage("./checkpoints")
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="proc_a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="proc_b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="proc_a"),
+                        "ProcessorB": lambda: ProcessorB(id="proc_b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .with_checkpointing(storage)
@@ -1309,7 +1259,7 @@ class WorkflowBuilder:
                 # Build and execute a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: MyExecutor(id="executor"), name="MyExecutor")
+                    .register_executors({"MyExecutor": lambda: MyExecutor(id="executor")})
                     .set_start_executor("MyExecutor")
                     .build()
                 )

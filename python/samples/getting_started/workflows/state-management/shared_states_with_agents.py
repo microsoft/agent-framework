@@ -194,11 +194,15 @@ async def main() -> None:
         WorkflowBuilder()
         .register_agent(create_spam_detection_agent, name="spam_detection_agent")
         .register_agent(create_email_assistant_agent, name="email_assistant_agent")
-        .register_executor(lambda: store_email, name="store_email")
-        .register_executor(lambda: to_detection_result, name="to_detection_result")
-        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
-        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
-        .register_executor(lambda: handle_spam, name="handle_spam")
+        .register_executors(
+            {
+                "store_email": lambda: store_email,
+                "to_detection_result": lambda: to_detection_result,
+                "submit_to_email_assistant": lambda: submit_to_email_assistant,
+                "finalize_and_send": lambda: finalize_and_send,
+                "handle_spam": lambda: handle_spam,
+            }
+        )
         .set_start_executor("store_email")
         .add_edge("store_email", "spam_detection_agent")
         .add_edge("spam_detection_agent", "to_detection_result")

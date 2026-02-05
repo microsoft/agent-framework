@@ -103,16 +103,14 @@ async def main() -> None:
     # and escalation paths for human review.
     agent = (
         WorkflowBuilder()
-        .register_executor(
-            lambda: Worker(
-                id="sub-worker",
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
-            ),
-            name="worker",
-        )
-        .register_executor(
-            lambda: ReviewerWithHumanInTheLoop(worker_id="sub-worker"),
-            name="reviewer",
+        .register_executors(
+            {
+                "worker": lambda: Worker(
+                    id="sub-worker",
+                    chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                ),
+                "reviewer": lambda: ReviewerWithHumanInTheLoop(worker_id="sub-worker"),
+            }
         )
         .add_edge("worker", "reviewer")  # Worker sends requests to Reviewer
         .add_edge("reviewer", "worker")  # Reviewer sends feedback to Worker

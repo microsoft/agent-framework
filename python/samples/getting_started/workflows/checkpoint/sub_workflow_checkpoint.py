@@ -296,9 +296,7 @@ def build_sub_workflow() -> WorkflowExecutor:
     """Assemble the sub-workflow used by the parent workflow executor."""
     sub_workflow = (
         WorkflowBuilder()
-        .register_executor(DraftWriter, name="writer")
-        .register_executor(DraftReviewRouter, name="router")
-        .register_executor(DraftFinaliser, name="finaliser")
+        .register_executors({"writer": DraftWriter, "router": DraftReviewRouter, "finaliser": DraftFinaliser})
         .set_start_executor("writer")
         .add_edge("writer", "router")
         .add_edge("router", "finaliser")
@@ -313,8 +311,7 @@ def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
     """Assemble the parent workflow that embeds the sub-workflow."""
     return (
         WorkflowBuilder()
-        .register_executor(LaunchCoordinator, name="coordinator")
-        .register_executor(build_sub_workflow, name="sub_executor")
+        .register_executors({"coordinator": LaunchCoordinator, "sub_executor": build_sub_workflow})
         .set_start_executor("coordinator")
         .add_edge("coordinator", "sub_executor")
         .add_edge("sub_executor", "coordinator")

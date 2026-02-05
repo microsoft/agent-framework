@@ -74,10 +74,7 @@ async def main() -> None:
             WorkflowBuilder()
             .register_agent(factory_func=lambda: writer, name="writer", agent_thread=shared_thread)
             .register_agent(factory_func=lambda: reviewer, name="reviewer", agent_thread=shared_thread)
-            .register_executor(
-                factory_func=lambda: intercept_agent_response,
-                name="intercept_agent_response",
-            )
+            .register_executors({"intercept_agent_response": lambda: intercept_agent_response})
             .add_chain(["writer", "intercept_agent_response", "reviewer"])
             .set_start_executor("writer")
             .build()

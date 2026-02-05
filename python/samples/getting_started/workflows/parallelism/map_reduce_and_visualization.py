@@ -262,27 +262,25 @@ async def main():
     """Construct the map reduce workflow, visualize it, then run it over a sample file."""
 
     # Step 1: Create the workflow builder and register executors.
-    workflow_builder = (
-        WorkflowBuilder()
-        .register_executor(lambda: Map(id="map_executor_0"), name="map_executor_0")
-        .register_executor(lambda: Map(id="map_executor_1"), name="map_executor_1")
-        .register_executor(lambda: Map(id="map_executor_2"), name="map_executor_2")
-        .register_executor(
-            lambda: Split(["map_executor_0", "map_executor_1", "map_executor_2"], id="split_data_executor"),
-            name="split_data_executor",
-        )
-        .register_executor(lambda: Reduce(id="reduce_executor_0"), name="reduce_executor_0")
-        .register_executor(lambda: Reduce(id="reduce_executor_1"), name="reduce_executor_1")
-        .register_executor(lambda: Reduce(id="reduce_executor_2"), name="reduce_executor_2")
-        .register_executor(lambda: Reduce(id="reduce_executor_3"), name="reduce_executor_3")
-        .register_executor(
-            lambda: Shuffle(
+    workflow_builder = WorkflowBuilder().register_executors(
+        {
+            "map_executor_0": lambda: Map(id="map_executor_0"),
+            "map_executor_1": lambda: Map(id="map_executor_1"),
+            "map_executor_2": lambda: Map(id="map_executor_2"),
+            "split_data_executor": lambda: Split(
+                ["map_executor_0", "map_executor_1", "map_executor_2"],
+                id="split_data_executor",
+            ),
+            "reduce_executor_0": lambda: Reduce(id="reduce_executor_0"),
+            "reduce_executor_1": lambda: Reduce(id="reduce_executor_1"),
+            "reduce_executor_2": lambda: Reduce(id="reduce_executor_2"),
+            "reduce_executor_3": lambda: Reduce(id="reduce_executor_3"),
+            "shuffle_executor": lambda: Shuffle(
                 ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
                 id="shuffle_executor",
             ),
-            name="shuffle_executor",
-        )
-        .register_executor(lambda: CompletionExecutor(id="completion_executor"), name="completion_executor")
+            "completion_executor": lambda: CompletionExecutor(id="completion_executor"),
+        }
     )
 
     # Step 2: Build the workflow graph using fan out and fan in edges.

@@ -232,15 +232,19 @@ async def main() -> None:
         .register_agent(create_email_analysis_agent, name="email_analysis_agent")
         .register_agent(create_email_assistant_agent, name="email_assistant_agent")
         .register_agent(create_email_summary_agent, name="email_summary_agent")
-        .register_executor(lambda: store_email, name="store_email")
-        .register_executor(lambda: to_analysis_result, name="to_analysis_result")
-        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
-        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
-        .register_executor(lambda: summarize_email, name="summarize_email")
-        .register_executor(lambda: merge_summary, name="merge_summary")
-        .register_executor(lambda: handle_spam, name="handle_spam")
-        .register_executor(lambda: handle_uncertain, name="handle_uncertain")
-        .register_executor(lambda: database_access, name="database_access")
+        .register_executors(
+            {
+                "store_email": lambda: store_email,
+                "to_analysis_result": lambda: to_analysis_result,
+                "submit_to_email_assistant": lambda: submit_to_email_assistant,
+                "finalize_and_send": lambda: finalize_and_send,
+                "summarize_email": lambda: summarize_email,
+                "merge_summary": lambda: merge_summary,
+                "handle_spam": lambda: handle_spam,
+                "handle_uncertain": lambda: handle_uncertain,
+                "database_access": lambda: database_access,
+            }
+        )
     )
 
     workflow = (

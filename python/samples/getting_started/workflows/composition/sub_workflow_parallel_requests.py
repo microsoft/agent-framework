@@ -172,10 +172,14 @@ def build_resource_request_distribution_workflow() -> Workflow:
 
     return (
         WorkflowBuilder()
-        .register_executor(lambda: RequestDistribution("orchestrator"), name="orchestrator")
-        .register_executor(lambda: ResourceRequester("resource_requester"), name="resource_requester")
-        .register_executor(lambda: PolicyChecker("policy_checker"), name="policy_checker")
-        .register_executor(lambda: ResultCollector("result_collector"), name="result_collector")
+        .register_executors(
+            {
+                "orchestrator": lambda: RequestDistribution("orchestrator"),
+                "resource_requester": lambda: ResourceRequester("resource_requester"),
+                "policy_checker": lambda: PolicyChecker("policy_checker"),
+                "result_collector": lambda: ResultCollector("result_collector"),
+            }
+        )
         .set_start_executor("orchestrator")
         .add_edge("orchestrator", "resource_requester")
         .add_edge("orchestrator", "policy_checker")
@@ -291,18 +295,19 @@ async def main() -> None:
     # Build the main workflow
     main_workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
-        .register_executor(lambda: PolicyEngine("policy_engine"), name="policy_engine")
-        .register_executor(
-            lambda: WorkflowExecutor(
-                build_resource_request_distribution_workflow(),
-                "sub_workflow_executor",
-                # Setting allow_direct_output=True to let the sub-workflow output directly.
-                # This is because the sub-workflow is the both the entry point and the exit
-                # point of the main workflow.
-                allow_direct_output=True,
-            ),
-            name="sub_workflow_executor",
+        .register_executors(
+            {
+                "resource_allocator": lambda: ResourceAllocator("resource_allocator"),
+                "policy_engine": lambda: PolicyEngine("policy_engine"),
+                "sub_workflow_executor": lambda: WorkflowExecutor(
+                    build_resource_request_distribution_workflow(),
+                    "sub_workflow_executor",
+                    # Setting allow_direct_output=True to let the sub-workflow output directly.
+                    # This is because the sub-workflow is the both the entry point and the exit
+                    # point of the main workflow.
+                    allow_direct_output=True,
+                ),
+            }
         )
         .set_start_executor("sub_workflow_executor")
         .add_edge("sub_workflow_executor", "resource_allocator")

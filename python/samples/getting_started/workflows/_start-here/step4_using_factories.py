@@ -69,15 +69,19 @@ def create_agent() -> ChatAgent:
 async def main():
     """Build and run a simple 2-step workflow using the fluent builder API."""
     # Build the workflow using a fluent pattern:
-    # 1) register_executor(factory, name) registers an executor factory
+    # 1) register_executors({name: factory}) registers executor factories
     # 2) register_agent(factory, name) registers an agent factory
     # 3) add_chain([node_names]) adds a sequence of nodes to the workflow
     # 4) set_start_executor(node) declares the entry point
     # 5) build() finalizes and returns an immutable Workflow object
     workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
-        .register_executor(lambda: reverse_text, name="ReverseText")
+        .register_executors(
+            {
+                "UpperCase": lambda: UpperCase(id="upper_case_executor"),
+                "ReverseText": lambda: reverse_text,
+            }
+        )
         .register_agent(create_agent, name="DecoderAgent", output_response=True)
         .add_chain(["UpperCase", "ReverseText", "DecoderAgent"])
         .set_start_executor("UpperCase")

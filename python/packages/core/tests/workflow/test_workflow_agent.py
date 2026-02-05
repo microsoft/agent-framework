@@ -603,7 +603,7 @@ class TestWorkflowAgent:
         # Build workflow: start -> agent1 (no output) -> agent2 (output_response=True)
         workflow = (
             WorkflowBuilder()
-            .register_executor(lambda: start_executor, "start")
+            .register_executors({"start": lambda: start_executor})
             .register_agent(lambda: MockAgent("agent1", "Agent1 output - should NOT appear"), "agent1")
             .register_agent(
                 lambda: MockAgent("agent2", "Agent2 output - SHOULD appear"), "agent2", output_response=True
@@ -675,7 +675,7 @@ class TestWorkflowAgent:
         # Build workflow with single agent that has output_response=True
         workflow = (
             WorkflowBuilder()
-            .register_executor(lambda: start_executor, "start")
+            .register_executors({"start": lambda: start_executor})
             .register_agent(lambda: MockAgent("agent", "Unique response text"), "agent", output_response=True)
             .set_start_executor("start")
             .add_edge("start", "agent")

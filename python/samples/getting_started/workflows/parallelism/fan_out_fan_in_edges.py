@@ -133,8 +133,12 @@ async def main() -> None:
         .register_agent(create_researcher_agent, name="researcher")
         .register_agent(create_marketer_agent, name="marketer")
         .register_agent(create_legal_agent, name="legal")
-        .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
-        .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
+        .register_executors(
+            {
+                "dispatcher": lambda: DispatchToExperts(id="dispatcher"),
+                "aggregator": lambda: AggregateInsights(id="aggregator"),
+            }
+        )
         .set_start_executor("dispatcher")
         .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])  # Parallel branches
         .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")  # Join at the aggregator

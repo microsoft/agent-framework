@@ -143,7 +143,7 @@ def create_sub_workflow() -> WorkflowExecutor:
 
     processing_workflow = (
         WorkflowBuilder()
-        .register_executor(TextProcessor, name="text_processor")
+        .register_executors({"text_processor": TextProcessor})
         .set_start_executor("text_processor")
         .build()
     )
@@ -157,8 +157,12 @@ async def main():
     # Step 1: Create the parent workflow
     main_workflow = (
         WorkflowBuilder()
-        .register_executor(TextProcessingOrchestrator, name="text_orchestrator")
-        .register_executor(create_sub_workflow, name="text_processor_workflow")
+        .register_executors(
+            {
+                "text_orchestrator": TextProcessingOrchestrator,
+                "text_processor_workflow": create_sub_workflow,
+            }
+        )
         .set_start_executor("text_orchestrator")
         .add_edge("text_orchestrator", "text_processor_workflow")
         .add_edge("text_processor_workflow", "text_orchestrator")

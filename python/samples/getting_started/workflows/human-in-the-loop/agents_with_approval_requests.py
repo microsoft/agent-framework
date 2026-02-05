@@ -232,11 +232,12 @@ async def main() -> None:
     workflow = (
         WorkflowBuilder()
         .register_agent(create_email_writer_agent, name="email_writer")
-        .register_executor(
-            lambda: EmailPreprocessor(special_email_addresses={"mike@contoso.com"}),
-            name="email_preprocessor",
+        .register_executors(
+            {
+                "email_preprocessor": lambda: EmailPreprocessor(special_email_addresses={"mike@contoso.com"}),
+                "conclude_workflow": lambda: conclude_workflow,
+            }
         )
-        .register_executor(lambda: conclude_workflow, name="conclude_workflow")
         .set_start_executor("email_preprocessor")
         .add_edge("email_preprocessor", "email_writer")
         .add_edge("email_writer", "conclude_workflow")

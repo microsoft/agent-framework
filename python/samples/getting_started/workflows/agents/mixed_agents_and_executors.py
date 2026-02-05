@@ -100,7 +100,7 @@ async def main():
         workflow = (
             WorkflowBuilder()
             .register_agent(lambda: create_coding_agent(chat_client), name="coding_agent")
-            .register_executor(lambda: Evaluator(id="evaluator"), name="evaluator")
+            .register_executors({"evaluator": lambda: Evaluator(id="evaluator")})
             .set_start_executor("coding_agent")
             .add_edge("coding_agent", "evaluator")
             .build()
