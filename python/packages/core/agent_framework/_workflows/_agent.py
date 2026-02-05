@@ -440,7 +440,7 @@ class WorkflowAgent(BaseAgent):
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
                     # responses.
                     raise AgentExecutionException(
-                        "WorkflowOutputEvent with AgentResponseUpdate data cannot be emitted in non-streaming mode."
+                        "WorkflowOutputEvent with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
                         "Please ensure executors emit AgentResponse for non-streaming workflows."
                     )
 
