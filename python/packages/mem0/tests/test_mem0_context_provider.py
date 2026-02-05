@@ -42,104 +42,105 @@ def sample_messages() -> list[ChatMessage]:
     ]
 
 
-class TestMem0ProviderInitialization:
-    """Test initialization and configuration of Mem0Provider."""
-
-    def test_init_with_all_ids(self, mock_mem0_client: AsyncMock) -> None:
-        """Test initialization with all IDs provided."""
-        provider = Mem0Provider(
-            user_id="user123",
-            agent_id="agent123",
-            application_id="app123",
-            thread_id="thread123",
-            mem0_client=mock_mem0_client,
-        )
-        assert provider.user_id == "user123"
-        assert provider.agent_id == "agent123"
-        assert provider.application_id == "app123"
-        assert provider.thread_id == "thread123"
-
-    def test_init_without_filters_succeeds(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that initialization succeeds even without filters (validation happens during invocation)."""
-        provider = Mem0Provider(mem0_client=mock_mem0_client)
-        assert provider.user_id is None
-        assert provider.agent_id is None
-        assert provider.application_id is None
-        assert provider.thread_id is None
-
-    def test_init_with_custom_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
-        """Test initialization with custom context prompt."""
-        custom_prompt = "## Custom Memories\nConsider these memories:"
-        provider = Mem0Provider(user_id="user123", context_prompt=custom_prompt, mem0_client=mock_mem0_client)
-        assert provider.context_prompt == custom_prompt
-
-    def test_init_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test initialization with scope_to_per_operation_thread_id enabled."""
-        provider = Mem0Provider(
-            user_id="user123",
-            scope_to_per_operation_thread_id=True,
-            mem0_client=mock_mem0_client,
-        )
-        assert provider.scope_to_per_operation_thread_id is True
-
-    def test_init_creates_default_client_when_none_provided(self) -> None:
-        """Test that a default client is created when none is provided."""
-
-        import agent_framework_mem0._provider as provider_module
-
-        mock_client = AsyncMock()
-
-        with patch.object(provider_module, "AsyncMemoryClient", return_value=mock_client) as mock_memory_client_class:
-            provider = Mem0Provider(user_id="user123", api_key="test_api_key")
-
-            mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
-            assert provider.mem0_client == mock_client
-            assert provider._should_close_client is True
-
-    def test_init_with_provided_client_should_not_close(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that provided client should not be closed by provider."""
-        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        assert provider._should_close_client is False
+def test_init_with_all_ids(self, mock_mem0_client: AsyncMock) -> None:
+    """Test initialization with all IDs provided."""
+    provider = Mem0Provider(
+        user_id="user123",
+        agent_id="agent123",
+        application_id="app123",
+        thread_id="thread123",
+        mem0_client=mock_mem0_client,
+    )
+    assert provider.user_id == "user123"
+    assert provider.agent_id == "agent123"
+    assert provider.application_id == "app123"
+    assert provider.thread_id == "thread123"
 
 
-class TestMem0ProviderAsyncContextManager:
-    """Test async context manager behavior."""
+def test_init_without_filters_succeeds(mock_mem0_client: AsyncMock) -> None:
+    """Test that initialization succeeds even without filters (validation happens during invocation)."""
+    provider = Mem0Provider(mem0_client=mock_mem0_client)
+    assert provider.user_id is None
+    assert provider.agent_id is None
+    assert provider.application_id is None
+    assert provider.thread_id is None
 
-    async def test_async_context_manager_entry(self, mock_mem0_client: AsyncMock) -> None:
-        """Test async context manager entry returns self."""
-        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        async with provider as ctx:
-            assert ctx is provider
 
-    async def test_async_context_manager_exit_closes_client_when_should_close(self) -> None:
-        """Test that async context manager closes client when it should."""
+def test_init_with_custom_context_prompt(mock_mem0_client: AsyncMock) -> None:
+    """Test initialization with custom context prompt."""
+    custom_prompt = "## Custom Memories\nConsider these memories:"
+    provider = Mem0Provider(user_id="user123", context_prompt=custom_prompt, mem0_client=mock_mem0_client)
+    assert provider.context_prompt == custom_prompt
 
-        import agent_framework_mem0._provider as provider_module
 
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock()
-        mock_client.async_client = AsyncMock()
-        mock_client.async_client.aclose = AsyncMock()
+def test_init_with_scope_to_per_operation_thread_id(mock_mem0_client: AsyncMock) -> None:
+    """Test initialization with scope_to_per_operation_thread_id enabled."""
+    provider = Mem0Provider(
+        user_id="user123",
+        scope_to_per_operation_thread_id=True,
+        mem0_client=mock_mem0_client,
+    )
+    assert provider.scope_to_per_operation_thread_id is True
 
-        with patch.object(provider_module, "AsyncMemoryClient", return_value=mock_client):
-            provider = Mem0Provider(user_id="user123", api_key="test_key")
-            assert provider._should_close_client is True
 
-            async with provider:
-                pass
+def test_init_creates_default_client_when_none_provided() -> None:
+    """Test that a default client is created when none is provided."""
 
-            mock_client.__aexit__.assert_called_once()
+    import agent_framework_mem0._provider as provider
 
-    async def test_async_context_manager_exit_does_not_close_provided_client(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that async context manager does not close provided client."""
-        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
-        assert provider._should_close_client is False
+    mock_client = AsyncMock()
+
+    with patch.object(provider, "AsyncMemoryClient", return_value=mock_client) as mock_memory_client_class:
+        provider = Mem0Provider(user_id="user123", api_key="test_api_key")
+
+        mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
+        assert provider.mem0_client == mock_client
+        assert provider._should_close_client is True
+
+
+def test_init_with_provided_client_should_not_close(mock_mem0_client: AsyncMock) -> None:
+    """Test that provided client should not be closed by provider."""
+    provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+    assert provider._should_close_client is False
+
+
+async def test_async_context_manager_entry(mock_mem0_client: AsyncMock) -> None:
+    """Test async context manager entry returns self."""
+    provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+    async with provider as ctx:
+        assert ctx is provider
+
+
+async def test_async_context_manager_exit_closes_client_when_should_close() -> None:
+    """Test that async context manager closes client when it should."""
+
+    import agent_framework_mem0._provider as provider
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock()
+    mock_client.async_client = AsyncMock()
+    mock_client.async_client.aclose = AsyncMock()
+
+    with patch.object(provider, "AsyncMemoryClient", return_value=mock_client):
+        provider = Mem0Provider(user_id="user123", api_key="test_key")
+        assert provider._should_close_client is True
 
         async with provider:
             pass
 
-        mock_mem0_client.__aexit__.assert_not_called()
+        mock_client.__aexit__.assert_called_once()
+
+
+async def test_async_context_manager_exit_does_not_close_provided_client(mock_mem0_client: AsyncMock) -> None:
+    """Test that async context manager does not close provided client."""
+    provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+    assert provider._should_close_client is False
+
+    async with provider:
+        pass
+
+    mock_mem0_client.__aexit__.assert_not_called()
 
 
 class TestMem0ProviderThreadMethods:
