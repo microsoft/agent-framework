@@ -55,14 +55,14 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
             var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
@@ -87,14 +87,14 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
             var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };

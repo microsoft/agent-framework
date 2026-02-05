@@ -33,7 +33,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return response.Value.Id;
     }
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var chatClientSession = (ChatClientAgentSession)session;
 
@@ -53,7 +53,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return [];
         }
 
-        return (await chatClientSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await chatClientSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)

@@ -14,6 +14,9 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public sealed class ChatHistoryProviderExtensionsTests
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
+
     [Fact]
     public void WithMessageFilters_ReturnsChatHistoryProviderMessageFilter()
     {
@@ -35,7 +38,7 @@ public sealed class ChatHistoryProviderExtensionsTests
         // Arrange
         Mock<ChatHistoryProvider> providerMock = new();
         List<ChatMessage> innerMessages = [new(ChatRole.User, "Hello"), new(ChatRole.Assistant, "Hi")];
-        ChatHistoryProvider.InvokingContext context = new([new ChatMessage(ChatRole.User, "Test")]);
+        ChatHistoryProvider.InvokingContext context = new(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test")]);
 
         providerMock
             .Setup(p => p.InvokingAsync(context, It.IsAny<CancellationToken>()))
@@ -59,7 +62,7 @@ public sealed class ChatHistoryProviderExtensionsTests
         Mock<ChatHistoryProvider> providerMock = new();
         List<ChatMessage> requestMessages = [new(ChatRole.User, "Hello")];
         List<ChatMessage> chatHistoryProviderMessages = [new(ChatRole.System, "System")];
-        ChatHistoryProvider.InvokedContext context = new(requestMessages, chatHistoryProviderMessages)
+        ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages, chatHistoryProviderMessages)
         {
             ResponseMessages = [new ChatMessage(ChatRole.Assistant, "Response")]
         };
@@ -106,7 +109,7 @@ public sealed class ChatHistoryProviderExtensionsTests
         List<ChatMessage> requestMessages = [new(ChatRole.User, "Hello")];
         List<ChatMessage> chatHistoryProviderMessages = [new(ChatRole.System, "System")];
         List<ChatMessage> aiContextProviderMessages = [new(ChatRole.System, "Context")];
-        ChatHistoryProvider.InvokedContext context = new(requestMessages, chatHistoryProviderMessages)
+        ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages, chatHistoryProviderMessages)
         {
             AIContextProviderMessages = aiContextProviderMessages
         };
