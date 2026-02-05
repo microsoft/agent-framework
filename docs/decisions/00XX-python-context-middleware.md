@@ -1,13 +1,13 @@
 ---
 # These are optional elements. Feel free to remove any of them.
-status: proposed
+status: accepted
 contact: eavanvalkenburg
-date: 2026-02-02
-deciders: eavanvalkenburg, markwallace-microsoft, sphenry, alliscode, johanst, brettcannon
+date: 2026-02-05
+deciders: eavanvalkenburg, markwallace-microsoft, sphenry, alliscode, johanst, brettcannon, westey-m
 consulted: taochenosu, moonbox3, dmytrostruk, giles17
 ---
 
-# Unifying Context Management with ContextMiddleware
+# Unifying Context Management with ContextPlugin
 
 ## Context and Problem Statement
 
@@ -115,24 +115,25 @@ class AgentThread:
 
 ## Design Decisions Summary
 
-The following key decisions shape the ContextMiddleware design:
+The following key decisions shape the ContextPlugin design:
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | **Agent vs Session Ownership** | Agent owns middleware config; Session owns resolved pipeline. Enables per-session factories. **(TBD - see Decision 2 in Outcome)** |
-| 2 | **Instance or Factory** | Middleware can be shared instances or `(session_id) -> Middleware` factories for per-session state. |
-| 3 | **Default Storage at Runtime** | `InMemoryStorageMiddleware` auto-added when no service_session_id, store≠True, and no pipeline. Evaluated at runtime so users can modify pipeline first. |
-| 4 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero storage middleware/hooks have `load_messages=True` (likely misconfiguration). |
-| 5 | **Single Storage Class** | One `StorageContextMiddleware` configured for memory/audit/evaluation - no separate classes. |
-| 6 | **Mandatory source_id** | Required parameter forces explicit naming for attribution in `context_messages` dict. |
-| 7 | **Explicit Load Behavior** | `load_messages: bool = True` - explicit configuration with no automatic detection. For `StorageContextHooks`, `before_run` is skipped entirely when `load_messages=False`. |
-| 8 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. Messages can have an `attribution` marker in `additional_properties` for external filtering scenarios. |
-| 9 | **Selective Storage** | `store_context_messages` and `store_context_from` control what gets persisted from other middleware. |
-| 10 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
-| 11 | **Clean Break** | Remove `AgentThread`, `ContextProvider`, `ChatMessageStore` completely (preview, no compatibility shims). |
-| 12 | **Middleware Ordering** | User-defined order; storage sees prior middleware (pre-processing) or all middleware (post-processing). |
-| 13 | **Agent-owned Serialization** | `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. |
-| 14 | **Session Management Methods** | `agent.create_session()` (no required params) and `agent.get_session_by_id(id)` for clear lifecycle management. |
+| 1 | **Agent vs Session Ownership** | Agent owns plugin instances; Session owns state as mutable dict. Plugins shared across sessions, state isolated per session. |
+| 2 | **Execution Pattern** | **ContextPlugin** with `before_run`/`after_run` methods (hooks pattern). Simpler mental model than wrapper/onion pattern. |
+| 3 | **State Management** | Whole state dict (`dict[str, Any]`) passed to each plugin. Dict is mutable, so no return value needed. |
+| 4 | **Default Storage at Runtime** | `InMemoryStoragePlugin` auto-added when no service_session_id, store≠True, and no plugins. Evaluated at runtime so users can modify pipeline first. |
+| 5 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero storage plugins have `load_messages=True` (likely misconfiguration). |
+| 6 | **Single Storage Class** | One `StorageContextPlugin` configured for memory/audit/evaluation - no separate classes. |
+| 7 | **Mandatory source_id** | Required parameter forces explicit naming for attribution in `context_messages` dict. |
+| 8 | **Explicit Load Behavior** | `load_messages: bool = True` - explicit configuration with no automatic detection. For `StorageContextPlugin`, `before_run` is skipped entirely when `load_messages=False`. |
+| 9 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. Messages can have an `attribution` marker in `additional_properties` for external filtering scenarios. |
+| 10 | **Selective Storage** | `store_context_messages` and `store_context_from` control what gets persisted from other plugins. |
+| 11 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
+| 12 | **Clean Break** | Remove `AgentThread`, `ContextProvider`, `ChatMessageStore` completely (preview, no compatibility shims). |
+| 13 | **Plugin Ordering** | User-defined order; storage sees prior plugins (pre-processing) or all plugins (post-processing). |
+| 14 | **Agent-owned Serialization** | `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. |
+| 15 | **Session Management Methods** | `agent.create_session()` (no required params) and `agent.get_session_by_id(id)` for clear lifecycle management. |
 
 ## Considered Options
 
@@ -731,10 +732,15 @@ response = await agent.run("Hello", session=session)
 
 ### Decision 1: Execution Pattern
 
-**TBD** - This ADR presents two viable approaches:
+**Chosen: Option 3 - Hooks (Pre/Post Pattern)** with the following naming:
+- **Class name:** `ContextPlugin` (emphasizes extensibility, familiar from build tools)
+- **Method names:** `before_run` / `after_run` (matches `agent.run()` terminology)
 
-- **Option 2: ContextMiddleware (Wrapper Pattern)** - Consistent with existing middleware patterns, more powerful control flow
-- **Option 3: ContextHooks (Pre/Post Pattern)** - Simpler mental model, easier migration from current `ContextProvider`
+Rationale:
+- Simpler mental model: "before" runs before, "after" runs after - no nesting to understand
+- Easier to implement plugins that only need one phase (just override one method)
+- More similar to the current `ContextProvider` API (`invoking`/`invoked`), easing migration
+- Clearer separation between what this does vs what Agent Middleware can do
 
 Both options share the same:
 - Agent vs Session ownership model
@@ -743,15 +749,25 @@ Both options share the same:
 - Session management methods (`create_session`, `get_session_by_id`, `serialize_session`, `restore_session`)
 - Renaming `AgentThread` → `AgentSession`
 
-The key difference is the execution model: nested wrapper vs linear phases.
-
 ### Decision 2: Instance Ownership (Orthogonal)
 
-**TBD** - Where should the actual middleware/hooks instances live?
+**Chosen: Option B1 - Instances in Agent, State in Session (Simple Dict)**
 
-This decision is orthogonal to Decision 1 (execution pattern) and applies equally to both Middleware and Hooks approaches.
+The `ChatAgent` owns and manages the `ContextPlugin` instances. The `AgentSession` only stores state as a mutable `dict[str, Any]`. Each plugin receives the **whole state dict** (not just its own slice), and since a dict is mutable, no return value is needed - plugins modify the dict in place.
 
-#### Option A: Instances in Session (Current Proposal)
+> **Note on trust:** Since all `ContextPlugin` instances reason over conversation messages (which may contain sensitive user data), they should be **trusted by default**. This is also why we allow all plugins to see all state - if a plugin is untrusted, it shouldn't be in the pipeline at all. The whole state dict is passed rather than isolated slices because plugins that handle messages already have access to the full conversation context.
+
+Rationale for B1 over B2: Simpler is better. The whole state dict is passed to each plugin, and since Python dicts are mutable, plugins can modify state in place without returning anything. This is the most Pythonic approach.
+
+Rationale for B over A:
+- Lightweight sessions - just data, easy to serialize/transfer
+- Plugin instances shared across sessions (more memory efficient)
+- Clearer separation: agent = behavior, session = state
+- Factories not needed - state dict handles per-session needs
+
+### Instance Ownership Options (for reference)
+
+#### Option A: Instances in Session
 
 The `AgentSession` owns the actual middleware/hooks instances. The pipeline is created when the session is created, and instances are stored in the session.
 
@@ -812,15 +828,15 @@ class ChatAgent:
 - Harder to share stateless middleware across sessions efficiently
 - Factories must be re-resolved for each session
 
-#### Option B: Instances in Agent, State in Session
+#### Option B: Instances in Agent, State in Session (CHOSEN)
 
 The `ChatAgent` owns and manages the middleware/hooks instances. The `AgentSession` only stores state data that middleware reads/writes. The agent's runner executes the pipeline using the session's state.
 
 Two variants exist for how state is stored in the session:
 
-##### Option B1: Simple Dict State
+##### Option B1: Simple Dict State (CHOSEN)
 
-The session stores state as a simple `dict[str, Any]` keyed by `source_id`. Each hook receives its own state slice and can optionally return updated state.
+The session stores state as a simple `dict[str, Any]`. Each plugin receives the **whole state dict**, and since dicts are mutable in Python, plugins can modify it in place without needing to return a value.
 
 ```python
 class AgentSession:
@@ -829,38 +845,32 @@ class AgentSession:
     def __init__(self, *, session_id: str | None = None):
         self._session_id = session_id or str(uuid.uuid4())
         self.service_session_id: str | None = None
-        self.state: dict[str, Any] = {}  # source_id -> hook state
+        self.state: dict[str, Any] = {}  # Mutable state dict
 
 
-class ContextHooksRunner:
-    """Agent-owned runner that executes hooks with session state."""
+class ContextPluginRunner:
+    """Agent-owned runner that executes plugins with session state."""
 
-    def __init__(self, hooks: Sequence[ContextHooks]):
-        self._hooks = list(hooks)
+    def __init__(self, plugins: Sequence[ContextPlugin]):
+        self._plugins = list(plugins)
 
-    async def run_before(
+    async def before_run(
         self,
         context: SessionContext,
-        session_state: dict[str, Any],
+        state: dict[str, Any],
     ) -> None:
-        """Run before_run for all hooks, passing each only its own state."""
-        for hook in self._hooks:
-            my_state = session_state.get(hook.source_id)
-            new_state = await hook.before_run(context, my_state)
-            if new_state is not None:
-                session_state[hook.source_id] = new_state
+        """Run before_run for all plugins, passing the whole state dict."""
+        for plugin in self._plugins:
+            await plugin.before_run(context, state)  # Dict is mutable, no return needed
 
-    async def run_after(
+    async def after_run(
         self,
         context: SessionContext,
-        session_state: dict[str, Any],
+        state: dict[str, Any],
     ) -> None:
-        """Run after_run for all hooks in reverse order."""
-        for hook in reversed(self._hooks):
-            my_state = session_state.get(hook.source_id)
-            new_state = await hook.after_run(context, my_state)
-            if new_state is not None:
-                session_state[hook.source_id] = new_state
+        """Run after_run for all plugins in reverse order."""
+        for plugin in reversed(self._plugins):
+            await plugin.after_run(context, state)  # Dict is mutable, no return needed
 
 
 class ChatAgent:
@@ -868,10 +878,10 @@ class ChatAgent:
         self,
         chat_client: ...,
         *,
-        context_hooks: Sequence[ContextHooks] | None = None,
+        context_plugins: Sequence[ContextPlugin] | None = None,
     ):
-        # Agent owns the actual hook instances
-        self._hooks_runner = ContextHooksRunner(list(context_hooks or []))
+        # Agent owns the actual plugin instances
+        self._plugin_runner = ContextPluginRunner(list(context_plugins or []))
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create lightweight session with just state."""
@@ -883,55 +893,57 @@ class ChatAgent:
             input_messages=[...],
         )
 
-        # Before hooks
-        await self._hooks_runner.run_before(context, session.state)
+        # Before-run plugins
+        await self._plugin_runner.before_run(context, session.state)
 
-        # ... invoke model ...
+        # assemble final input messages from context
 
-        # After hooks
-        await self._hooks_runner.run_after(context, session.state)
+        # ... actual running, i.e. `get_response` for ChatAgent ...
+
+        # After-run plugins
+        await self._plugin_runner.after_run(context, session.state)
 
 
-# Hook that maintains state - returns updated state
-class InMemoryStorageHooks(ContextHooks):
+# Plugin that maintains state - modifies dict in place
+class InMemoryStoragePlugin(ContextPlugin):
     async def before_run(
         self,
         context: SessionContext,
-        state: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        # Read from own state (or empty if first invocation)
-        messages = (state or {}).get("messages", [])
+        state: dict[str, Any],
+    ) -> None:
+        # Read from state (use source_id as key for namespace)
+        my_state = state.get(self.source_id, {})
+        messages = my_state.get("messages", [])
         context.add_messages(self.source_id, messages)
-        return None  # No state change in before_run
 
     async def after_run(
         self,
         context: SessionContext,
-        state: dict[str, Any] | None,
-    ) -> dict[str, Any]:  # Returns updated state
-        messages = (state or {}).get("messages", [])
-        return {
-            "messages": [
-                *messages,
-                *context.input_messages,
-                *(context.response_messages or []),
-            ],
-        }
+        state: dict[str, Any],
+    ) -> None:
+        # Modify state dict in place - no return needed
+        my_state = state.setdefault(self.source_id, {})
+        messages = my_state.get("messages", [])
+        my_state["messages"] = [
+            *messages,
+            *context.input_messages,
+            *(context.response_messages or []),
+        ]
 
 
-# Stateless hook - returns None (no state to store)
-class TimeContextHooks(ContextHooks):
+# Stateless plugin - ignores state
+class TimeContextPlugin(ContextPlugin):
     async def before_run(
         self,
         context: SessionContext,
-        state: dict[str, Any] | None,
+        state: dict[str, Any],
     ) -> None:
         context.add_instructions(self.source_id, f"Current time: {datetime.now()}")
 
     async def after_run(
         self,
         context: SessionContext,
-        state: dict[str, Any] | None,
+        state: dict[str, Any],
     ) -> None:
         pass  # No state, nothing to do after
 ```
@@ -1057,67 +1069,44 @@ class TimeContextHooks(ContextHooks):
 
 **Option B Pros (both variants):**
 - Lightweight sessions - just data, easy to serialize/transfer
-- Hook instances shared across sessions (more memory efficient)
+- Plugin instances shared across sessions (more memory efficient)
 - Clearer separation: agent = behavior, session = state
 
 **Option B Cons (both variants):**
 - More complex execution model (agent + session coordination)
-- Hooks must explicitly read/write state (no implicit instance variables)
-- Session given to another agent may not work (different hooks configuration)
+- Plugins must explicitly read/write state (no implicit instance variables)
+- Session given to another agent may not work (different plugins configuration)
 
 **B1 vs B2:**
 
-| Aspect | B1: Simple Dict | B2: SessionState Object |
+| Aspect | B1: Simple Dict (CHOSEN) | B2: SessionState Object |
 |--------|-----------------|-------------------------|
 | Simplicity | Simpler, less abstraction | More structure, helper methods |
-| State return | Optional return (`dict | None`) | Mutable wrapper, no return needed |
-| Type safety | `dict[str, Any] | None` - loose | Can add type hints on methods |
+| State passing | Whole dict passed, mutate in place | Mutable wrapper, no return needed |
+| Type safety | `dict[str, Any]` - loose | Can add type hints on methods |
 | Extensibility | Add keys as needed | Can add methods/validation |
 | Serialization | Direct JSON serialization | Need custom serialization |
 
 #### Comparison
 
-| Aspect | Option A: Instances in Session | Option B: Instances in Agent |
+| Aspect | Option A: Instances in Session | Option B: Instances in Agent (CHOSEN) |
 |--------|-------------------------------|------------------------------|
 | Session weight | Heavier (instances + state) | Lighter (state only) |
-| Hook sharing | Per-session instances | Shared across sessions |
+| Plugin sharing | Per-session instances | Shared across sessions |
 | Instance state | Natural (instance variables) | Explicit (state dict) |
-| Serialization | Serialize session + hooks | Serialize state only |
-| Factory handling | Resolved at session creation | See open discussion below |
+| Serialization | Serialize session + plugins | Serialize state only |
+| Factory handling | Resolved at session creation | Not needed (state dict handles per-session needs) |
 | Signature | `before_run(context)` | `before_run(context, state)` |
-| Session portability | Works with any agent | Tied to agent's hooks config |
+| Session portability | Works with any agent | Tied to agent's plugins config |
 
-#### Open Discussion: Hook Factories in Option B
+#### Factories Not Needed with Option B
 
-With Option A (instances in session), hook factories naturally fit: the factory is called at session creation to produce a per-session instance that can hold instance-level state.
+With Option B (instances in agent, state in session), the plugins are shared across sessions and the explicit state dict handles per-session needs. Therefore, **factory support is not needed**:
 
-With Option B (instances in agent, state in session), the hooks are shared across sessions, which raises questions about factories:
-
-**Question:** What is the purpose of hook factories when hooks are shared?
-
-**Possible approaches:**
-
-1. **No factories in Option B** - Since state is externalized, there's no need for per-session instances. All hooks are shared. If a hook needs per-session initialization, it can do so in `before_run` on first call (checking if state is empty).
-
-2. **Factories create agent-level instances** - Factories are called once when the agent is created, not per-session. Useful for dependency injection or configuration, but not per-session state.
-
-3. **Factories still create per-session instances** - Keep factory support, but now factories create instances that are stored... where? This reintroduces complexity:
-   - Store instances in session? (Back to Option A)
-   - Store instances in agent keyed by session_id? (Memory leak risk)
-   - Discard after use? (Defeats purpose of instance state)
-
-4. **Hybrid: allow both shared and per-session hooks** - Agent can have a mix:
-   ```python
-   agent = ChatAgent(
-       context_hooks=[
-           SharedRAGHooks("rag"),  # Shared instance
-           lambda session_id: PerSessionCache("cache", session_id),  # Factory
-       ]
-   )
-   ```
-   Per-session hooks would need to be stored somewhere (session or agent).
-
-**Recommendation:** If choosing Option B, consider dropping factory support entirely. The explicit state parameter handles per-session state needs. Factories in Option A exist primarily to enable per-session instance state, which Option B solves differently via the state parameter.
+- State is externalized to the session's `state: dict[str, Any]`
+- If a plugin needs per-session initialization, it can do so in `before_run` on first call (checking if state is empty)
+- All plugins are shared across sessions (more memory efficient)
+- Plugins use `state.setdefault(self.source_id, {})` to namespace their state
 
 ---
 
@@ -1127,11 +1116,11 @@ The .NET Agent Framework provides equivalent functionality through a different s
 
 ### Concept Mapping
 
-| .NET Concept | Python Middleware (Option 2) | Python Hooks (Option 3) |
-|--------------|------------------------------|-------------------------|
-| `AIContextProvider` | `ContextMiddleware` | `ContextHooks` |
-| `ChatHistoryProvider` | `StorageContextMiddleware` | `StorageContextHooks` |
-| `AgentSession` | `AgentSession` | `AgentSession` |
+| .NET Concept | Python (Chosen) |
+|--------------|-----------------|
+| `AIContextProvider` | `ContextPlugin` |
+| `ChatHistoryProvider` | `StorageContextPlugin` |
+| `AgentSession` | `AgentSession` |
 
 ### Feature Equivalence
 
@@ -1139,12 +1128,12 @@ Both platforms provide the same core capabilities:
 
 | Capability | .NET | Python |
 |------------|------|--------|
-| Inject context before invocation | `AIContextProvider.InvokingAsync()` | `process()` before `next()` / `before_run()` |
-| React after invocation | `AIContextProvider.InvokedAsync()` | `process()` after `next()` / `after_run()` |
-| Load conversation history | `ChatHistoryProvider.InvokingAsync()` | `StorageContextMiddleware/Hooks` with `load_messages=True` |
-| Store conversation history | `ChatHistoryProvider.InvokedAsync()` | `StorageContextMiddleware/Hooks` with `store_*` flags |
-| Session serialization | `Serialize()` on providers | `serialize()`/`restore()` on middleware/hooks |
-| Factory-based creation | `AIContextProviderFactory`, `ChatHistoryProviderFactory` | Factory functions in middleware/hooks list |
+| Inject context before invocation | `AIContextProvider.InvokingAsync()` | `ContextPlugin.before_run()` |
+| React after invocation | `AIContextProvider.InvokedAsync()` | `ContextPlugin.after_run()` |
+| Load conversation history | `ChatHistoryProvider.InvokingAsync()` | `StorageContextPlugin` with `load_messages=True` |
+| Store conversation history | `ChatHistoryProvider.InvokedAsync()` | `StorageContextPlugin` with `store_*` flags |
+| Session serialization | `Serialize()` on providers | Session's `state` dict is directly serializable |
+| Factory-based creation | `AIContextProviderFactory`, `ChatHistoryProviderFactory` | Not needed - state dict handles per-session needs |
 
 ### Implementation Differences
 
@@ -1152,12 +1141,13 @@ The implementations differ in ways idiomatic to each language:
 
 | Aspect | .NET Approach | Python Approach |
 |--------|---------------|-----------------|
-| **Context providers** | Separate `AIContextProvider` (single) and `ChatHistoryProvider` (single) | Unified list of middleware/hooks (multiple) |
-| **Composition** | One of each provider type per session | Unlimited middleware/hooks in pipeline |
+| **Context providers** | Separate `AIContextProvider` (single) and `ChatHistoryProvider` (single) | Unified list of `ContextPlugin` (multiple) |
+| **Composition** | One of each provider type per session | Unlimited plugins in pipeline |
 | **Type system** | Strict interfaces, compile-time checks | Duck typing, protocols, runtime flexibility |
-| **Configuration** | DI container, factory delegates | Direct instantiation, list of instances/factories |
-| **Default storage** | Can auto-inject when `ChatHistoryProvider` missing | Only auto-injects when no pipeline configured |
-| **Source tracking** | Via separate provider types | Built-in `source_id` on each middleware/hook |
+| **Configuration** | DI container, factory delegates | Direct instantiation, list of instances |
+| **State management** | Instance state in providers | Explicit state dict in session |
+| **Default storage** | Can auto-inject when `ChatHistoryProvider` missing | Only auto-injects when no plugins configured |
+| **Source tracking** | Via separate provider types | Built-in `source_id` on each plugin |
 
 ### Design Trade-offs
 
@@ -1173,6 +1163,7 @@ Each approach has trade-offs that align with language conventions:
 - Multiple instances of same type (e.g., multiple storage backends)
 - More explicit - customization means owning full configuration
 - `source_id` enables filtering/debugging across all sources
+- Explicit state dict makes serialization trivial
 
 Neither approach is inherently better - they reflect different language philosophies while achieving equivalent functionality. The Python design embraces the "we're all consenting adults" philosophy, while .NET provides more compile-time guardrails.
 
@@ -1191,7 +1182,7 @@ Currently, this is challenging because:
 
 ### Design Question
 
-Should `ContextMiddleware`/`ContextHooks` be invoked:
+Should `ContextPlugin` be invoked:
 1. **Only at agent invocation boundaries** (current proposal) - before/after each `agent.run()` call
 2. **During the tool loop** - before/after each model call within a single `agent.run()`
 
@@ -1203,7 +1194,7 @@ While boundary and in-run compaction could potentially use the same mechanism, t
 - **Before run**: Keep context manageable - load a compacted view of history
 - **After run**: Keep storage compact - summarize/truncate before persisting
 - Useful for maintaining reasonable context sizes across conversation turns
-- One reason to have **multiple storage middleware**: persist compacted history for use during runs, while also storing the full uncompacted history for auditing and evaluations
+- One reason to have **multiple storage plugins**: persist compacted history for use during runs, while also storing the full uncompacted history for auditing and evaluations
 
 **In-run compaction** (during function calling loops):
 - Relevant for **function calling scenarios** where many tool calls accumulate
@@ -1234,17 +1225,17 @@ For local storage, a full message list is sent to the model each time, making co
 - Single mechanism for all context manipulation
 - More powerful but more complex
 - Requires coordination with `ChatClient` internals
-- Risk: Performance overhead if middleware/hooks are expensive
+- Risk: Performance overhead if plugins are expensive
 
 **Option C: Unified approach across layers**
 - Define a single context compaction abstraction that works at both agent and client levels
-- `ContextMiddleware`/`ContextHooks` could delegate to `ChatMiddleware` for mid-loop execution
+- `ContextPlugin` could delegate to `ChatMiddleware` for mid-loop execution
 - Requires deeper architectural thought
 
 ### Potential Extension Points (for any option)
 
 Regardless of the chosen approach, these extension points could support compaction:
-- A `CompactionStrategy` that can be shared between middleware/hooks and function calling configuration
+- A `CompactionStrategy` that can be shared between plugins and function calling configuration
 - Hooks for `ChatClient` to notify the agent layer when context limits are approaching
 - A unified `ContextManager` that coordinates compaction across layers
 - **Message-level attribution**: The `attribution` marker in `ChatMessage.additional_properties` can be used during compaction to identify messages that should be preserved (e.g., `attribution: "important"`) or that are safe to remove (e.g., `attribution: "ephemeral"`). This prevents accidental filtering of critical context during aggressive compaction.
