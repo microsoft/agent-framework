@@ -129,7 +129,8 @@ static async Task UseStructuredOutputWithMiddlewareAsync(ChatClient chatClient)
 
     // Add structured output middleware via UseStructuredOutput method to add structured output support to the agent.
     // This middleware transforms the agent's text response into structured data using a chat client.
-    // A middleware that removes ResponseFormat is also added to emulate an agent that doesn't support structured output natively.
+    // Since our agent does support structured output natively, we will add a middleware that removes ResponseFormat
+    //  from the AgentRunOptions to emulate an agent that doesn't support structured output natively
     agent = agent
         .AsBuilder()
         .UseStructuredOutput(meaiChatClient)
