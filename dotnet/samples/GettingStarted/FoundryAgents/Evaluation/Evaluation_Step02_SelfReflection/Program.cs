@@ -142,89 +142,91 @@ static int SimulateGroundednessScore(string response, string context, int iterat
     return Math.Min(5, 3 + iteration);
 }
 
-// static async Task RunWithCustomEvaluator(AIAgent agent, string question, string context)
-// {
-//     Console.WriteLine("Running with Custom Evaluator...");
-//     Console.WriteLine();
-//
-//     const int MaxReflections = 3;
-//     var messageHistory = new List<string> { question };
-//     double bestScore = 0;
-//     string? bestResponse = null;
-//
-//     for (int i = 0; i < MaxReflections; i++)
-//     {
-//         Console.WriteLine($"Iteration {i + 1}/{MaxReflections}:");
-//
-//         AgentSession session = await agent.CreateSessionAsync();
-//         AgentResponse agentResponse = await agent.RunAsync(messageHistory.Last(), session);
-//         string responseText = agentResponse.Text;
-//
-//         // Custom evaluation logic
-//         double score = EvaluateGroundedness(responseText, context);
-//         Console.WriteLine($"Custom evaluation score: {score:F2}/5.0");
-//
-//         if (score > bestScore)
-//         {
-//             bestScore = score;
-//             bestResponse = responseText;
-//         }
-//
-//         messageHistory.Add(responseText);
-//
-//         if (score < 5.0 && i < MaxReflections - 1)
-//         {
-//             messageHistory.Add($"Score: {score}/5. Improve to be more grounded in the context.");
-//         }
-//         else if (score >= 5.0)
-//         {
-//             Console.WriteLine("Excellent groundedness!");
-//             break;
-//         }
-//     }
-//
-//     Console.WriteLine($"\nBest score: {bestScore:F2}/5.0");
-// }
-//
-// static double EvaluateGroundedness(string response, string context)
-// {
-//     // Simple heuristic: check if response contains context keywords
-//     // In production, use proper evaluator like GroundednessEvaluator
-//     string[] contextKeywords = ["unified", "safety", "security", "scalable", "integration", "evaluation", "RAG"];
-//     int matchCount = contextKeywords.Count(kw => response.Contains(kw, StringComparison.OrdinalIgnoreCase));
-//     return Math.Min(5.0, 1.0 + (matchCount / 2.0));
-// }
+#pragma warning disable CS8321 // Local function is declared but never used - available for uncommenting
+static async Task RunWithCustomEvaluator(AIAgent agent, string question, string context)
+{
+    Console.WriteLine("Running with Custom Evaluator...");
+    Console.WriteLine();
 
-// static async Task RunWithAzureEvalService(AIProjectClient client, AIAgent agent, string question, string context)
-// {
-//     Console.WriteLine("Running with Azure AI Evaluation Service Pattern...");
-//     Console.WriteLine();
-//
-//     // This demonstrates the pattern for using Azure AI Foundry Evaluation Service
-//     // Requires proper Azure AI Evaluation setup and configuration
-//
-//     Console.WriteLine("Azure AI Evaluation Service approach:");
-//     Console.WriteLine("1. Create evaluation configuration");
-//     Console.WriteLine("2. Submit evaluation job to Azure AI Foundry");
-//     Console.WriteLine("3. Monitor evaluation progress");
-//     Console.WriteLine("4. Retrieve and analyze results");
-//     Console.WriteLine();
-//
-//     // Example pattern (requires Azure AI Evaluation to be configured):
-//     // var evalClient = client.GetEvaluationsClient();
-//     // var evalConfig = new EvaluationConfiguration
-//     // {
-//     //     EvaluatorType = "groundedness",
-//     //     DataSource = new InlineDataSource
-//     //     {
-//     //         Items = new[] { new { query = question, response = "", context = context } }
-//     //     }
-//     // };
-//     // var evalJob = await evalClient.CreateEvaluationAsync(evalConfig);
-//     // var results = await evalClient.GetEvaluationResultsAsync(evalJob.Id);
-//
-//     Console.WriteLine("Note: To use Azure AI Evaluation Service:");
-//     Console.WriteLine("- Configure Azure AI Foundry project with evaluation capabilities");
-//     Console.WriteLine("- Uncomment the evaluation service code above");
-//     Console.WriteLine("- See README.md and Azure documentation for setup details");
-// }
+    const int MaxReflections = 3;
+    var messageHistory = new List<string> { question };
+    double bestScore = 0;
+    string? bestResponse = null;
+
+    for (int i = 0; i < MaxReflections; i++)
+    {
+        Console.WriteLine($"Iteration {i + 1}/{MaxReflections}:");
+
+        AgentSession session = await agent.CreateSessionAsync();
+        AgentResponse agentResponse = await agent.RunAsync(messageHistory.Last(), session);
+        string responseText = agentResponse.Text;
+
+        // Custom evaluation logic
+        double score = EvaluateGroundedness(responseText, context);
+        Console.WriteLine($"Custom evaluation score: {score:F2}/5.0");
+
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestResponse = responseText;
+        }
+
+        messageHistory.Add(responseText);
+
+        if (score < 5.0 && i < MaxReflections - 1)
+        {
+            messageHistory.Add($"Score: {score}/5. Improve to be more grounded in the context.");
+        }
+        else if (score >= 5.0)
+        {
+            Console.WriteLine("Excellent groundedness!");
+            break;
+        }
+    }
+
+    Console.WriteLine($"\nBest score: {bestScore:F2}/5.0");
+}
+
+static double EvaluateGroundedness(string response, string context)
+{
+    // Simple heuristic: check if response contains context keywords
+    // In production, use proper evaluator like GroundednessEvaluator
+    string[] contextKeywords = ["unified", "safety", "security", "scalable", "integration", "evaluation", "RAG"];
+    int matchCount = contextKeywords.Count(kw => response.Contains(kw, StringComparison.OrdinalIgnoreCase));
+    return Math.Min(5.0, 1.0 + (matchCount / 2.0));
+}
+
+static async Task RunWithAzureEvalService(AIProjectClient client, AIAgent agent, string question, string context)
+{
+    Console.WriteLine("Running with Azure AI Evaluation Service Pattern...");
+    Console.WriteLine();
+
+    // This demonstrates the pattern for using Azure AI Foundry Evaluation Service
+    // Requires proper Azure AI Evaluation setup and configuration
+
+    Console.WriteLine("Azure AI Evaluation Service approach:");
+    Console.WriteLine("1. Create evaluation configuration");
+    Console.WriteLine("2. Submit evaluation job to Azure AI Foundry");
+    Console.WriteLine("3. Monitor evaluation progress");
+    Console.WriteLine("4. Retrieve and analyze results");
+    Console.WriteLine();
+
+    // Example pattern (requires Azure AI Evaluation to be configured):
+    // var evalClient = client.GetEvaluationsClient();
+    // var evalConfig = new EvaluationConfiguration
+    // {
+    //     EvaluatorType = "groundedness",
+    //     DataSource = new InlineDataSource
+    //     {
+    //         Items = new[] { new { query = question, response = "", context = context } }
+    //     }
+    // };
+    // var evalJob = await evalClient.CreateEvaluationAsync(evalConfig);
+    // var results = await evalClient.GetEvaluationResultsAsync(evalJob.Id);
+
+    Console.WriteLine("Note: To use Azure AI Evaluation Service:");
+    Console.WriteLine("- Configure Azure AI Foundry project with evaluation capabilities");
+    Console.WriteLine("- Uncomment the evaluation service code above");
+    Console.WriteLine("- See README.md and Azure documentation for setup details");
+}
+#pragma warning restore CS8321

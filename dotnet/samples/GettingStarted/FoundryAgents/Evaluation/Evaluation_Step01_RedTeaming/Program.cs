@@ -114,80 +114,82 @@ static async Task RunBasicRedTeamEvaluation(AIProjectClient client, AIAgent agen
     }
 }
 
-// static async Task RunComprehensiveRedTeamEvaluation(AIProjectClient client, AIAgent agent)
-// {
-//     Console.WriteLine("Running Comprehensive Red Team Evaluation...");
-//     Console.WriteLine("Configuration: All attack strategies, All risk categories");
-//     Console.WriteLine();
-//
-//     try
-//     {
-//         // Comprehensive red team configuration with all attack strategies
-//         // var redTeamsClient = client.GetRedTeamsClient();
-//         // var redTeam = new RedTeam(targetCallback)
-//         // {
-//         //     NumTurns = 5,
-//         //     AttackStrategies =
-//         //     {
-//         //         AttackStrategy.Easy,
-//         //         AttackStrategy.Moderate,
-//         //         AttackStrategy.CharacterSpace,
-//         //         AttackStrategy.UnicodeConfusable,
-//         //         AttackStrategy.Morse,
-//         //         AttackStrategy.Leetspeak
-//         //     },
-//         //     RiskCategories =
-//         //     {
-//         //         RiskCategory.Violence,
-//         //         RiskCategory.HateUnfairness,
-//         //         RiskCategory.Sexual,
-//         //         RiskCategory.SelfHarm
-//         //     },
-//         //     SimulationOnly = false,
-//         //     ApplicationScenario = "Financial advisor comprehensive safety assessment"
-//         // };
-//         // var response = await redTeamsClient.CreateAsync(redTeam);
-//         // Console.WriteLine($"Red Team ID: {response.Value.Id}");
-//         // Console.WriteLine($"Status: {response.Value.Status}");
-//
-//         Console.WriteLine("Comprehensive evaluation includes:");
-//         Console.WriteLine("- Multiple attack strategies (Easy, Moderate, Character manipulation, Encoding)");
-//         Console.WriteLine("- All risk categories (Violence, HateUnfairness, Sexual, SelfHarm)");
-//         Console.WriteLine("- Extended attack turns for thorough testing");
-//     }
-//     catch (Exception ex)
-//     {
-//         Console.WriteLine($"Error: {ex.Message}");
-//     }
-// }
+#pragma warning disable CS8321 // Local function is declared but never used - available for uncommenting
+static async Task RunComprehensiveRedTeamEvaluation(AIProjectClient client, AIAgent agent)
+{
+    Console.WriteLine("Running Comprehensive Red Team Evaluation...");
+    Console.WriteLine("Configuration: All attack strategies, All risk categories");
+    Console.WriteLine();
 
-// static async Task RunSimulationOnlyMode(AIProjectClient client, AIAgent agent)
-// {
-//     Console.WriteLine("Running Simulation-Only Mode...");
-//     Console.WriteLine("Configuration: Generate attack prompts without evaluation");
-//     Console.WriteLine();
-//
-//     try
-//     {
-//         // Simulation mode generates attack prompts but doesn't run full evaluation
-//         // Useful for testing attack prompt generation without consuming evaluation resources
-//         // var redTeamsClient = client.GetRedTeamsClient();
-//         // var redTeam = new RedTeam(targetCallback)
-//         // {
-//         //     NumTurns = 3,
-//         //     AttackStrategies = { AttackStrategy.Easy },
-//         //     RiskCategories = { RiskCategory.Violence },
-//         //     SimulationOnly = true  // Only generate prompts, don't evaluate
-//         // };
-//         // var response = await redTeamsClient.CreateAsync(redTeam);
-//
-//         Console.WriteLine("Simulation-only mode:");
-//         Console.WriteLine("- Generates adversarial prompts");
-//         Console.WriteLine("- Does not run full evaluation");
-//         Console.WriteLine("- Useful for testing attack prompt generation");
-//     }
-//     catch (Exception ex)
-//     {
-//         Console.WriteLine($"Error: {ex.Message}");
-//     }
-// }
+    try
+    {
+        // Comprehensive red team configuration with all attack strategies
+        // var redTeamsClient = client.GetRedTeamsClient();
+        // var redTeam = new RedTeam(targetCallback)
+        // {
+        //     NumTurns = 5,
+        //     AttackStrategies =
+        //     {
+        //         AttackStrategy.Easy,
+        //         AttackStrategy.Moderate,
+        //         AttackStrategy.CharacterSpace,
+        //         AttackStrategy.UnicodeConfusable,
+        //         AttackStrategy.Morse,
+        //         AttackStrategy.Leetspeak
+        //     },
+        //     RiskCategories =
+        //     {
+        //         RiskCategory.Violence,
+        //         RiskCategory.HateUnfairness,
+        //         RiskCategory.Sexual,
+        //         RiskCategory.SelfHarm
+        //     },
+        //     SimulationOnly = false,
+        //     ApplicationScenario = "Financial advisor comprehensive safety assessment"
+        // };
+        // var response = await redTeamsClient.CreateAsync(redTeam);
+        // Console.WriteLine($"Red Team ID: {response.Value.Id}");
+        // Console.WriteLine($"Status: {response.Value.Status}");
+
+        Console.WriteLine("Comprehensive evaluation includes:");
+        Console.WriteLine("- Multiple attack strategies (Easy, Moderate, Character manipulation, Encoding)");
+        Console.WriteLine("- All risk categories (Violence, HateUnfairness, Sexual, SelfHarm)");
+        Console.WriteLine("- Extended attack turns for thorough testing");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error: {ex.Message}");
+    }
+}
+
+static async Task RunSimulationOnlyMode(AIProjectClient client, AIAgent agent)
+{
+    Console.WriteLine("Running Simulation-Only Mode...");
+    Console.WriteLine("Configuration: Generate attack prompts without evaluation");
+    Console.WriteLine();
+
+    try
+    {
+        // Simulation mode generates attack prompts but doesn't run full evaluation
+        // Useful for testing attack prompt generation without consuming evaluation resources
+        // var redTeamsClient = client.GetRedTeamsClient();
+        // var redTeam = new RedTeam(targetCallback)
+        // {
+        //     NumTurns = 3,
+        //     AttackStrategies = { AttackStrategy.Easy },
+        //     RiskCategories = { RiskCategory.Violence },
+        //     SimulationOnly = true  // Only generate prompts, don't evaluate
+        // };
+        // var response = await redTeamsClient.CreateAsync(redTeam);
+
+        Console.WriteLine("Simulation-only mode:");
+        Console.WriteLine("- Generates adversarial prompts");
+        Console.WriteLine("- Does not run full evaluation");
+        Console.WriteLine("- Useful for testing attack prompt generation");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error: {ex.Message}");
+    }
+}
+#pragma warning restore CS8321
