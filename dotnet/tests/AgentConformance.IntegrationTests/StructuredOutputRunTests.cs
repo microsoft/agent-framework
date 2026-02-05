@@ -63,6 +63,25 @@ public abstract class StructuredOutputRunTests<TAgentFixture>(Func<TAgentFixture
         Assert.Equal("Paris", response.Result.Name);
     }
 
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithPrimitiveTypeReturnsExpectedResultAsync()
+    {
+        // Arrange
+        var agent = this.Fixture.Agent;
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
+
+        // Act - Request a primitive type, which requires wrapping in an object schema
+        AgentResponse<int> response = await agent.RunAsync<int>(
+            new ChatMessage(ChatRole.User, "What is the sum of 15 and 27? Respond with just the number."),
+            session);
+
+        // Assert
+        Assert.NotNull(response);
+        Assert.Single(response.Messages);
+        Assert.Equal(42, response.Result);
+    }
+
     protected static bool TryDeserialize<T>(string json, JsonSerializerOptions jsonSerializerOptions, out T structuredOutput)
     {
         try

@@ -33,6 +33,14 @@ public class AgentResponse<T> : AgentResponse
     }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the JSON schema has an extra object wrapper.
+    /// </summary>
+    /// <remarks>
+    /// The wrapper is required for any non-JSON-object-typed values such as numbers, enum values, and arrays.
+    /// </remarks>
+    internal bool IsWrappedInObject { get; init; }
+
+    /// <summary>
     /// Gets the result value of the agent response as an instance of <typeparamref name="T"/>.
     /// </summary>
     [JsonIgnore]
@@ -46,6 +54,11 @@ public class AgentResponse<T> : AgentResponse
                 throw new InvalidOperationException("The response did not contain JSON to be deserialized.");
             }
 
+            if (this.IsWrappedInObject)
+            {
+                json = UnwrapDataProperty(json!);
+            }
+
             T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)this._serializerOptions.GetTypeInfo(typeof(T)));
             if (deserialized is null)
             {
@@ -54,6 +67,19 @@ public class AgentResponse<T> : AgentResponse
 
             return deserialized;
         }
+    }
+
+    private static string UnwrapDataProperty(string json)
+    {
+        var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind == JsonValueKind.Object &&
+            document.RootElement.TryGetProperty("data", out JsonElement dataElement))
+        {
+            return dataElement.GetRawText();
+        }
+
+        // If root is not an object or "data" property is not found, return the original JSON as a fallback
+        return json;
     }
 
     private static T? DeserializeFirstTopLevelObject(string json, JsonTypeInfo<T> typeInfo)
