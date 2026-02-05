@@ -15,16 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import pytest_asyncio
 from agent_framework import AgentExecutor, ChatAgent, FunctionExecutor, WorkflowBuilder
 
-# Import test utilities
-from test_helpers import (
-    MockBaseChatClient,
-    create_concurrent_workflow,
-    create_executor_with_real_agent,
-    create_sequential_workflow,
-)
+# Import mock classes from conftest for direct use in some tests
+from conftest import MockBaseChatClient
 
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
@@ -32,36 +26,8 @@ from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 # =============================================================================
-# Local Fixtures (async factory-based)
+# Local Fixtures (module-specific)
 # =============================================================================
-
-
-@pytest_asyncio.fixture
-async def executor_with_real_agent():
-    """Create an executor with a REAL ChatAgent using mock chat client."""
-    return await create_executor_with_real_agent()
-
-
-@pytest_asyncio.fixture
-async def sequential_workflow_fixture():
-    """Create a realistic sequential workflow (Writer -> Reviewer)."""
-    return await create_sequential_workflow()
-
-
-@pytest_asyncio.fixture
-async def concurrent_workflow_fixture():
-    """Create a realistic concurrent workflow (Researcher | Analyst | Summarizer)."""
-    return await create_concurrent_workflow()
-
-
-@pytest.fixture
-def test_entities_dir():
-    """Use the samples directory which has proper entity structure."""
-    # Get the samples directory from the main python samples folder
-    current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
-    return str(samples_dir.resolve())
 
 
 @pytest.fixture
@@ -419,9 +385,9 @@ async def test_request_extracts_entity_id_from_metadata(executor):
 
 
 @pytest.mark.asyncio
-async def test_executor_get_start_executor_message_types(sequential_workflow_fixture):
+async def test_executor_get_start_executor_message_types(sequential_workflow):
     """Test _get_start_executor_message_types with real workflow."""
-    executor, _entity_id, _mock_client, workflow = sequential_workflow_fixture
+    executor, _entity_id, _mock_client, workflow = sequential_workflow
 
     start_exec, message_types = executor._get_start_executor_message_types(workflow)
 
@@ -493,11 +459,11 @@ async def test_executor_parse_raw_string_for_string_workflow():
 
 
 @pytest.mark.asyncio
-async def test_executor_parse_converts_to_chat_message_for_sequential_workflow(sequential_workflow_fixture):
+async def test_executor_parse_converts_to_chat_message_for_sequential_workflow(sequential_workflow):
     """Sequential workflows convert string input to ChatMessage."""
     from agent_framework import ChatMessage
 
-    executor, _entity_id, _mock_client, workflow = sequential_workflow_fixture
+    executor, _entity_id, _mock_client, workflow = sequential_workflow
 
     # Sequential workflows expect ChatMessage, so raw string becomes ChatMessage
     parsed = executor._parse_raw_workflow_input(workflow, "hello")
@@ -630,13 +596,13 @@ async def test_executor_handles_streaming_agent():
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_sequential_workflow(sequential_workflow_fixture):
+async def test_full_pipeline_sequential_workflow(sequential_workflow):
     """Test SequentialBuilder workflow full pipeline with JSON serialization.
 
-    Uses the shared sequential_workflow_fixture (Writer → Reviewer) from conftest.
+    Uses the shared sequential_workflow fixture (Writer → Reviewer) from conftest.
     Tests that all events can be JSON serialized for SSE streaming.
     """
-    executor, entity_id, mock_client, _workflow = sequential_workflow_fixture
+    executor, entity_id, mock_client, _workflow = sequential_workflow
 
     request = AgentFrameworkRequest(
         metadata={"entity_id": entity_id},
@@ -665,13 +631,13 @@ async def test_full_pipeline_sequential_workflow(sequential_workflow_fixture):
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_concurrent_workflow(concurrent_workflow_fixture):
+async def test_full_pipeline_concurrent_workflow(concurrent_workflow):
     """Test ConcurrentBuilder workflow full pipeline with JSON serialization.
 
-    Uses the shared concurrent_workflow_fixture (Researcher | Analyst | Summarizer) from conftest.
+    Uses the shared concurrent_workflow fixture (Researcher | Analyst | Summarizer) from conftest.
     Tests fan-out/fan-in pattern with parallel agent execution.
     """
-    executor, entity_id, mock_client, _workflow = concurrent_workflow_fixture
+    executor, entity_id, mock_client, _workflow = concurrent_workflow
 
     request = AgentFrameworkRequest(
         metadata={"entity_id": entity_id},

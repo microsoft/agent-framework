@@ -6,19 +6,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from agent_framework_devui._discovery import EntityDiscovery
 
-
-@pytest.fixture
-def test_entities_dir():
-    """Use the samples directory which has proper entity structure."""
-    # Get the samples directory from the main python samples folder
-    current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
-    return str(samples_dir.resolve())
+# Note: test_entities_dir fixture is provided by conftest.py
 
 
 async def test_discover_agents(test_entities_dir):

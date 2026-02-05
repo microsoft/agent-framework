@@ -15,7 +15,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
+    FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -23,13 +23,13 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     ResponseStream,
-    Role,
     TextSpanRegion,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
 )
 from agent_framework._pydantic import AFBaseSettings
+from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
@@ -176,14 +176,14 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Role and Finish Reason Maps
 
 
-ROLE_MAP: dict[Role, str] = {
+ROLE_MAP: dict[str, str] = {
     "user": "user",
     "assistant": "assistant",
     "system": "user",
     "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
+FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "stop_sequence": "stop",
     "max_tokens": "length",
     "tool_use": "tool_calls",
@@ -540,7 +540,7 @@ class AnthropicClient(
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": content.get_data_bytes_as_str(),  # type: ignore[attr-defined]
+                                "data": _get_data_bytes_as_str(content),  # type: ignore[attr-defined]
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },

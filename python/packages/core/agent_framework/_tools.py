@@ -2194,7 +2194,10 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     errors_in_a_row = result["errors_in_a_row"]
 
                     # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
-                    if mutable_options.get("tool_choice") == "required":
+                    if mutable_options.get("tool_choice") == "required" or (
+                        isinstance(mutable_options.get("tool_choice"), dict)
+                        and mutable_options.get("tool_choice", {}).get("mode") == "required"
+                    ):
                         mutable_options["tool_choice"] = None  # reset to default for next iteration
 
                     if response.conversation_id is not None:
@@ -2306,7 +2309,10 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     return
 
                 # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops
-                if mutable_options.get("tool_choice") == "required":
+                if mutable_options.get("tool_choice") == "required" or (
+                    isinstance(mutable_options.get("tool_choice"), dict)
+                    and mutable_options.get("tool_choice", {}).get("mode") == "required"
+                ):
                     mutable_options["tool_choice"] = None  # reset to default for next iteration
 
                 if response.conversation_id is not None:

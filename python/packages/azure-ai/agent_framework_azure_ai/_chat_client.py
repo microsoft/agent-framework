@@ -31,6 +31,7 @@ from agent_framework import (
     HostedWebSearchTool,
     MiddlewareTypes,
     ResponseStream,
+    Role,
     TextSpanRegion,
     ToolProtocol,
     UsageDetails,
@@ -664,7 +665,7 @@ class AzureAIAgentClient(
                 match event_data:
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
-                        role = "user" if event_data.delta.role.value == "user" else "assistant"
+                        role: Role = "user" if event_data.delta.role == "user" else "assistant"  # type: ignore[assignment]
 
                         # Extract URL citations from the delta chunk
                         url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)

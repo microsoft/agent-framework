@@ -23,14 +23,7 @@ class _StubExecutor:
             self._handlers = dict(handlers)
 
 
-@pytest.fixture
-def test_entities_dir():
-    """Use the samples directory which has proper entity structure."""
-    # Get the samples directory from the main python samples folder
-    current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
-    return str(samples_dir.resolve())
+# Note: test_entities_dir fixture is provided by conftest.py
 
 
 async def test_server_health_endpoint(test_entities_dir):

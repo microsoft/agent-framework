@@ -1,22 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared test utilities for DevUI tests.
+"""Pytest configuration and fixtures for DevUI tests.
 
-This module provides reusable test helpers including:
+This module provides reusable test fixtures including:
 - Mock chat clients that don't require API keys
 - Real workflow event classes from agent_framework
 - Test agents and executors for workflow testing
 - Factory functions for test data
-
-These follow the patterns established in other agent_framework packages
-(like a2a, ag-ui) which use explicit imports instead of conftest.py
-to avoid pytest plugin conflicts when running tests across packages.
 """
 
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Generic
 
+import pytest
+import pytest_asyncio
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
@@ -32,25 +31,24 @@ from agent_framework import (
 )
 from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
-from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
-
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
-# Import real workflow event classes - NOT mocks!
 from agent_framework._workflows._events import (
     ExecutorCompletedEvent,
     ExecutorFailedEvent,
     ExecutorInvokedEvent,
     WorkflowErrorDetails,
 )
+from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
 
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 # =============================================================================
 # Mock Chat Clients (from core tests pattern)
@@ -242,63 +240,21 @@ class MockToolCallingAgent(BaseAgent):
 
 
 # =============================================================================
-# Factory Functions for Test Data
+# Helper Functions for Test Data Creation
 # =============================================================================
 
 
-def create_mapper() -> MessageMapper:
-    """Create a fresh MessageMapper."""
-    return MessageMapper()
-
-
-def create_test_request(
-    entity_id: str = "test_agent",
-    input_text: str = "Test input",
-    stream: bool = True,
-) -> AgentFrameworkRequest:
-    """Create a standard test request."""
-    return AgentFrameworkRequest(
-        metadata={"entity_id": entity_id},
-        input=input_text,
-        stream=stream,
-    )
-
-
-def create_mock_chat_client() -> MockChatClient:
-    """Create a mock chat client."""
-    return MockChatClient()
-
-
-def create_mock_base_chat_client() -> MockBaseChatClient:
-    """Create a mock BaseChatClient."""
-    return MockBaseChatClient()
-
-
-def create_mock_agent(
-    id: str = "test_agent",
-    name: str = "TestAgent",
-    response_text: str = "Mock agent response",
-) -> MockAgent:
-    """Create a mock agent."""
-    return MockAgent(id=id, name=name, response_text=response_text)
-
-
-def create_mock_tool_agent(id: str = "tool_agent", name: str = "ToolAgent") -> MockToolCallingAgent:
-    """Create a mock agent that simulates tool calls."""
-    return MockToolCallingAgent(id=id, name=name)
-
-
-def create_agent_run_response(text: str = "Test response") -> AgentResponse:
+def _create_agent_run_response(text: str = "Test response") -> AgentResponse:
     """Create an AgentResponse with the given text."""
     return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=text)])])
 
 
-def create_agent_executor_response(
+def _create_agent_executor_response(
     executor_id: str = "test_executor",
     response_text: str = "Executor response",
 ) -> AgentExecutorResponse:
     """Create an AgentExecutorResponse - the type that's nested in ExecutorCompletedEvent.data."""
-    agent_response = create_agent_run_response(response_text)
+    agent_response = _create_agent_run_response(response_text)
     return AgentExecutorResponse(
         executor_id=executor_id,
         agent_response=agent_response,
@@ -307,6 +263,21 @@ def create_agent_executor_response(
             ChatMessage("assistant", [Content.from_text(text=response_text)]),
         ],
     )
+
+
+# =============================================================================
+# Public Factory Functions (for direct import in tests)
+# =============================================================================
+
+
+def create_agent_run_response(text: str = "Test response") -> AgentResponse:
+    """Create an AgentResponse with the given text."""
+    return _create_agent_run_response(text)
+
+
+def create_executor_invoked_event(executor_id: str = "test_executor") -> ExecutorInvokedEvent:
+    """Create an ExecutorInvokedEvent."""
+    return ExecutorInvokedEvent(executor_id=executor_id)
 
 
 def create_executor_completed_event(
@@ -319,13 +290,8 @@ def create_executor_completed_event(
     ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
     AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
     """
-    data = create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
+    data = _create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
     return ExecutorCompletedEvent(executor_id=executor_id, data=data)
-
-
-def create_executor_invoked_event(executor_id: str = "test_executor") -> ExecutorInvokedEvent:
-    """Create an ExecutorInvokedEvent."""
-    return ExecutorInvokedEvent(executor_id=executor_id)
 
 
 def create_executor_failed_event(
@@ -338,11 +304,97 @@ def create_executor_failed_event(
 
 
 # =============================================================================
-# Workflow Setup Helpers (async factory functions)
+# Pytest Fixtures
 # =============================================================================
 
 
-async def create_executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient]:
+@pytest.fixture
+def mapper() -> MessageMapper:
+    """Create a fresh MessageMapper for each test."""
+    return MessageMapper()
+
+
+@pytest.fixture
+def test_request() -> AgentFrameworkRequest:
+    """Create a standard test request."""
+    return AgentFrameworkRequest(
+        metadata={"entity_id": "test_agent"},
+        input="Test input",
+        stream=True,
+    )
+
+
+@pytest.fixture
+def mock_chat_client() -> MockChatClient:
+    """Create a mock chat client."""
+    return MockChatClient()
+
+
+@pytest.fixture
+def mock_base_chat_client() -> MockBaseChatClient:
+    """Create a mock BaseChatClient."""
+    return MockBaseChatClient()
+
+
+@pytest.fixture
+def mock_agent() -> MockAgent:
+    """Create a mock agent."""
+    return MockAgent(id="test_agent", name="TestAgent", response_text="Mock agent response")
+
+
+@pytest.fixture
+def mock_tool_agent() -> MockToolCallingAgent:
+    """Create a mock agent that simulates tool calls."""
+    return MockToolCallingAgent(id="tool_agent", name="ToolAgent")
+
+
+@pytest.fixture
+def agent_run_response() -> AgentResponse:
+    """Create an AgentResponse with default text."""
+    return _create_agent_run_response()
+
+
+@pytest.fixture
+def executor_completed_event() -> ExecutorCompletedEvent:
+    """Create an ExecutorCompletedEvent with realistic nested data.
+
+    This creates the exact data structure that caused the serialization bug:
+    ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
+    AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
+    """
+    data = _create_agent_executor_response("test_executor")
+    return ExecutorCompletedEvent(executor_id="test_executor", data=data)
+
+
+@pytest.fixture
+def executor_invoked_event() -> ExecutorInvokedEvent:
+    """Create an ExecutorInvokedEvent."""
+    return ExecutorInvokedEvent(executor_id="test_executor")
+
+
+@pytest.fixture
+def executor_failed_event() -> ExecutorFailedEvent:
+    """Create an ExecutorFailedEvent."""
+    details = WorkflowErrorDetails(error_type="TestError", message="Test error")
+    return ExecutorFailedEvent(executor_id="test_executor", details=details)
+
+
+@pytest.fixture
+def test_entities_dir() -> str:
+    """Use the samples directory which has proper entity structure."""
+    current_dir = Path(__file__).parent
+    # Navigate to python/samples/getting_started/devui
+    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "getting_started" / "devui"
+    return str(samples_dir.resolve())
+
+
+# =============================================================================
+# Async Fixtures for Executor/Workflow Setup
+# =============================================================================
+
+
+@pytest_asyncio.fixture
+async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient]:
     """Create an executor with a REAL ChatAgent using mock chat client.
 
     This tests the full execution pipeline:
@@ -374,7 +426,8 @@ async def create_executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str
     return executor, entity_info.id, mock_client
 
 
-async def create_sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient, Any]:
+@pytest_asyncio.fixture
+async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient, Any]:
     """Create a realistic sequential workflow (Writer -> Reviewer).
 
     This provides a reusable multi-agent workflow that:
@@ -417,7 +470,8 @@ async def create_sequential_workflow() -> tuple[AgentFrameworkExecutor, str, Moc
     return executor, entity_info.id, mock_client, workflow
 
 
-async def create_concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient, Any]:
+@pytest_asyncio.fixture
+async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient, Any]:
     """Create a realistic concurrent workflow (Researcher | Analyst | Summarizer).
 
     This provides a reusable fan-out/fan-in workflow that:
