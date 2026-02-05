@@ -244,20 +244,20 @@ public static class ServiceCollectionExtensions
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agentFactories =
             durableOptions.Agents.GetAgentFactories();
 
-            // Register orchestrations and activities
-            foreach (WorkflowRegistrationInfo registration in registrations)
-            {
-                // Register with DurableWorkflowInput<object> - the DataConverter handles serialization/deserialization
-                registry.AddOrchestratorFunc<DurableWorkflowInput<object>, string>(
-                    registration.OrchestrationName,
-                    (context, input) => RunWorkflowOrchestrationAsync(context, input, durableOptions));
+        // Register orchestrations and activities
+        foreach (WorkflowRegistrationInfo registration in registrations)
+        {
+            // Register with DurableWorkflowInput<object> - the DataConverter handles serialization/deserialization
+            registry.AddOrchestratorFunc<DurableWorkflowInput<object>, string>(
+                registration.OrchestrationName,
+                (context, input) => RunWorkflowOrchestrationAsync(context, input, durableOptions));
 
-                foreach (ActivityRegistrationInfo activity in registration.Activities)
-                {
-                    ExecutorBinding binding = activity.Binding;
-                    registry.AddActivityFunc<string, string>(
-                        activity.ActivityName,
-                    (context, input) => DurableActivityExecutor.ExecuteAsync(binding, input));
+            foreach (ActivityRegistrationInfo activity in registration.Activities)
+            {
+                ExecutorBinding binding = activity.Binding;
+                registry.AddActivityFunc<string, string>(
+                    activity.ActivityName,
+                (context, input) => DurableActivityExecutor.ExecuteAsync(binding, input));
             }
         }
 
@@ -314,56 +314,56 @@ public static class ServiceCollectionExtensions
         // registered as separate orchestrations via BuildWorkflowRegistrationRecursive.
         foreach (KeyValuePair<string, ExecutorBinding> entry in executorBindings
                     .Where(e => e.Value is not AIAgentBinding and not SubworkflowBinding))
-                {
-                    string executorName = WorkflowNamingHelper.GetExecutorName(entry.Key);
-                    string activityName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
+        {
+            string executorName = WorkflowNamingHelper.GetExecutorName(entry.Key);
+            string activityName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
 
-                    if (registeredActivities.Add(activityName))
-                    {
-                        activities.Add(new ActivityRegistrationInfo(activityName, entry.Value));
-                    }
-                }
-
-                return new WorkflowRegistrationInfo(orchestrationName, activities);
-            }
-
-            private static async Task<string> RunWorkflowOrchestrationAsync(
-                TaskOrchestrationContext context,
-                DurableWorkflowInput<object> workflowInput,
-                DurableOptions durableOptions)
+            if (registeredActivities.Add(activityName))
             {
-                ILogger logger = context.CreateReplaySafeLogger("DurableWorkflow");
-                DurableWorkflowRunner runner = new(durableOptions);
-
-                // ConfigureAwait(true) is required in orchestration code for deterministic replay.
-                return await runner.RunWorkflowOrchestrationAsync(context, workflowInput, logger).ConfigureAwait(true);
-            }
-
-            private sealed record WorkflowRegistrationInfo(string OrchestrationName, List<ActivityRegistrationInfo> Activities);
-
-            private sealed record ActivityRegistrationInfo(string ActivityName, ExecutorBinding Binding);
-
-            /// <summary>
-            /// Validates that an agent with the specified name has been registered.
-            /// </summary>
-            /// <param name="services">The service provider.</param>
-            /// <param name="agentName">The name of the agent to validate.</param>
-            /// <exception cref="InvalidOperationException">
-            /// Thrown when the agent dictionary is not registered in the service provider.
-            /// </exception>
-            /// <exception cref="AgentNotRegisteredException">
-            /// Thrown when the agent with the specified name has not been registered.
-            /// </exception>
-            internal static void ValidateAgentIsRegistered(IServiceProvider services, string agentName)
-            {
-                IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>? agents =
-                    services.GetService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>()
-                    ?? throw new InvalidOperationException(
-                        $"Durable agents have not been configured. Ensure {nameof(ConfigureDurableAgents)} has been called on the service collection.");
-
-                if (!agents.ContainsKey(agentName))
-                {
-                    throw new AgentNotRegisteredException(agentName);
-                }
+                activities.Add(new ActivityRegistrationInfo(activityName, entry.Value));
             }
         }
+
+        return new WorkflowRegistrationInfo(orchestrationName, activities);
+    }
+
+    private static async Task<string> RunWorkflowOrchestrationAsync(
+        TaskOrchestrationContext context,
+        DurableWorkflowInput<object> workflowInput,
+        DurableOptions durableOptions)
+    {
+        ILogger logger = context.CreateReplaySafeLogger("DurableWorkflow");
+        DurableWorkflowRunner runner = new(durableOptions);
+
+        // ConfigureAwait(true) is required in orchestration code for deterministic replay.
+        return await runner.RunWorkflowOrchestrationAsync(context, workflowInput, logger).ConfigureAwait(true);
+    }
+
+    private sealed record WorkflowRegistrationInfo(string OrchestrationName, List<ActivityRegistrationInfo> Activities);
+
+    private sealed record ActivityRegistrationInfo(string ActivityName, ExecutorBinding Binding);
+
+    /// <summary>
+    /// Validates that an agent with the specified name has been registered.
+    /// </summary>
+    /// <param name="services">The service provider.</param>
+    /// <param name="agentName">The name of the agent to validate.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the agent dictionary is not registered in the service provider.
+    /// </exception>
+    /// <exception cref="AgentNotRegisteredException">
+    /// Thrown when the agent with the specified name has not been registered.
+    /// </exception>
+    internal static void ValidateAgentIsRegistered(IServiceProvider services, string agentName)
+    {
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>? agents =
+            services.GetService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>()
+            ?? throw new InvalidOperationException(
+                $"Durable agents have not been configured. Ensure {nameof(ConfigureDurableAgents)} has been called on the service collection.");
+
+        if (!agents.ContainsKey(agentName))
+        {
+            throw new AgentNotRegisteredException(agentName);
+        }
+    }
+}
