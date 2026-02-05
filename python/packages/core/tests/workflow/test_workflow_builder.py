@@ -538,8 +538,10 @@ def test_with_output_from_with_registered_names():
     """Test with_output_from with registered factory names (strings)."""
     workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: MockExecutor(id="ExecutorA"), name="ExecutorAFactory")
-        .register_executor(lambda: MockExecutor(id="ExecutorB"), name="ExecutorBFactory")
+        .register_executors({
+            "ExecutorAFactory": lambda: MockExecutor(id="ExecutorA"),
+            "ExecutorBFactory": lambda: MockExecutor(id="ExecutorB"),
+        })
         .set_start_executor("ExecutorAFactory")
         .add_edge("ExecutorAFactory", "ExecutorBFactory")
         .with_output_from(["ExecutorBFactory"])
