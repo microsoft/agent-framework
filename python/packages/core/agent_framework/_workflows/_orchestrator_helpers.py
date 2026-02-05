@@ -12,8 +12,7 @@ from .._types import ChatMessage
 
 logger = logging.getLogger(__name__)
 
-
-def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[ChatMessage]:
+def clean_conversation(conversation: list[ChatMessage]) -> list[ChatMessage]:
     """Remove tool-related content from conversation for clean handoffs.
 
     During handoffs, tool calls can cause API errors because:
