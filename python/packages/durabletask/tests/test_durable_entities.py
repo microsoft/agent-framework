@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content, ResponseStream
 from pydantic import BaseModel
 
 from agent_framework_durabletask import (
@@ -247,10 +247,13 @@ class TestAgentEntityRunAgent:
         mock_agent = Mock()
         mock_agent.name = "StreamingAgent"
 
-        # Mock run() to return async generator when stream=True
+        # Mock run() to return ResponseStream when stream=True
         def mock_run(*args, stream=False, **kwargs):
             if stream:
-                return update_generator()
+                return ResponseStream(
+                    update_generator(),
+                    finalizer=AgentResponse.from_updates,
+                )
             raise AssertionError("run(stream=False) should not be called when streaming succeeds")
 
         mock_agent.run = mock_run
