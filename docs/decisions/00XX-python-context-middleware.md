@@ -119,7 +119,7 @@ The following key decisions shape the ContextMiddleware design:
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | **Agent vs Session Ownership** | Agent owns middleware config; Session owns resolved pipeline. Enables per-session factories. |
+| 1 | **Agent vs Session Ownership** | Agent owns middleware config; Session owns resolved pipeline. Enables per-session factories. **(TBD - see Decision 2 in Outcome)** |
 | 2 | **Instance or Factory** | Middleware can be shared instances or `(session_id) -> Middleware` factories for per-session state. |
 | 3 | **Default Storage at Runtime** | `InMemoryStorageMiddleware` auto-added when no service_session_id, store≠True, and no pipeline. Evaluated at runtime so users can modify pipeline first. |
 | 4 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero storage middleware/hooks have `load_messages=True` (likely misconfiguration). |
@@ -729,6 +729,8 @@ response = await agent.run("Hello", session=session)
 ```
 ## Decision Outcome
 
+### Decision 1: Execution Pattern
+
 **TBD** - This ADR presents two viable approaches:
 
 - **Option 2: ContextMiddleware (Wrapper Pattern)** - Consistent with existing middleware patterns, more powerful control flow
@@ -742,6 +744,380 @@ Both options share the same:
 - Renaming `AgentThread` → `AgentSession`
 
 The key difference is the execution model: nested wrapper vs linear phases.
+
+### Decision 2: Instance Ownership (Orthogonal)
+
+**TBD** - Where should the actual middleware/hooks instances live?
+
+This decision is orthogonal to Decision 1 (execution pattern) and applies equally to both Middleware and Hooks approaches.
+
+#### Option A: Instances in Session (Current Proposal)
+
+The `AgentSession` owns the actual middleware/hooks instances. The pipeline is created when the session is created, and instances are stored in the session.
+
+```python
+class AgentSession:
+    """Session owns the middleware instances."""
+
+    def __init__(
+        self,
+        *,
+        session_id: str | None = None,
+        context_pipeline: ContextMiddlewarePipeline | None = None,  # Owns instances
+    ):
+        self._session_id = session_id or str(uuid.uuid4())
+        self._context_pipeline = context_pipeline  # Actual instances live here
+
+
+class ChatAgent:
+    def __init__(
+        self,
+        chat_client: ...,
+        *,
+        context_middleware: Sequence[ContextMiddlewareConfig] | None = None,
+    ):
+        self._context_middleware_config = list(context_middleware or [])
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        """Create session with resolved middleware instances."""
+        resolved_id = session_id or str(uuid.uuid4())
+
+        # Resolve factories and create actual instances
+        pipeline = None
+        if self._context_middleware_config:
+            pipeline = ContextMiddlewarePipeline.from_config(
+                self._context_middleware_config,
+                session_id=resolved_id,
+            )
+
+        return AgentSession(
+            session_id=resolved_id,
+            context_pipeline=pipeline,  # Session owns the instances
+        )
+
+    async def run(self, input: str, *, session: AgentSession) -> AgentResponse:
+        # Session's pipeline executes
+        context = await session.run_context_pipeline(input_messages)
+        # ... invoke model ...
+```
+
+**Pros:**
+- Self-contained session - all state and behavior together
+- Middleware can maintain per-session instance state naturally
+- Session given to another agent will work the same way
+
+**Cons:**
+- Session becomes heavier (instances + state)
+- Complicated serialization - serialization needs to deal with instances, which might include non-serializable things like clients or connections
+- Harder to share stateless middleware across sessions efficiently
+- Factories must be re-resolved for each session
+
+#### Option B: Instances in Agent, State in Session
+
+The `ChatAgent` owns and manages the middleware/hooks instances. The `AgentSession` only stores state data that middleware reads/writes. The agent's runner executes the pipeline using the session's state.
+
+Two variants exist for how state is stored in the session:
+
+##### Option B1: Simple Dict State
+
+The session stores state as a simple `dict[str, Any]` keyed by `source_id`. Each hook receives its own state slice and can optionally return updated state.
+
+```python
+class AgentSession:
+    """Session only holds state as a simple dict."""
+
+    def __init__(self, *, session_id: str | None = None):
+        self._session_id = session_id or str(uuid.uuid4())
+        self.service_session_id: str | None = None
+        self.state: dict[str, Any] = {}  # source_id -> hook state
+
+
+class ContextHooksRunner:
+    """Agent-owned runner that executes hooks with session state."""
+
+    def __init__(self, hooks: Sequence[ContextHooks]):
+        self._hooks = list(hooks)
+
+    async def run_before(
+        self,
+        context: SessionContext,
+        session_state: dict[str, Any],
+    ) -> None:
+        """Run before_run for all hooks, passing each only its own state."""
+        for hook in self._hooks:
+            my_state = session_state.get(hook.source_id)
+            new_state = await hook.before_run(context, my_state)
+            if new_state is not None:
+                session_state[hook.source_id] = new_state
+
+    async def run_after(
+        self,
+        context: SessionContext,
+        session_state: dict[str, Any],
+    ) -> None:
+        """Run after_run for all hooks in reverse order."""
+        for hook in reversed(self._hooks):
+            my_state = session_state.get(hook.source_id)
+            new_state = await hook.after_run(context, my_state)
+            if new_state is not None:
+                session_state[hook.source_id] = new_state
+
+
+class ChatAgent:
+    def __init__(
+        self,
+        chat_client: ...,
+        *,
+        context_hooks: Sequence[ContextHooks] | None = None,
+    ):
+        # Agent owns the actual hook instances
+        self._hooks_runner = ContextHooksRunner(list(context_hooks or []))
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        """Create lightweight session with just state."""
+        return AgentSession(session_id=session_id)
+
+    async def run(self, input: str, *, session: AgentSession) -> AgentResponse:
+        context = SessionContext(
+            session_id=session.session_id,
+            input_messages=[...],
+        )
+
+        # Before hooks
+        await self._hooks_runner.run_before(context, session.state)
+
+        # ... invoke model ...
+
+        # After hooks
+        await self._hooks_runner.run_after(context, session.state)
+
+
+# Hook that maintains state - returns updated state
+class InMemoryStorageHooks(ContextHooks):
+    async def before_run(
+        self,
+        context: SessionContext,
+        state: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        # Read from own state (or empty if first invocation)
+        messages = (state or {}).get("messages", [])
+        context.add_messages(self.source_id, messages)
+        return None  # No state change in before_run
+
+    async def after_run(
+        self,
+        context: SessionContext,
+        state: dict[str, Any] | None,
+    ) -> dict[str, Any]:  # Returns updated state
+        messages = (state or {}).get("messages", [])
+        return {
+            "messages": [
+                *messages,
+                *context.input_messages,
+                *(context.response_messages or []),
+            ],
+        }
+
+
+# Stateless hook - returns None (no state to store)
+class TimeContextHooks(ContextHooks):
+    async def before_run(
+        self,
+        context: SessionContext,
+        state: dict[str, Any] | None,
+    ) -> None:
+        context.add_instructions(self.source_id, f"Current time: {datetime.now()}")
+
+    async def after_run(
+        self,
+        context: SessionContext,
+        state: dict[str, Any] | None,
+    ) -> None:
+        pass  # No state, nothing to do after
+```
+
+##### Option B2: SessionState Object
+
+The session stores state in a dedicated `SessionState` object. Each hook receives its own state slice through a mutable wrapper that writes back automatically.
+
+```python
+class HookState:
+    """Mutable wrapper for a single hook's state.
+
+    Changes are written back to the session state automatically.
+    """
+
+    def __init__(self, session_state: dict[str, dict[str, Any]], source_id: str):
+        self._session_state = session_state
+        self._source_id = source_id
+        if source_id not in session_state:
+            session_state[source_id] = {}
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._session_state[self._source_id].get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        self._session_state[self._source_id][key] = value
+
+    def update(self, values: dict[str, Any]) -> None:
+        self._session_state[self._source_id].update(values)
+
+
+class SessionState:
+    """Structured state container for a session."""
+
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.service_session_id: str | None = None
+        self._hook_state: dict[str, dict[str, Any]] = {}  # source_id -> state
+
+    def get_hook_state(self, source_id: str) -> HookState:
+        """Get mutable state wrapper for a specific hook."""
+        return HookState(self._hook_state, source_id)
+
+
+class AgentSession:
+    """Session holds a SessionState object."""
+
+    def __init__(self, *, session_id: str | None = None):
+        self._session_id = session_id or str(uuid.uuid4())
+        self._state = SessionState(self._session_id)
+
+    @property
+    def state(self) -> SessionState:
+        return self._state
+
+
+class ContextHooksRunner:
+    """Agent-owned runner that executes hooks with session state."""
+
+    def __init__(self, hooks: Sequence[ContextHooks]):
+        self._hooks = list(hooks)
+
+    async def run_before(
+        self,
+        context: SessionContext,
+        session_state: SessionState,
+    ) -> None:
+        """Run before_run for all hooks."""
+        for hook in self._hooks:
+            my_state = session_state.get_hook_state(hook.source_id)
+            await hook.before_run(context, my_state)
+
+    async def run_after(
+        self,
+        context: SessionContext,
+        session_state: SessionState,
+    ) -> None:
+        """Run after_run for all hooks in reverse order."""
+        for hook in reversed(self._hooks):
+            my_state = session_state.get_hook_state(hook.source_id)
+            await hook.after_run(context, my_state)
+
+
+# Hook uses HookState wrapper - no return needed
+class InMemoryStorageHooks(ContextHooks):
+    async def before_run(
+        self,
+        context: SessionContext,
+        state: HookState,  # Mutable wrapper
+    ) -> None:
+        messages = state.get("messages", [])
+        context.add_messages(self.source_id, messages)
+
+    async def after_run(
+        self,
+        context: SessionContext,
+        state: HookState,  # Mutable wrapper
+    ) -> None:
+        messages = state.get("messages", [])
+        state.set("messages", [
+            *messages,
+            *context.input_messages,
+            *(context.response_messages or []),
+        ])
+
+
+# Stateless hook - state wrapper provided but not used
+class TimeContextHooks(ContextHooks):
+    async def before_run(
+        self,
+        context: SessionContext,
+        state: HookState,
+    ) -> None:
+        context.add_instructions(self.source_id, f"Current time: {datetime.now()}")
+
+    async def after_run(
+        self,
+        context: SessionContext,
+        state: HookState,
+    ) -> None:
+        pass  # Nothing to do
+```
+
+**Option B Pros (both variants):**
+- Lightweight sessions - just data, easy to serialize/transfer
+- Hook instances shared across sessions (more memory efficient)
+- Clearer separation: agent = behavior, session = state
+
+**Option B Cons (both variants):**
+- More complex execution model (agent + session coordination)
+- Hooks must explicitly read/write state (no implicit instance variables)
+- Session given to another agent may not work (different hooks configuration)
+
+**B1 vs B2:**
+
+| Aspect | B1: Simple Dict | B2: SessionState Object |
+|--------|-----------------|-------------------------|
+| Simplicity | Simpler, less abstraction | More structure, helper methods |
+| State return | Optional return (`dict | None`) | Mutable wrapper, no return needed |
+| Type safety | `dict[str, Any] | None` - loose | Can add type hints on methods |
+| Extensibility | Add keys as needed | Can add methods/validation |
+| Serialization | Direct JSON serialization | Need custom serialization |
+
+#### Comparison
+
+| Aspect | Option A: Instances in Session | Option B: Instances in Agent |
+|--------|-------------------------------|------------------------------|
+| Session weight | Heavier (instances + state) | Lighter (state only) |
+| Hook sharing | Per-session instances | Shared across sessions |
+| Instance state | Natural (instance variables) | Explicit (state dict) |
+| Serialization | Serialize session + hooks | Serialize state only |
+| Factory handling | Resolved at session creation | See open discussion below |
+| Signature | `before_run(context)` | `before_run(context, state)` |
+| Session portability | Works with any agent | Tied to agent's hooks config |
+
+#### Open Discussion: Hook Factories in Option B
+
+With Option A (instances in session), hook factories naturally fit: the factory is called at session creation to produce a per-session instance that can hold instance-level state.
+
+With Option B (instances in agent, state in session), the hooks are shared across sessions, which raises questions about factories:
+
+**Question:** What is the purpose of hook factories when hooks are shared?
+
+**Possible approaches:**
+
+1. **No factories in Option B** - Since state is externalized, there's no need for per-session instances. All hooks are shared. If a hook needs per-session initialization, it can do so in `before_run` on first call (checking if state is empty).
+
+2. **Factories create agent-level instances** - Factories are called once when the agent is created, not per-session. Useful for dependency injection or configuration, but not per-session state.
+
+3. **Factories still create per-session instances** - Keep factory support, but now factories create instances that are stored... where? This reintroduces complexity:
+   - Store instances in session? (Back to Option A)
+   - Store instances in agent keyed by session_id? (Memory leak risk)
+   - Discard after use? (Defeats purpose of instance state)
+
+4. **Hybrid: allow both shared and per-session hooks** - Agent can have a mix:
+   ```python
+   agent = ChatAgent(
+       context_hooks=[
+           SharedRAGHooks("rag"),  # Shared instance
+           lambda session_id: PerSessionCache("cache", session_id),  # Factory
+       ]
+   )
+   ```
+   Per-session hooks would need to be stored somewhere (session or agent).
+
+**Recommendation:** If choosing Option B, consider dropping factory support entirely. The explicit state parameter handles per-session state needs. Factories in Option A exist primarily to enable per-session instance state, which Option B solves differently via the state parameter.
 
 ---
 
