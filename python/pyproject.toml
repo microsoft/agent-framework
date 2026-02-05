@@ -263,7 +263,6 @@ pytest --import-mode=importlib
 -rs
 -n logical --dist loadfile --dist worksteal
     packages/**/tests
-    packages/**/ag_ui_tests
 """
 
 [tool.poe.tasks.all-tests]
@@ -274,7 +273,6 @@ pytest --import-mode=importlib
 -rs
 -n logical --dist loadfile --dist worksteal
     packages/**/tests
-    packages/**/ag_ui_tests
 """
 
 [tool.poe.tasks.venv]
