@@ -473,12 +473,14 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip all integration tests if prerequisites are not met."""
+    """Skip integration tests in this directory if prerequisites are not met."""
     should_skip, reason = _should_skip_azure_functions_integration_tests()
     if should_skip:
         skip_marker = pytest.mark.skip(reason=reason)
         for item in items:
-            item.add_marker(skip_marker)
+            # Only skip items that are in this integration_tests directory
+            if "integration_tests" in str(item.fspath):
+                item.add_marker(skip_marker)
 
 
 # =============================================================================
