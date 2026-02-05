@@ -39,7 +39,7 @@ from agent_framework._tools import (
     normalize_function_invocation_configuration,
 )
 from agent_framework._types import ResponseStream
-from agent_framework.exceptions import AgentRunException
+from agent_framework.exceptions import AgentExecutionException
 
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
@@ -876,7 +876,7 @@ async def run_agent_stream(
     else:
         stream = await cast(Awaitable[ResponseStream[Any, Any]], response_stream)
         if not isinstance(stream, ResponseStream):
-            raise AgentRunException("Chat client did not return a ResponseStream.")
+            raise AgentExecutionException("Chat client did not return a ResponseStream.")
     async for update in stream:
         # Collect updates for structured output processing
         if response_format is not None:

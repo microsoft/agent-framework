@@ -98,7 +98,6 @@ def test_agui_tool_result_to_agent_framework():
 
 
 def test_agui_tool_approval_updates_tool_call_arguments():
-<<<<<<< HEAD
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
     The LLM context (ChatMessage) should contain only enabled steps, so the LLM
@@ -107,9 +106,6 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     The raw messages (for MESSAGES_SNAPSHOT) should contain all steps with status,
     so the UI can show which steps were enabled/disabled.
     """
-=======
-    """Tool approval updates matching tool call arguments for snapshots and agent context."""
->>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
     messages_input = [
         {
             "role": "assistant",
@@ -153,7 +149,6 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     assert len(messages) == 2
     assistant_msg = messages[0]
     func_call = next(content for content in assistant_msg.contents if content.type == "function_call")
-<<<<<<< HEAD
     # LLM context should only have enabled steps (what was actually approved)
     assert func_call.arguments == {
         "steps": [
@@ -162,15 +157,6 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         ]
     }
     # Raw messages (for MESSAGES_SNAPSHOT) should have all steps with status
-=======
-    assert func_call.arguments == {
-        "steps": [
-            {"description": "Boil water", "status": "enabled"},
-            {"description": "Brew coffee", "status": "disabled"},
-            {"description": "Serve coffee", "status": "enabled"},
-        ]
-    }
->>>>>>> 9ebb1e356 (Fix ChatMessage and Role API changes in a2a and lab packages)
     assert messages_input[0]["tool_calls"][0]["function"]["arguments"] == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},

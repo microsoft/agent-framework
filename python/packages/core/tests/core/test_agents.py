@@ -30,7 +30,7 @@ from agent_framework import (
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentInitializationError, AgentRunException
+from agent_framework.exceptions import AgentInitializationError, AgentExecutionException
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -177,7 +177,7 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
     agent = ChatAgent(chat_client=chat_client)
     thread = AgentThread(service_thread_id="123")
 
-    with raises(AgentRunException, match="Service did not return a valid conversation id"):
+    with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
         await agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
 
 
@@ -974,7 +974,7 @@ async def test_chat_agent_raises_on_conversation_id_mismatch(chat_client_base: C
     # Create a thread with a different service_thread_id
     thread = AgentThread(service_thread_id="different-thread-id")
 
-    with pytest.raises(AgentRunException, match="conversation_id set on the agent is different"):
+    with pytest.raises(AgentExecutionException, match="conversation_id set on the agent is different"):
         await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
             thread=thread, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
         )

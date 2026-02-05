@@ -37,7 +37,7 @@ class AgentException(AgentFrameworkException):
     pass
 
 
-class AgentRunException(AgentException):
+class AgentExecutionException(AgentException):
     """An error occurred while executing the agent."""
 
     pass

@@ -2194,10 +2194,9 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                         break
                     errors_in_a_row = result["errors_in_a_row"]
 
-                    # When tool_choice is 'required', return after tool execution
-                    # The user's intent is to force exactly one tool call and get the result
+                    # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
                     if mutable_options.get("tool_choice") == "required":
-                        return response
+                        mutable_options["tool_choice"] = None  # reset to default for next iteration
 
                     if response.conversation_id is not None:
                         # For conversation-based APIs, the server already has the function call message.

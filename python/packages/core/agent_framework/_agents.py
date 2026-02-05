@@ -48,7 +48,7 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInitializationError, AgentRunException
+from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -882,7 +882,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 )
 
                 if not response:
-                    raise AgentRunException("Chat client did not return a response.")
+                    raise AgentExecutionException("Chat client did not return a response.")
 
                 await self._finalize_response_and_update_thread(
                     response=response,
@@ -1262,13 +1262,13 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             response_conversation_id: The conversation ID from the response, if any.
 
         Raises:
-            AgentRunException: If conversation ID is missing for service-managed thread.
+            AgentExecutionException: If conversation ID is missing for service-managed thread.
         """
         if response_conversation_id is None and thread.service_thread_id is not None:
             # We were passed a thread that is service managed, but we got no conversation id back from the chat client,
             # meaning the service doesn't support service managed threads,
             # so the thread cannot be used with this service.
-            raise AgentRunException(
+            raise AgentExecutionException(
                 "Service did not return a valid conversation id when using a service managed thread."
             )
 
@@ -1308,7 +1308,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 - The complete list of messages for the chat client
 
         Raises:
-            AgentRunException: If the conversation IDs on the thread and agent don't match.
+            AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
         # Create a shallow copy of options and deep copy non-tool values
         # Tools containing HTTP clients or other non-copyable objects cannot be deep copied
@@ -1355,7 +1355,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             and chat_options.get("conversation_id")
             and thread.service_thread_id != chat_options["conversation_id"]
         ):
-            raise AgentRunException(
+            raise AgentExecutionException(
                 "The conversation_id set on the agent is different from the one set on the thread, "
                 "only one ID can be used for a run."
             )
