@@ -110,6 +110,34 @@ public class AIAgentStructuredOutputTests
         Assert.True(result.IsWrappedInObject);
     }
 
+    /// <summary>
+    /// Verifies that when requesting an enum type, the schema IS wrapped.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncGeneric_WithEnumType_WrapsSchemaAsync()
+    {
+        // Arrange
+        const string ResponseJson = "{\"data\":\"Tiger\"}";
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, ResponseJson));
+
+        this._agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(response);
+
+        // Act
+        AgentResponse<Species> result = await this._agentMock.Object.RunAsync<Species>(
+            "Give me a species",
+            serializerOptions: TestJsonSerializerContext.Default.Options);
+
+        // Assert - Verify the result is marked as wrapped
+        Assert.True(result.IsWrappedInObject);
+    }
+
     #endregion
 
     #region AgentResponse<T>.Result Unwrapping Tests
@@ -169,6 +197,24 @@ public class AIAgentStructuredOutputTests
 
         // Assert
         Assert.Equal(["apple", "banana", "cherry"], result);
+    }
+
+    /// <summary>
+    /// Verifies that AgentResponse{T}.Result correctly unwraps and deserializes an enum.
+    /// </summary>
+    [Fact]
+    public void AgentResponseGeneric_Result_UnwrapsEnumFromDataProperty()
+    {
+        // Arrange
+        const string ResponseJson = "{\"data\":\"Walrus\"}";
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, ResponseJson));
+        AgentResponse<Species> typedResponse = new(response, TestJsonSerializerContext.Default.Options) { IsWrappedInObject = true };
+
+        // Act
+        Species result = typedResponse.Result;
+
+        // Assert
+        Assert.Equal(Species.Walrus, result);
     }
 
     /// <summary>
@@ -310,6 +356,35 @@ public class AIAgentStructuredOutputTests
         Assert.Equal(expectedAnimal.Id, result.Result.Id);
         Assert.Equal(expectedAnimal.FullName, result.Result.FullName);
         Assert.Equal(expectedAnimal.Species, result.Result.Species);
+    }
+
+    /// <summary>
+    /// End-to-end test: Request an enum type, verify wrapping, and verify correct deserialization.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncGeneric_EnumEndToEnd_WrapsAndDeserializesCorrectlyAsync()
+    {
+        // Arrange
+        const string ResponseJson = "{\"data\":\"Bear\"}";
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, ResponseJson));
+
+        this._agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(response);
+
+        // Act
+        AgentResponse<Species> result = await this._agentMock.Object.RunAsync<Species>(
+            "Give me a species",
+            serializerOptions: TestJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.True(result.IsWrappedInObject);
+        Assert.Equal(Species.Bear, result.Result);
     }
 
     #endregion

@@ -71,7 +71,7 @@ public class AgentResponse<T> : AgentResponse
 
     private static string UnwrapDataProperty(string json)
     {
-        var document = JsonDocument.Parse(json);
+        using var document = JsonDocument.Parse(json);
         if (document.RootElement.ValueKind == JsonValueKind.Object &&
             document.RootElement.TryGetProperty("data", out JsonElement dataElement))
         {
