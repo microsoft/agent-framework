@@ -11,11 +11,26 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return durableSession.Serialize(jsonSerializerOptions);
+    }
+
     public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
     }
 
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)

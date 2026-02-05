@@ -41,12 +41,12 @@ def get_client(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -63,32 +63,32 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
         client: The DurableTaskSchedulerClient instance
     """
     logger.debug("Starting single agent chaining orchestration...")
-    
+
     # Start the orchestration
     instance_id = client.schedule_new_orchestration(    # type: ignore
         orchestrator="single_agent_chaining_orchestration",
         input="",
     )
-    
+
     logger.info(f"Orchestration started with instance ID: {instance_id}")
     logger.debug("Waiting for orchestration to complete...")
-    
+
     # Retrieve the final state
     metadata = client.wait_for_orchestration_completion(
         instance_id=instance_id,
         timeout=300
     )
-    
+
     if metadata and metadata.runtime_status.name == "COMPLETED":
         result = metadata.serialized_output
-        
+
         logger.debug("Orchestration completed successfully!")
-        
+
         # Parse and display the result
         if result:
             final_text = json.loads(result)
             logger.info("Final refined sentence: %s \n", final_text)
-        
+
     elif metadata:
         logger.error(f"Orchestration ended with status: {metadata.runtime_status.name}")
         if metadata.serialized_output:
@@ -100,10 +100,10 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
 async def main() -> None:
     """Main entry point for the client application."""
     logger.debug("Starting Durable Task Single Agent Chaining Orchestration Client...")
-    
+
     # Create client using helper function
     client = get_client()
-    
+
     try:
         run_client(client)
     except Exception as e:

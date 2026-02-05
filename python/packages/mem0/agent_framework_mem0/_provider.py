@@ -121,9 +121,9 @@ class Mem0Provider(ContextProvider):
         messages_list = [*request_messages_list, *response_messages_list]
 
         messages: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.text}
+            {"role": message.role, "content": message.text}
             for message in messages_list
-            if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
+            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip()
         ]
 
         if messages:
@@ -176,7 +176,7 @@ class Mem0Provider(ContextProvider):
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         return Context(
-            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            messages=[ChatMessage("user", [f"{self.context_prompt}\n{line_separated_memories}"])]
             if line_separated_memories
             else None
         )

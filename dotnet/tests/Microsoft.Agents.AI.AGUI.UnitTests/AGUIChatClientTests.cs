@@ -251,7 +251,7 @@ public sealed class AGUIAgentTests
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
         AgentSession originalSession = await agent.CreateSessionAsync();
-        JsonElement serialized = originalSession.Serialize();
+        JsonElement serialized = agent.SerializeSession(originalSession);
 
         // Act
         AgentSession deserialized = await agent.DeserializeSessionAsync(serialized);

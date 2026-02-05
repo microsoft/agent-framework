@@ -9,12 +9,10 @@ from agent_framework import (
     AgentResponse,
     AgentRunUpdateEvent,
     ChatMessage,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
     executor,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -72,7 +70,7 @@ async def enrich_with_references(
 ) -> None:
     """Inject a follow-up user instruction that adds an external note for the next agent."""
     conversation = list(draft.full_conversation or draft.agent_response.messages)
-    original_prompt = next((message.text for message in conversation if message.role == Role.USER), "")
+    original_prompt = next((message.text for message in conversation if message.role == "user"), "")
     external_note = _lookup_external_note(original_prompt) or (
         "No additional references were found. Please refine the previous assistant response for clarity."
     )
@@ -82,7 +80,7 @@ async def enrich_with_references(
         f"{external_note}\n\n"
         "Please update the prior assistant answer so it weaves this note into the guidance."
     )
-    conversation.append(ChatMessage(role=Role.USER, text=follow_up))
+    conversation.append(ChatMessage("user", [follow_up]))
 
     await ctx.send_message(AgentExecutorRequest(messages=conversation))
 

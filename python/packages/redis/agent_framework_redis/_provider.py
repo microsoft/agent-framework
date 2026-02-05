@@ -8,7 +8,7 @@ from operator import and_
 from typing import Any, Literal, cast
 
 import numpy as np
-from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import (
     AgentException,
     ServiceInitializationError,
@@ -503,13 +503,9 @@ class RedisProvider(ContextProvider):
 
         messages: list[dict[str, Any]] = []
         for message in messages_list:
-            if (
-                message.role.value in {Role.USER.value, Role.ASSISTANT.value, Role.SYSTEM.value}
-                and message.text
-                and message.text.strip()
-            ):
+            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 shaped: dict[str, Any] = {
-                    "role": message.role.value,
+                    "role": message.role,
                     "content": message.text,
                     "conversation_id": self._conversation_id,
                     "message_id": message.message_id,
@@ -545,7 +541,7 @@ class RedisProvider(ContextProvider):
         )
 
         return Context(
-            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            messages=[ChatMessage("user", [f"{self.context_prompt}\n{line_separated_memories}"])]
             if line_separated_memories
             else None
         )

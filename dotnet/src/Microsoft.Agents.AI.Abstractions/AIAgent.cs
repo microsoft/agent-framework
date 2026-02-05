@@ -126,20 +126,35 @@ public abstract class AIAgent
     public abstract ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Serializes an agent session to its JSON representation.
+    /// </summary>
+    /// <param name="session">The <see cref="AgentSession"/> to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the serialization process.</param>
+    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The type of <paramref name="session"/> is not supported by this agent.</exception>
+    /// <remarks>
+    /// This method enables saving conversation sessions to persistent storage,
+    /// allowing conversations to resume across application restarts or be migrated between
+    /// different agent instances. Use <see cref="DeserializeSessionAsync"/> to restore the session.
+    /// </remarks>
+    public abstract JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null);
+
+    /// <summary>
     /// Deserializes an agent session from its JSON serialized representation.
     /// </summary>
-    /// <param name="serializedSession">A <see cref="JsonElement"/> containing the serialized session state.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> containing the serialized session state.</param>
     /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A value task that represents the asynchronous operation. The task result contains a restored <see cref="AgentSession"/> instance with the state from <paramref name="serializedSession"/>.</returns>
-    /// <exception cref="ArgumentException">The <paramref name="serializedSession"/> is not in the expected format.</exception>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a restored <see cref="AgentSession"/> instance with the state from <paramref name="serializedState"/>.</returns>
+    /// <exception cref="ArgumentException">The <paramref name="serializedState"/> is not in the expected format.</exception>
     /// <exception cref="JsonException">The serialized data is invalid or cannot be deserialized.</exception>
     /// <remarks>
     /// This method enables restoration of conversation sessions from previously saved state,
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
     /// </remarks>
-    public abstract ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    public abstract ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the session.

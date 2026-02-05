@@ -75,7 +75,7 @@ internal sealed class WorkflowSession : AgentSession
 
     public CheckpointInfo? LastCheckpoint { get; set; }
 
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         SessionState info = new(

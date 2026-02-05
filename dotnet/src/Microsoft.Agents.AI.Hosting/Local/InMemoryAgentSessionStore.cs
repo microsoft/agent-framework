@@ -33,7 +33,7 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
     public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
-        this._threads[key] = session.Serialize();
+        this._threads[key] = agent.SerializeSession(session);
         return default;
     }
 

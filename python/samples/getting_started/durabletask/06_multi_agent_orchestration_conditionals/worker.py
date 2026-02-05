@@ -11,16 +11,16 @@ Prerequisites:
 """
 
 import asyncio
-from collections.abc import Generator
 import logging
 import os
+from collections.abc import Generator
 from typing import Any, cast
 
 from agent_framework import AgentResponse, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.task import ActivityContext, OrchestrationContext, Task
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from durabletask.task import ActivityContext, OrchestrationContext, Task
 from pydantic import BaseModel, ValidationError
 
 # Configure logging
@@ -118,24 +118,24 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
         str: Result message from activity functions
     """
     logger.debug("[Orchestration] Starting spam detection orchestration")
-    
+
     # Validate input
     if not isinstance(payload_raw, dict):
         raise ValueError("Email data is required")
-    
+
     try:
         payload = EmailPayload.model_validate(payload_raw)
     except ValidationError as exc:
         raise ValueError(f"Invalid email payload: {exc}") from exc
-    
+
     logger.debug(f"[Orchestration] Processing email ID: {payload.email_id}")
-    
+
     # Wrap the orchestration context to access agents
     agent_context = DurableAIAgentOrchestrationContext(context)
-    
+
     # Get spam detection agent
     spam_agent = agent_context.get_agent(SPAM_AGENT_NAME)
-    
+
     # Run spam detection
     spam_prompt = (
         "Analyze this email for spam content and return a JSON response with 'is_spam' (boolean) "
@@ -143,52 +143,52 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
         f"Email ID: {payload.email_id}\n"
         f"Content: {payload.email_content}"
     )
-    
+
     logger.info("[Orchestration] Running spam detection agent: %s", spam_prompt)
     spam_result_task = spam_agent.run(
         messages=spam_prompt,
         options={"response_format": SpamDetectionResult},
     )
-    
+
     spam_result_raw: AgentResponse = yield spam_result_task
     spam_result = cast(SpamDetectionResult, spam_result_raw.value)
-    
+
     logger.info("[Orchestration] Spam detection result: is_spam=%s", spam_result.is_spam)
-    
+
     # Branch based on spam detection result
     if spam_result.is_spam:
         logger.debug("[Orchestration] Email is spam, handling...")
         result_task: Task[str] = context.call_activity("handle_spam_email", input=spam_result.reason)
         result: str = yield result_task
         return result
-    
+
     # Email is legitimate - draft a response
     logger.debug("[Orchestration] Email is legitimate, drafting response...")
-    
+
     email_agent = agent_context.get_agent(EMAIL_AGENT_NAME)
-    
+
     email_prompt = (
         "Draft a professional response to this email. Return a JSON response with a 'response' field "
         "containing the reply:\n\n"
         f"Email ID: {payload.email_id}\n"
         f"Content: {payload.email_content}"
     )
-    
+
     logger.info("[Orchestration] Running email assistant agent: %s", email_prompt)
     email_result_task = email_agent.run(
         messages=email_prompt,
         options={"response_format": EmailResponse},
     )
-    
+
     email_result_raw: AgentResponse = yield email_result_task
     email_result = cast(EmailResponse, email_result_raw.value)
-    
+
     logger.debug("[Orchestration] Email response drafted, sending...")
     result_task: Task[str] = context.call_activity("send_email", input=email_result.response)
     result: str = yield result_task
 
     logger.info("Sent Email: %s", result)
-    
+
     return result
 
 
@@ -209,12 +209,12 @@ def get_worker(
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -235,55 +235,55 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Create and register both agents
     logger.debug("Creating and registering agents...")
     spam_agent = create_spam_agent()
     email_agent = create_email_agent()
-    
+
     agent_worker.add_agent(spam_agent)
     agent_worker.add_agent(email_agent)
-    
+
     logger.debug(f"✓ Registered agents: {spam_agent.name}, {email_agent.name}")
-    
+
     # Register activity functions
     logger.debug("Registering activity functions...")
     worker.add_activity(handle_spam_email)  # type: ignore[arg-type]
     worker.add_activity(send_email)  # type: ignore[arg-type]
-    logger.debug(f"✓ Registered activity: handle_spam_email")
-    logger.debug(f"✓ Registered activity: send_email")
-    
+    logger.debug("✓ Registered activity: handle_spam_email")
+    logger.debug("✓ Registered activity: send_email")
+
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
     worker.add_orchestrator(spam_detection_orchestration)   # type: ignore[arg-type]
     logger.debug(f"✓ Registered orchestration: {spam_detection_orchestration.__name__}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Spam Detection Worker with Orchestration...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agents, orchestrations, and activities
     setup_worker(worker)
-    
+
     logger.debug("Worker is ready and listening for requests...")
     logger.debug("Press Ctrl+C to stop.")
-    
+
     try:
         # Start the worker (this blocks until stopped)
         worker.start()
-        
+
         # Keep the worker running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         logger.debug("Worker shutdown initiated")
-    
+
     logger.debug("Worker stopped")
 
 

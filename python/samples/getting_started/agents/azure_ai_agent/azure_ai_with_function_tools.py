@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
-from agent_framework import tool
 
 """
 Azure AI Agent with Function Tools Example
@@ -16,6 +16,7 @@ Azure AI Agent with Function Tools Example
 This sample demonstrates function tool integration with Azure AI Agents,
 showing both agent-level and query-level tool configuration patterns.
 """
+
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
@@ -25,6 +26,7 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
 
 @tool(approval_mode="never_require")
 def get_time() -> str:

@@ -277,7 +277,7 @@ async def test_azure_assistants_client_get_response() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
         response = await azure_assistants_client.get_response(messages=messages)
@@ -295,7 +295,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
         assert isinstance(azure_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
         response = await azure_assistants_client.get_response(
@@ -323,7 +323,7 @@ async def test_azure_assistants_client_streaming() -> None:
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(ChatMessage("user", ["What's the weather like today?"]))
 
         # Test that the client can be used to get a response
         response = azure_assistants_client.get_streaming_response(messages=messages)
@@ -347,7 +347,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
         assert isinstance(azure_assistants_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages.append(ChatMessage("user", ["What's the weather like in Seattle?"]))
 
         # Test that the client can be used to get a response
         response = azure_assistants_client.get_streaming_response(
@@ -372,7 +372,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
     # First create an assistant to use in the test
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
-        messages = [ChatMessage(role="user", text="Hello")]
+        messages = [ChatMessage("user", ["Hello"])]
         await temp_client.get_response(messages=messages)
         assistant_id = temp_client.assistant_id
 
@@ -383,7 +383,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
             assert isinstance(azure_assistants_client, ChatClientProtocol)
             assert azure_assistants_client.assistant_id == assistant_id
 
-            messages = [ChatMessage(role="user", text="What can you do?")]
+            messages = [ChatMessage("user", ["What can you do?"])]
 
             # Test that the client can be used to get a response
             response = await azure_assistants_client.get_response(messages=messages)

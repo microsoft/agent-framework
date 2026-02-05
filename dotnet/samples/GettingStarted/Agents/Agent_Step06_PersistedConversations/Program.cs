@@ -25,7 +25,7 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Serialize the session state to a JsonElement, so it can be stored for later use.
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 
 // Save the serialized session to a temporary file (for demonstration purposes).
 string tempFilePath = Path.GetTempFileName();

@@ -299,6 +299,161 @@ public class AgentResponseUpdateExtensionsTests
         Assert.Equal(expected, response.CreatedAt);
     }
 
+    #region AsChatResponse Tests
+
+    [Fact]
+    public void AsChatResponse_WithNullArgument_ThrowsArgumentNullException()
+    {
+        // Arrange & Act & Assert
+        Assert.Throws<ArgumentNullException>("response", () => ((AgentResponse)null!).AsChatResponse());
+    }
+
+    [Fact]
+    public void AsChatResponse_WithRawRepresentationAsChatResponse_ReturnsSameInstance()
+    {
+        // Arrange
+        ChatResponse originalChatResponse = new()
+        {
+            ResponseId = "original-response",
+            Messages = [new ChatMessage(ChatRole.Assistant, "Hello")]
+        };
+        AgentResponse agentResponse = new(originalChatResponse);
+
+        // Act
+        ChatResponse result = agentResponse.AsChatResponse();
+
+        // Assert
+        Assert.Same(originalChatResponse, result);
+    }
+
+    [Fact]
+    public void AsChatResponse_WithoutRawRepresentation_CreatesNewChatResponse()
+    {
+        // Arrange
+        AgentResponse agentResponse = new(new ChatMessage(ChatRole.Assistant, "Test message"))
+        {
+            ResponseId = "test-response-id",
+            CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            Usage = new UsageDetails { TotalTokenCount = 50 },
+            AdditionalProperties = new() { ["key"] = "value" },
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+        };
+
+        // Act
+        ChatResponse result = agentResponse.AsChatResponse();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("test-response-id", result.ResponseId);
+        Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Same(agentResponse.Messages, result.Messages);
+        Assert.Same(agentResponse, result.RawRepresentation);
+        Assert.Same(agentResponse.Usage, result.Usage);
+        Assert.Same(agentResponse.AdditionalProperties, result.AdditionalProperties);
+        Assert.Equal(agentResponse.ContinuationToken, result.ContinuationToken);
+    }
+
+    #endregion
+
+    #region AsChatResponseUpdate Tests
+
+    [Fact]
+    public void AsChatResponseUpdate_WithNullArgument_ThrowsArgumentNullException()
+    {
+        // Arrange & Act & Assert
+        Assert.Throws<ArgumentNullException>("responseUpdate", () => ((AgentResponseUpdate)null!).AsChatResponseUpdate());
+    }
+
+    [Fact]
+    public void AsChatResponseUpdate_WithRawRepresentationAsChatResponseUpdate_ReturnsSameInstance()
+    {
+        // Arrange
+        ChatResponseUpdate originalChatResponseUpdate = new()
+        {
+            ResponseId = "original-update",
+            Contents = [new TextContent("Hello")]
+        };
+        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert
+        Assert.Same(originalChatResponseUpdate, result);
+    }
+
+    [Fact]
+    public void AsChatResponseUpdate_WithoutRawRepresentation_CreatesNewChatResponseUpdate()
+    {
+        // Arrange
+        AgentResponseUpdate agentResponseUpdate = new(ChatRole.Assistant, "Test")
+        {
+            AuthorName = "TestAuthor",
+            ResponseId = "update-id",
+            MessageId = "message-id",
+            CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            AdditionalProperties = new() { ["key"] = "value" },
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+        };
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("TestAuthor", result.AuthorName);
+        Assert.Equal("update-id", result.ResponseId);
+        Assert.Equal("message-id", result.MessageId);
+        Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.Same(agentResponseUpdate.Contents, result.Contents);
+        Assert.Same(agentResponseUpdate, result.RawRepresentation);
+        Assert.Same(agentResponseUpdate.AdditionalProperties, result.AdditionalProperties);
+        Assert.Equal(agentResponseUpdate.ContinuationToken, result.ContinuationToken);
+    }
+
+    #endregion
+
+    #region AsChatResponseUpdatesAsync Tests
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithNullArgument_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange & Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>("responseUpdates", async () =>
+        {
+            await foreach (ChatResponseUpdate _ in ((IAsyncEnumerable<AgentResponseUpdate>)null!).AsChatResponseUpdatesAsync())
+            {
+                // Do nothing
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_ConvertsUpdatesAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new(ChatRole.Assistant, "First"),
+            new(ChatRole.Assistant, "Second"),
+        ];
+
+        // Act
+        List<ChatResponseUpdate> results = [];
+        await foreach (ChatResponseUpdate update in YieldAsync(updates).AsChatResponseUpdatesAsync())
+        {
+            results.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        Assert.Equal("First", Assert.IsType<TextContent>(results[0].Contents[0]).Text);
+        Assert.Equal("Second", Assert.IsType<TextContent>(results[1].Contents[0]).Text);
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<AgentResponseUpdate> YieldAsync(IEnumerable<AgentResponseUpdate> updates)
     {
         foreach (AgentResponseUpdate update in updates)

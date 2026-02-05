@@ -31,9 +31,9 @@ Key behaviors demonstrated:
 4. After next(): thread contains full conversation history (all previous + current messages)
 """
 
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
-
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:

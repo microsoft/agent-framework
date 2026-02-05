@@ -56,7 +56,7 @@ class StreamingChatClientStub(BaseChatClient[TOptions_co], Generic[TOptions_co])
             contents.extend(update.contents)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[ChatMessage("assistant", contents)],
             response_id="stub-response",
         )
 
