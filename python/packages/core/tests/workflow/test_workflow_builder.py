@@ -277,6 +277,20 @@ def test_register_executors_bulk():
     assert workflow.start_executor_id == "ExecutorA"
 
 
+def test_register_executors_rejects_empty_inputs():
+    """Test that empty executor mappings and entries are rejected."""
+    builder = WorkflowBuilder()
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        builder.register_executors({})
+
+    with pytest.raises(ValueError, match="name cannot be empty"):
+        builder.register_executors({"": lambda: MockExecutor(id="ExecutorA")})
+
+    with pytest.raises(TypeError, match="must be callable"):
+        builder.register_executors({"ExecutorA": None})  # type: ignore[arg-type]
+
+
 def test_register_with_multiple_names():
     """Test registering the same factory function under multiple names."""
     builder = WorkflowBuilder()

@@ -343,6 +343,10 @@ class WorkflowBuilder:
             executor_factories: A mapping of executor names to factory callables that
                 return Executor instances when called.
 
+        Raises:
+            ValueError: If executor_factories is empty or contains empty names, or if a name is already registered.
+            TypeError: If an executor factory is not callable.
+
         Example:
             .. code-block:: python
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
@@ -371,7 +375,14 @@ class WorkflowBuilder:
                     .build()
                 )
         """
-        for name in executor_factories:
+        if not executor_factories:
+            raise ValueError("Executor factories cannot be empty.")
+
+        for name, factory_function in executor_factories.items():
+            if not name or not name.strip():
+                raise ValueError("Executor factory name cannot be empty.")
+            if not callable(factory_function):
+                raise TypeError(f"Executor factory for '{name}' must be callable.")
             if name in self._executor_registry:
                 raise ValueError(f"An executor factory with the name '{name}' is already registered.")
 
