@@ -11,6 +11,7 @@ from agent_framework import (
     WorkflowAgent,
     tool,
 )
+from agent_framework_orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential

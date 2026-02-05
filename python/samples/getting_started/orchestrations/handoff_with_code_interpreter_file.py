@@ -38,7 +38,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
-from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
 from azure.identity.aio import AzureCliCredential
 
 # Toggle between V1 (AzureAIAgentClient) and V2 (AzureAIClient)

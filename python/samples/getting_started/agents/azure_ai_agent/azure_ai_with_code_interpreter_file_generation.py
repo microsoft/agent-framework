@@ -5,7 +5,6 @@ import os
 
 from agent_framework import (
     HostedCodeInterpreterTool,
-    HostedFileContent,
 )
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
@@ -63,7 +62,7 @@ async def main() -> None:
             for content in chunk.contents:
                 if content.type == "text":
                     print(content.text, end="", flush=True)
-                elif content.type == "hosted_file" and isinstance(content, HostedFileContent):
+                elif content.type == "hosted_file" and content.file_id:
                     file_ids.append(content.file_id)
                     print(f"\n[File generated: {content.file_id}]")
 

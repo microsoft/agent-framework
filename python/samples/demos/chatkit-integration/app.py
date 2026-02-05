@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role, tool
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -332,7 +332,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        from agent_framework import FunctionResultContent
 
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
@@ -375,7 +374,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -472,7 +471,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -585,7 +584,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):
         attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
 
         # Clear the upload_url since upload is complete
-        attachment.upload_url = None
+        attachment.upload_url = None  # type: ignore[union-attr]
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})

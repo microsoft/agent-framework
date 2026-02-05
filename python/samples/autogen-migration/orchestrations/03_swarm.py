@@ -7,7 +7,7 @@ to other specialized agents based on the task requirements.
 
 import asyncio
 
-from agent_framework import WorkflowEvent
+from agent_framework import AgentResponseUpdate, WorkflowEvent
 from orderedmultidict import Any
 
 
@@ -99,7 +99,6 @@ async def run_autogen() -> None:
 async def run_agent_framework() -> None:
     """Agent Framework's HandoffBuilder for agent coordination."""
     from agent_framework import (
-        AgentResponseUpdate,
         WorkflowRunState,
     )
     from agent_framework.openai import OpenAIChatClient

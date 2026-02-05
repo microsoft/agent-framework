@@ -376,14 +376,14 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
             raw = event.data.raw_representation
 
             # Try conversation_id directly on raw representation
-            if hasattr(raw, "conversation_id") and raw.conversation_id:
+            if hasattr(raw, "conversation_id") and raw.conversation_id:  # type: ignore[union-attr]
                 # Only add if not already in the list
-                if raw.conversation_id not in conversation_ids[agent]:
-                    conversation_ids[agent].append(raw.conversation_id)
+                if raw.conversation_id not in conversation_ids[agent]:  # type: ignore[union-attr]
+                    conversation_ids[agent].append(raw.conversation_id)  # type: ignore[union-attr]
 
             # Extract response_id from the OpenAI event (available from first event)
-            if hasattr(raw, "raw_representation") and raw.raw_representation:
-                openai_event = raw.raw_representation
+            if hasattr(raw, "raw_representation") and raw.raw_representation:  # type: ignore[union-attr]
+                openai_event = raw.raw_representation  # type: ignore[union-attr]
 
                 # Check if event has response object with id
                 if hasattr(openai_event, "response") and hasattr(openai_event.response, "id"):

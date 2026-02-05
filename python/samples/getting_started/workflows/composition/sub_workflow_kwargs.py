@@ -9,6 +9,7 @@ from agent_framework import (
     WorkflowExecutor,
     tool,
 )
+from agent_framework_orchestrations import SequentialBuilder
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 
