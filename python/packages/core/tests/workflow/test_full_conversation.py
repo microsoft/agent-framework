@@ -85,7 +85,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
         .build()
     )
 
-    # Act: use run() instead of run_stream() to test non-streaming mode
+    # Act: use run() to test non-streaming mode
     result = await wf.run("hello world")
 
     # Extract output from run result

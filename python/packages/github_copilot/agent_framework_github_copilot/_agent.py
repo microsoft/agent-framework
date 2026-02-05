@@ -541,7 +541,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         Args:
             thread: The conversation thread.
             streaming: Whether to enable streaming for the session.
-            runtime_options: Runtime options from run/run_stream that take precedence.
+            runtime_options: Runtime options from run that take precedence.
 
         Returns:
             A CopilotSession instance.

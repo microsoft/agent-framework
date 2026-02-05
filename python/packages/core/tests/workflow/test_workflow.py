@@ -880,7 +880,7 @@ class _StreamingTestAgent(BaseAgent):
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that run() and run_stream() both emits WorkflowOutputEvents correctly with the right data types."""
+    """Test that stream=True/False both emits WorkflowOutputEvents correctly with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
@@ -902,7 +902,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     assert agent_response[0].data is not None
     assert agent_response[0].data.messages[0].text == "Hello World"
 
-    # Test streaming mode with run_stream()
+    # Test streaming mode with run(stream=True)
     stream_events: list[WorkflowEvent] = []
     async for event in workflow.run("test message", stream=True):
         stream_events.append(event)
@@ -937,7 +937,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
 
 async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
-    """Test that run() and run_stream() properly validate parameter combinations."""
+    """Test that stream properly validate parameter combinations."""
     workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)

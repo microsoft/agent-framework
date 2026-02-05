@@ -65,7 +65,7 @@ class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
     AgentExecutor adapts its behavior based on the workflow execution mode:
-    - run_stream(): Emits incremental WorkflowOutputEvents as the agent produces tokens
+    - run(stream=True): Emits incremental WorkflowOutputEvents as the agent produces tokens
     - run(): Emits a single WorkflowOutputEvent containing the complete response
 
     Use `with_output_from` in WorkflowBuilder to control whether the AgentResponse

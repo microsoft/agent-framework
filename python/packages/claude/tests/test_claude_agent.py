@@ -380,7 +380,7 @@ class TestClaudeAgentRunStream:
             assert updates[1].text == "response"
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
-        """Test run_stream raises ServiceException when AssistantMessage has an error."""
+        """Test run raises ServiceException when AssistantMessage has an error."""
         from agent_framework.exceptions import ServiceException
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
@@ -410,7 +410,7 @@ class TestClaudeAgentRunStream:
             assert "Error details from API" in str(exc_info.value)
 
     async def test_run_stream_raises_on_result_message_error(self) -> None:
-        """Test run_stream raises ServiceException when ResultMessage.is_error is True."""
+        """Test run raises ServiceException when ResultMessage.is_error is True."""
         from agent_framework.exceptions import ServiceException
         from claude_agent_sdk import ResultMessage
 
