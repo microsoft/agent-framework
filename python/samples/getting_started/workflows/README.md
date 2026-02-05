@@ -37,8 +37,6 @@ Once comfortable with these, explore the rest of the samples below.
 | Azure Chat Agents (Streaming)          | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py)                               | Add Azure Chat agents as edges and handle streaming events                                           |
 | Azure AI Agents (Streaming)            | [agents/azure_ai_agents_streaming.py](./agents/azure_ai_agents_streaming.py)                                   | Add Azure AI agents as edges and handle streaming events                                             |
 | Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_thread.py](./agents/azure_ai_agents_with_shared_thread.py)                 | Share a common message thread between multiple Azure AI agents in a workflow                         |
-| Azure Chat Agents (Function Bridge)    | [agents/azure_chat_agents_function_bridge.py](./agents/azure_chat_agents_function_bridge.py)                   | Chain two agents with a function executor that injects external context                              |
-| Azure Chat Agents (Tools + HITL)       | [agents/azure_chat_agents_tool_calls_with_feedback.py](./agents/azure_chat_agents_tool_calls_with_feedback.py) | Tool-enabled writer/editor pipeline with human feedback gating                                       |
 | Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                                         | Create executors to handle agent run methods                                                         |
 | Sequential Workflow as Agent           | [agents/sequential_workflow_as_agent.py](./agents/sequential_workflow_as_agent.py)                             | Build a sequential workflow orchestrating agents, then expose it as a reusable agent                 |
 | Concurrent Workflow as Agent           | [agents/concurrent_workflow_as_agent.py](./agents/concurrent_workflow_as_agent.py)                             | Build a concurrent fan-out/fan-in workflow, then expose it as a reusable agent                       |
@@ -110,31 +108,7 @@ For additional observability samples in Agent Framework, see the [observability 
 
 ### orchestration
 
-| Sample                                            | File                                                                                                       | Concepts                                                                                                         |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Concurrent Orchestration (Default Aggregator)     | [orchestration/concurrent_agents.py](./orchestration/concurrent_agents.py)                                 | Fan-out to multiple agents; fan-in with default aggregator returning combined ChatMessages                       |
-| Concurrent Orchestration (Custom Aggregator)      | [orchestration/concurrent_custom_aggregator.py](./orchestration/concurrent_custom_aggregator.py)           | Override aggregator via callback; summarize results with an LLM                                                  |
-| Concurrent Orchestration (Custom Agent Executors) | [orchestration/concurrent_custom_agent_executors.py](./orchestration/concurrent_custom_agent_executors.py) | Child executors own ChatAgents; concurrent fan-out/fan-in via ConcurrentBuilder                                  |
-| Concurrent Orchestration (Participant Factory)    | [orchestration/concurrent_participant_factory.py](./orchestration/concurrent_participant_factory.py)       | Use participant factories for state isolation between workflow instances                                         |
-| Group Chat with Agent Manager                     | [orchestration/group_chat_agent_manager.py](./orchestration/group_chat_agent_manager.py)                   | Agent-based manager using `with_orchestrator(agent=)` to select next speaker                                     |
-| Group Chat Philosophical Debate                   | [orchestration/group_chat_philosophical_debate.py](./orchestration/group_chat_philosophical_debate.py)     | Agent manager moderates long-form, multi-round debate across diverse participants                                |
-| Group Chat with Simple Function Selector          | [orchestration/group_chat_simple_selector.py](./orchestration/group_chat_simple_selector.py)               | Group chat with a simple function selector for next speaker                                                      |
-| Handoff (Simple)                                  | [orchestration/handoff_simple.py](./orchestration/handoff_simple.py)                                       | Single-tier routing: triage agent routes to specialists, control returns to user after each specialist response  |
-| Handoff (Autonomous)                              | [orchestration/handoff_autonomous.py](./orchestration/handoff_autonomous.py)                               | Autonomous mode: specialists iterate independently until invoking a handoff tool using `.with_autonomous_mode()` |
-| Handoff (Participant Factory)                     | [orchestration/handoff_participant_factory.py](./orchestration/handoff_participant_factory.py)             | Use participant factories for state isolation between workflow instances                                         |
-| Magentic Workflow (Multi-Agent)                   | [orchestration/magentic.py](./orchestration/magentic.py)                                                   | Orchestrate multiple agents with Magentic manager and streaming                                                  |
-| Magentic + Human Plan Review                      | [orchestration/magentic_human_plan_review.py](./orchestration/magentic_human_plan_review.py)               | Human reviews/updates the plan before execution                                                                  |
-| Magentic + Checkpoint Resume                      | [orchestration/magentic_checkpoint.py](./orchestration/magentic_checkpoint.py)                             | Resume Magentic orchestration from saved checkpoints                                                             |
-| Sequential Orchestration (Agents)                 | [orchestration/sequential_agents.py](./orchestration/sequential_agents.py)                                 | Chain agents sequentially with shared conversation context                                                       |
-| Sequential Orchestration (Custom Executor)        | [orchestration/sequential_custom_executors.py](./orchestration/sequential_custom_executors.py)             | Mix agents with a summarizer that appends a compact summary                                                      |
-| Sequential Orchestration (Participant Factories)  | [orchestration/sequential_participant_factory.py](./orchestration/sequential_participant_factory.py)       | Use participant factories for state isolation between workflow instances                                         |
-
-**Magentic checkpointing tip**: Treat `MagenticBuilder.participants` keys as stable identifiers. When resuming from a checkpoint, the rebuilt workflow must reuse the same participant names; otherwise the checkpoint cannot be applied and the run will fail fast.
-
-**Handoff workflow tip**: Handoff workflows maintain the full conversation history including any
-`ChatMessage.additional_properties` emitted by your agents. This ensures routing metadata remains
-intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)`
-to configure which agents can route to which others with a fluent, type-safe API.
+Orchestration samples (Sequential, Concurrent, Handoff, GroupChat, Magentic) have moved to the dedicated [orchestrations samples directory](../orchestrations/README.md).
 
 ### parallelism
 
@@ -146,16 +120,10 @@ to configure which agents can route to which others with a fluent, type-safe API
 
 ### state-management
 
-| Sample                           | File                                                                                             | Concepts                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Shared States                    | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents                   |
-| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@ai_function` tools |
-
-=======
-| Sample | File | Concepts |
-|---|---|---|
-| Shared States | [state-management/shared_states_with_agents.py](./state-management/shared_states_with_agents.py) | Store in shared state once and later reuse across agents |
-| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py) | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
+| Sample                           | File                                                                                             | Concepts                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
+| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
 
 ### visualization
 

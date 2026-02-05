@@ -22,7 +22,6 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -299,16 +298,16 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are a helpful assistant.")]),
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="System response")]),
+        ChatMessage("system", [Content.from_text(text="You are a helpful assistant.")]),
+        ChatMessage("user", [Content.from_text(text="Hello")]),
+        ChatMessage("assistant", [Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
 
     assert len(result_messages) == 2
-    assert result_messages[0].role == Role.USER
-    assert result_messages[1].role == Role.ASSISTANT
+    assert result_messages[0].role == "user"
+    assert result_messages[1].role == "assistant"
     assert instructions == "You are a helpful assistant."
 
 
@@ -319,8 +318,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hi there!")]),
+        ChatMessage("user", [Content.from_text(text="Hello")]),
+        ChatMessage("assistant", [Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -420,7 +419,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -454,7 +453,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -493,7 +492,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -695,14 +694,35 @@ async def test_agent_creation_with_instructions(
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
 
-    run_options = {"model": "test-model", "instructions": "Option instructions. "}
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Option instructions. "}
     messages_instructions = "Message instructions. "
 
-    await client._get_agent_reference_or_create(run_options, messages_instructions)  # type: ignore
+    await client._get_agent_reference_or_create(run_options, messages_instructions, chat_options)  # type: ignore
 
     # Verify agent was created with combined instructions
     call_args = mock_project_client.agents.create_version.call_args
     assert call_args[1]["definition"].instructions == "Message instructions. Option instructions. "
+
+
+async def test_agent_creation_with_instructions_from_chat_options(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with instructions passed only via chat_options."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model"}
+    chat_options = {"instructions": "Chat options instructions."}
+
+    await client._get_agent_reference_or_create(run_options, None, chat_options)  # type: ignore
+
+    call_args = mock_project_client.agents.create_version.call_args
+    assert call_args[1]["definition"].instructions == "Chat options instructions."
 
 
 async def test_agent_creation_with_additional_args(
@@ -948,7 +968,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hello")])]
+    messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (
@@ -1334,10 +1354,10 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+        messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
     else:
         # Generic prompt for simple options
-        messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+        messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value, "tools": [get_weather]}
@@ -1351,7 +1371,7 @@ async def test_integration_options(
             )
 
             output_format = option_value if option_name == "response_format" else None
-            response = await ChatResponse.from_chat_response_generator(response_gen, output_format_type=output_format)
+            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -1437,11 +1457,11 @@ async def test_integration_agent_options(
             # Prepare test message
             if option_name.startswith("response_format"):
                 # Use prompt that works well with structured output
-                messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-                messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+                messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
+                messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
             else:
                 # Generic prompt for simple options
-                messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+                messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
 
             # Build options dict
             options = {option_name: option_value}
@@ -1454,9 +1474,7 @@ async def test_integration_agent_options(
                 )
 
                 output_format = option_value if option_name.startswith("response_format") else None
-                response = await ChatResponse.from_chat_response_generator(
-                    response_gen, output_format_type=output_format
-                )
+                response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
             else:
                 # Test non-streaming mode
                 response = await client.get_response(
@@ -1498,7 +1516,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
             else:
                 response = await client.get_response(**content)
 
@@ -1523,7 +1541,7 @@ async def test_integration_web_search() -> None:
                 },
             }
             if streaming:
-                response = await ChatResponse.from_chat_response_generator(client.get_streaming_response(**content))
+                response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
             else:
                 response = await client.get_response(**content)
             assert response.text is not None

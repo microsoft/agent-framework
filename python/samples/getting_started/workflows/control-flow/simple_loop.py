@@ -10,11 +10,9 @@ from agent_framework import (
     ChatMessage,
     Executor,
     ExecutorCompletedEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -97,7 +95,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
             target_id=self._judge_agent_id,
         )
 

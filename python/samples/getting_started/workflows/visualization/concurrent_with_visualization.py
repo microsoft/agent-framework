@@ -9,12 +9,10 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Executor,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowViz,
     handler,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -41,7 +39,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage(Role.USER, text=prompt)
+        initial_message = ChatMessage("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 

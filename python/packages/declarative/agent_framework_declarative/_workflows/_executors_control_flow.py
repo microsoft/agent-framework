@@ -7,7 +7,7 @@ Control flow in the graph-based system is handled differently than the interpret
   returns a ConditionResult with the first-matching branch index. Edge conditions
   then check the branch_index to route to the correct branch. This ensures only
   one branch executes (first-match semantics), matching the interpreter behavior.
-- Foreach: Loop iteration state managed in SharedState + loop edges
+- Foreach: Loop iteration state managed in State + loop edges
 - Goto: Edge to target action (handled by builder)
 - Break/Continue: Special signals for loop control
 
@@ -30,7 +30,7 @@ from ._declarative_base import (
     LoopIterationResult,
 )
 
-# Keys for loop state in SharedState
+# Keys for loop state in State
 LOOP_STATE_KEY = "_declarative_loop_state"
 
 # Index value indicating the else/default branch
@@ -88,7 +88,7 @@ class ConditionGroupEvaluatorExecutor(DeclarativeActionExecutor):
             elif isinstance(condition_expr, str) and not condition_expr.startswith("="):
                 condition_expr = f"={condition_expr}"
 
-            result = await state.eval(condition_expr)
+            result = state.eval(condition_expr)
             if bool(result):
                 # First matching condition found
                 await ctx.send_message(ConditionResult(matched=True, branch_index=index, value=result))
@@ -143,7 +143,7 @@ class SwitchEvaluatorExecutor(DeclarativeActionExecutor):
             return
 
         # Evaluate the switch value once
-        switch_value = await state.eval_if_expression(value_expr)
+        switch_value = state.eval_if_expression(value_expr)
 
         # Compare against each case's match value
         for index, case_item in enumerate(self._cases):
@@ -152,7 +152,7 @@ class SwitchEvaluatorExecutor(DeclarativeActionExecutor):
                 continue
 
             # Evaluate the match value
-            match_value = await state.eval_if_expression(match_expr)
+            match_value = state.eval_if_expression(match_expr)
 
             if switch_value == match_value:
                 # Found matching case
@@ -196,7 +196,7 @@ class IfConditionEvaluatorExecutor(DeclarativeActionExecutor):
         """Evaluate the condition and output the result."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        result = await state.eval(self._condition_expr)
+        result = state.eval(self._condition_expr)
         is_truthy = bool(result)
 
         if is_truthy:
@@ -208,7 +208,7 @@ class IfConditionEvaluatorExecutor(DeclarativeActionExecutor):
 class ForeachInitExecutor(DeclarativeActionExecutor):
     """Initializes a foreach loop.
 
-    Sets up the loop state in SharedState and determines if there are items.
+    Sets up the loop state in State and determines if there are items.
     """
 
     @handler
@@ -226,7 +226,7 @@ class ForeachInitExecutor(DeclarativeActionExecutor):
         items_expr = (
             self._action_def.get("itemsSource") or self._action_def.get("items") or self._action_def.get("source")
         )
-        items_raw: Any = await state.eval_if_expression(items_expr) or []
+        items_raw: Any = state.eval_if_expression(items_expr) or []
 
         items: list[Any]
         items = (list(items_raw) if items_raw else []) if not isinstance(items_raw, (list, tuple)) else list(items_raw)  # type: ignore
@@ -234,14 +234,14 @@ class ForeachInitExecutor(DeclarativeActionExecutor):
         loop_id = self.id
 
         # Store loop state
-        state_data = await state.get_state_data()
+        state_data = state.get_state_data()
         loop_states: dict[str, Any] = cast(dict[str, Any], state_data).setdefault(LOOP_STATE_KEY, {})
         loop_states[loop_id] = {
             "items": items,
             "index": 0,
             "length": len(items),
         }
-        await state.set_state_data(state_data)
+        state.set_state_data(state_data)
 
         # Check if we have items
         if items:
@@ -263,9 +263,9 @@ class ForeachInitExecutor(DeclarativeActionExecutor):
                 index_name = self._action_def.get("indexName", "index")
                 index_var = f"Local.{index_name}"
 
-            await state.set(item_var, items[0])
+            state.set(item_var, items[0])
             if index_var:
-                await state.set(index_var, 0)
+                state.set(index_var, 0)
 
             await ctx.send_message(LoopIterationResult(has_next=True, current_item=items[0], current_index=0))
         else:
@@ -307,7 +307,7 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
         loop_id = self._init_executor_id
 
         # Get loop state
-        state_data = await state.get_state_data()
+        state_data = state.get_state_data()
         loop_states: dict[str, Any] = cast(dict[str, Any], state_data).get(LOOP_STATE_KEY, {})
         loop_state = loop_states.get(loop_id)
 
@@ -322,7 +322,7 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
         if current_index < len(items):
             # Update loop state
             loop_state["index"] = current_index
-            await state.set_state_data(state_data)
+            state.set_state_data(state_data)
 
             # Set the iteration variable
             # Support multiple schema formats:
@@ -342,9 +342,9 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
                 index_name = self._action_def.get("indexName", "index")
                 index_var = f"Local.{index_name}"
 
-            await state.set(item_var, items[current_index])
+            state.set(item_var, items[current_index])
             if index_var:
-                await state.set(index_var, current_index)
+                state.set(index_var, current_index)
 
             await ctx.send_message(
                 LoopIterationResult(has_next=True, current_item=items[current_index], current_index=current_index)
@@ -354,7 +354,7 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
             loop_states_dict = cast(dict[str, Any], state_data).get(LOOP_STATE_KEY, {})
             if loop_id in loop_states_dict:
                 del loop_states_dict[loop_id]
-            await state.set_state_data(state_data)
+            state.set_state_data(state_data)
 
             await ctx.send_message(LoopIterationResult(has_next=False))
 
@@ -365,15 +365,15 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[LoopIterationResult],
     ) -> None:
         """Handle break/continue signals."""
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         if control.action == "break":
             # Clean up loop state and signal done
-            state_data = await state.get_state_data()
+            state_data = state.get_state_data()
             loop_states: dict[str, Any] = cast(dict[str, Any], state_data).get(LOOP_STATE_KEY, {})
             if self._init_executor_id in loop_states:
                 del loop_states[self._init_executor_id]
-                await state.set_state_data(state_data)
+                state.set_state_data(state_data)
 
             await ctx.send_message(LoopIterationResult(has_next=False))
 

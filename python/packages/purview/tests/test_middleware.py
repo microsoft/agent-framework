@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentRunContext, ChatMessage, Role
+from agent_framework import AgentResponse, AgentRunContext, ChatMessage
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
@@ -49,7 +49,7 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test middleware allows prompt that passes policy check."""
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello, how are you?")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello, how are you?"])])
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
             next_called = False
@@ -57,7 +57,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next(ctx: AgentRunContext) -> None:
                 nonlocal next_called
                 next_called = True
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="I'm good, thanks!")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["I'm good, thanks!"])])
 
             await middleware.process(context, mock_next)
 
@@ -69,9 +69,7 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test middleware blocks prompt that violates policy."""
-        context = AgentRunContext(
-            agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Sensitive information")]
-        )
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Sensitive information"])])
 
         with patch.object(middleware._processor, "process_messages", return_value=(True, "user-123")):
             next_called = False
@@ -86,12 +84,12 @@ class TestPurviewPolicyMiddleware:
             assert context.result is not None
             assert context.terminate
             assert len(context.result.messages) == 1
-            assert context.result.messages[0].role == Role.SYSTEM
+            assert context.result.messages[0].role == "system"
             assert "blocked by policy" in context.result.messages[0].text.lower()
 
     async def test_middleware_checks_response(self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock) -> None:
         """Test middleware checks agent response for policy violations."""
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
 
         call_count = 0
 
@@ -104,16 +102,14 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, text="Here's some sensitive information")]
-                )
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["Here's some sensitive information"])])
 
             await middleware.process(context, mock_next)
 
             assert call_count == 2
             assert context.result is not None
             assert len(context.result.messages) == 1
-            assert context.result.messages[0].role == Role.SYSTEM
+            assert context.result.messages[0].role == "system"
             assert "blocked by policy" in context.result.messages[0].text.lower()
 
     async def test_middleware_handles_result_without_messages(
@@ -123,7 +119,7 @@ class TestPurviewPolicyMiddleware:
         # Set ignore_exceptions to True so AttributeError is caught and logged
         middleware._settings.ignore_exceptions = True
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
@@ -140,12 +136,12 @@ class TestPurviewPolicyMiddleware:
         """Test middleware passes correct activity type to processor."""
         from agent_framework_purview._models import Activity
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Test"])])
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_process:
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["Response"])])
 
             await middleware.process(context, mock_next)
 
@@ -157,13 +153,13 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test that streaming results skip post-check evaluation."""
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
         context.is_streaming = True
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="streaming")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["streaming"])])
 
             await middleware.process(context, mock_next)
 
@@ -175,7 +171,7 @@ class TestPurviewPolicyMiddleware:
         """Test that 402 in pre-check is raised when ignore_payment_required=False."""
         from agent_framework_purview._exceptions import PurviewPaymentRequiredError
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
 
         with patch.object(
             middleware._processor,
@@ -195,7 +191,7 @@ class TestPurviewPolicyMiddleware:
         """Test that 402 in post-check is raised when ignore_payment_required=False."""
         from agent_framework_purview._exceptions import PurviewPaymentRequiredError
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
 
         call_count = 0
 
@@ -209,7 +205,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="OK")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["OK"])])
 
             with pytest.raises(PurviewPaymentRequiredError):
                 await middleware.process(context, mock_next)
@@ -220,7 +216,7 @@ class TestPurviewPolicyMiddleware:
         """Test that post-check exceptions are propagated when ignore_exceptions=False."""
         middleware._settings.ignore_exceptions = False
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Hello"])])
 
         call_count = 0
 
@@ -234,7 +230,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="OK")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["OK"])])
 
             with pytest.raises(ValueError, match="Post-check blew up"):
                 await middleware.process(context, mock_next)
@@ -246,14 +242,14 @@ class TestPurviewPolicyMiddleware:
         # Set ignore_exceptions to True
         middleware._settings.ignore_exceptions = True
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Test"])])
 
         with patch.object(
             middleware._processor, "process_messages", side_effect=Exception("Pre-check error")
         ) as mock_process:
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["Response"])])
 
             await middleware.process(context, mock_next)
 
@@ -271,7 +267,7 @@ class TestPurviewPolicyMiddleware:
         # Set ignore_exceptions to True
         middleware._settings.ignore_exceptions = True
 
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Test"])])
 
         call_count = 0
 
@@ -285,7 +281,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: AgentRunContext) -> None:
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["Response"])])
 
             await middleware.process(context, mock_next)
 
@@ -302,7 +298,7 @@ class TestPurviewPolicyMiddleware:
 
         mock_agent = MagicMock()
         mock_agent.name = "test-agent"
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Test"])])
 
         # Mock processor to raise an exception
         async def mock_process_messages(*args, **kwargs):
@@ -311,7 +307,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx):
-                ctx.result = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+                ctx.result = AgentResponse(messages=[ChatMessage("assistant", ["Response"])])
 
             # Should not raise, just log
             await middleware.process(context, mock_next)
@@ -326,7 +322,7 @@ class TestPurviewPolicyMiddleware:
 
         mock_agent = MagicMock()
         mock_agent.name = "test-agent"
-        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage("user", ["Test"])])
 
         # Mock processor to raise an exception
         async def mock_process_messages(*args, **kwargs):

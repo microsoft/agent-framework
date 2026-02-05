@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+import types
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
@@ -22,7 +23,7 @@ class ValidationTypeEnum(Enum):
     TYPE_COMPATIBILITY = "TYPE_COMPATIBILITY"
     GRAPH_CONNECTIVITY = "GRAPH_CONNECTIVITY"
     HANDLER_OUTPUT_ANNOTATION = "HANDLER_OUTPUT_ANNOTATION"
-    INTERCEPTOR_CONFLICT = "INTERCEPTOR_CONFLICT"
+    OUTPUT_VALIDATION = "OUTPUT_VALIDATION"
 
 
 class WorkflowValidationError(Exception):
@@ -55,8 +56,8 @@ class TypeCompatibilityError(WorkflowValidationError):
         self,
         source_executor_id: str,
         target_executor_id: str,
-        source_types: list[type[Any]],
-        target_types: list[type[Any]],
+        source_types: list[type[Any] | types.UnionType],
+        target_types: list[type[Any] | types.UnionType],
     ):
         # Use a placeholder for incompatible types - will be computed in WorkflowGraphValidator
         super().__init__(
@@ -76,13 +77,6 @@ class GraphConnectivityError(WorkflowValidationError):
 
     def __init__(self, message: str):
         super().__init__(message, validation_type=ValidationTypeEnum.GRAPH_CONNECTIVITY)
-
-
-class InterceptorConflictError(WorkflowValidationError):
-    """Exception raised when multiple executors intercept the same request type from the same sub-workflow."""
-
-    def __init__(self, message: str):
-        super().__init__(message, validation_type=ValidationTypeEnum.INTERCEPTOR_CONFLICT)
 
 
 # endregion
@@ -108,6 +102,7 @@ class WorkflowGraphValidator:
         edge_groups: Sequence[EdgeGroup],
         executors: dict[str, Executor],
         start_executor: Executor,
+        output_executors: list[str],
     ) -> None:
         """Validate the entire workflow graph.
 
@@ -115,6 +110,7 @@ class WorkflowGraphValidator:
             edge_groups: list of edge groups in the workflow
             executors: Map of executor IDs to executor instances
             start_executor: The starting executor
+            output_executors: List of output executor IDs
 
         Raises:
             WorkflowValidationError: If any validation fails
@@ -161,6 +157,7 @@ class WorkflowGraphValidator:
         self._validate_graph_connectivity(start_executor.id)
         self._validate_self_loops()
         self._validate_dead_ends()
+        self._output_validation(output_executors)
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -253,7 +250,7 @@ class WorkflowGraphValidator:
 
         # Check if any source output type is compatible with any target input type
         compatible = False
-        compatible_pairs: list[tuple[type[Any], type[Any]]] = []
+        compatible_pairs: list[tuple[type[Any] | types.UnionType, type[Any] | types.UnionType]] = []
 
         for source_type in source_output_types:
             for target_type in target_input_types:
@@ -356,6 +353,26 @@ class WorkflowGraphValidator:
 
     # endregion
 
+    # region Output Validation
+
+    def _output_validation(self, output_executors: list[str]) -> None:
+        """Validate that output executors exist in the workflow and have the correct workflow context annotations."""
+        for output_id in output_executors:
+            if output_id not in self._executors:
+                raise WorkflowValidationError(
+                    f"Output executor '{output_id}' is not present in the workflow graph",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+            output_executor = self._executors[output_id]
+            if not output_executor.workflow_output_types:
+                raise WorkflowValidationError(
+                    f"Output executor '{output_id}' must have output type annotations defined.",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+    # endregion
+
     # region Additional Validation Scenarios
     def _validate_self_loops(self) -> None:
         """Detect and log self-loops (edges from executor to itself).
@@ -396,13 +413,15 @@ def validate_workflow_graph(
     edge_groups: Sequence[EdgeGroup],
     executors: dict[str, Executor],
     start_executor: Executor,
+    output_executors: list[str],
 ) -> None:
     """Convenience function to validate a workflow graph.
 
     Args:
         edge_groups: list of edge groups in the workflow
         executors: Map of executor IDs to executor instances
-        start_executor: The starting executor (can be instance or ID)
+        start_executor: The starting executor instance
+        output_executors: List of output executor IDs
 
     Raises:
         WorkflowValidationError: If any validation fails
@@ -412,4 +431,5 @@ def validate_workflow_graph(
         edge_groups,
         executors,
         start_executor,
+        output_executors,
     )

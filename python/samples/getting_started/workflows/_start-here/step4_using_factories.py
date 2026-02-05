@@ -2,17 +2,9 @@
 
 import asyncio
 
-from agent_framework import (
-    AgentResponse,
-    ChatAgent,
-    Executor,
-    WorkflowBuilder,
-    WorkflowContext,
-    WorkflowOutputEvent,
-    executor,
-    handler,
-    tool,
-)
+from agent_framework import (AgentResponseUpdate, ChatAgent, Executor,
+                             WorkflowBuilder, WorkflowContext,
+                             WorkflowOutputEvent, executor, handler)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -82,26 +74,28 @@ async def main():
                 "ReverseText": lambda: reverse_text,
             }
         )
-        .register_agent(create_agent, name="DecoderAgent", output_response=True)
+        .register_agent(create_agent, name="DecoderAgent")
         .add_chain(["UpperCase", "ReverseText", "DecoderAgent"])
         .set_start_executor("UpperCase")
         .build()
     )
 
-    output: AgentResponse | None = None
+    first_update = True
     async for event in workflow.run_stream("hello world"):
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponse):
-            output = event.data
-
-    if output:
-        print(f"Decoded output: {output.text}")
-    else:
-        print("No output received.")
+        # The outputs of the workflow are whatever the agents produce. So the events are expected to
+        # contain `AgentResponseUpdate` from the agents in the workflow.
+        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            update = event.data
+            if first_update:
+                print(f"{update.author_name}: {update.text}", end="", flush=True)
+                first_update = False
+            else:
+                print(update.text, end="", flush=True)
 
     """
     Sample Output:
 
-    HELLO WORLD
+    decoder: HELLO WORLD
     """
 
 

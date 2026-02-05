@@ -115,7 +115,7 @@ public sealed class ChatClientAgentSession : AgentSession
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientAgentSession"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedSessionState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <param name="chatHistoryProviderFactory">
     /// An optional factory function to create a custom <see cref="AI.ChatHistoryProvider"/> from its serialized state.
@@ -128,18 +128,18 @@ public sealed class ChatClientAgentSession : AgentSession
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation. The task result contains the deserialized <see cref="ChatClientAgentSession"/>.</returns>
     internal static async Task<ChatClientAgentSession> DeserializeAsync(
-        JsonElement serializedSessionState,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatHistoryProvider>>? chatHistoryProviderFactory = null,
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<AIContextProvider>>? aiContextProviderFactory = null,
         CancellationToken cancellationToken = default)
     {
-        if (serializedSessionState.ValueKind != JsonValueKind.Object)
+        if (serializedState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedState));
         }
 
-        var state = serializedSessionState.Deserialize(
+        var state = serializedState.Deserialize(
             AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(SessionState))) as SessionState;
 
         var session = new ChatClientAgentSession();
@@ -165,7 +165,7 @@ public sealed class ChatClientAgentSession : AgentSession
     }
 
     /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonElement? chatHistoryProviderState = this._chatHistoryProvider?.Serialize(jsonSerializerOptions);
 

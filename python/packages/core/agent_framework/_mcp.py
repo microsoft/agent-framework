@@ -32,7 +32,6 @@ from ._tools import (
 from ._types import (
     ChatMessage,
     Content,
-    Role,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -71,7 +70,7 @@ def _parse_message_from_mcp(
 ) -> ChatMessage:
     """Parse an MCP container type into an Agent Framework type."""
     return ChatMessage(
-        role=Role(value=mcp_type.role),
+        role=mcp_type.role,
         contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
     )
@@ -756,10 +755,12 @@ class MCPTool:
         # that should not be forwarded to external MCP servers.
         # conversation_id is an internal tracking ID used by services like Azure AI.
         # options contains metadata/store used by AG-UI for Azure AI client requirements.
+        # response_format is a Pydantic model class used for structured output (not serializable).
         filtered_kwargs = {
             k: v
             for k, v in kwargs.items()
-            if k not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options"}
+            if k
+            not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
         }
 
         # Try the operation, reconnecting once if the connection is closed

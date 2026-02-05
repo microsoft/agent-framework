@@ -1,15 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for AgentRunEvent and AgentRunUpdateEvent type annotations."""
+"""Tests for agent run event typing."""
 
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Role
-from agent_framework._workflows._events import AgentRunEvent, AgentRunUpdateEvent
+from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage
+from agent_framework._workflows._events import WorkflowOutputEvent
 
 
 def test_agent_run_event_data_type() -> None:
-    """Verify AgentRunEvent.data is typed as AgentResponse | None."""
-    response = AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")])
-    event = AgentRunEvent(executor_id="test", data=response)
+    """Verify WorkflowOutputEvent.data is typed as AgentResponse | None."""
+    response = AgentResponse(messages=[ChatMessage(role="assistant", text="Hello")])
+    event = WorkflowOutputEvent(data=response, executor_id="test")
 
     # This assignment should pass type checking without a cast
     data: AgentResponse | None = event.data
@@ -18,9 +18,9 @@ def test_agent_run_event_data_type() -> None:
 
 
 def test_agent_run_update_event_data_type() -> None:
-    """Verify AgentRunUpdateEvent.data is typed as AgentResponseUpdate | None."""
+    """Verify WorkflowOutputEvent.data is typed as AgentResponseUpdate | None."""
     update = AgentResponseUpdate()
-    event = AgentRunUpdateEvent(executor_id="test", data=update)
+    event = WorkflowOutputEvent(data=update, executor_id="test")
 
     # This assignment should pass type checking without a cast
     data: AgentResponseUpdate | None = event.data

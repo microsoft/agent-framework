@@ -106,7 +106,7 @@ class TestCheckpointConversationManager:
         from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 
         checkpoint = WorkflowCheckpoint(
-            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, shared_state={"test": "data"}
+            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, state={"test": "data"}
         )
 
         # Get checkpoint storage for this conversation and save
@@ -144,7 +144,7 @@ class TestCheckpointConversationManager:
             checkpoint_id=str(uuid.uuid4()),
             workflow_id=test_workflow.id,
             messages={},
-            shared_state={"conversation": "A"},
+            state={"conversation": "A"},
         )
         storage_a = checkpoint_manager.get_checkpoint_storage(conv_a)
         await storage_a.save_checkpoint(checkpoint_a)
@@ -181,7 +181,7 @@ class TestCheckpointConversationManager:
                 checkpoint_id=str(uuid.uuid4()),
                 workflow_id=test_workflow.id,
                 messages={},
-                shared_state={"iteration": i},
+                state={"iteration": i},
             )
             saved_id = await storage.save_checkpoint(checkpoint)
             checkpoint_ids.append(saved_id)
@@ -217,7 +217,7 @@ class TestCheckpointConversationManager:
                 checkpoint_id=f"checkpoint_{i}",
                 workflow_id=test_workflow.id,
                 messages={},
-                shared_state={"iteration": i},
+                state={"iteration": i},
             )
             saved_id = await storage.save_checkpoint(checkpoint)
             checkpoint_ids.append(saved_id)
@@ -259,7 +259,7 @@ class TestCheckpointConversationManager:
             checkpoint_id=str(uuid.uuid4()),
             workflow_id=test_workflow.id,
             messages={},
-            shared_state={"test_key": "test_value"},
+            state={"test_key": "test_value"},
         )
 
         # Save to this session
@@ -272,7 +272,7 @@ class TestCheckpointConversationManager:
         assert loaded_checkpoint is not None
         assert loaded_checkpoint.checkpoint_id == original_checkpoint.checkpoint_id
         assert loaded_checkpoint.workflow_id == original_checkpoint.workflow_id
-        assert loaded_checkpoint.shared_state == {"test_key": "test_value"}
+        assert loaded_checkpoint.state == {"test_key": "test_value"}
 
 
 class TestCheckpointStorage:
@@ -298,7 +298,7 @@ class TestCheckpointStorage:
         from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 
         checkpoint = WorkflowCheckpoint(
-            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, shared_state={"test": "data"}
+            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, state={"test": "data"}
         )
 
         # Test save_checkpoint
@@ -348,7 +348,7 @@ class TestIntegration:
         from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 
         checkpoint = WorkflowCheckpoint(
-            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, shared_state={"injected": True}
+            checkpoint_id=str(uuid.uuid4()), workflow_id=test_workflow.id, messages={}, state={"injected": True}
         )
         await checkpoint_storage.save_checkpoint(checkpoint)
 
@@ -381,7 +381,7 @@ class TestIntegration:
             checkpoint_id=str(uuid.uuid4()),
             workflow_id=test_workflow.id,
             messages={},
-            shared_state={"ready_to_resume": True},
+            state={"ready_to_resume": True},
         )
         checkpoint_id = await checkpoint_storage.save_checkpoint(checkpoint)
 
@@ -389,7 +389,7 @@ class TestIntegration:
         loaded = await checkpoint_storage.load_checkpoint(checkpoint_id)
         assert loaded is not None
         assert loaded.checkpoint_id == checkpoint_id
-        assert loaded.shared_state == {"ready_to_resume": True}
+        assert loaded.state == {"ready_to_resume": True}
 
         # Verify checkpoint is accessible via storage (for UI to list checkpoints)
         checkpoints = await checkpoint_storage.list_checkpoints()

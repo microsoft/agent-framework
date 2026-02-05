@@ -26,15 +26,17 @@ class WorkflowCheckpoint:
         workflow_id: Identifier of the workflow this checkpoint belongs to
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
-        shared_state: Complete shared state including user data and executor states.
-                     Executor states are stored under the reserved key '_executor_state'.
+        state: Committed workflow state including user data and executor states.
+               This contains only committed state; pending state changes are not
+               included in checkpoints. Executor states are stored under the
+               reserved key '_executor_state'.
         iteration_count: Current iteration number when checkpoint was created
         metadata: Additional metadata (e.g., superstep info, graph signature)
         version: Checkpoint format version
 
     Note:
-        The shared_state dict may contain reserved keys managed by the framework.
-        See SharedState class documentation for details on reserved keys.
+        The state dict may contain reserved keys managed by the framework.
+        See State class documentation for details on reserved keys.
     """
 
     checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -43,7 +45,7 @@ class WorkflowCheckpoint:
 
     # Core workflow state
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
-    shared_state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
+    state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
     pending_request_info_events: dict[str, dict[str, Any]] = field(default_factory=dict)  # type: ignore[misc]
 
     # Runtime state

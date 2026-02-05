@@ -13,11 +13,9 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     ChatAgent,  # Case entry for a switch-case edge group
     ChatMessage,
     Default,  # Default branch when no cases match
-    Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
@@ -27,13 +25,13 @@ from typing_extensions import Never
 """
 Sample: Switch-Case Edge Group with an explicit Uncertain branch.
 
-The workflow stores a single email in shared state, asks a spam detection agent for a three way decision,
+The workflow stores a single email in workflow state, asks a spam detection agent for a three way decision,
 then routes with a switch-case group: NotSpam to the drafting assistant, Spam to a spam handler, and
 Default to an Uncertain handler.
 
 Purpose:
 Demonstrate deterministic one of N routing with switch-case edges. Show how to:
-- Persist input once in shared state, then pass around a small typed pointer that carries the email id.
+- Persist input once in workflow state, then pass around a small typed pointer that carries the email id.
 - Validate agent JSON with Pydantic models for robust parsing.
 - Keep executor responsibilities narrow. Transform model output to a typed DetectionResult, then route based
 on that type.
@@ -76,7 +74,7 @@ class DetectionResult:
 
 @dataclass
 class Email:
-    # In memory record of the email content stored in shared state.
+    # In memory record of the email content stored in workflow state.
     email_id: str
     email_content: str
 
@@ -95,12 +93,12 @@ def get_case(expected_decision: str):
 async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
     # Persist the raw email once. Store under a unique key and set the current pointer for convenience.
     new_email = Email(email_id=str(uuid4()), email_content=email_text)
-    await ctx.set_shared_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
-    await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
+    ctx.set_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
+    ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -108,7 +106,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowContext[DetectionResult]) -> None:
     # Parse the detector JSON into a typed model. Attach the current email id for downstream lookups.
     parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
-    email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
+    email_id: str = ctx.get_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(spam_decision=parsed.spam_decision, reason=parsed.reason, email_id=email_id))
 
 
@@ -118,10 +116,10 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     if detection.spam_decision != "NotSpam":
         raise RuntimeError("This executor should only handle NotSpam messages.")
 
-    # Load the original content from shared state using the id carried in DetectionResult.
-    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
+    # Load the original content from workflow state using the id carried in DetectionResult.
+    email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -145,7 +143,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Uncertain path terminal. Surface the original content to aid human review.
     if detection.spam_decision == "Uncertain":
-        email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
+        email: Email | None = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
         await ctx.yield_output(
             f"Email marked as uncertain: {detection.reason}. Email content: {getattr(email, 'email_content', '')}"
         )

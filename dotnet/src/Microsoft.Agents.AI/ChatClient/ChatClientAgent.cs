@@ -302,7 +302,7 @@ public sealed partial class ChatClientAgent : AIAgent
         : this.ChatClient.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
     {
         ChatHistoryProvider? chatHistoryProvider = this._agentOptions?.ChatHistoryProviderFactory is not null
             ? await this._agentOptions.ChatHistoryProviderFactory.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }, cancellationToken).ConfigureAwait(false)
@@ -337,7 +337,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// instances that support server-side conversation storage through their underlying <see cref="IChatClient"/>.
     /// </para>
     /// </remarks>
-    public async ValueTask<AgentSession> GetNewSessionAsync(string conversationId, CancellationToken cancellationToken = default)
+    public async ValueTask<AgentSession> CreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
     {
         AIContextProvider? contextProvider = this._agentOptions?.AIContextProviderFactory is not null
             ? await this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }, cancellationToken).ConfigureAwait(false)
@@ -365,14 +365,14 @@ public sealed partial class ChatClientAgent : AIAgent
     /// with a <see cref="ChatHistoryProvider"/> may not be compatible with these services.
     /// </para>
     /// <para>
-    /// Where a service requires server-side conversation storage, use <see cref="GetNewSessionAsync(string, CancellationToken)"/>.
+    /// Where a service requires server-side conversation storage, use <see cref="CreateSessionAsync(string, CancellationToken)"/>.
     /// </para>
     /// <para>
     /// If the agent detects, during the first run, that the underlying AI service requires server-side conversation storage,
     /// the session will throw an exception to indicate that it cannot continue using the provided <see cref="ChatHistoryProvider"/>.
     /// </para>
     /// </remarks>
-    public async ValueTask<AgentSession> GetNewSessionAsync(ChatHistoryProvider chatHistoryProvider, CancellationToken cancellationToken = default)
+    public async ValueTask<AgentSession> CreateSessionAsync(ChatHistoryProvider chatHistoryProvider, CancellationToken cancellationToken = default)
     {
         AIContextProvider? contextProvider = this._agentOptions?.AIContextProviderFactory is not null
             ? await this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }, cancellationToken).ConfigureAwait(false)
@@ -386,7 +386,20 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not ChatClientAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
+    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatHistoryProvider>>? chatHistoryProviderFactory = this._agentOptions?.ChatHistoryProviderFactory is null ?
             null :
@@ -397,7 +410,7 @@ public sealed partial class ChatClientAgent : AIAgent
             (jse, jso, ct) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso }, ct);
 
         return await ChatClientAgentSession.DeserializeAsync(
-            serializedSession,
+            serializedState,
             jsonSerializerOptions,
             chatHistoryProviderFactory,
             aiContextProviderFactory,
@@ -689,7 +702,7 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("A session must be provided when continuing a background response with a continuation token.");
         }
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not ChatClientAgentSession typedSession)
         {
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");

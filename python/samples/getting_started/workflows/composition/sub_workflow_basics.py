@@ -10,10 +10,9 @@ from agent_framework import (
     WorkflowContext,
     WorkflowExecutor,
     handler,
-    tool,
 )
 from typing_extensions import Never
- 
+
 """
 Sample: Sub-Workflows (Basics)
 

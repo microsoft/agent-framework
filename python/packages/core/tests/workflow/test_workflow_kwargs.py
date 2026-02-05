@@ -11,18 +11,19 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
-    ConcurrentBuilder,
     Content,
-    GroupChatBuilder,
-    GroupChatState,
-    HandoffBuilder,
-    Role,
-    SequentialBuilder,
     WorkflowRunState,
     WorkflowStatusEvent,
     tool,
 )
 from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+from agent_framework.orchestrations import (
+    ConcurrentBuilder,
+    GroupChatBuilder,
+    GroupChatState,
+    HandoffBuilder,
+    SequentialBuilder,
+)
 
 # Track kwargs received by tools during test execution
 _received_kwargs: list[dict[str, Any]] = []
@@ -57,7 +58,7 @@ class _KwargsCapturingAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResponse:
         self.captured_kwargs.append(dict(kwargs))
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=f"{self.name} response")])
+        return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} response"])])
 
     async def run_stream(
         self,
@@ -209,48 +210,48 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
 # endregion
 
 
-# region SharedState Verification Tests
+# region State Verification Tests
 
 
-async def test_kwargs_stored_in_shared_state() -> None:
-    """Test that kwargs are stored in SharedState with the correct key."""
+async def test_kwargs_stored_in_state() -> None:
+    """Test that kwargs are stored in State with the correct key."""
     from agent_framework import Executor, WorkflowContext, handler
 
     stored_kwargs: dict[str, Any] | None = None
 
-    class _SharedStateInspector(Executor):
+    class _StateInspector(Executor):
         @handler
         async def inspect(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
             nonlocal stored_kwargs
-            stored_kwargs = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
+            stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.send_message(msgs)
 
-    inspector = _SharedStateInspector(id="inspector")
+    inspector = _StateInspector(id="inspector")
     workflow = SequentialBuilder().participants([inspector]).build()
 
     async for event in workflow.run_stream("test", my_kwarg="my_value", another=123):
         if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
             break
 
-    assert stored_kwargs is not None, "kwargs should be stored in SharedState"
+    assert stored_kwargs is not None, "kwargs should be stored in State"
     assert stored_kwargs.get("my_kwarg") == "my_value"
     assert stored_kwargs.get("another") == 123
 
 
 async def test_empty_kwargs_stored_as_empty_dict() -> None:
-    """Test that empty kwargs are stored as empty dict in SharedState."""
+    """Test that empty kwargs are stored as empty dict in State."""
     from agent_framework import Executor, WorkflowContext, handler
 
     stored_kwargs: Any = "NOT_CHECKED"
 
-    class _SharedStateChecker(Executor):
+    class _StateChecker(Executor):
         @handler
         async def check(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
             nonlocal stored_kwargs
-            stored_kwargs = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
+            stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.send_message(msgs)
 
-    checker = _SharedStateChecker(id="checker")
+    checker = _StateChecker(id="checker")
     workflow = SequentialBuilder().participants([checker]).build()
 
     # Run without any kwargs
@@ -258,7 +259,7 @@ async def test_empty_kwargs_stored_as_empty_dict() -> None:
         if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
             break
 
-    # SharedState should have empty dict when no kwargs provided
+    # State should have empty dict when no kwargs provided
     assert stored_kwargs == {}, f"Expected empty dict, got: {stored_kwargs}"
 
 
@@ -372,13 +373,14 @@ async def test_handoff_kwargs_flow_to_agents() -> None:
 
 async def test_magentic_kwargs_flow_to_agents() -> None:
     """Test that kwargs flow to agents in a magentic workflow via MagenticAgentExecutor."""
-    from agent_framework import MagenticBuilder
-    from agent_framework._workflows._magentic import (
+    from agent_framework_orchestrations._magentic import (
         MagenticContext,
         MagenticManagerBase,
         MagenticProgressLedger,
         MagenticProgressLedgerItem,
     )
+
+    from agent_framework.orchestrations import MagenticBuilder
 
     # Create a mock manager that completes after one round
     class _MockManager(MagenticManagerBase):
@@ -387,10 +389,10 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Plan: Test task", author_name="manager")
+            return ChatMessage("assistant", ["Plan: Test task"], author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Replan: Test task", author_name="manager")
+            return ChatMessage("assistant", ["Replan: Test task"], author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             # Return completed on first call
@@ -403,7 +405,7 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Final answer", author_name="manager")
+            return ChatMessage("assistant", ["Final answer"], author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -421,15 +423,16 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
     # A more comprehensive integration test would require the manager to select an agent.
 
 
-async def test_magentic_kwargs_stored_in_shared_state() -> None:
-    """Test that kwargs are stored in SharedState when using MagenticWorkflow.run_stream()."""
-    from agent_framework import MagenticBuilder
-    from agent_framework._workflows._magentic import (
+async def test_magentic_kwargs_stored_in_state() -> None:
+    """Test that kwargs are stored in State when using MagenticWorkflow.run_stream()."""
+    from agent_framework_orchestrations._magentic import (
         MagenticContext,
         MagenticManagerBase,
         MagenticProgressLedger,
         MagenticProgressLedgerItem,
     )
+
+    from agent_framework.orchestrations import MagenticBuilder
 
     class _MockManager(MagenticManagerBase):
         def __init__(self) -> None:
@@ -437,10 +440,10 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Plan", author_name="manager")
+            return ChatMessage("assistant", ["Plan"], author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Replan", author_name="manager")
+            return ChatMessage("assistant", ["Replan"], author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             return MagenticProgressLedger(
@@ -452,7 +455,7 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role=Role.ASSISTANT, text="Final", author_name="manager")
+            return ChatMessage("assistant", ["Final"], author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -640,10 +643,10 @@ async def test_subworkflow_kwargs_propagation() -> None:
     )
 
 
-async def test_subworkflow_kwargs_accessible_via_shared_state() -> None:
-    """Test that kwargs are accessible via SharedState within subworkflow.
+async def test_subworkflow_kwargs_accessible_via_state() -> None:
+    """Test that kwargs are accessible via State within subworkflow.
 
-    Verifies that WORKFLOW_RUN_KWARGS_KEY is populated in the subworkflow's SharedState
+    Verifies that WORKFLOW_RUN_KWARGS_KEY is populated in the subworkflow's State
     with kwargs from the parent workflow.
     """
     from agent_framework import Executor, WorkflowContext, handler
@@ -651,17 +654,17 @@ async def test_subworkflow_kwargs_accessible_via_shared_state() -> None:
 
     captured_kwargs_from_state: list[dict[str, Any]] = []
 
-    class _SharedStateReader(Executor):
-        """Executor that reads kwargs from SharedState for verification."""
+    class _StateReader(Executor):
+        """Executor that reads kwargs from State for verification."""
 
         @handler
         async def read_kwargs(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
-            kwargs_from_state = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
+            kwargs_from_state = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             captured_kwargs_from_state.append(kwargs_from_state or {})
             await ctx.send_message(msgs)
 
-    # Build inner workflow with SharedState reader
-    state_reader = _SharedStateReader(id="state_reader")
+    # Build inner workflow with State reader
+    state_reader = _StateReader(id="state_reader")
     inner_workflow = SequentialBuilder().participants([state_reader]).build()
 
     # Wrap as subworkflow
@@ -680,15 +683,15 @@ async def test_subworkflow_kwargs_accessible_via_shared_state() -> None:
             break
 
     # Verify the state reader was invoked
-    assert len(captured_kwargs_from_state) >= 1, "SharedState reader should have been invoked"
+    assert len(captured_kwargs_from_state) >= 1, "State reader should have been invoked"
 
     kwargs_in_subworkflow = captured_kwargs_from_state[0]
 
     assert kwargs_in_subworkflow.get("my_custom_kwarg") == "should_be_propagated", (
-        f"Expected 'my_custom_kwarg' in subworkflow SharedState, got: {kwargs_in_subworkflow}"
+        f"Expected 'my_custom_kwarg' in subworkflow  got: {kwargs_in_subworkflow}"
     )
     assert kwargs_in_subworkflow.get("another_kwarg") == 42, (
-        f"Expected 'another_kwarg'=42 in subworkflow SharedState, got: {kwargs_in_subworkflow}"
+        f"Expected 'another_kwarg'=42 in subworkflow  got: {kwargs_in_subworkflow}"
     )
 
 

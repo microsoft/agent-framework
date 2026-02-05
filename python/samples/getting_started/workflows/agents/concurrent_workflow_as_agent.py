@@ -20,8 +20,20 @@ Demonstrates:
 
 Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
-- Familiarity with Workflow events (AgentRunEvent, WorkflowOutputEvent)
+- Familiarity with Workflow events (WorkflowOutputEvent)
 """
+
+
+def clear_and_redraw(buffers: dict[str, str], agent_order: list[str]) -> None:
+    """Clear terminal and redraw all agent outputs grouped together."""
+    # ANSI escape: clear screen and move cursor to top-left
+    print("\033[2J\033[H", end="")
+    print("===== Concurrent Agent Streaming (Live) =====\n")
+    for name in agent_order:
+        print(f"--- {name} ---")
+        print(buffers.get(name, ""))
+        print()
+    print("", end="", flush=True)
 
 
 async def main() -> None:
@@ -58,68 +70,13 @@ async def main() -> None:
     # 3) Expose the concurrent workflow as an agent for easy reuse
     agent = workflow.as_agent(name="ConcurrentWorkflowAgent")
     prompt = "We are launching a new budget-friendly electric bike for urban commuters."
+
     agent_response = await agent.run(prompt)
-
-    if agent_response.messages:
-        print("\n===== Aggregated Messages =====")
-        for i, msg in enumerate(agent_response.messages, start=1):
-            role = getattr(msg.role, "value", msg.role)
-            name = msg.author_name if msg.author_name else role
-            print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")
-
-    """
-    Sample Output:
-
-    ===== Aggregated Messages =====
-    ------------------------------------------------------------
-
-    01 [user]:
-    We are launching a new budget-friendly electric bike for urban commuters.
-    ------------------------------------------------------------
-
-    02 [researcher]:
-    **Insights:**
-
-    - **Target Demographic:** Urban commuters seeking affordable, eco-friendly transport;
-        likely to include students, young professionals, and price-sensitive urban residents.
-    - **Market Trends:** E-bike sales are growing globally, with increasing urbanization,
-        higher fuel costs, and sustainability concerns driving adoption.
-    - **Competitive Landscape:** Key competitors include brands like Rad Power Bikes, Aventon,
-        Lectric, and domestic budget-focused manufacturers in North America, Europe, and Asia.
-    - **Feature Expectations:** Customers expect reliability, ease-of-use, theft protection,
-        lightweight design, sufficient battery range for daily city commutes (typically 25-40 miles),
-        and low-maintenance components.
-
-    **Opportunities:**
-
-    - **First-time Buyers:** Capture newcomers to e-biking by emphasizing affordability, ease of
-        operation, and cost savings vs. public transit/car ownership.
-    ...
-    ------------------------------------------------------------
-
-    03 [marketer]:
-    **Value Proposition:**
-    "Empowering your city commute: Our new electric bike combines affordability, reliability, and
-        sustainable design—helping you conquer urban journeys without breaking the bank."
-
-    **Target Messaging:**
-
-    *For Young Professionals:*
-    ...
-    ------------------------------------------------------------
-
-    04 [legal]:
-    **Constraints, Disclaimers, & Policy Concerns for Launching a Budget-Friendly Electric Bike for Urban Commuters:**
-
-    **1. Regulatory Compliance**
-    - Verify that the electric bike meets all applicable federal, state, and local regulations
-        regarding e-bike classification, speed limits, power output, and safety features.
-    - Ensure necessary certifications (e.g., UL certification for batteries, CE markings if sold internationally) are obtained.
-
-    **2. Product Safety**
-    - Include consumer safety warnings regarding use, battery handling, charging protocols, and age restrictions.
-    ...
-    """  # noqa: E501
+    print("===== Final Aggregated Response =====\n")
+    for message in agent_response.messages:
+        # The agent_response contains messages from all participants concatenated
+        # into a single message.
+        print(f"{message.author_name}: {message.text}\n")
 
 
 if __name__ == "__main__":

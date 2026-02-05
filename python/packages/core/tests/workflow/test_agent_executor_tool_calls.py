@@ -2,7 +2,7 @@
 
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from typing import Any
 
 from typing_extensions import Never
@@ -12,7 +12,6 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatAgent,
@@ -21,7 +20,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowOutputEvent,
@@ -39,17 +37,17 @@ class _ToolCallingAgent(BaseAgent):
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming run - not used in this test."""
-        return AgentResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
+        return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
 
     async def run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -58,7 +56,7 @@ class _ToolCallingAgent(BaseAgent):
         # First update: some text
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="Let me search for that...")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Second update: tool call (no text!)
@@ -70,7 +68,7 @@ class _ToolCallingAgent(BaseAgent):
                     arguments={"query": "weather"},
                 )
             ],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
         # Third update: tool result (no text!)
@@ -81,13 +79,13 @@ class _ToolCallingAgent(BaseAgent):
                     result={"temperature": 72, "condition": "sunny"},
                 )
             ],
-            role=Role.TOOL,
+            role="tool",
         )
 
         # Fourth update: final text response
         yield AgentResponseUpdate(
             contents=[Content.from_text(text="The weather is sunny, 72°F.")],
-            role=Role.ASSISTANT,
+            role="assistant",
         )
 
 
@@ -100,9 +98,9 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
 
     # Act: run in streaming mode
-    events: list[AgentRunUpdateEvent] = []
+    events: list[WorkflowOutputEvent] = []
     async for event in workflow.run_stream("What's the weather?"):
-        if isinstance(event, AgentRunUpdateEvent):
+        if isinstance(event, WorkflowOutputEvent):
             events.append(event)
 
     # Assert: we should receive 4 events (text, function call, function result, text)
@@ -149,7 +147,7 @@ class MockChatClient:
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         **kwargs: Any,
     ) -> ChatResponse:
         if self._iteration == 0:
@@ -179,14 +177,14 @@ class MockChatClient:
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage(role="assistant", text="Tool executed successfully."))
+            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         if self._iteration == 0:
@@ -212,7 +210,7 @@ class MockChatClient:
                     role="assistant",
                 )
         else:
-            yield ChatResponseUpdate(text=Content.from_text(text="Tool executed "), role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1
@@ -232,7 +230,13 @@ async def test_agent_executor_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(agent)
+        .add_edge(agent, test_executor)
+        .with_output_from([test_executor])
+        .build()
+    )
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")
@@ -301,7 +305,13 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = (
+        WorkflowBuilder()
+        .set_start_executor(agent)
+        .add_edge(agent, test_executor)
+        .with_output_from([test_executor])
+        .build()
+    )
 
     # Act
     events = await workflow.run("Invoke tool requiring approval")
