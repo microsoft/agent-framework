@@ -82,19 +82,20 @@ class TestMem0ProviderInitialization:
         )
         assert provider.scope_to_per_operation_thread_id is True
 
-    @patch("agent_framework_mem0._provider.AsyncMemoryClient")
-    def test_init_creates_default_client_when_none_provided(self, mock_memory_client_class: AsyncMock) -> None:
+    def test_init_creates_default_client_when_none_provided(self) -> None:
         """Test that a default client is created when none is provided."""
         from mem0 import AsyncMemoryClient
 
+        import agent_framework_mem0._provider as provider_module
+
         mock_client = AsyncMock(spec=AsyncMemoryClient)
-        mock_memory_client_class.return_value = mock_client
 
-        provider = Mem0Provider(user_id="user123", api_key="test_api_key")
+        with patch.object(provider_module, "AsyncMemoryClient", return_value=mock_client) as mock_memory_client_class:
+            provider = Mem0Provider(user_id="user123", api_key="test_api_key")
 
-        mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
-        assert provider.mem0_client == mock_client
-        assert provider._should_close_client is True
+            mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
+            assert provider.mem0_client == mock_client
+            assert provider._should_close_client is True
 
     def test_init_with_provided_client_should_not_close(self, mock_mem0_client: AsyncMock) -> None:
         """Test that provided client should not be closed by provider."""
@@ -115,13 +116,15 @@ class TestMem0ProviderAsyncContextManager:
         """Test that async context manager closes client when it should."""
         from mem0 import AsyncMemoryClient
 
+        import agent_framework_mem0._provider as provider_module
+
         mock_client = AsyncMock(spec=AsyncMemoryClient)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock()
         mock_client.async_client = AsyncMock()
         mock_client.async_client.aclose = AsyncMock()
 
-        with patch("agent_framework_mem0._provider.AsyncMemoryClient", return_value=mock_client):
+        with patch.object(provider_module, "AsyncMemoryClient", return_value=mock_client):
             provider = Mem0Provider(user_id="user123", api_key="test_key")
             assert provider._should_close_client is True
 
