@@ -27,13 +27,12 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    ConcurrentBuilder,
     Content,
-    SequentialBuilder,
     use_chat_middleware,
 )
 from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover

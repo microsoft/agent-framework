@@ -15,7 +15,7 @@ from agent_framework import (  # Core chat primitives to build LLM requests
     WorkflowContext,  # Per run context and event bus
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     handler,  # Decorator to mark an Executor method as invokable
-    )
+)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from typing_extensions import Never
@@ -30,7 +30,6 @@ Purpose:
 Show how to construct a parallel branch pattern in workflows. Demonstrate:
 - Fan out by targeting multiple AgentExecutor nodes from one dispatcher.
 - Fan in by collecting a list of AgentExecutorResponse objects and reducing them to a single result.
-- Simple tracing using AgentRunEvent to observe execution order and progress.
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.

@@ -7,8 +7,6 @@ from typing import Annotated, Never
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
     Content,
     Executor,
     WorkflowBuilder,
@@ -52,7 +50,10 @@ Prerequisites:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# See:
+# samples/getting_started/tools/function_tool_with_approval.py
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_current_date() -> str:
     """Get the current date in YYYY-MM-DD format."""
@@ -211,10 +212,10 @@ async def conclude_workflow(
     await ctx.yield_output(email_response.agent_response.text)
 
 
-def create_email_writer_agent() -> ChatAgent:
-    """Create the Email Writer agent with tools that require approval."""
-    return OpenAIChatClient().as_agent(
-        name="Email Writer",
+async def main() -> None:
+    # Create agent
+    email_writer_agent = OpenAIChatClient().as_agent(
+        name="EmailWriter",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests
         tools=[
@@ -226,20 +227,16 @@ def create_email_writer_agent() -> ChatAgent:
         ],
     )
 
+    # Create executor
+    email_processor = EmailPreprocessor(special_email_addresses={"mike@contoso.com"})
 
-async def main() -> None:
     # Build the workflow
     workflow = (
         WorkflowBuilder()
-        .register_agent(create_email_writer_agent, name="email_writer")
-        .register_executor(
-            lambda: EmailPreprocessor(special_email_addresses={"mike@contoso.com"}),
-            name="email_preprocessor",
-        )
-        .register_executor(lambda: conclude_workflow, name="conclude_workflow")
-        .set_start_executor("email_preprocessor")
-        .add_edge("email_preprocessor", "email_writer")
-        .add_edge("email_writer", "conclude_workflow")
+        .set_start_executor(email_processor)
+        .add_edge(email_processor, email_writer_agent)
+        .add_edge(email_writer_agent, conclude_workflow)
+        .with_output_from([conclude_workflow])
         .build()
     )
 
@@ -250,46 +247,40 @@ async def main() -> None:
         body="Please provide your team's status update on the project since last week.",
     )
 
-    responses: dict[str, Content] = {}
-    output: list[ChatMessage] | None = None
-    while True:
-        if responses:
-            events = await workflow.send_responses(responses)
-            responses.clear()
-        else:
-            events = await workflow.run(incoming_email)
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    events = await workflow.run(incoming_email)
+    request_info_events = events.get_request_info_events()
 
-        request_info_events = events.get_request_info_events()
+    # Run until there are no more approval requests
+    while request_info_events:
+        responses: dict[str, Content] = {}
         for request_info_event in request_info_events:
-            # We should only expect function_approval_request Content in this sample
-            if not isinstance(request_info_event.data, Content) or request_info_event.data.type != "function_approval_request":
-                raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
+            # We should only expect FunctionApprovalRequestContent in this sample
+            data = request_info_event.data
+            if not isinstance(data, Content) or data.type != "function_approval_request":
+                raise ValueError(f"Unexpected request info content type: {type(data)}")
+
+            # To make the type checker happy, we make sure function_call is not None
+            if data.function_call is None:
+                raise ValueError("Function call information is missing in the approval request.")
 
             # Pretty print the function call details
-            arguments = json.dumps(request_info_event.data.function_call.parse_arguments(), indent=2)
-            print(
-                f"Received approval request for function: {request_info_event.data.function_call.name} "
-                f"with args:\n{arguments}"
-            )
+            arguments = json.dumps(data.function_call.parse_arguments(), indent=2)
+            print(f"Received approval request for function: {data.function_call.name} with args:\n{arguments}")
 
             # For demo purposes, we automatically approve the request
             # The expected response type of the request is `function_approval_response Content`,
             # which can be created via `to_function_approval_response` method on the request content
             print("Performing automatic approval for demo purposes...")
-            responses[request_info_event.request_id] = request_info_event.data.to_function_approval_response(approved=True)
+            responses[request_info_event.request_id] = data.to_function_approval_response(approved=True)
 
-        # Once we get an output event, we can conclude the workflow
-        # Outputs can only be produced by the conclude_workflow_executor in this sample
-        if outputs := events.get_outputs():
-            # We expect only one output from the conclude_workflow_executor
-            output = outputs[0]
-            break
+        events = await workflow.send_responses(responses)
+        request_info_events = events.get_request_info_events()
 
-    if not output:
-        raise RuntimeError("Workflow did not produce any output event.")
-
+    # The output should only come from conclude_workflow executor and it's a single string
     print("Final email response conversation:")
-    print(output)
+    print(events.get_outputs()[0])
 
     """
     Sample Output:

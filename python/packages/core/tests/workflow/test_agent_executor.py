@@ -12,13 +12,13 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStore,
     Content,
-    SequentialBuilder,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework.orchestrations import SequentialBuilder
 
 
 class _CountingAgent(BaseAgent):
@@ -93,8 +93,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     )
 
     # Verify checkpoint contains executor state with both cache and thread
-    assert "_executor_state" in restore_checkpoint.shared_state
-    executor_states = restore_checkpoint.shared_state["_executor_state"]
+    assert "_executor_state" in restore_checkpoint.state
+    executor_states = restore_checkpoint.state["_executor_state"]
     assert isinstance(executor_states, dict)
     assert executor.id in executor_states
 

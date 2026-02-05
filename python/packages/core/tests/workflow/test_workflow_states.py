@@ -19,7 +19,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._state import State
 
 
 class FailingExecutor(Executor):
@@ -62,12 +62,12 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
 async def test_executor_failed_event_emitted_on_direct_execute():
     failing = FailingExecutor(id="f")
     ctx = InProcRunnerContext()
-    shared_state = SharedState()
+    state = State()
     with pytest.raises(RuntimeError, match="boom"):
         await failing.execute(
             0,
             ["START"],
-            shared_state,
+            state,
             ctx,
         )
     drained = await ctx.drain_events()

@@ -1,26 +1,26 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import cast
 
-from agent_framework import AgentRunEvent, WorkflowBuilder
+from agent_framework import AgentResponse, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
 Step 2: Agents in a Workflow non-streaming
 
-This sample uses two custom executors. A Writer agent creates or edits content,
-then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
+This sample creates two agents: a Writer agent creates or edits content, and a Reviewer agent which
+evaluates and provides feedback.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate how agents
-automatically yield outputs when they complete, removing the need for explicit completion events.
-The workflow completes when it becomes idle.
+Show how to create agents from AzureOpenAIChatClient and use them directly in a workflow. Demonstrate
+how agents can be used in a workflow.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
-- Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming or non streaming runs.
+- Basic familiarity with WorkflowBuilder, edges, events, and streaming or non-streaming runs.
 """
 
 
@@ -51,34 +51,26 @@ async def main():
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the terminal event.
     events = await workflow.run("Create a slogan for a new electric SUV that is affordable and fun to drive.")
-    # Print agent run events and final outputs
-    for event in events:
-        if isinstance(event, AgentRunEvent):
-            print(f"{event.executor_id}: {event.data}")
 
-    print(f"{'=' * 60}\nWorkflow Outputs: {events.get_outputs()}")
+    outputs = events.get_outputs()
+    # The outputs of the workflow are whatever the agents produce. So the outputs are expected to be a list
+    # of `AgentResponse` from the agents in the workflow.
+    outputs = cast(list[AgentResponse], outputs)
+    for output in outputs:
+        # TODO: author_name should be available in AgentResponse
+        print(f"{output.messages[0].author_name}: {output.text}\n")
+
     # Summarize the final run state (e.g., COMPLETED)
     print("Final state:", events.get_final_state())
 
     """
-    Sample Output:
+    writer: "Charge Ahead: Affordable Adventure Awaits!"
 
-    writer: "Charge Up Your Adventure—Affordable Fun, Electrified!"
-    reviewer: Slogan: "Plug Into Fun—Affordable Adventure, Electrified."
+    reviewer: - Consider emphasizing both affordability and fun in a more dynamic way. 
+    - Try using a catchy phrase that includes a play on words, like “Electrify Your Drive: Fun Meets Affordability!”
+    - Ensure the slogan is succinct while capturing the essence of the car's unique selling proposition.
 
-    **Feedback:**
-    - Clear focus on affordability and enjoyment.
-    - "Plug into fun" connects emotionally and highlights electric nature.
-    - Consider specifying "SUV" for clarity in some uses.
-    - Strong, upbeat tone suitable for marketing.
-    ============================================================
-    Workflow Outputs: ['Slogan: "Plug Into Fun—Affordable Adventure, Electrified."
-
-    **Feedback:**
-    - Clear focus on affordability and enjoyment.
-    - "Plug into fun" connects emotionally and highlights electric nature.
-    - Consider specifying "SUV" for clarity in some uses.
-    - Strong, upbeat tone suitable for marketing.']
+    Final state: WorkflowRunState.IDLE
     """
 
 

@@ -27,7 +27,7 @@ from ._runner_context import (
     Message,
     RunnerContext,
 )
-from ._shared_state import SharedState
+from ._state import State
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +39,17 @@ class Runner:
         self,
         edge_groups: Sequence[EdgeGroup],
         executors: dict[str, Executor],
-        shared_state: SharedState,
+        state: State,
         ctx: RunnerContext,
         max_iterations: int = 100,
         workflow_id: str | None = None,
     ) -> None:
-        """Initialize the runner with edges, shared state, and context.
+        """Initialize the runner with edges, state, and context.
 
         Args:
             edge_groups: The edge groups of the workflow.
             executors: Map of executor IDs to executor instances.
-            shared_state: The shared state for the workflow.
+            state: The state for the workflow.
             ctx: The runner context for the workflow.
             max_iterations: The maximum number of iterations to run.
             workflow_id: The workflow ID for checkpointing.
@@ -60,7 +60,7 @@ class Runner:
         self._ctx = ctx
         self._iteration = 0
         self._max_iterations = max_iterations
-        self._shared_state = shared_state
+        self._state = state
         self._workflow_id = workflow_id
         self._running = False
         self._resumed_from_checkpoint = False  # Track whether we resumed
@@ -141,6 +141,9 @@ class Runner:
 
                 logger.info(f"Completed superstep {self._iteration}")
 
+                # Commit pending state changes at superstep boundary
+                self._state.commit()
+
                 # Create checkpoint after each superstep iteration
                 await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
 
@@ -164,7 +167,7 @@ class Runner:
 
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: Message) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
-                return await edge_runner.send_message(message, self._shared_state, self._ctx)
+                return await edge_runner.send_message(message, self._state, self._ctx)
 
             def _normalize_message_payload(message: Message) -> None:
                 data = message.data
@@ -212,7 +215,7 @@ class Runner:
             if self.graph_signature_hash:
                 metadata["graph_signature"] = self.graph_signature_hash
             checkpoint_id = await self._ctx.create_checkpoint(
-                self._shared_state,
+                self._state,
                 self._iteration,
                 metadata=metadata,
             )
@@ -271,9 +274,9 @@ class Runner:
                 )
 
             self._workflow_id = checkpoint.workflow_id
-            # Restore shared state
-            await self._shared_state.import_state(decode_checkpoint_value(checkpoint.shared_state))
-            # Restore executor states using the restored shared state
+            # Restore state
+            self._state.import_state(decode_checkpoint_value(checkpoint.state))
+            # Restore executor states using the restored state
             await self._restore_executor_states()
             # Apply the checkpoint to the context
             await self._ctx.apply_checkpoint(checkpoint)
@@ -346,11 +349,11 @@ class Runner:
         This method will try the backward compatibility behavior first; if that does not restore state,
         it falls back to the updated behavior.
         """
-        has_executor_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
+        has_executor_states = self._state.has(EXECUTOR_STATE_KEY)
         if not has_executor_states:
             return
 
-        executor_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
+        executor_states = self._state.get(EXECUTOR_STATE_KEY)
         if not isinstance(executor_states, dict):
             raise WorkflowCheckpointException("Executor states in shared state is not a dictionary. Unable to restore.")
 
@@ -416,19 +419,15 @@ class Runner:
         self._iteration = iteration
 
     async def _set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
-        """Store executor state in shared state under a reserved key.
+        """Store executor state in state under a reserved key.
 
         Executors call this with a JSON-serializable dict capturing the minimal
         state needed to resume. It replaces any previously stored state.
         """
-        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
-        if has_existing_states:
-            existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
-        else:
-            existing_states = {}
+        existing_states = self._state.get(EXECUTOR_STATE_KEY, {})
 
         if not isinstance(existing_states, dict):
-            raise WorkflowCheckpointException("Existing executor states in shared state is not a dictionary.")
+            raise WorkflowCheckpointException("Existing executor states in state is not a dictionary.")
 
         existing_states[executor_id] = state
-        await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
+        self._state.set(EXECUTOR_STATE_KEY, existing_states)

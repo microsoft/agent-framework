@@ -81,9 +81,9 @@ class BriefPreparer(Executor):
         normalized = " ".join(brief.split()).strip()
         if not normalized.endswith("."):
             normalized += "."
-        # Persist the cleaned brief in shared state so downstream executors and
+        # Persist the cleaned brief in workflow state so downstream executors and
         # future checkpoints can recover the original intent.
-        await ctx.set_shared_state("brief", normalized)
+        ctx.set_state("brief", normalized)
         prompt = (
             "You are drafting product release notes. Summarise the brief below in two sentences. "
             "Keep it positive and end with a call to action.\n\n"

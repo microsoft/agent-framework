@@ -10,7 +10,7 @@ from agent_framework import InMemoryCheckpointStorage, InProcRunnerContext
 from agent_framework._workflows._checkpoint_encoding import DATACLASS_MARKER, encode_checkpoint_value
 from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
 from agent_framework._workflows._events import RequestInfoEvent
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._state import State
 
 
 @dataclass
@@ -46,7 +46,7 @@ async def test_rehydrate_request_info_event() -> None:
     runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
     await runner_context.add_request_info_event(request_info_event)
 
-    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     assert checkpoint is not None
@@ -79,7 +79,7 @@ async def test_rehydrate_fails_when_request_type_missing() -> None:
     runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
     await runner_context.add_request_info_event(request_info_event)
 
-    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     assert checkpoint is not None
@@ -107,7 +107,7 @@ async def test_rehydrate_fails_when_request_type_mismatch() -> None:
     runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
     await runner_context.add_request_info_event(request_info_event)
 
-    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     assert checkpoint is not None
@@ -137,7 +137,7 @@ async def test_pending_requests_in_summary() -> None:
     runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
     await runner_context.add_request_info_event(request_info_event)
 
-    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     assert checkpoint is not None
@@ -175,7 +175,7 @@ async def test_request_info_event_serializes_non_json_payloads() -> None:
     await runner_context.add_request_info_event(req_1)
     await runner_context.add_request_info_event(req_2)
 
-    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     # Should be JSON serializable despite datetime/slots

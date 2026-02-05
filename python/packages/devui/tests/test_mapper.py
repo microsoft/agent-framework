@@ -437,20 +437,20 @@ async def test_workflow_status_event(mapper: MessageMapper, test_request: AgentF
 
 
 # =============================================================================
-# Magentic Event Tests - Testing REAL AgentRunUpdateEvent with additional_properties
+# Magentic Event Tests - Testing WorkflowOutputEvent with additional_properties
 # =============================================================================
 
 
 async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
-    """Test that AgentRunUpdateEvent with magentic_event_type='agent_delta' is handled correctly.
+    """Test that WorkflowOutputEvent with magentic_event_type='agent_delta' is handled correctly.
 
     This tests the ACTUAL event format Magentic emits - not a fake MagenticAgentDeltaEvent class.
-    Magentic uses AgentRunUpdateEvent with additional_properties containing magentic_event_type.
+    Magentic uses WorkflowOutputEvent wrapping AgentResponseUpdate with additional_properties.
     """
     from agent_framework._types import AgentResponseUpdate
-    from agent_framework._workflows._events import AgentRunUpdateEvent
+    from agent_framework._workflows._events import WorkflowOutputEvent
 
     # Create the REAL event format that Magentic emits
     update = AgentResponseUpdate(
@@ -462,11 +462,11 @@ async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
             "agent_id": "writer_agent",
         },
     )
-    event = AgentRunUpdateEvent(executor_id="magentic_executor", data=update)
+    event = WorkflowOutputEvent(executor_id="magentic_executor", data=update)
 
     events = await mapper.convert_event(event, test_request)
 
-    # Should be treated as a regular AgentRunUpdateEvent with text content
+    # Should be treated as a regular WorkflowOutputEvent with text content
     # The mapper should emit text delta events
     assert len(events) >= 1
     text_events = [e for e in events if getattr(e, "type", "") == "response.output_text.delta"]
@@ -475,13 +475,13 @@ async def test_magentic_agent_run_update_event_with_agent_delta_metadata(
 
 
 async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
-    """Test that AgentRunUpdateEvent with magentic_event_type='orchestrator_message' is handled.
+    """Test that WorkflowOutputEvent with magentic_event_type='orchestrator_message' is handled.
 
-    Magentic emits orchestrator planning/instruction messages using AgentRunUpdateEvent
-    with additional_properties containing magentic_event_type='orchestrator_message'.
+    Magentic emits orchestrator planning/instruction messages using WorkflowOutputEvent
+    wrapping AgentResponseUpdate with additional_properties.
     """
     from agent_framework._types import AgentResponseUpdate
-    from agent_framework._workflows._events import AgentRunUpdateEvent
+    from agent_framework._workflows._events import WorkflowOutputEvent
 
     # Create orchestrator message event (REAL format from Magentic)
     update = AgentResponseUpdate(
@@ -494,11 +494,11 @@ async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_r
             "orchestrator_id": "magentic_orchestrator",
         },
     )
-    event = AgentRunUpdateEvent(executor_id="magentic_orchestrator", data=update)
+    event = WorkflowOutputEvent(executor_id="magentic_orchestrator", data=update)
 
     events = await mapper.convert_event(event, test_request)
 
-    # Currently, mapper treats this as regular AgentRunUpdateEvent (no special handling)
+    # Currently, mapper treats this as regular WorkflowOutputEvent (no special handling)
     # This test documents the current behavior
     assert len(events) >= 1
     text_events = [e for e in events if getattr(e, "type", "") == "response.output_text.delta"]
@@ -509,15 +509,15 @@ async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_r
 async def test_magentic_events_use_same_event_class_as_other_workflows(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
-    """Verify Magentic uses the same AgentRunUpdateEvent class as other workflows.
+    """Verify Magentic uses the same WorkflowOutputEvent class as other workflows.
 
     This test documents that Magentic does NOT define separate event classes like
-    MagenticAgentDeltaEvent - it reuses AgentRunUpdateEvent with metadata in
+    MagenticAgentDeltaEvent - it reuses WorkflowOutputEvent with metadata in
     additional_properties. Any mapper code checking for 'MagenticAgentDeltaEvent'
     class names is dead code.
     """
     from agent_framework._types import AgentResponseUpdate
-    from agent_framework._workflows._events import AgentRunUpdateEvent
+    from agent_framework._workflows._events import WorkflowOutputEvent
 
     # Create events the way different workflows do it
     # 1. Regular workflow (no additional_properties)
@@ -525,7 +525,7 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
         contents=[Content.from_text(text="Regular workflow response")],
         role="assistant",
     )
-    regular_event = AgentRunUpdateEvent(executor_id="regular_executor", data=regular_update)
+    regular_event = WorkflowOutputEvent(executor_id="regular_executor", data=regular_update)
 
     # 2. Magentic workflow (with additional_properties)
     magentic_update = AgentResponseUpdate(
@@ -533,12 +533,12 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
         role="assistant",
         additional_properties={"magentic_event_type": "agent_delta"},
     )
-    magentic_event = AgentRunUpdateEvent(executor_id="magentic_executor", data=magentic_update)
+    magentic_event = WorkflowOutputEvent(executor_id="magentic_executor", data=magentic_update)
 
     # Both should be the SAME class
     assert type(regular_event) is type(magentic_event)
-    assert isinstance(regular_event, AgentRunUpdateEvent)
-    assert isinstance(magentic_event, AgentRunUpdateEvent)
+    assert isinstance(regular_event, WorkflowOutputEvent)
+    assert isinstance(magentic_event, WorkflowOutputEvent)
 
     # Both should be handled by the same isinstance check in mapper
     regular_events = await mapper.convert_event(regular_event, test_request)

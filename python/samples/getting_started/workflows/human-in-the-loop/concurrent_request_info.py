@@ -22,6 +22,7 @@ Prerequisites:
 """
 
 import asyncio
+from collections.abc import AsyncIterable
 from typing import Any
 
 from agent_framework import (
@@ -29,9 +30,8 @@ from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
     RequestInfoEvent,
+    WorkflowEvent,
     WorkflowOutputEvent,
-    WorkflowRunState,
-    WorkflowStatusEvent,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient
@@ -93,6 +93,57 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
     return response.messages[-1].text if response.messages else ""
 
 
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+
+    requests: dict[str, AgentExecutorResponse] = {}
+    async for event in stream:
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+            # Display agent output for review and potential modification
+            requests[event.request_id] = event.data
+
+        if isinstance(event, WorkflowOutputEvent):
+            # The output of the workflow comes from the aggregator and it's a single string
+            print("\n" + "=" * 60)
+            print("ANALYSIS COMPLETE")
+            print("=" * 60)
+            print("Final synthesized analysis:")
+            print(event.data)
+
+    # Process any requests for human feedback
+    responses: dict[str, AgentRequestInfoResponse] = {}
+    if requests:
+        for request_id, request in requests.items():
+            print("\n" + "-" * 40)
+            print("INPUT REQUESTED")
+            print(
+                f"Agent {request.executor_id} just responded with: '{request.agent_response.text}'. "
+                "Please provide your feedback."
+            )
+            print("-" * 40)
+            if request.full_conversation:
+                print("Conversation context:")
+                recent = (
+                    request.full_conversation[-2:] if len(request.full_conversation) > 2 else request.full_conversation
+                )
+                for msg in recent:
+                    name = msg.author_name or msg.role
+                    text = (msg.text or "")[:150]
+                    print(f"  [{name}]: {text}...")
+                print("-" * 40)
+
+            # Get human input to steer this agent's contribution
+            user_input = input("Your guidance for the analysts (or 'skip' to approve): ")  # noqa: ASYNC250
+            if user_input.lower() == "skip":
+                user_input = AgentRequestInfoResponse.approve()
+            else:
+                user_input = AgentRequestInfoResponse.from_strings([user_input])
+
+            responses[request_id] = user_input
+
+    return responses if responses else None
+
+
 async def main() -> None:
     global _chat_client
     _chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -135,70 +186,16 @@ async def main() -> None:
         .build()
     )
 
-    # Run the workflow with human-in-the-loop
-    pending_responses: dict[str, AgentRequestInfoResponse] | None = None
-    workflow_complete = False
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    stream = workflow.run_stream("Analyze the impact of large language models on software development.")
 
-    print("Starting multi-perspective analysis workflow...")
-    print("=" * 60)
-
-    while not workflow_complete:
-        # Run or continue the workflow
-        stream = (
-            workflow.send_responses_streaming(pending_responses)
-            if pending_responses
-            else workflow.run_stream("Analyze the impact of large language models on software development.")
-        )
-
-        pending_responses = None
-
-        # Process events
-        async for event in stream:
-            if isinstance(event, RequestInfoEvent):
-                if isinstance(event.data, AgentExecutorResponse):
-                    # Display agent output for review and potential modification
-                    print("\n" + "-" * 40)
-                    print("INPUT REQUESTED")
-                    print(
-                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
-                        "Please provide your feedback."
-                    )
-                    print("-" * 40)
-                    if event.data.full_conversation:
-                        print("Conversation context:")
-                        recent = (
-                            event.data.full_conversation[-2:]
-                            if len(event.data.full_conversation) > 2
-                            else event.data.full_conversation
-                        )
-                        for msg in recent:
-                            name = msg.author_name or msg.role
-                            text = (msg.text or "")[:150]
-                            print(f"  [{name}]: {text}...")
-                        print("-" * 40)
-
-                    # Get human input to steer this agent's contribution
-                    user_input = input("Your guidance for the analysts (or 'skip' to approve): ")  # noqa: ASYNC250
-                    if user_input.lower() == "skip":
-                        user_input = AgentRequestInfoResponse.approve()
-                    else:
-                        user_input = AgentRequestInfoResponse.from_strings([user_input])
-
-                    pending_responses = {event.request_id: user_input}
-                    print("(Resuming workflow...)")
-
-            elif isinstance(event, WorkflowOutputEvent):
-                print("\n" + "=" * 60)
-                print("WORKFLOW COMPLETE")
-                print("=" * 60)
-                print("Aggregated output:")
-                # Custom aggregator returns a string
-                if event.data:
-                    print(event.data)
-                workflow_complete = True
-
-            elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
-                workflow_complete = True
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.send_responses_streaming(pending_responses)
+        pending_responses = await process_event_stream(stream)
 
 
 if __name__ == "__main__":

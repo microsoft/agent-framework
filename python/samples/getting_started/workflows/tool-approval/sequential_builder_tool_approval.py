@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Annotated
+from collections.abc import AsyncIterable
+from typing import Annotated, cast
 
 from agent_framework import (
     ChatMessage,
     Content,
     RequestInfoEvent,
     SequentialBuilder,
+    WorkflowEvent,
     WorkflowOutputEvent,
     tool,
 )
@@ -65,6 +67,36 @@ def get_database_schema() -> str:
     """
 
 
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, Content] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+    requests: dict[str, Content] = {}
+    async for event in stream:
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, Content):
+            # We are only expecting tool approval requests in this sample
+            requests[event.request_id] = event.data
+        elif isinstance(event, WorkflowOutputEvent):
+            # The output of the workflow comes from the orchestrator and it's a list of messages
+            print("\n" + "=" * 60)
+            print("Workflow summary:")
+            outputs = cast(list[ChatMessage], event.data)
+            for msg in outputs:
+                speaker = msg.author_name or msg.role
+                print(f"[{speaker}]: {msg.text}")
+
+    responses: dict[str, Content] = {}
+    if requests:
+        for request_id, request in requests.items():
+            if request.type == "function_approval_request":
+                print("\n[APPROVAL REQUIRED]")
+                print(f"  Tool: {request.function_call.name}")  # type: ignore
+                print(f"  Arguments: {request.function_call.arguments}")  # type: ignore
+                print(f"Simulating human approval for: {request.function_call.name}")  # type: ignore
+                # Create approval response
+                responses[request_id] = request.to_function_approval_response(approved=True)
+
+    return responses if responses else None
+
+
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
     chat_client = OpenAIChatClient()
@@ -85,42 +117,16 @@ async def main() -> None:
     print("Starting sequential workflow with tool approval...")
     print("-" * 60)
 
-    # Phase 1: Run workflow and collect all events (stream ends at IDLE or IDLE_WITH_PENDING_REQUESTS)
-    request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(
-        "Check the schema and then update all orders with status 'pending' to 'processing'"
-    ):
-        if isinstance(event, RequestInfoEvent):
-            request_info_events.append(event)
-            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
-                print(f"\nApproval requested for tool: {event.data.function_call.name}")
-                print(f"  Arguments: {event.data.function_call.arguments}")
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    stream = workflow.run_stream("Check the schema and then update all orders with status 'pending' to 'processing'")
 
-    # 5. Handle approval requests
-    if request_info_events:
-        for request_event in request_info_events:
-            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
-                # In a real application, you would prompt the user here
-                print("\nSimulating human approval (auto-approving for demo)...")
-
-                # Create approval response
-                approval_response = request_event.data.to_function_approval_response(approved=True)
-
-                # Phase 2: Send approval and continue workflow
-                output: list[ChatMessage] | None = None
-                async for event in workflow.send_responses_streaming({request_event.request_id: approval_response}):
-                    if isinstance(event, WorkflowOutputEvent):
-                        output = event.data
-
-                if output:
-                    print("\n" + "-" * 60)
-                    print("Workflow completed. Final conversation:")
-                    for msg in output:
-                        role = msg.role if hasattr(msg.role, "value") else msg.role
-                        text = msg.text[:200] + "..." if len(msg.text) > 200 else msg.text
-                        print(f"  [{role}]: {text}")
-    else:
-        print("No approval requests were generated (schema check may have been sufficient).")
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.send_responses_streaming(pending_responses)
+        pending_responses = await process_event_stream(stream)
 
     """
     Sample Output:
