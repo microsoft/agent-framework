@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentRunContext, ChatMessage, MiddlewareTermination, Role
+from agent_framework import AgentResponse, AgentRunContext, ChatMessage, MiddlewareTermination
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
@@ -68,9 +68,7 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test middleware blocks prompt that violates policy."""
-        context = AgentRunContext(
-            agent=mock_agent, messages=[ChatMessage(role="user", text="Sensitive information")]
-        )
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role="user", text="Sensitive information")])
 
         with patch.object(middleware._processor, "process_messages", return_value=(True, "user-123")):
             next_called = False

@@ -16,7 +16,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ResponseStream,
-    Role,
 )
 from agent_framework._middleware import (
     AgentMiddleware,

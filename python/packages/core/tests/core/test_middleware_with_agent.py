@@ -23,7 +23,6 @@ from agent_framework import (
     MiddlewareException,
     MiddlewareTermination,
     MiddlewareType,
-    Role,
     agent_middleware,
     chat_middleware,
     function_middleware,
@@ -764,9 +763,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                     )
                 ]
             ),
-            ChatResponse(
-                messages=[ChatMessage(role="assistant", contents=[Content.from_text("Function completed")])]
-            ),
+            ChatResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text("Function completed")])]),
         ]
 
         # Create ChatAgent with function middleware
@@ -1755,9 +1752,7 @@ class TestChatAgentChatMiddleware:
             async def process(self, context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
                 execution_order.append("middleware_before")
                 # Set a custom response since we're terminating
-                context.result = ChatResponse(
-                    messages=[ChatMessage(role="assistant", text="Terminated by middleware")]
-                )
+                context.result = ChatResponse(messages=[ChatMessage(role="assistant", text="Terminated by middleware")])
                 raise MiddlewareTermination
                 # We call next() but since terminate=True, execution should stop
                 await next(context)

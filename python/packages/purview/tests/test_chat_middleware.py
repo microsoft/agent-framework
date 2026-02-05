@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatContext, ChatMessage, MiddlewareTermination, Role
+from agent_framework import ChatContext, ChatMessage, MiddlewareTermination
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings

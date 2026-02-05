@@ -4,6 +4,7 @@
 
 import json
 
+import pytest
 from agent_framework import ChatAgent, ChatResponseUpdate, Content
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
@@ -13,15 +14,14 @@ from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 
 
-
-import pytest
-
 @pytest.fixture
 def build_chat_client(streaming_chat_client_stub, stream_from_updates_fixture):
     """Create a typed chat client stub for endpoint tests."""
+
     def _build(response_text: str = "Test response"):
         updates = [ChatResponseUpdate(contents=[Content.from_text(text=response_text)])]
         return streaming_chat_client_stub(stream_from_updates_fixture(updates))
+
     return _build
 
 

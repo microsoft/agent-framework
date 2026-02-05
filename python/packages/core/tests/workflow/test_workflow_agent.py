@@ -199,7 +199,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to capture streaming events
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test input"):
+        async for update in agent.run("Test input", stream=True):
             updates.append(update)
 
         # Should have received at least one streaming update
@@ -230,7 +230,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to get request info event
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Start request"):
+        async for update in agent.run("Start request", stream=True):
             updates.append(update)
         # Should have received an approval request for the request info
         assert len(updates) > 0
@@ -368,7 +368,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("hello"):
+        async for update in agent.run("hello", stream=True):
             updates.append(update)
 
         # Should have received updates for both yield_output calls
@@ -451,7 +451,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("raw-test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         # Should have 3 updates
@@ -494,7 +494,7 @@ class TestWorkflowAgent:
 
         # Verify streaming returns the update with all 4 contents before coalescing
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         assert len(updates) == 3
@@ -563,7 +563,7 @@ class TestWorkflowAgent:
         thread = AgentThread(message_store=message_store)
 
         # Stream from the agent with the thread and a new message
-        async for _ in agent.run_stream("How are you?", thread=thread):
+        async for _ in agent.run("How are you?", stream=True, thread=thread):
             pass
 
         # Verify the executor received all messages (3 from history + 1 new)
@@ -603,7 +603,7 @@ class TestWorkflowAgent:
         checkpoint_storage = InMemoryCheckpointStorage()
 
         # Run with checkpoint storage enabled
-        async for _ in agent.run_stream("Test message", checkpoint_storage=checkpoint_storage):
+        async for _ in agent.run("Test message", stream=True, checkpoint_storage=checkpoint_storage):
             pass
 
         # Drain workflow events to get checkpoint
@@ -761,7 +761,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify at least one update was received
@@ -797,7 +797,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify author_name is preserved (not overwritten with executor_id)
@@ -815,7 +815,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Should have updates from both executors

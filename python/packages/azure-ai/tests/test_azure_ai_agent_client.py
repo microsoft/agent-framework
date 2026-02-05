@@ -22,7 +22,6 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework._serialization import SerializationMixin
@@ -533,16 +532,16 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     async def mock_streaming_response():
-        yield ChatResponseUpdate(role="assistant", text="Hello back")
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello back")])
 
     with (
         patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
-        patch("agent_framework.ChatResponse.from_chat_response_generator") as mock_from_generator,
+        patch("agent_framework.ChatResponse.from_update_generator") as mock_from_generator,
     ):
-        mock_response = ChatResponse(role="assistant", text="Hello back")
+        mock_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Hello back")])
         mock_from_generator.return_value = mock_response
 
-        result = await ChatResponse.from_chat_response_generator(mock_streaming_response())
+        result = await ChatResponse.from_update_generator(mock_streaming_response())
 
         assert result is mock_response
         mock_from_generator.assert_called_once()

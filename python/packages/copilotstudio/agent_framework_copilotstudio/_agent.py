@@ -13,7 +13,6 @@ from agent_framework import (
     Content,
     ContextProvider,
     ResponseStream,
-    Role,
     normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -313,7 +312,7 @@ class CopilotStudioAgent(BaseAgent):
                 )
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[None]:
-            return AgentResponse.from_agent_run_response_updates(updates)
+            return AgentResponse.from_updates(updates)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 

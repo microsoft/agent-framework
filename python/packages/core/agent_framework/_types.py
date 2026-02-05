@@ -6,20 +6,11 @@ import base64
 import json
 import re
 import sys
-from collections.abc import (
-    AsyncIterable,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Mapping,
-    MutableMapping,
-    MutableSequence,
-    Sequence,
-)
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -49,11 +40,16 @@ __all__ = [
     "ResponseStream",
     "Role",
     "RoleLiteral",
+    "TFinal",
+    "TOuterFinal",
+    "TOuterUpdate",
+    "TUpdate",
     "TextSpanRegion",
     "ToolMode",
     "UsageDetails",
     "add_usage_details",
     "detect_media_type_from_base64",
+    "map_chat_to_agent_update",
     "merge_chat_options",
     "normalize_messages",
     "normalize_tools",
@@ -70,19 +66,24 @@ logger = get_logger("agent_framework")
 # region Content Parsing Utilities
 
 
-def _parse_content_list(contents_data: Sequence[Content | Mapping[str, Any]]) -> list[Content]:
-    """Parse a list of content data dictionaries into appropriate Content objects.
+def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
+    """Parse a list of content data into appropriate Content objects.
 
     Args:
-        contents_data: List of content data (dicts or already constructed objects)
+        contents_data: List of content data (strings, dicts, or already constructed objects)
 
     Returns:
         List of Content objects with unknown types logged and ignored
     """
     contents: list[Content] = []
     for content_data in contents_data:
+        if content_data is None:
+            continue
         if isinstance(content_data, Content):
             contents.append(content_data)
+            continue
+        if isinstance(content_data, str):
+            contents.append(Content.from_text(text=content_data))
             continue
         try:
             contents.append(Content.from_dict(content_data))
@@ -1406,7 +1407,6 @@ def prepare_function_call_results(content: Content | Any | list[Content | Any]) 
 
 # region Chat Response constants
 
-
 RoleLiteral = Literal["system", "user", "assistant", "tool"]
 """Literal type for known role values. Accepts any string for extensibility."""
 
@@ -1477,32 +1477,32 @@ class ChatMessage(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessage, TextContent
+            from agent_framework import ChatMessage, Content
 
-            # Create a message with text
-            user_msg = ChatMessage(role="user", text="What's the weather?")
+            # Create a message with text content
+            user_msg = ChatMessage("user", ["What's the weather?"])
             print(user_msg.text)  # "What's the weather?"
 
-            # Create a message with role string
-            system_msg = ChatMessage(role="system", text="You are a helpful assistant.")
+            # Create a system message
+            system_msg = ChatMessage("system", ["You are a helpful assistant."])
 
-            # Create a message with contents
+            # Create a message with mixed content types
             assistant_msg = ChatMessage(
-                role="assistant",
-                contents=[Content.from_text(text="The weather is sunny!")],
+                "assistant",
+                ["The weather is sunny!", Content.from_image_uri("https://...")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
             # Serialization - to_dict and from_dict
             msg_dict = user_msg.to_dict()
-            # {'type': 'chat_message', 'role': {'type': 'role', 'value': 'user'},
+            # {'type': 'chat_message', 'role': 'user',
             #  'contents': [{'type': 'text', 'text': "What's the weather?"}], 'additional_properties': {}}
             restored_msg = ChatMessage.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather?"
 
             # Serialization - to_json and from_json
             msg_json = user_msg.to_json()
-            # '{"type": "chat_message", "role": {"type": "role", "value": "user"}, "contents": [...], ...}'
+            # '{"type": "chat_message", "role": "user", "contents": [...], ...}'
             restored_from_json = ChatMessage.from_json(msg_json)
             print(restored_from_json.role)  # "user"
 
@@ -1510,86 +1510,32 @@ class ChatMessage(SerializationMixin):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
 
-    @overload
     def __init__(
         self,
-        role: Role | Literal["system", "user", "assistant", "tool"],
-        *,
-        text: str,
-        author_name: str | None = None,
-        message_id: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatMessage with a role and text content.
-
-        Args:
-            role: The role of the author of the message.
-
-        Keyword Args:
-            text: The text content of the message.
-            author_name: Optional name of the author of the message.
-            message_id: Optional ID of the chat message.
-            additional_properties: Optional additional properties associated with the chat message.
-                Additional properties are used within Agent Framework, they are not sent to services.
-            raw_representation: Optional raw representation of the chat message.
-            **kwargs: Additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        role: Role | Literal["system", "user", "assistant", "tool"],
-        *,
-        contents: Sequence[Content | Mapping[str, Any]],
-        author_name: str | None = None,
-        message_id: str | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatMessage with a role and optional contents.
-
-        Args:
-            role: The role of the author of the message.
-
-        Keyword Args:
-            contents: Optional list of BaseContent items to include in the message.
-            author_name: Optional name of the author of the message.
-            message_id: Optional ID of the chat message.
-            additional_properties: Optional additional properties associated with the chat message.
-                Additional properties are used within Agent Framework, they are not sent to services.
-            raw_representation: Optional raw representation of the chat message.
-            **kwargs: Additional keyword arguments.
-        """
-
-    def __init__(
-        self,
-        role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any],
+        role: RoleLiteral | str,
+        contents: Sequence[Content | str | Mapping[str, Any]] | None = None,
         *,
         text: str | None = None,
-        contents: Sequence[Content | Mapping[str, Any]] | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize ChatMessage.
 
         Args:
-            role: The role of the author of the message (Role, string, or dict).
+            role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
+            contents: A sequence of content items. Can be Content objects, strings (auto-converted
+                to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
 
         Keyword Args:
-            text: Optional text content of the message.
-            contents: Optional list of BaseContent items or dicts to include in the message.
+            text: Deprecated. Text content of the message. Use contents instead.
+                This parameter is kept for backward compatibility with serialization.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
-            kwargs: will be combined with additional_properties if provided.
         """
         # Handle role conversion from legacy dict format
         if isinstance(role, dict) and "value" in role:
@@ -1598,6 +1544,7 @@ class ChatMessage(SerializationMixin):
         # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
+        # Handle text for backward compatibility (from serialization)
         if text is not None:
             parsed_contents.append(Content.from_text(text=text))
 
@@ -1606,7 +1553,6 @@ class ChatMessage(SerializationMixin):
         self.author_name = author_name
         self.message_id = message_id
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
         self.raw_representation = raw_representation
 
     @property
@@ -1620,13 +1566,17 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | ChatMessage | Sequence[str | ChatMessage] | None,
+    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
     system_instructions: str | Sequence[str] | None = None,
 ) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
     Args:
-        messages: The input messages in various supported formats.
+        messages: The input messages in various supported formats. Can be:
+            - A string (converted to a user message)
+            - A Content object (wrapped in a user ChatMessage)
+            - A ChatMessage object
+            - A sequence containing any mix of the above
         system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
@@ -1635,45 +1585,66 @@ def prepare_messages(
     if system_instructions is not None:
         if isinstance(system_instructions, str):
             system_instructions = [system_instructions]
-        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+        system_instruction_messages = [ChatMessage("system", [instr]) for instr in system_instructions]
     else:
         system_instruction_messages = []
 
-    if messages is None:
-        return system_instruction_messages
     if isinstance(messages, str):
-        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
+        return [*system_instruction_messages, ChatMessage("user", [messages])]
+    if isinstance(messages, Content):
+        return [*system_instruction_messages, ChatMessage("user", [messages])]
     if isinstance(messages, ChatMessage):
         return [*system_instruction_messages, messages]
 
     return_messages: list[ChatMessage] = system_instruction_messages
     for msg in messages:
-        if isinstance(msg, str):
-            msg = ChatMessage(role="user", text=msg)
+        if isinstance(msg, (str, Content)):
+            msg = ChatMessage("user", [msg])
         return_messages.append(msg)
     return return_messages
 
 
 def normalize_messages(
-    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
 ) -> list[ChatMessage]:
-    """Normalize message inputs to a list of ChatMessage objects."""
+    """Normalize message inputs to a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats. Can be:
+            - None (returns empty list)
+            - A string (converted to a user message)
+            - A Content object (wrapped in a user ChatMessage)
+            - A ChatMessage object
+            - A sequence containing any mix of the above
+
+    Returns:
+        A list of ChatMessage objects.
+    """
     if messages is None:
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
+        return [ChatMessage("user", [messages])]
+
+    if isinstance(messages, Content):
+        return [ChatMessage("user", [messages])]
 
     if isinstance(messages, ChatMessage):
         return [messages]
 
-    return [ChatMessage(role="user", text=msg) if isinstance(msg, str) else msg for msg in messages]
+    result: list[ChatMessage] = []
+    for msg in messages:
+        if isinstance(msg, (str, Content)):
+            result.append(ChatMessage("user", [msg]))
+        else:
+            result.append(msg)
+    return result
 
 
 def prepend_instructions_to_messages(
     messages: list[ChatMessage],
     instructions: str | Sequence[str] | None,
-    role: Role | Literal["system", "user", "assistant"] = "system",
+    role: RoleLiteral | str = "system",
 ) -> list[ChatMessage]:
     """Prepend instructions to a list of messages with a specified role.
 
@@ -1694,7 +1665,7 @@ def prepend_instructions_to_messages(
 
             from agent_framework import prepend_instructions_to_messages, ChatMessage
 
-            messages = [ChatMessage(role="user", text="Hello")]
+            messages = [ChatMessage("user", ["Hello"])]
             instructions = "You are a helpful assistant"
 
             # Prepend as system message (default)
@@ -1709,7 +1680,7 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [ChatMessage(role=role, text=instr) for instr in instructions]
+    instruction_messages = [ChatMessage(role, [instr]) for instr in instructions]
     return [*instruction_messages, *messages]
 
 
@@ -1731,7 +1702,7 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage(role="assistant", contents=[])
+        message = ChatMessage("assistant", [])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -1839,31 +1810,32 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
 
+    Note:
+        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        not on the `ChatResponse` itself. Use `response.messages[0].author_name` to access
+        the author name of individual messages.
+
     Examples:
         .. code-block:: python
 
             from agent_framework import ChatResponse, ChatMessage
 
-            # Create a simple text response
-            response = ChatResponse(text="Hello, how can I help you?")
-            print(response.text)  # "Hello, how can I help you?"
-
             # Create a response with messages
-            msg = ChatMessage(role="assistant", text="The weather is sunny.")
+            msg = ChatMessage("assistant", ["The weather is sunny."])
             response = ChatResponse(
                 messages=[msg],
                 finish_reason="stop",
                 model_id="gpt-4",
             )
+            print(response.text)  # "The weather is sunny."
 
             # Combine streaming updates
             updates = [...]  # List of ChatResponseUpdate objects
-            response = ChatResponse.from_chat_response_updates(updates)
+            response = ChatResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4',
-            #  'finish_reason': {'type': 'finish_reason', 'value': 'stop'}}
+            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4', 'finish_reason': 'stop'}
             restored_response = ChatResponse.from_dict(response_dict)
             print(restored_response.model_id)  # "gpt-4"
 
@@ -1876,154 +1848,69 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
 
-    @overload
     def __init__(
         self,
         *,
-        messages: ChatMessage | MutableSequence[ChatMessage],
+        messages: ChatMessage | Sequence[ChatMessage] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
         Keyword Args:
-            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
+            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
             model_id: Optional model ID used in the creation of the chat response.
             created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
-            usage_details: Optional usage details for the chat response.
-            value: Optional value of the structured output.
-            response_format: Optional response format for the chat response.
-            messages: List of ChatMessage objects to include in the response.
-            additional_properties: Optional additional properties associated with the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-        """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        text: Content | str,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | None = None,
-        usage_details: UsageDetails | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatResponse with the provided parameters.
-
-        Keyword Args:
-            text: The text content to include in the response. If provided, it will be added as a ChatMessage.
-            response_id: Optional ID of the chat response.
-            conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
+            finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-
         """
-
-    def __init__(
-        self,
-        *,
-        messages: ChatMessage | MutableSequence[ChatMessage] | list[dict[str, Any]] | None = None,
-        text: Content | str | None = None,
-        response_id: str | None = None,
-        conversation_id: str | None = None,
-        model_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | dict[str, Any] | None = None,
-        usage_details: UsageDetails | dict[str, Any] | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initializes a ChatResponse with the provided parameters.
-
-        Keyword Args:
-            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
-            text: The text content to include in the response. If provided, it will be added as a ChatMessage.
-            response_id: Optional ID of the chat response.
-            conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
-            finish_reason: Optional reason for the chat response.
-            usage_details: Optional usage details for the chat response.
-            value: Optional value of the structured output.
-            response_format: Optional response format for the chat response.
-            additional_properties: Optional additional properties associated with the chat response.
-            raw_representation: Optional raw representation of the chat response from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
-        """
-        # Handle messages conversion
         if messages is None:
-            messages = []
-        elif not isinstance(messages, MutableSequence):
-            messages = [messages]
+            self.messages: list[ChatMessage] = []
+        elif isinstance(messages, ChatMessage):
+            self.messages = [messages]
         else:
-            # Convert any dicts in messages list to ChatMessage objects
-            converted_messages: list[ChatMessage] = []
+            # Handle both ChatMessage objects and dicts (for from_dict support)
+            processed_messages: list[ChatMessage] = []
             for msg in messages:
-                if isinstance(msg, dict):
-                    converted_messages.append(ChatMessage.from_dict(msg))
+                if isinstance(msg, ChatMessage):
+                    processed_messages.append(msg)
+                elif isinstance(msg, dict):
+                    processed_messages.append(ChatMessage.from_dict(msg))
                 else:
-                    converted_messages.append(msg)
-            messages = converted_messages
-
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            messages.append(ChatMessage(role="assistant", contents=[text]))
-
-        # Handle finish_reason conversion from legacy dict format
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
-
-        # Handle usage_details - UsageDetails is now a TypedDict, so dict is already the right type
-        # No conversion needed
-
-        self.messages = list(messages)
+                    processed_messages.append(msg)
+            self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
+        # Handle legacy dict format for finish_reason
+        if isinstance(finish_reason, dict) and "value" in finish_reason:
+            finish_reason = finish_reason["value"]
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @overload
     @classmethod
-    def from_chat_response_updates(
+    def from_updates(
         cls: type[ChatResponse[Any]],
         updates: Sequence[ChatResponseUpdate],
         *,
@@ -2032,7 +1919,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    def from_chat_response_updates(
+    def from_updates(
         cls: type[ChatResponse[Any]],
         updates: Sequence[ChatResponseUpdate],
         *,
@@ -2040,7 +1927,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     ) -> ChatResponse[Any]: ...
 
     @classmethod
-    def from_chat_response_updates(
+    def from_updates(
         cls: type[TChatResponse],
         updates: Sequence[ChatResponseUpdate],
         *,
@@ -2055,12 +1942,12 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
                 # Create some response updates
                 updates = [
-                    ChatResponseUpdate(role="assistant", text="Hello"),
-                    ChatResponseUpdate(text=" How can I help you?"),
+                    ChatResponseUpdate(contents=[Content.from_text(text="Hello")], role="assistant"),
+                    ChatResponseUpdate(contents=[Content.from_text(text=" How can I help you?")]),
                 ]
 
                 # Combine updates into a single ChatResponse
-                response = ChatResponse.from_chat_response_updates(updates)
+                response = ChatResponse.from_updates(updates)
                 print(response.text)  # "Hello How can I help you?"
 
         Args:
@@ -2069,17 +1956,16 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
         """
-        msg = cls(messages=[])
+        response_format = output_format_type if isinstance(output_format_type, type) else None
+        msg = cls(messages=[], response_format=response_format)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
         return msg
 
     @overload
     @classmethod
-    async def from_chat_response_generator(
+    async def from_update_generator(
         cls: type[ChatResponse[Any]],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
@@ -2088,7 +1974,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    async def from_chat_response_generator(
+    async def from_update_generator(
         cls: type[ChatResponse[Any]],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
@@ -2096,7 +1982,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     ) -> ChatResponse[Any]: ...
 
     @classmethod
-    async def from_chat_response_generator(
+    async def from_update_generator(
         cls: type[TChatResponse],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
@@ -2110,8 +1996,8 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
                 from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
 
                 client = ChatClient()  # should be a concrete implementation
-                response = await ChatResponse.from_chat_response_generator(
-                    client.get_response("Hello, how are you?", stream=True)
+                response = await ChatResponse.from_update_generator(
+                    client.get_streaming_response("Hello, how are you?")
                 )
                 print(response.text)
 
@@ -2126,8 +2012,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
-        if response_format and issubclass(response_format, BaseModel):
-            msg.try_parse_value(response_format)
         return msg
 
     @property
@@ -2159,47 +2043,6 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     def __str__(self) -> str:
         return self.text
 
-    @overload
-    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
-
-    @overload
-    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
-
-    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
-        """Try to parse the text into a typed value.
-
-        This is the safe alternative to accessing the value property directly.
-        Returns the parsed value on success, or None on failure.
-
-        Args:
-            output_format_type: The Pydantic model type to parse into.
-                               If None, uses the response_format from initialization.
-
-        Returns:
-            The parsed value as the specified type, or None if parsing fails.
-        """
-        format_type = output_format_type or self._response_format
-        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
-            return None
-
-        # Cache the result unless a different schema than the configured response_format is requested.
-        # This prevents calls with a different schema from polluting the cached value.
-        use_cache = (
-            self._response_format is None or output_format_type is None or output_format_type is self._response_format
-        )
-
-        if use_cache and self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value, no-any-return]
-        try:
-            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            if use_cache:
-                self._value = cast(TResponseModel, parsed_value)
-                self._value_parsed = True
-            return parsed_value  # type: ignore[return-value]
-        except ValidationError as ex:
-            logger.warning("Failed to parse value from chat response text: %s", ex)
-            return None
-
 
 # region ChatResponseUpdate
 
@@ -2210,7 +2053,10 @@ class ChatResponseUpdate(SerializationMixin):
     Attributes:
         contents: The chat response update content items.
         role: The role of the author of the response update.
-        author_name: The name of the author of the response update.
+        author_name: The name of the author of the response update. This is primarily used in
+            multi-agent scenarios to identify which agent or participant generated the response.
+            When updates are combined into a `ChatResponse`, the `author_name` is propagated
+            to the resulting `ChatMessage` objects.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
@@ -2223,9 +2069,9 @@ class ChatResponseUpdate(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponseUpdate, TextContent
+            from agent_framework import ChatResponseUpdate, Content
 
-            # Create a response update
+            # Create a response update with text content
             update = ChatResponseUpdate(
                 contents=[Content.from_text(text="Hello")],
                 role="assistant",
@@ -2233,13 +2079,10 @@ class ChatResponseUpdate(SerializationMixin):
             )
             print(update.text)  # "Hello"
 
-            # Create update with text shorthand
-            update = ChatResponseUpdate(text="World!", role="assistant")
-
             # Serialization - to_dict and from_dict
             update_dict = update.to_dict()
             # {'type': 'chat_response_update', 'contents': [{'type': 'text', 'text': 'Hello'}],
-            #  'role': {'type': 'role', 'value': 'assistant'}, 'message_id': 'msg_123'}
+            #  'role': 'assistant', 'message_id': 'msg_123'}
             restored_update = ChatResponseUpdate.from_dict(update_dict)
             print(restored_update.text)  # "Hello"
 
@@ -2253,41 +2096,26 @@ class ChatResponseUpdate(SerializationMixin):
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
 
-    contents: list[Content]
-    role: Role | None
-    author_name: str | None
-    response_id: str | None
-    message_id: str | None
-    conversation_id: str | None
-    model_id: str | None
-    created_at: CreatedAtT | None
-    finish_reason: FinishReason | None
-    additional_properties: dict[str, Any] | None
-    raw_representation: Any | None
-
     def __init__(
         self,
         *,
         contents: Sequence[Content] | None = None,
-        text: Content | str | None = None,
-        role: Role | Literal["system", "user", "assistant", "tool"] | None = None,
+        role: RoleLiteral | Role | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReason | dict[str, Any] | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters.
 
         Keyword Args:
-            contents: Optional list of BaseContent items or dicts to include in the update.
-            text: Optional text content to include in the update.
-            role: Optional role of the author of the response update.
+            contents: Optional list of Content items to include in the update.
+            role: Optional role of the author of the response update (e.g., "user", "assistant").
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
@@ -2298,30 +2126,30 @@ class ChatResponseUpdate(SerializationMixin):
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update
                 from an underlying implementation.
-            **kwargs: Any additional keyword arguments.
 
         """
-        # Handle contents conversion
-        parsed_contents: list[Content] = [] if contents is None else _parse_content_list(contents)
+        # Handle contents - support dict conversion for from_dict
+        if contents is None:
+            self.contents: list[Content] = []
+        else:
+            processed_contents: list[Content] = []
+            for c in contents:
+                if isinstance(c, Content):
+                    processed_contents.append(c)
+                elif isinstance(c, dict):
+                    processed_contents.append(Content.from_dict(c))
+                else:
+                    processed_contents.append(c)
+            self.contents = processed_contents
 
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            parsed_contents.append(text)
-
-        # Handle finish_reason conversion from legacy dict format
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
-
-        self.contents = parsed_contents
-        self.role: str | None = role
+        self.role = role
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
+        self.finish_reason = finish_reason
         self.additional_properties = additional_properties
         self.raw_representation = raw_representation
 
@@ -2334,9 +2162,363 @@ class ChatResponseUpdate(SerializationMixin):
         return self.text
 
 
+# region AgentResponse
+
+
+class AgentResponse(SerializationMixin, Generic[TResponseModel]):
+    """Represents the response to an Agent run request.
+
+    Provides one or more response messages and metadata about the response.
+    A typical response will contain a single message, but may contain multiple
+    messages in scenarios involving function calls, RAG retrievals, or complex logic.
+
+    Note:
+        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
+        the author name of individual messages.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AgentResponse, ChatMessage
+
+            # Create agent response
+            msg = ChatMessage("assistant", ["Task completed successfully."])
+            response = AgentResponse(messages=[msg], response_id="run_123")
+            print(response.text)  # "Task completed successfully."
+
+            # Access user input requests
+            user_requests = response.user_input_requests
+            print(len(user_requests))  # 0
+
+            # Combine streaming updates
+            updates = [...]  # List of AgentResponseUpdate objects
+            response = AgentResponse.from_updates(updates)
+
+            # Serialization - to_dict and from_dict
+            response_dict = response.to_dict()
+            # {'type': 'agent_response', 'messages': [...], 'response_id': 'run_123',
+            #  'additional_properties': {}}
+            restored_response = AgentResponse.from_dict(response_dict)
+            print(restored_response.response_id)  # "run_123"
+
+            # Serialization - to_json and from_json
+            response_json = response.to_json()
+            # '{"type": "agent_response", "messages": [...], "response_id": "run_123", ...}'
+            restored_from_json = AgentResponse.from_json(response_json)
+            print(restored_from_json.text)  # "Task completed successfully."
+    """
+
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
+
+    def __init__(
+        self,
+        *,
+        messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        response_id: str | None = None,
+        agent_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        usage_details: UsageDetails | None = None,
+        value: TResponseModel | None = None,
+        response_format: type[BaseModel] | None = None,
+        raw_representation: Any | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize an AgentResponse.
+
+        Keyword Args:
+            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
+            response_id: The ID of the chat response.
+            agent_id: The identifier of the agent that produced this response. Useful in multi-agent
+                scenarios to track which agent generated the response.
+            created_at: A timestamp for the chat response.
+            usage_details: The usage details for the chat response.
+            value: The structured output of the agent run response, if applicable.
+            response_format: Optional response format for the agent response.
+            additional_properties: Any additional properties associated with the chat response.
+            raw_representation: The raw representation of the chat response from an underlying implementation.
+        """
+        if messages is None:
+            self.messages: list[ChatMessage] = []
+        elif isinstance(messages, ChatMessage):
+            self.messages = [messages]
+        else:
+            # Handle both ChatMessage objects and dicts (for from_dict support)
+            processed_messages: list[ChatMessage] = []
+            for msg in messages:
+                if isinstance(msg, ChatMessage):
+                    processed_messages.append(msg)
+                elif isinstance(msg, dict):
+                    processed_messages.append(ChatMessage.from_dict(msg))
+                else:
+                    processed_messages.append(msg)
+            self.messages = processed_messages
+        self.response_id = response_id
+        self.agent_id = agent_id
+        self.created_at = created_at
+        self.usage_details = usage_details
+        self._value: TResponseModel | None = value
+        self._response_format: type[BaseModel] | None = response_format
+        self._value_parsed: bool = value is not None
+        self.additional_properties = additional_properties or {}
+        self.raw_representation = raw_representation
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all messages."""
+        return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @property
+    def value(self) -> TResponseModel | None:
+        """Get the parsed structured output value.
+
+        If a response_format was provided and parsing hasn't been attempted yet,
+        this will attempt to parse the text into the specified type.
+
+        Raises:
+            ValidationError: If the response text doesn't match the expected schema.
+        """
+        if self._value_parsed:
+            return self._value
+        if (
+            self._response_format is not None
+            and isinstance(self._response_format, type)
+            and issubclass(self._response_format, BaseModel)
+        ):
+            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
+            self._value_parsed = True
+        return self._value
+
+    @property
+    def user_input_requests(self) -> list[Content]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [
+            content
+            for msg in self.messages
+            for content in msg.contents
+            if isinstance(content, Content) and content.user_input_request
+        ]
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> AgentResponse[TResponseModelT]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        output_format_type: None = None,
+    ) -> AgentResponse[Any]: ...
+
+    @classmethod
+    def from_updates(
+        cls: type[TAgentRunResponse],
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        output_format_type: type[BaseModel] | None = None,
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentResponse.
+
+        Args:
+            updates: A sequence of AgentResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+        """
+        msg = cls(messages=[], response_format=output_format_type)
+        for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
+        output_format_type: type[TResponseModelT],
+    ) -> AgentResponse[TResponseModelT]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
+        output_format_type: None = None,
+    ) -> AgentResponse[Any]: ...
+
+    @classmethod
+    async def from_update_generator(
+        cls: type[TAgentRunResponse],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
+        output_format_type: type[BaseModel] | None = None,
+    ) -> TAgentRunResponse:
+        """Joins multiple updates into a single AgentResponse.
+
+        Args:
+            updates: An async iterable of AgentResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data
+        """
+        msg = cls(messages=[], response_format=output_format_type)
+        async for update in updates:
+            _process_update(msg, update)
+        _finalize_response(msg)
+        return msg
+
+    def __str__(self) -> str:
+        return self.text
+
+
+# region AgentResponseUpdate
+
+
+class AgentResponseUpdate(SerializationMixin):
+    """Represents a single streaming response chunk from an Agent.
+
+    Attributes:
+        contents: The content items in this update.
+        role: The role of the author of the response update.
+        author_name: The name of the author of the response update. In multi-agent scenarios,
+            this identifies which agent generated this update. When updates are combined into
+            an `AgentResponse`, the `author_name` is propagated to the resulting `ChatMessage` objects.
+        agent_id: The identifier of the agent that produced this update. Useful in multi-agent
+            scenarios to track which agent generated specific parts of the response.
+        response_id: The ID of the response of which this update is a part.
+        message_id: The ID of the message of which this update is a part.
+        created_at: A timestamp for the response update.
+        additional_properties: Any additional properties associated with the update.
+        raw_representation: The raw representation from an underlying implementation.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AgentResponseUpdate, Content
+
+            # Create an agent run update
+            update = AgentResponseUpdate(
+                contents=[Content.from_text(text="Processing...")],
+                role="assistant",
+                response_id="run_123",
+            )
+            print(update.text)  # "Processing..."
+
+            # Check for user input requests
+            user_requests = update.user_input_requests
+
+            # Serialization - to_dict and from_dict
+            update_dict = update.to_dict()
+            # {'type': 'agent_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
+            #  'role': 'assistant', 'response_id': 'run_123'}
+            restored_update = AgentResponseUpdate.from_dict(update_dict)
+            print(restored_update.response_id)  # "run_123"
+
+            # Serialization - to_json and from_json
+            update_json = update.to_json()
+            # '{"type": "agent_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
+            restored_from_json = AgentResponseUpdate.from_json(update_json)
+            print(restored_from_json.text)  # "Processing..."
+    """
+
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
+
+    def __init__(
+        self,
+        *,
+        contents: Sequence[Content] | None = None,
+        role: RoleLiteral | str | None = None,
+        author_name: str | None = None,
+        agent_id: str | None = None,
+        response_id: str | None = None,
+        message_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+    ) -> None:
+        """Initialize an AgentResponseUpdate.
+
+        Keyword Args:
+            contents: Optional list of Content items to include in the update.
+            role: The role of the author of the response update (e.g., "user", "assistant").
+            author_name: Optional name of the author of the response update. Used in multi-agent
+                scenarios to identify which agent generated this update.
+            agent_id: Optional identifier of the agent that produced this update.
+            response_id: Optional ID of the response of which this update is a part.
+            message_id: Optional ID of the message of which this update is a part.
+            created_at: Optional timestamp for the chat response update.
+            additional_properties: Optional additional properties associated with the chat response update.
+            raw_representation: Optional raw representation of the chat response update.
+
+        """
+        # Handle contents - support dict conversion for from_dict
+        if contents is None:
+            self.contents: list[Content] = []
+        else:
+            processed_contents: list[Content] = []
+            for c in contents:
+                if isinstance(c, Content):
+                    processed_contents.append(c)
+                elif isinstance(c, dict):
+                    processed_contents.append(Content.from_dict(c))
+                else:
+                    processed_contents.append(c)
+            self.contents = processed_contents
+
+        # Handle legacy dict format for role
+        if isinstance(role, dict) and "value" in role:
+            role = role["value"]
+
+        self.role: str | None = role
+        self.author_name = author_name
+        self.agent_id = agent_id
+        self.response_id = response_id
+        self.message_id = message_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties
+        self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @property
+    def text(self) -> str:
+        """Get the concatenated text of all TextContent objects in contents."""
+        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""  # type: ignore[misc]
+
+    @property
+    def user_input_requests(self) -> list[Content]:
+        """Get all BaseUserInputRequest messages from the response."""
+        return [content for content in self.contents if isinstance(content, Content) and content.user_input_request]
+
+    def __str__(self) -> str:
+        return self.text
+
+
 # region ResponseStream
 
 
+def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
+    return AgentResponseUpdate(
+        contents=update.contents,
+        role=update.role,
+        author_name=update.author_name or agent_name,
+        response_id=update.response_id,
+        message_id=update.message_id,
+        created_at=update.created_at,
+        additional_properties=update.additional_properties,
+        raw_representation=update,
+    )
+
+
+# Type variables for ResponseStream
 TUpdate = TypeVar("TUpdate")
 TFinal = TypeVar("TFinal")
 TOuterUpdate = TypeVar("TOuterUpdate")
@@ -2425,7 +2607,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         Example:
             >>> chat_stream.map(
             ...     lambda u: AgentResponseUpdate(...),
-            ...     AgentResponse.from_agent_run_response_updates,
+            ...     AgentResponse.from_updates,
             ... )
         """
         stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
@@ -2454,7 +2636,7 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
             A new ResponseStream with the new final type.
 
         Example:
-            >>> stream.with_finalizer(AgentResponse.from_agent_run_response_updates)
+            >>> stream.with_finalizer(AgentResponse.from_updates)
         """
         stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
         stream._inner_stream_source = self
@@ -2667,382 +2849,6 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         return self._updates
 
 
-# region AgentResponse
-
-
-class AgentResponse(SerializationMixin, Generic[TResponseModel]):
-    """Represents the response to an Agent run request.
-
-    Provides one or more response messages and metadata about the response.
-    A typical response will contain a single message, but may contain multiple
-    messages in scenarios involving function calls, RAG retrievals, or complex logic.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import AgentResponse, ChatMessage
-
-            # Create agent response
-            msg = ChatMessage(role="assistant", text="Task completed successfully.")
-            response = AgentResponse(messages=[msg], response_id="run_123")
-            print(response.text)  # "Task completed successfully."
-
-            # Access user input requests
-            user_requests = response.user_input_requests
-            print(len(user_requests))  # 0
-
-            # Combine streaming updates
-            updates = [...]  # List of AgentResponseUpdate objects
-            response = AgentResponse.from_agent_run_response_updates(updates)
-
-            # Serialization - to_dict and from_dict
-            response_dict = response.to_dict()
-            # {'type': 'agent_response', 'messages': [...], 'response_id': 'run_123',
-            #  'additional_properties': {}}
-            restored_response = AgentResponse.from_dict(response_dict)
-            print(restored_response.response_id)  # "run_123"
-
-            # Serialization - to_json and from_json
-            response_json = response.to_json()
-            # '{"type": "agent_response", "messages": [...], "response_id": "run_123", ...}'
-            restored_from_json = AgentResponse.from_json(response_json)
-            print(restored_from_json.text)  # "Task completed successfully."
-    """
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
-
-    def __init__(
-        self,
-        *,
-        messages: ChatMessage
-        | list[ChatMessage]
-        | MutableMapping[str, Any]
-        | list[MutableMapping[str, Any]]
-        | None = None,
-        response_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
-        raw_representation: Any | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize an AgentResponse.
-
-        Keyword Args:
-            messages: The list of chat messages in the response.
-            response_id: The ID of the chat response.
-            created_at: A timestamp for the chat response.
-            usage_details: The usage details for the chat response.
-            value: The structured output of the agent run response, if applicable.
-            response_format: Optional response format for the agent response.
-            additional_properties: Any additional properties associated with the chat response.
-            raw_representation: The raw representation of the chat response from an underlying implementation.
-            **kwargs: Additional properties to set on the response.
-        """
-        processed_messages: list[ChatMessage] = []
-        if messages is not None:
-            if isinstance(messages, ChatMessage):
-                processed_messages.append(messages)
-            elif isinstance(messages, list):
-                for message_data in messages:
-                    if isinstance(message_data, ChatMessage):
-                        processed_messages.append(message_data)
-                    elif isinstance(message_data, MutableMapping):
-                        processed_messages.append(ChatMessage.from_dict(message_data))
-                    else:
-                        logger.warning(f"Unknown message content: {message_data}")
-            elif isinstance(messages, MutableMapping):
-                processed_messages.append(ChatMessage.from_dict(messages))
-
-        # Convert usage_details from dict if needed (for SerializationMixin support)
-        # UsageDetails is now a TypedDict, so dict is already the right type
-
-        self.messages = processed_messages
-        self.response_id = response_id
-        self.created_at = created_at
-        self.usage_details = usage_details
-        self._value: TResponseModel | None = value
-        self._response_format: type[BaseModel] | None = response_format
-        self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs or {})
-        self.raw_representation = raw_representation
-
-    @property
-    def text(self) -> str:
-        """Get the concatenated text of all messages."""
-        return "".join(msg.text for msg in self.messages) if self.messages else ""
-
-    @property
-    def value(self) -> TResponseModel | None:
-        """Get the parsed structured output value.
-
-        If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
-
-        Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-        """
-        if self._value_parsed:
-            return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
-            self._value_parsed = True
-        return self._value
-
-    @property
-    def user_input_requests(self) -> list[Content]:
-        """Get all BaseUserInputRequest messages from the response."""
-        return [
-            content
-            for msg in self.messages
-            for content in msg.contents
-            if isinstance(content, Content) and content.user_input_request
-        ]
-
-    @overload
-    @classmethod
-    def from_agent_run_response_updates(
-        cls: type[AgentResponse[Any]],
-        updates: Sequence[AgentResponseUpdate],
-        *,
-        output_format_type: type[TResponseModelT],
-    ) -> AgentResponse[TResponseModelT]: ...
-
-    @overload
-    @classmethod
-    def from_agent_run_response_updates(
-        cls: type[AgentResponse[Any]],
-        updates: Sequence[AgentResponseUpdate],
-        *,
-        output_format_type: None = None,
-    ) -> AgentResponse[Any]: ...
-
-    @classmethod
-    def from_agent_run_response_updates(
-        cls: type[TAgentRunResponse],
-        updates: Sequence[AgentResponseUpdate],
-        *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentResponse.
-
-        Args:
-            updates: A sequence of AgentResponseUpdate objects to combine.
-
-        Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
-        """
-        msg = cls(messages=[], response_format=output_format_type)
-        for update in updates:
-            _process_update(msg, update)
-        _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
-        return msg
-
-    @overload
-    @classmethod
-    async def from_agent_response_generator(
-        cls: type[AgentResponse[Any]],
-        updates: AsyncIterable[AgentResponseUpdate],
-        *,
-        output_format_type: type[TResponseModelT],
-    ) -> AgentResponse[TResponseModelT]: ...
-
-    @overload
-    @classmethod
-    async def from_agent_response_generator(
-        cls: type[AgentResponse[Any]],
-        updates: AsyncIterable[AgentResponseUpdate],
-        *,
-        output_format_type: None = None,
-    ) -> AgentResponse[Any]: ...
-
-    @classmethod
-    async def from_agent_response_generator(
-        cls: type[TAgentRunResponse],
-        updates: AsyncIterable[AgentResponseUpdate],
-        *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentResponse.
-
-        Args:
-            updates: An async iterable of AgentResponseUpdate objects to combine.
-
-        Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data
-        """
-        msg = cls(messages=[], response_format=output_format_type)
-        async for update in updates:
-            _process_update(msg, update)
-        _finalize_response(msg)
-        if output_format_type:
-            msg.try_parse_value(output_format_type)
-        return msg
-
-    def __str__(self) -> str:
-        return self.text
-
-    @overload
-    def try_parse_value(self, output_format_type: type[TResponseModelT]) -> TResponseModelT | None: ...
-
-    @overload
-    def try_parse_value(self, output_format_type: None = None) -> TResponseModel | None: ...
-
-    def try_parse_value(self, output_format_type: type[BaseModel] | None = None) -> BaseModel | None:
-        """Try to parse the text into a typed value.
-
-        This is the safe alternative when you need to parse the response text into a typed value.
-        Returns the parsed value on success, or None on failure.
-
-        Args:
-            output_format_type: The Pydantic model type to parse into.
-                               If None, uses the response_format from initialization.
-
-        Returns:
-            The parsed value as the specified type, or None if parsing fails.
-        """
-        format_type = output_format_type or self._response_format
-        if format_type is None or not (isinstance(format_type, type) and issubclass(format_type, BaseModel)):
-            return None
-
-        # Cache the result unless a different schema than the configured response_format is requested.
-        # This prevents calls with a different schema from polluting the cached value.
-        use_cache = (
-            self._response_format is None or output_format_type is None or output_format_type is self._response_format
-        )
-
-        if use_cache and self._value_parsed and self._value is not None:
-            return self._value  # type: ignore[return-value, no-any-return]
-        try:
-            parsed_value = format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
-            if use_cache:
-                self._value = cast(TResponseModel, parsed_value)
-                self._value_parsed = True
-            return parsed_value  # type: ignore[return-value]
-        except ValidationError as ex:
-            logger.warning("Failed to parse value from agent run response text: %s", ex)
-            return None
-
-
-# region AgentResponseUpdate
-
-
-class AgentResponseUpdate(SerializationMixin):
-    """Represents a single streaming response chunk from an Agent.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import AgentResponseUpdate, Content
-
-            # Create an agent run update
-            update = AgentResponseUpdate(
-                contents=[Content.from_text(text="Processing...")],
-                role="assistant",
-                response_id="run_123",
-            )
-            print(update.text)  # "Processing..."
-
-            # Check for user input requests
-            user_requests = update.user_input_requests
-
-            # Serialization - to_dict and from_dict
-            update_dict = update.to_dict()
-            # {'type': 'agent_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
-            #  'role': {'type': 'role', 'value': 'assistant'}, 'response_id': 'run_123'}
-            restored_update = AgentResponseUpdate.from_dict(update_dict)
-            print(restored_update.response_id)  # "run_123"
-
-            # Serialization - to_json and from_json
-            update_json = update.to_json()
-            # '{"type": "agent_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
-            restored_from_json = AgentResponseUpdate.from_json(update_json)
-            print(restored_from_json.text)  # "Processing..."
-    """
-
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
-
-    def __init__(
-        self,
-        *,
-        contents: Sequence[Content | MutableMapping[str, Any]] | None = None,
-        text: Content | str | None = None,
-        role: Role | MutableMapping[str, Any] | str | None = None,
-        author_name: str | None = None,
-        response_id: str | None = None,
-        message_id: str | None = None,
-        created_at: CreatedAtT | None = None,
-        additional_properties: MutableMapping[str, Any] | None = None,
-        raw_representation: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize an AgentResponseUpdate.
-
-        Keyword Args:
-            contents: Optional list of BaseContent items or dicts to include in the update.
-            text: Optional text content of the update.
-            role: The role of the author of the response update.
-            author_name: Optional name of the author of the response update.
-            response_id: Optional ID of the response of which this update is a part.
-            message_id: Optional ID of the message of which this update is a part.
-            created_at: Optional timestamp for the chat response update.
-            additional_properties: Optional additional properties associated with the chat response update.
-            raw_representation: Optional raw representation of the chat response update.
-            kwargs: will be combined with additional_properties if provided.
-
-        """
-        parsed_contents: list[Content] = [] if contents is None else _parse_content_list(contents)
-
-        if text is not None:
-            if isinstance(text, str):
-                text = Content.from_text(text=text)
-            parsed_contents.append(text)
-
-        self.contents = parsed_contents
-        self.role = role
-        self.author_name = author_name
-        self.response_id = response_id
-        self.message_id = message_id
-        self.created_at = created_at
-        self.additional_properties = additional_properties
-        self.raw_representation: Any | list[Any] | None = raw_representation
-
-    @property
-    def text(self) -> str:
-        """Get the concatenated text of all TextContent objects in contents."""
-        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""  # type: ignore[misc]
-
-    @property
-    def user_input_requests(self) -> list[Content]:
-        """Get all BaseUserInputRequest messages from the response."""
-        return [content for content in self.contents if isinstance(content, Content) and content.user_input_request]
-
-    def __str__(self) -> str:
-        return self.text
-
-
-def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
-    return AgentResponseUpdate(
-        contents=update.contents,
-        role=update.role,
-        author_name=update.author_name or agent_name,
-        response_id=update.response_id,
-        message_id=update.message_id,
-        created_at=update.created_at,
-        additional_properties=update.additional_properties,
-        raw_representation=update,
-    )
-
-
 # region ChatOptions
 
 
@@ -3118,8 +2924,6 @@ class _ChatOptionsBase(TypedDict, total=False):
     )
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
-    additional_function_arguments: dict[str, Any]
-    # Extra arguments passed to function invocations for tools that accept **kwargs.
 
     # Response configuration
     response_format: type[BaseModel] | Mapping[str, Any] | None
@@ -3146,7 +2950,7 @@ else:
 # region Chat Options Utility Functions
 
 
-async def validate_chat_options(options: Mapping[str, Any]) -> dict[str, Any]:
+async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize chat options dictionary.
 
     Validates numeric constraints and converts types as needed.
@@ -3345,8 +3149,8 @@ def validate_tool_mode(
 
 
 def merge_chat_options(
-    base: Mapping[str, Any] | None,
-    override: Mapping[str, Any] | None,
+    base: dict[str, Any] | None,
+    override: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Merge two chat options dictionaries.
 

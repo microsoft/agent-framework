@@ -54,9 +54,9 @@ async def test_resume_fails_when_graph_mismatch() -> None:
         _ = [
             event
             async for event in mismatched_workflow.run(
-                stream=True,
                 checkpoint_id=target_checkpoint.checkpoint_id,
                 checkpoint_storage=storage,
+                stream=True,
             )
         ]
 
@@ -74,9 +74,9 @@ async def test_resume_succeeds_when_graph_matches() -> None:
     events = [
         event
         async for event in resumed_workflow.run(
-            stream=True,
             checkpoint_id=target_checkpoint.checkpoint_id,
             checkpoint_storage=storage,
+            stream=True,
         )
     ]
 

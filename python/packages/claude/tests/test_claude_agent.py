@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, Role, tool
+from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -373,8 +373,8 @@ class TestClaudeAgentRunStream:
             updates: list[AgentResponseUpdate] = []
             async for update in agent.run("Hello", stream=True):
                 updates.append(update)
-            # StreamEvent yields text deltas
-            assert len(updates) == 3
+            # StreamEvent yields text deltas (2 events)
+            assert len(updates) == 2
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
@@ -404,7 +404,7 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             with pytest.raises(ServiceException) as exc_info:
-                async for _ in agent.run_stream("Hello"):
+                async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Invalid request to Claude API" in str(exc_info.value)
             assert "Error details from API" in str(exc_info.value)
@@ -430,7 +430,7 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             with pytest.raises(ServiceException) as exc_info:
-                async for _ in agent.run_stream("Hello"):
+                async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
 

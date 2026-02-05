@@ -8,7 +8,6 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
-    Role,
 )
 
 

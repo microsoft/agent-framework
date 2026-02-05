@@ -17,7 +17,6 @@ from agent_framework import (
     Content,
     ContextProvider,
     ResponseStream,
-    Role,
     normalize_messages,
 )
 from agent_framework._tools import FunctionTool, ToolProtocol
@@ -330,7 +329,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         if stream:
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                return AgentResponse.from_agent_run_response_updates(updates)
+                return AgentResponse.from_updates(updates)
 
             return ResponseStream(
                 self._stream_updates(messages=messages, thread=thread, options=options, **kwargs),

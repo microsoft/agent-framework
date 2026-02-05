@@ -22,7 +22,6 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError

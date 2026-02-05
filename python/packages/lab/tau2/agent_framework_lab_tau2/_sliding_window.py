@@ -52,12 +52,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
             self.truncated_messages.pop(0)
         # Remove leading tool messages
         while len(self.truncated_messages) > 0:
-            role_value = (
-                self.truncated_messages[0].role
-                if hasattr(self.truncated_messages[0].role, "value")
-                else self.truncated_messages[0].role
-            )
-            if role_value != "tool":
+            if self.truncated_messages[0].role != "tool":
                 break
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
             self.truncated_messages.pop(0)

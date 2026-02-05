@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,20 +13,18 @@ from agent_framework import (
     Content,
     RequestInfoEvent,
     ResponseStream,
-    Role,
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
-    use_function_invocation,
 )
+from agent_framework._clients import BaseChatClient
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationLayer
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
 
-@use_function_invocation
-class MockChatClient:
+class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
     """Mock chat client for testing handoff workflows."""
-
-    additional_properties: dict[str, Any]
 
     def __init__(
         self,
@@ -42,22 +40,23 @@ class MockChatClient:
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(**kwargs)
+        ChatMiddlewareLayer.__init__(self)
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
 
-    def get_response(
+    def _inner_get_response(
         self,
-        messages: Any,
         *,
-        stream: bool = False,
-        options: dict[str, Any] | None = None,
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        options = options or {}
         if stream:
-            return self._get_streaming_response(options=options)
+            return self._build_streaming_response(options=dict(options))
 
         async def _get() -> ChatResponse:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
@@ -69,15 +68,15 @@ class MockChatClient:
 
         return _get()
 
-    def _get_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+    def _build_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            yield ChatResponseUpdate(contents=contents, role="assistant", is_finished=True)
+            yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             response_format = options.get("response_format")
             output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -194,9 +193,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
     final_conversation = outputs[-1].data
     assert isinstance(final_conversation, list)
     conversation_list = cast(list[ChatMessage], final_conversation)
-    assert any(
-        msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list
-    )
+    assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
 
 
 async def test_autonomous_mode_resumes_user_input_on_turn_limit():
@@ -587,9 +584,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
 
     # Second user message - specialist_a hands off to specialist_b
     events = await _drain(
-        workflow.send_responses_streaming({
-            requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]
-        })
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]})
     )
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests

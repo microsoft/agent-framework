@@ -362,8 +362,9 @@ class AgentExecutor(Executor):
 
         updates: list[AgentResponseUpdate] = []
         user_input_requests: list[Content] = []
-        async for update in self._agent.run_stream(
+        async for update in self._agent.run(
             self._cache,
+            stream=True,
             thread=self._agent_thread,
             **run_kwargs,
         ):
@@ -376,12 +377,12 @@ class AgentExecutor(Executor):
         # Build the final AgentResponse from the collected updates
         if is_chat_agent(self._agent):
             response_format = self._agent.default_options.get("response_format")
-            response = AgentResponse.from_agent_run_response_updates(
+            response = AgentResponse.from_updates(
                 updates,
                 output_format_type=response_format,
             )
         else:
-            response = AgentResponse.from_agent_run_response_updates(updates)
+            response = AgentResponse.from_updates(updates)
 
         # Handle any user input requests after the streaming completes
         if user_input_requests:

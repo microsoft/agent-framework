@@ -662,7 +662,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
-            "role": message.role if isinstance(message.role, Role) else message.role,
+            "role": message.role,
         }
         for content in message.contents:
             match content.type:
@@ -671,10 +671,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     continue
                 case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))
+                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
                     all_messages.append(new_args)
                 case "function_call":
-                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
+                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
                     all_messages.append(function_call)  # type: ignore
                 case "function_approval_response" | "function_approval_request":
                     all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore

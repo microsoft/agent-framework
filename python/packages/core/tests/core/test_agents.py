@@ -24,13 +24,12 @@ from agent_framework import (
     Context,
     ContextProvider,
     HostedCodeInterpreterTool,
-    Role,
     ToolProtocol,
     tool,
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentInitializationError, AgentExecutionException
+from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -90,7 +89,7 @@ async def test_chat_client_agent_run(chat_client: ChatClientProtocol) -> None:
 async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
 
-    result = await AgentResponse.from_agent_response_generator(agent.run("Hello", stream=True))
+    result = await AgentResponse.from_update_generator(agent.run("Hello", stream=True))
 
     assert result.text == "test streaming response another update"
 
@@ -203,9 +202,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
     chat_client_base.run_responses = [
         ChatResponse(
             messages=[
-                ChatMessage(
-                    role="assistant", contents=[Content.from_text("test response")], author_name="TestAuthor"
-                )
+                ChatMessage(role="assistant", contents=[Content.from_text("test response")], author_name="TestAuthor")
             ]
         )
     ]

@@ -43,7 +43,6 @@ from .._types import (
     ChatResponseUpdate,
     Content,
     ResponseStream,
-    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -387,7 +386,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # Non-streaming mode - collect updates and convert to response
         async def _get_response() -> ChatResponse:
             stream_result = self._inner_get_response(messages=messages, options=options, stream=True, **kwargs)
-            return await ChatResponse.from_chat_response_generator(
+            return await ChatResponse.from_update_generator(
                 updates=stream_result,  # type: ignore[arg-type]
                 output_format_type=options.get("response_format"),  # type: ignore[arg-type]
             )
@@ -507,8 +506,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             yield ChatResponseUpdate(
-                                role=role,
-                                text=delta_block.text.value,
+                                role=role,  # type: ignore[arg-type]
+                                contents=[Content.from_text(delta_block.text.value)],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,

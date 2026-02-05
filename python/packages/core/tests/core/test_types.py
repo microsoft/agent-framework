@@ -19,9 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
     ResponseStream,
-    Role,
     TextSpanRegion,
     ToolMode,
     ToolProtocol,
@@ -639,15 +637,13 @@ def test_chat_response_with_format():
     message = ChatMessage(role="assistant", text='{"response": "Hello"}')
 
     # Create a ChatResponse with the message
-    response = ChatResponse(messages=message)
+    response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
-    assert response.value is None
-    response.try_parse_value(OutputModel)
     assert response.value is not None
     assert response.value.response == "Hello"
 
@@ -690,37 +686,6 @@ def test_chat_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_chat_response_try_parse_value_returns_none_on_invalid():
-    """Test that try_parse_value returns None on validation failure with Field constraints."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = ChatResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_chat_response_try_parse_value_returns_value_on_success():
-    """Test that try_parse_value returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = ChatResponse(messages=message)
-
-    result = response.try_parse_value(MySchema)
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
-
-
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
 
@@ -740,37 +705,6 @@ def test_agent_response_value_raises_on_invalid_schema():
     assert "id" in error_fields, "Expected 'id' Literal constraint error"
     assert "name" in error_fields, "Expected 'name' min_length constraint error"
     assert "score" in error_fields, "Expected 'score' gt constraint error"
-
-
-def test_agent_response_try_parse_value_returns_none_on_invalid():
-    """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = AgentResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_agent_response_try_parse_value_returns_value_on_success():
-    """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = AgentResponse(messages=message)
-
-    result = response.try_parse_value(MySchema)
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
 
 
 # region ChatResponseUpdate
@@ -798,12 +732,12 @@ def test_chat_response_updates_to_chat_response_one():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -821,12 +755,12 @@ def test_chat_response_updates_to_chat_response_two():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="2"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="2"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 2
@@ -845,13 +779,13 @@ def test_chat_response_updates_to_chat_response_multiple():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -869,15 +803,15 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text(text="More context")], message_id="1"),
-        ChatResponseUpdate(text="Final part", message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text("Final part")], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
@@ -898,32 +832,30 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
 async def test_chat_response_from_async_generator():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text="Hello", message_id="1")
-        yield ChatResponseUpdate(text=" world", message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text("Hello")], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(" world")], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == "Hello world"
 
 
 async def test_chat_response_from_async_generator_output_format():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
-    assert resp.value is None
-    resp.try_parse_value(OutputModel)
     assert resp.value is not None
     assert resp.value.response == "Hello"
 
 
 async def test_chat_response_from_async_generator_output_format_in_method():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
@@ -1130,7 +1062,7 @@ def test_agent_run_response_text_property_empty() -> None:
 
 def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpdate) -> None:
     updates = [agent_response_update, agent_response_update]
-    response = AgentResponse.from_agent_run_response_updates(updates)
+    response = AgentResponse.from_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
 
@@ -1272,7 +1204,7 @@ def test_function_call_merge_in_process_update_and_usage_aggregation():
     # plus usage
     u3 = ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=1, output_token_count=2))])
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2, u3])
+    resp = ChatResponse.from_updates([u1, u2, u3])
     assert len(resp.messages) == 1
     last_contents = resp.messages[0].contents
     assert any(c.type == "function_call" for c in last_contents)
@@ -1288,7 +1220,7 @@ def test_function_call_incompatible_ids_are_not_merged():
     u1 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="a", name="f", arguments="x")], message_id="m")
     u2 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="b", name="f", arguments="y")], message_id="m")
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2])
+    resp = ChatResponse.from_updates([u1, u2])
     fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
     assert len(fcs) == 2
 
@@ -1297,17 +1229,19 @@ def test_function_call_incompatible_ids_are_not_merged():
 
 
 def test_chat_role_str_and_repr():
-    assert str("user") == "user"
-    assert "Role(value=" in repr("user")
+    # Role is now a NewType of str, so it's just a plain string
+    assert "user" == "user"
+    assert repr("user") == "'user'"
 
 
 def test_chat_finish_reason_constants():
-    assert "stop".value == "stop"
+    # FinishReason is now a NewType of str, so it's just a plain string
+    assert "stop" == "stop"
 
 
 def test_response_update_propagates_fields_and_metadata():
     upd = ChatResponseUpdate(
-        text="hello",
+        contents=[Content.from_text("hello")],
         role="assistant",
         author_name="bot",
         response_id="rid",
@@ -1318,7 +1252,7 @@ def test_response_update_propagates_fields_and_metadata():
         finish_reason="stop",
         additional_properties={"k": "v"},
     )
-    resp = ChatResponse.from_chat_response_updates([upd])
+    resp = ChatResponse.from_updates([upd])
     assert resp.response_id == "rid"
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
@@ -1333,9 +1267,9 @@ def test_response_update_propagates_fields_and_metadata():
 def test_text_coalescing_preserves_first_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
-    upd1 = ChatResponseUpdate(text=t1, message_id="x")
-    upd2 = ChatResponseUpdate(text=t2, message_id="x")
-    resp = ChatResponse.from_chat_response_updates([upd1, upd2])
+    upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
+    upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
+    resp = ChatResponse.from_updates([upd1, upd2])
     # After coalescing there should be a single TextContent with merged text and preserved props from first
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
@@ -1368,7 +1302,7 @@ async def test_agent_run_response_from_async_generator():
         yield AgentResponseUpdate(contents=[Content.from_text("A")])
         yield AgentResponseUpdate(contents=[Content.from_text("B")])
 
-    r = await AgentResponse.from_agent_response_generator(gen())
+    r = await AgentResponse.from_update_generator(gen())
     assert r.text == "AB"
 
 
@@ -1677,7 +1611,7 @@ def test_chat_response_complex_serialization():
     response = ChatResponse.from_dict(response_data)
     assert len(response.messages) == 2
     assert isinstance(response.messages[0], ChatMessage)
-    assert isinstance(response.finish_reason, FinishReason)
+    assert isinstance(response.finish_reason, str)  # FinishReason is now a NewType of str
     assert isinstance(response.usage_details, dict)
     assert response.model_id == "gpt-4"  # Should be stored as model_id
 
@@ -1685,7 +1619,7 @@ def test_chat_response_complex_serialization():
     response_dict = response.to_dict()
     assert len(response_dict["messages"]) == 2
     assert isinstance(response_dict["messages"][0], dict)
-    assert isinstance(response_dict["finish_reason"], dict)
+    assert isinstance(response_dict["finish_reason"], str)  # FinishReason serializes to string
     assert isinstance(response_dict["usage_details"], dict)
     assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
 
@@ -1795,19 +1729,19 @@ def test_agent_run_response_update_all_content_types():
 
     update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
-    assert isinstance(update.role, Role)
+    assert isinstance(update.role, str)  # Role is now a NewType of str
     assert update.role == "assistant"
 
     # Test to_dict with role conversion
     update_dict = update.to_dict()
     assert len(update_dict["contents"]) == 12  # unknown_type was ignored during from_dict
-    assert isinstance(update_dict["role"], dict)
+    assert isinstance(update_dict["role"], str)  # Role serializes to string
 
     # Test role as string conversion
     update_data_str_role = update_data.copy()
     update_data_str_role["role"] = "user"
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
-    assert isinstance(update_str.role, Role)
+    assert isinstance(update_str.role, str)  # Role is now a NewType of str
     assert update_str.role == "user"
 
 
@@ -1937,7 +1871,7 @@ def test_agent_run_response_update_all_content_types():
         pytest.param(
             ChatMessage,
             {
-                "role": {"type": "role", "value": "user"},
+                "role": "\1",
                 "contents": [
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
@@ -1954,16 +1888,16 @@ def test_agent_run_response_update_all_content_types():
                 "messages": [
                     {
                         "type": "chat_message",
-                        "role": {"type": "role", "value": "user"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hello"}],
                     },
                     {
                         "type": "chat_message",
-                        "role": {"type": "role", "value": "assistant"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hi there"}],
                     },
                 ],
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "finish_reason": "\1",
                 "usage_details": {
                     "type": "usage_details",
                     "input_token_count": 10,
@@ -1982,8 +1916,8 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "role": "\1",
+                "finish_reason": "\1",
                 "message_id": "msg-123",
                 "response_id": "resp-123",
             },
@@ -1994,11 +1928,11 @@ def test_agent_run_response_update_all_content_types():
             {
                 "messages": [
                     {
-                        "role": {"type": "role", "value": "user"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Question"}],
                     },
                     {
-                        "role": {"type": "role", "value": "assistant"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Answer"}],
                     },
                 ],
@@ -2019,7 +1953,7 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Streaming"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
+                "role": "\1",
                 "message_id": "msg-123",
                 "response_id": "run-123",
                 "author_name": "Agent",
@@ -2533,7 +2467,7 @@ async def _generate_updates(count: int = 5) -> AsyncIterable[ChatResponseUpdate]
 
 def _combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
     """Helper finalizer that combines updates into a response."""
-    return ChatResponse.from_chat_response_updates(updates)
+    return ChatResponse.from_updates(updates)
 
 
 class TestResponseStreamBasicIteration:
@@ -2827,7 +2761,7 @@ class TestResponseStreamResultHooks:
         """Result hook can transform the final result."""
 
         def wrap_text(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"[{response.text}]", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"[{response.text}]"]))
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -2843,10 +2777,10 @@ class TestResponseStreamResultHooks:
         """Multiple result hooks are called in order."""
 
         def add_prefix(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"prefix_{response.text}", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"prefix_{response.text}"]))
 
         def add_suffix(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"{response.text}_suffix", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"{response.text}_suffix"]))
 
         stream = ResponseStream(
             _generate_updates(1),
@@ -2894,7 +2828,7 @@ class TestResponseStreamResultHooks:
         """Async result hooks are awaited."""
 
         async def async_hook(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"async_{response.text}", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"async_{response.text}"]))
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -2916,7 +2850,7 @@ class TestResponseStreamFinalizer:
 
         def capturing_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             received_updates.extend(updates)
-            return ChatResponse(messages="done", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["done"]))
 
         stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
 
@@ -2941,7 +2875,7 @@ class TestResponseStreamFinalizer:
 
         async def async_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             text = "".join(u.text or "" for u in updates)
-            return ChatResponse(text=f"async_{text}", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"async_{text}"]))
 
         stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
 
@@ -2955,7 +2889,7 @@ class TestResponseStreamFinalizer:
 
         def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             call_count["value"] += 1
-            return ChatResponse(messages="done", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["done"]))
 
         stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
 
@@ -3015,7 +2949,7 @@ class TestResponseStreamMapAndWithFinalizer:
 
         def inner_result_hook(response: ChatResponse) -> ChatResponse:
             inner_result_hook_called["value"] = True
-            return ChatResponse(text=f"hooked_{response.text}", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"hooked_{response.text}"]))
 
         inner = ResponseStream(
             _generate_updates(2),
@@ -3035,7 +2969,7 @@ class TestResponseStreamMapAndWithFinalizer:
 
         def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             inner_finalizer_called["value"] = True
-            return ChatResponse(text="inner_result", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["inner_result"]))
 
         inner = ResponseStream(
             _generate_updates(2),
@@ -3055,7 +2989,7 @@ class TestResponseStreamMapAndWithFinalizer:
         inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
         def outer_hook(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"outer_{response.text}", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", [f"outer_{response.text}"]))
 
         outer = inner.with_finalizer(_combine_updates).with_result_hook(outer_hook)
 
@@ -3180,7 +3114,7 @@ class TestResponseStreamExecutionOrder:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             order.append("finalizer")
-            return ChatResponse(messages="done", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["done"]))
 
         def result_hook(response: ChatResponse) -> ChatResponse:
             order.append("result")
@@ -3215,7 +3149,7 @@ class TestResponseStreamExecutionOrder:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             order.append("finalizer")
-            return ChatResponse(messages="done", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["done"]))
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -3335,7 +3269,7 @@ class TestResponseStreamEdgeCases:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             events.append("finalizer")
-            return ChatResponse(messages="done", role="assistant")
+            return ChatResponse(messages=ChatMessage("assistant", ["done"]))
 
         def result(r: ChatResponse) -> ChatResponse:
             events.append("result")

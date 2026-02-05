@@ -1552,6 +1552,8 @@ async def _auto_invoke_function(
             **context_obj.kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
         )
 
+    from ._middleware import MiddlewareTermination
+
     # MiddlewareTermination bubbles up to signal loop termination
     try:
         function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
@@ -1559,18 +1561,16 @@ async def _auto_invoke_function(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=function_result,
         )
+    except MiddlewareTermination as term_exc:
+        # Re-raise to signal loop termination, but first capture any result set by middleware
+        if middleware_context.result is not None:
+            # Store result in exception for caller to extract
+            term_exc.result = Content.from_function_result(
+                call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                result=middleware_context.result,
+            )
+        raise
     except Exception as exc:
-        from ._middleware import MiddlewareTermination
-
-        if isinstance(exc, MiddlewareTermination):
-            # Re-raise to signal loop termination, but first capture any result set by middleware
-            if middleware_context.result is not None:
-                # Store result in exception for caller to extract
-                exc.result = Content.from_function_result(
-                    call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                    result=middleware_context.result,
-                )
-            raise
         message = "Error: Function failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
@@ -1696,17 +1696,15 @@ async def _try_execute_function_calls(
             )
             return (result, False)
         except MiddlewareTermination as exc:
-            # Middleware requested termination - return any result it set
-            if exc.result is not None:
+            # Middleware requested termination - return result as Content
+            # exc.result may already be a Content (set by _auto_invoke_function) or raw value
+            if isinstance(exc.result, Content):
                 return (exc.result, True)
-            # No result set - return empty result
-            return (
-                Content.from_function_result(
-                    call_id=function_call.call_id,  # type: ignore[arg-type]
-                    result=None,
-                ),
-                True,
+            result_content = Content.from_function_result(
+                call_id=function_call.call_id,  # type: ignore[arg-type]
+                result=exc.result,
             )
+            return (result_content, True)
 
     execution_results = await asyncio.gather(*[
         invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
@@ -1818,7 +1816,6 @@ def _replace_approval_contents_with_results(
     """Replace approval request/response contents with function call/result contents in-place."""
     from ._types import (
         Content,
-        Role,
     )
 
     result_idx = 0
@@ -1995,8 +1992,10 @@ async def _process_function_requests(
                             max_errors,
                         )
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+            # Continue to call chat client with updated messages (containing function results)
+            # so it can generate the final response
             return {
-                "action": "return" if should_terminate else "stop",
+                "action": "return" if should_terminate else "continue",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
                 "update_role": None,
@@ -2257,8 +2256,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 if approval_result["action"] == "stop":
                     return
 
-                all_updates: list[ChatResponseUpdate] = []
-                stream = await _ensure_response_stream(
+                inner_stream = await _ensure_response_stream(
                     super_get_response(
                         messages=prepped_messages,
                         stream=True,
@@ -2266,21 +2264,24 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                         **filtered_kwargs,
                     )
                 )
-                # pick up any result_hooks from the previous stream
-                stream_result_hooks[:] = _get_result_hooks_from_stream(stream)
-                async for update in stream:
-                    all_updates.append(update)
+                # Collect result hooks from the inner stream to run later
+                stream_result_hooks[:] = _get_result_hooks_from_stream(inner_stream)
+
+                # Yield updates from the inner stream, letting it collect them
+                async for update in inner_stream:
                     yield update
+
+                # Get the finalized response from the inner stream
+                # This triggers the inner stream's finalizer and result hooks
+                response = await inner_stream.get_final_response()
 
                 if not any(
                     item.type in ("function_call", "function_approval_request")
-                    for upd in all_updates
-                    for item in upd.contents
+                    for msg in response.messages
+                    for item in msg.contents
                 ):
                     return
 
-                # Build a response snapshot from raw updates without invoking stream finalizers.
-                response = ChatResponse.from_chat_response_updates(all_updates)
                 if response.conversation_id is not None:
                     _update_conversation_id(kwargs, response.conversation_id, mutable_options)
                     prepped_messages = []
@@ -2304,10 +2305,9 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 if result["action"] != "continue":
                     return
 
-                # When tool_choice is 'required', return after tool execution
-                # The user's intent is to force exactly one tool call and get the result
+                # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops
                 if mutable_options.get("tool_choice") == "required":
-                    return
+                    mutable_options["tool_choice"] = None  # reset to default for next iteration
 
                 if response.conversation_id is not None:
                     # For conversation-based APIs, the server already has the function call message.
@@ -2323,7 +2323,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 return
 
             mutable_options["tool_choice"] = "none"
-            stream = await _ensure_response_stream(
+            inner_stream = await _ensure_response_stream(
                 super_get_response(
                     messages=prepped_messages,
                     stream=True,
@@ -2331,15 +2331,14 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                     **filtered_kwargs,
                 )
             )
-            async for update in stream:
+            async for update in inner_stream:
                 yield update
+            # Finalize the inner stream to trigger its hooks
+            await inner_stream.get_final_response()
 
-        async def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-            result = ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
-            for hook in stream_result_hooks:
-                result = hook(result)
-                if isinstance(result, Awaitable):
-                    result = await result
-            return result
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            # Note: stream_result_hooks are already run via inner stream's get_final_response()
+            # We don't need to run them again here
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
         return ResponseStream(_stream(), finalizer=_finalize)

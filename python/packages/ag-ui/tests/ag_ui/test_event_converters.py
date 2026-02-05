@@ -2,8 +2,6 @@
 
 """Tests for AG-UI event converter."""
 
-from agent_framework import FinishReason, Role
-
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 
 

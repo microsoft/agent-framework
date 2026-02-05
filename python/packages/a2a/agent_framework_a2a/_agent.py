@@ -33,7 +33,6 @@ from agent_framework import (
     ChatMessage,
     Content,
     ResponseStream,
-    Role,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
@@ -247,7 +246,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         updates: list[AgentResponseUpdate] = []
         async for update in self._stream_updates(messages, thread=thread, **kwargs):
             updates.append(update)
-        return AgentResponse.from_agent_run_response_updates(updates)
+        return AgentResponse.from_updates(updates)
 
     def _run_stream_impl(
         self,
@@ -259,7 +258,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """Streaming implementation of run."""
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
-            return AgentResponse.from_agent_run_response_updates(list(updates))
+            return AgentResponse.from_updates(list(updates))
 
         return ResponseStream(self._stream_updates(messages, thread=thread, **kwargs), finalizer=_finalize)
 

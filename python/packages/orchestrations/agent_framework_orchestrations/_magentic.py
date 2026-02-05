@@ -1561,11 +1561,11 @@ class MagenticBuilder:
 
             # First run
             thread_id = "task-123"
-            async for msg in workflow.run("task", thread_id=thread_id):
+            async for msg in workflow.run("task", thread_id=thread_id, stream=True):
                 print(msg.text)
 
             # Resume from checkpoint
-            async for msg in workflow.run("continue", thread_id=thread_id):
+            async for msg in workflow.run("continue", thread_id=thread_id, stream=True):
                 print(msg.text)
 
         Notes:

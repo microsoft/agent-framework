@@ -38,7 +38,6 @@ from agent_framework import (
     HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import (
@@ -1354,8 +1353,8 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
         approval_message = ChatMessage(role="user", contents=[approval])
         _ = await client.get_response(messages=[approval_message])
 
-        # Ensure the approval was parsed (second call is deferred until the model continues)
-        assert mock_create.call_count == 1
+        # After approval is processed, the model is called again to get the final response
+        assert mock_create.call_count == 2
 
 
 def test_usage_details_basic() -> None:

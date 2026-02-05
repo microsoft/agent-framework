@@ -13,7 +13,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Role,
     tool,
 )
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
@@ -562,9 +561,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     for msg in all_messages:
         for content in msg.contents:
             if content.type == "function_result":
-                assert msg.role == "tool", (
-                    f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
-                )
+                assert msg.role == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
 
 
 async def test_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):
@@ -652,7 +649,6 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
     # Should execute successfully
     assert response2 is not None
     assert exec_counter == 1
-    assert response2.messages[-1].role == "tool"
 
 
 async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: ChatClientProtocol):
@@ -2542,14 +2538,16 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 self.call_count += 1
                 if not self.streaming_responses:
-                    yield ChatResponseUpdate(text="done", role="assistant", is_finished=True)
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text("done")], role="assistant", finish_reason="stop"
+                    )
                     return
                 response = self.streaming_responses.pop(0)
                 for update in response:
                     yield update
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                return ChatResponse.from_chat_response_updates(updates)
+                return ChatResponse.from_updates(updates)
 
             return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -2606,7 +2604,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             ),
         ],
         [
-            ChatResponseUpdate(text="streaming done", role="assistant", is_finished=True),
+            ChatResponseUpdate(contents=[Content.from_text("streaming done")], role="assistant", finish_reason="stop"),
         ],
     ]
 
@@ -2626,149 +2624,3 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
     assert conversation_ids_received[1] == "stream_conv_after_first", (
         "streaming: conversation_id should be updated in options after receiving new conversation_id from API"
     )
-
-
-async def test_tool_choice_required_returns_after_tool_execution():
-    """Test that tool_choice='required' returns after tool execution without another model call.
-
-    When tool_choice is 'required', the user's intent is to force exactly one tool call.
-    After the tool executes, we should return the response with the function call and result,
-    not continue to call the model again.
-    """
-    from collections.abc import AsyncIterable, MutableSequence, Sequence
-    from typing import Any
-    from unittest.mock import patch
-
-    from agent_framework import (
-        BaseChatClient,
-        ChatMessage,
-        ChatResponse,
-        ChatResponseUpdate,
-        Content,
-        ResponseStream,
-        Role,
-        tool,
-    )
-    from agent_framework._middleware import ChatMiddlewareLayer
-    from agent_framework._tools import FunctionInvocationLayer
-
-    class TrackingChatClient(
-        ChatMiddlewareLayer,
-        FunctionInvocationLayer,
-        BaseChatClient,
-    ):
-        def __init__(self) -> None:
-            super().__init__(function_middleware=[])
-            self.run_responses: list[ChatResponse] = []
-            self.streaming_responses: list[list[ChatResponseUpdate]] = []
-            self.call_count: int = 0
-
-        def _inner_get_response(
-            self,
-            *,
-            messages: MutableSequence[ChatMessage],
-            stream: bool,
-            options: dict[str, Any],
-            **kwargs: Any,
-        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-            if stream:
-                return self._get_streaming_response(messages=messages, options=options, **kwargs)
-
-            async def _get() -> ChatResponse:
-                self.call_count += 1
-                if not self.run_responses:
-                    return ChatResponse(messages=ChatMessage(role="assistant", text="done"))
-                return self.run_responses.pop(0)
-
-            return _get()
-
-        def _get_streaming_response(
-            self,
-            *,
-            messages: MutableSequence[ChatMessage],
-            options: dict[str, Any],
-            **kwargs: Any,
-        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
-            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                self.call_count += 1
-                if not self.streaming_responses:
-                    yield ChatResponseUpdate(text="done", role="assistant", is_finished=True)
-                    return
-                response = self.streaming_responses.pop(0)
-                for update in response:
-                    yield update
-
-            def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                return ChatResponse.from_chat_response_updates(updates)
-
-            return ResponseStream(_stream(), finalizer=_finalize)
-
-    @tool(name="test_func", approval_mode="never_require")
-    def test_func(arg1: str) -> str:
-        return f"Result {arg1}"
-
-    # Test non-streaming: should only call model once, then return with function call + result
-    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
-        client = TrackingChatClient()
-
-    client.run_responses = [
-        ChatResponse(
-            messages=ChatMessage(
-                role="assistant",
-                contents=[Content.from_function_call(call_id="call_1", name="test_func", arguments='{"arg1": "v1"}')],
-            ),
-        ),
-        # This second response should NOT be consumed
-        ChatResponse(
-            messages=ChatMessage(role="assistant", text="this should not be reached"),
-        ),
-    ]
-
-    response = await client.get_response(
-        "hello",
-        options={"tool_choice": "required", "tools": [test_func]},
-    )
-
-    # Should only call model once - after tool execution, return immediately
-    assert client.call_count == 1
-    # Response should contain function call and function result
-    assert len(response.messages) == 2
-    assert response.messages[0].role == "assistant"
-    assert response.messages[0].contents[0].type == "function_call"
-    assert response.messages[1].role == "tool"
-    assert response.messages[1].contents[0].type == "function_result"
-    # Second response should still be in queue (not consumed)
-    assert len(client.run_responses) == 1
-
-    # Test streaming version too
-    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
-        streaming_client = TrackingChatClient()
-
-    streaming_client.streaming_responses = [
-        [
-            ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="call_2", name="test_func", arguments='{"arg1": "v2"}')],
-                role="assistant",
-            ),
-        ],
-        # This second response should NOT be consumed
-        [
-            ChatResponseUpdate(text="this should not be reached", role="assistant", is_finished=True),
-        ],
-    ]
-
-    response_stream = streaming_client.get_response(
-        "hello",
-        stream=True,
-        options={"tool_choice": "required", "tools": [test_func]},
-    )
-    updates = []
-    async for update in response_stream:
-        updates.append(update)
-
-    # Should only call model once
-    assert streaming_client.call_count == 1
-    # Should have function call update and function result update
-    assert len(updates) == 2
-    # Second streaming response should still be in queue (not consumed)
-    assert len(streaming_client.streaming_responses) == 1

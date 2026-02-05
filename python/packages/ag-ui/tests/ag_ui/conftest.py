@@ -114,7 +114,7 @@ class StreamingChatClientStub(
         if stream:
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                return ChatResponse.from_chat_response_updates(updates)
+                return ChatResponse.from_updates(updates)
 
             return ResponseStream(self._stream_fn(messages, options, **kwargs), finalizer=_finalize)
 
@@ -209,7 +209,7 @@ class StubAgent(AgentProtocol):
                     yield update
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                return AgentResponse.from_agent_run_response_updates(updates)
+                return AgentResponse.from_updates(updates)
 
             return ResponseStream(_stream(), finalizer=_finalize)
 

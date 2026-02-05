@@ -14,7 +14,7 @@ to avoid pytest plugin conflicts when running tests across packages.
 """
 
 import sys
-from collections.abc import AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Generic
 
 from agent_framework import (
@@ -28,7 +28,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    use_chat_middleware,
+    ResponseStream,
 )
 from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
@@ -92,7 +92,6 @@ class MockChatClient:
             yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response")], role="assistant")
 
 
-@use_chat_middleware
 class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """Full BaseChatClient mock with middleware support.
 
@@ -102,34 +101,34 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     """
 
     def __init__(self, **kwargs: Any):
-        super().__init__(function_middleware=[], **kwargs)
+        super().__init__(**kwargs)
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0
         self.received_messages: list[list[ChatMessage]] = []
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
-        self.call_count += 1
-        self.received_messages.append(list(messages))
-        if self.run_responses:
-            return self.run_responses.pop(0)
-        return ChatResponse(messages=ChatMessage("assistant", ["Mock response from ChatAgent"]))
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            return self._build_response_stream(self._stream_impl(messages))
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
+        async def _get() -> ChatResponse:
+            self.call_count += 1
+            self.received_messages.append(list(messages))
+            if self.run_responses:
+                return self.run_responses.pop(0)
+            return ChatResponse(messages=ChatMessage("assistant", ["Mock response from ChatAgent"]))
+
+        return _get()
+
+    async def _stream_impl(self, messages: Sequence[ChatMessage]) -> AsyncIterable[ChatResponseUpdate]:
         self.call_count += 1
         self.received_messages.append(list(messages))
         if self.streaming_responses:

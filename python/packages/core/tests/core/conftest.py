@@ -24,7 +24,6 @@ from agent_framework import (
     Content,
     FunctionInvocationLayer,
     ResponseStream,
-    Role,
     ToolProtocol,
     tool,
 )
@@ -124,13 +123,13 @@ class MockChatClient:
                 for update in self.streaming_responses.pop(0):
                     yield update
             else:
-                yield ChatResponseUpdate(text=Content.from_text("test streaming response "), role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("test streaming response ")], role="assistant")
                 yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             response_format = options.get("response_format")
             output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -217,11 +216,15 @@ class MockBaseChatClient(
             logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
             self.call_count += 1
             if not self.streaming_responses:
-                yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant", is_finished=True)
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text(f"update - {messages[0].text}")], role="assistant", finish_reason="stop"
+                )
                 return
             if options.get("tool_choice") == "none":
                 yield ChatResponseUpdate(
-                    text="I broke out of the function invocation loop...", role="assistant", is_finished=True
+                    contents=[Content.from_text("I broke out of the function invocation loop...")],
+                    role="assistant",
+                    finish_reason="stop",
                 )
                 return
             response = self.streaming_responses.pop(0)
@@ -232,7 +235,7 @@ class MockBaseChatClient(
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             response_format = options.get("response_format")
             output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 

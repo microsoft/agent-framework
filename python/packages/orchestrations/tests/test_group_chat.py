@@ -18,7 +18,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
-    Role,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,

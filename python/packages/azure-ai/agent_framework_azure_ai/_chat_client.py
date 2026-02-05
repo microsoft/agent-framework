@@ -31,7 +31,6 @@ from agent_framework import (
     HostedWebSearchTool,
     MiddlewareTypes,
     ResponseStream,
-    Role,
     TextSpanRegion,
     ToolProtocol,
     UsageDetails,
@@ -396,7 +395,7 @@ class AzureAIAgentClient(
                 ):
                     yield update
 
-            return await ChatResponse.from_chat_response_generator(
+            return await ChatResponse.from_update_generator(
                 updates=_get_streaming(),
                 output_format_type=options.get("response_format"),
             )
@@ -665,7 +664,7 @@ class AzureAIAgentClient(
                 match event_data:
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
-                        role = "user" if event_data.delta.role == Message"user" else "assistant"
+                        role = "user" if event_data.delta.role.value == "user" else "assistant"
 
                         # Extract URL citations from the delta chunk
                         url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)
@@ -1134,7 +1133,7 @@ class AzureAIAgentClient(
                     additional_messages = []
                 additional_messages.append(
                     ThreadMessageOptions(
-                        role=MessageRole.AGENT if chat_message.role == "assistant" else Message"user",
+                        role=MessageRole.AGENT if chat_message.role == "assistant" else MessageRole.USER,
                         content=message_contents,
                     )
                 )

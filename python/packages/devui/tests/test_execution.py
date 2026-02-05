@@ -566,7 +566,7 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
 
 async def test_executor_handles_streaming_agent():
     """Test executor handles agents with run(stream=True) method."""
-    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content, Role
+    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content
 
     class StreamingAgent:
         """Agent with run() method supporting stream parameter."""
@@ -584,9 +584,7 @@ async def test_executor_handles_streaming_agent():
 
         async def _run_impl(self, messages):
             return AgentResponse(
-                messages=[
-                    ChatMessage(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])
-                ],
+                messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])],
                 response_id="test_123",
             )
 

@@ -306,7 +306,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         Returns:
             The validated and normalized options dict.
         """
-        return await validate_chat_options(options)
+        return await validate_chat_options(dict(options))
 
     def _finalize_response_updates(
         self,
@@ -316,7 +316,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     ) -> ChatResponse:
         """Finalize response updates into a single ChatResponse."""
         output_format_type = response_format if isinstance(response_format, type) else None
-        return ChatResponse.from_chat_response_updates(updates, output_format_type=output_format_type)
+        return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
     def _build_response_stream(
         self,

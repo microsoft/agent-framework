@@ -14,7 +14,6 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     ChatMessage,
-    Role,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._orchestration_request_info import (

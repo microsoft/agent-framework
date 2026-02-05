@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
@@ -296,7 +298,7 @@ def _create_otlp_exporters(
     metrics_headers: dict[str, str] | None = None,
     logs_endpoint: str | None = None,
     logs_headers: dict[str, str] | None = None,
-) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
+) -> list[LogRecordExporter | SpanExporter | MetricExporter]:
     """Create OTLP exporters for a given endpoint and protocol.
 
     Args:
@@ -324,7 +326,7 @@ def _create_otlp_exporters(
     actual_metrics_headers = metrics_headers or headers
     actual_logs_headers = logs_headers or headers
 
-    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
+    exporters: list[LogRecordExporter | SpanExporter | MetricExporter] = []
 
     if not actual_logs_endpoint and not actual_traces_endpoint and not actual_metrics_endpoint:
         return exporters
@@ -407,7 +409,7 @@ def _create_otlp_exporters(
 def _get_exporters_from_env(
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
-) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
+) -> list[LogRecordExporter | SpanExporter | MetricExporter]:
     """Parse OpenTelemetry environment variables and create exporters.
 
     This function reads standard OpenTelemetry environment variables to configure
@@ -482,7 +484,7 @@ def create_resource(
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
     **attributes: Any,
-) -> "Resource":
+) -> Resource:
     """Create an OpenTelemetry Resource from environment variables and parameters.
 
     This function reads standard OpenTelemetry environment variables to configure
@@ -550,7 +552,7 @@ def create_resource(
     return Resource.create(resource_attributes)
 
 
-def create_metric_views() -> list["View"]:
+def create_metric_views() -> list[View]:
     """Create the default OpenTelemetry metric views for Agent Framework."""
     from opentelemetry.sdk.metrics.view import DropAggregation, View
 
@@ -605,7 +607,7 @@ class ObservabilitySettings(AFBaseSettings):
     enable_sensitive_data: bool = False
     enable_console_exporters: bool = False
     vs_code_extension_port: int | None = None
-    _resource: "Resource" = PrivateAttr()
+    _resource: Resource = PrivateAttr()
     _executed_setup: bool = PrivateAttr(default=False)
 
     def __init__(self, **kwargs: Any) -> None:
@@ -641,8 +643,8 @@ class ObservabilitySettings(AFBaseSettings):
     def _configure(
         self,
         *,
-        additional_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
-        views: list["View"] | None = None,
+        additional_exporters: list[LogRecordExporter | SpanExporter | MetricExporter] | None = None,
+        views: list[View] | None = None,
     ) -> None:
         """Configure application-wide observability based on the settings.
 
@@ -657,7 +659,7 @@ class ObservabilitySettings(AFBaseSettings):
         if not self.ENABLED or self._executed_setup:
             return
 
-        exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
+        exporters: list[LogRecordExporter | SpanExporter | MetricExporter] = []
 
         # 1. Add exporters from standard OTEL environment variables
         exporters.extend(
@@ -690,8 +692,8 @@ class ObservabilitySettings(AFBaseSettings):
 
     def _configure_providers(
         self,
-        exporters: list["LogRecordExporter | MetricExporter | SpanExporter"],
-        views: list["View"] | None = None,
+        exporters: list[LogRecordExporter | MetricExporter | SpanExporter],
+        views: list[View] | None = None,
     ) -> None:
         """Configure tracing, logging, events and metrics with the provided exporters.
 
@@ -754,7 +756,7 @@ def get_tracer(
     instrumenting_library_version: str = version_info,
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
-) -> "trace.Tracer":
+) -> trace.Tracer:
     """Returns a Tracer for use by the given instrumentation library.
 
     This function is a convenience wrapper for trace.get_tracer() replicating
@@ -805,7 +807,7 @@ def get_meter(
     version: str = version_info,
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
-) -> "metrics.Meter":
+) -> metrics.Meter:
     """Returns a Meter for Agent Framework.
 
     This is a convenience wrapper for metrics.get_meter() replicating the behavior
@@ -882,8 +884,8 @@ def enable_instrumentation(
 def configure_otel_providers(
     *,
     enable_sensitive_data: bool | None = None,
-    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
-    views: list["View"] | None = None,
+    exporters: list[LogRecordExporter | SpanExporter | MetricExporter] | None = None,
+    views: list[View] | None = None,
     vs_code_extension_port: int | None = None,
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
@@ -1029,7 +1031,7 @@ def configure_otel_providers(
 # region Chat Client Telemetry
 
 
-def _get_duration_histogram() -> "metrics.Histogram":
+def _get_duration_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
         name=Meters.LLM_OPERATION_DURATION,
         unit=OtelAttr.DURATION_UNIT,
@@ -1038,7 +1040,7 @@ def _get_duration_histogram() -> "metrics.Histogram":
     )
 
 
-def _get_token_usage_histogram() -> "metrics.Histogram":
+def _get_token_usage_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
         name=Meters.LLM_TOKEN_USAGE,
         unit=OtelAttr.T_UNIT,
@@ -1068,41 +1070,41 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: ChatOptions[TResponseModelT],
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[TResponseModelT]]": ...
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_co | ChatOptions[None] | None" = None,
+        options: TOptions_co | ChatOptions[None] | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[Any]]": ...
+    ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]": ...
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
@@ -1183,7 +1185,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                             span=span,
                             provider_name=provider_name,
                             messages=response.messages,
-                            finish_reason=response.finish_reason,
+                            finish_reason=response.finish_reason,  # type: ignore[arg-type]
                             output=True,
                         )
                 except Exception as exception:
@@ -1197,7 +1199,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
-        async def _get_response() -> "ChatResponse":
+        async def _get_response() -> ChatResponse:
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
@@ -1255,31 +1257,31 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: "AgentThread | None" = None,
+        thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[AgentResponse[Any]]": ...
+    ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
     def run(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: Literal[True],
-        thread: "AgentThread | None" = None,
+        thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]": ...
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: "str | ChatMessage | Sequence[str | ChatMessage] | None" = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         stream: bool = False,
-        thread: "AgentThread | None" = None,
+        thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
         super_run = super().run  # type: ignore[misc]
@@ -1381,7 +1383,7 @@ class AgentTelemetryLayer:
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
-        async def _run() -> "AgentResponse":
+        async def _run() -> AgentResponse:
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
@@ -1420,7 +1422,7 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: "FunctionTool[Any, Any]", tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: FunctionTool[Any, Any], tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:
@@ -1443,7 +1445,7 @@ def get_function_span_attributes(function: "FunctionTool[Any, Any]", tool_call_i
 
 def get_function_span(
     attributes: dict[str, str],
-) -> "_AgnosticContextManager[trace.Span]":
+) -> _AgnosticContextManager[trace.Span]:
     """Starts a span for the given function.
 
     Args:
@@ -1465,7 +1467,7 @@ def get_function_span(
 def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
-) -> Generator["trace.Span", Any, Any]:
+) -> Generator[trace.Span, Any, Any]:
     """Start a span for a agent run.
 
     Note: `attributes` must contain the `span_name_attribute` key.
@@ -1586,10 +1588,10 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: "str | ChatMessage | Sequence[str | ChatMessage]",
+    messages: str | ChatMessage | Sequence[str | ChatMessage],
     system_instructions: str | list[str] | None = None,
     output: bool = False,
-    finish_reason: "FinishReason | None" = None,
+    finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
     from ._types import prepare_messages
@@ -1619,12 +1621,12 @@ def _capture_messages(
         span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
 
 
-def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
+def _to_otel_message(message: ChatMessage) -> dict[str, Any]:
     """Create a otel representation of a message."""
     return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
 
 
-def _to_otel_part(content: "Content") -> dict[str, Any] | None:
+def _to_otel_part(content: Content) -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
     from ._types import _get_data_bytes_as_str
 
@@ -1666,7 +1668,7 @@ def _to_otel_part(content: "Content") -> dict[str, Any] | None:
 
 def _get_response_attributes(
     attributes: dict[str, Any],
-    response: "ChatResponse | AgentResponse",
+    response: ChatResponse | AgentResponse,
     *,
     capture_usage: bool = True,
 ) -> dict[str, Any]:
@@ -1703,8 +1705,8 @@ GEN_AI_METRIC_ATTRIBUTES = (
 def _capture_response(
     span: trace.Span,
     attributes: dict[str, Any],
-    operation_duration_histogram: "metrics.Histogram | None" = None,
-    token_usage_histogram: "metrics.Histogram | None" = None,
+    operation_duration_histogram: metrics.Histogram | None = None,
+    token_usage_histogram: metrics.Histogram | None = None,
     duration: float | None = None,
 ) -> None:
     """Set the response for a given span."""
@@ -1741,7 +1743,7 @@ class EdgeGroupDeliveryStatus(Enum):
         return self.value
 
 
-def workflow_tracer() -> "Tracer":
+def workflow_tracer() -> Tracer:
     """Get a workflow tracer or a no-op tracer if not enabled."""
     global OBSERVABILITY_SETTINGS
     return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
@@ -1751,7 +1753,7 @@ def create_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
-) -> "_AgnosticContextManager[trace.Span]":
+) -> _AgnosticContextManager[trace.Span]:
     """Create a generic workflow span."""
     return workflow_tracer().start_as_current_span(name, kind=kind, attributes=attributes)
 
@@ -1763,7 +1765,7 @@ def create_processing_span(
     payload_type: str,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> "_AgnosticContextManager[trace.Span]":
+) -> _AgnosticContextManager[trace.Span]:
     """Create an executor processing span with optional links to source spans.
 
     Processing spans are created as children of the current workflow span and
@@ -1823,7 +1825,7 @@ def create_edge_group_processing_span(
     message_target_id: str | None = None,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> "_AgnosticContextManager[trace.Span]":
+) -> _AgnosticContextManager[trace.Span]:
     """Create an edge group processing span with optional links to source spans.
 
     Edge group processing spans track the processing operations in edge runners

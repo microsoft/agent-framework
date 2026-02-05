@@ -14,7 +14,6 @@ from agent_framework import (
     Content,
     FunctionInvocationContext,
     FunctionTool,
-    Role,
     chat_middleware,
     function_middleware,
 )

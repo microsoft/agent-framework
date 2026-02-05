@@ -22,7 +22,6 @@ from agent_framework import (
     Content,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    Role,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError

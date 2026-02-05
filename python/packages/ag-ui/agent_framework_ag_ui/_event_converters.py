@@ -7,7 +7,6 @@ from typing import Any
 from agent_framework import (
     ChatResponseUpdate,
     Content,
-    FinishReason,
 )
 
 

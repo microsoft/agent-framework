@@ -13,7 +13,6 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ResponseStream,
-    Role,
     tool,
 )
 from pytest import MonkeyPatch

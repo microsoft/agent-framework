@@ -350,7 +350,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                             tool_calls.extend(chunk.tool_calls)
 
                     # Build consolidated response from updates
-                    response = AgentResponse.from_agent_run_response_updates(updates)
+                    response = AgentResponse.from_updates(updates)
                     text = response.text
                     response_messages = response.messages
 
@@ -585,7 +585,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                         )
 
                 # Build consolidated response from updates
-                response = AgentResponse.from_agent_run_response_updates(updates)
+                response = AgentResponse.from_updates(updates)
                 text = response.text
                 response_messages = response.messages
 

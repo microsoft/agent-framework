@@ -141,9 +141,11 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await next(context)
             return
 
+        from agent_framework._middleware import MiddlewareTermination
+
         # Short-circuit execution and provide deterministic response payload for the tool call.
         context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
-        context.terminate = True
+        raise MiddlewareTermination(result=context.result)
 
 
 @dataclass

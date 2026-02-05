@@ -10,7 +10,6 @@ from agent_framework import ChatAgent, ChatMessage, ChatOptions, ChatResponseUpd
 from pydantic import BaseModel
 
 
-
 class RecipeOutput(BaseModel):
     """Test Pydantic model for recipe output."""
 

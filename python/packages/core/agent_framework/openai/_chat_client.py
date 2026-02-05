@@ -34,7 +34,6 @@ from .._types import (
     Content,
     FinishReason,
     ResponseStream,
-    Role,
     UsageDetails,
     prepare_function_call_results,
 )
@@ -314,7 +313,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = FinishReason(value=choice.finish_reason)
+                finish_reason = choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -359,7 +358,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
-                finish_reason = FinishReason(value=choice.finish_reason)
+                finish_reason = choice.finish_reason  # type: ignore[assignment]
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -484,7 +483,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 continue
 
             args: dict[str, Any] = {
-                "role": message.role if isinstance(message.role, Role) else message.role,
+                "role": message.role,
             }
             if message.author_name and message.role != "tool":
                 args["name"] = message.author_name

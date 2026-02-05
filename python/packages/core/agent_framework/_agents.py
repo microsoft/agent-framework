@@ -508,7 +508,7 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_agent_run_response_updates(response_updates).text
+            return AgentResponse.from_updates(response_updates).text
 
         agent_tool: FunctionTool[BaseModel, str] = FunctionTool(
             name=tool_name,
@@ -975,7 +975,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     ) -> AgentResponse:
         """Finalize response updates into a single AgentResponse."""
         output_format_type = response_format if isinstance(response_format, type) else None
-        return AgentResponse.from_agent_run_response_updates(updates, output_format_type=output_format_type)
+        return AgentResponse.from_updates(updates, output_format_type=output_format_type)
 
     async def _prepare_run_context(
         self,

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage, Content, Role
+from agent_framework import AgentResponse, ChatMessage, Content
 
 from agent_framework_devui import register_cleanup
 from agent_framework_devui._discovery import EntityDiscovery

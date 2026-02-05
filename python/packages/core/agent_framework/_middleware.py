@@ -93,9 +93,9 @@ class MiddlewareTermination(MiddlewareException):
 
     result: Any = None  # Optional result to return when terminating
 
-    def __init__(self, message: str = "Middleware terminated execution.") -> None:
+    def __init__(self, message: str = "Middleware terminated execution.", *, result: Any = None) -> None:
         super().__init__(message, log_level=None)
-        self.result = None
+        self.result = result
 
 
 class MiddlewareType(str, Enum):
@@ -1090,13 +1090,9 @@ class AgentMiddlewareLayer:
         self.agent_middleware = middleware_list["agent"]
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
         super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
-        if chat_client := getattr(self, "chat_client", None):
-            client_chat_middleware = getattr(chat_client, "chat_middleware", [])
-            client_chat_middleware.extend(middleware_list["chat"])
-            chat_client.chat_middleware = client_chat_middleware
-            client_func_middleware = getattr(chat_client, "function_middleware", [])
-            client_func_middleware.extend(middleware_list["function"])
-            chat_client.function_middleware = client_func_middleware
+        # Note: We intentionally don't extend chat_client's middleware lists here.
+        # Chat and function middleware is passed to the chat client at runtime via kwargs
+        # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
 
     @overload
     def run(
@@ -1151,9 +1147,15 @@ class AgentMiddlewareLayer:
         run_middleware_list = categorize_middleware(middleware)
         pipeline = AgentMiddlewarePipeline(*base_middleware_list["agent"], *run_middleware_list["agent"])
 
-        # Forward chat/function middleware from both base and run-level to kwargs
+        # Combine base and run-level function/chat middleware for forwarding to chat client
+        combined_function_chat_middleware = (
+            base_middleware_list["function"]
+            + base_middleware_list["chat"]
+            + run_middleware_list["function"]
+            + run_middleware_list["chat"]
+        )
         combined_kwargs = dict(kwargs)
-        combined_kwargs["middleware"] = middleware
+        combined_kwargs["middleware"] = combined_function_chat_middleware if combined_function_chat_middleware else None
 
         # Execute with middleware if available
         if not pipeline.has_middlewares:
@@ -1161,7 +1163,7 @@ class AgentMiddlewareLayer:
 
         context = AgentRunContext(
             agent=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages),
+            messages=prepare_messages(messages),  # type: ignore[arg-type]
             thread=thread,
             options=options,
             stream=stream,

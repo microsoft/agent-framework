@@ -9,7 +9,6 @@ from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate, ChatResponseUpdate
 
 
-
 async def test_service_thread_id_when_there_are_updates(stub_agent):
     """Test that service-managed thread IDs (conversation_id) are correctly set as the thread_id in events."""
     from agent_framework.ag_ui import AgentFrameworkAgent

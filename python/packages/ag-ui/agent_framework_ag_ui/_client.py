@@ -374,11 +374,11 @@ class AGUIChatClient(
                     options=options,
                     **kwargs,
                 ),
-                finalizer=ChatResponse.from_chat_response_updates,
+                finalizer=ChatResponse.from_updates,
             )
 
         async def _get_response() -> ChatResponse:
-            return await ChatResponse.from_chat_response_generator(
+            return await ChatResponse.from_update_generator(
                 self._streaming_impl(
                     messages=messages,
                     options=options,

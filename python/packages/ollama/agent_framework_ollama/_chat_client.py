@@ -27,7 +27,6 @@ from agent_framework import (
     FunctionTool,
     HostedWebSearchTool,
     ResponseStream,
-    Role,
     ToolProtocol,
     UsageDetails,
     get_logger,
@@ -454,10 +453,10 @@ class OllamaChatClient(
 
     def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
-            "system".value: self._format_system_message,
-            "user".value: self._format_user_message,
-            "assistant".value: self._format_assistant_message,
-            "tool".value: self._format_tool_message,
+            "system": self._format_system_message,
+            "user": self._format_user_message,
+            "assistant": self._format_assistant_message,
+            "tool": self._format_tool_message,
         }
         return message_converters[message.role](message)
 
@@ -529,7 +528,7 @@ class OllamaChatClient(
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
-            ai_model_id=response.model,
+            model_id=response.model,
             created_at=response.created_at,
         )
 
