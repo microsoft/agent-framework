@@ -968,7 +968,7 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
 async def test_workflow_run_stream_parameter_validation(
     simple_executor: Executor,
 ) -> None:
-    """Test run_stream() specific parameter validation scenarios."""
+    """Test stream=True specific parameter validation scenarios."""
     workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)
