@@ -42,7 +42,7 @@ def sample_messages() -> list[ChatMessage]:
     ]
 
 
-def test_init_with_all_ids(self, mock_mem0_client: AsyncMock) -> None:
+def test_init_with_all_ids(mock_mem0_client: AsyncMock) -> None:
     """Test initialization with all IDs provided."""
     provider = Mem0Provider(
         user_id="user123",
