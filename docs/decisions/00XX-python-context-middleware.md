@@ -856,21 +856,23 @@ class ContextPluginRunner:
 
     async def before_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
-        state: dict[str, Any],
     ) -> None:
         """Run before_run for all plugins, passing the whole state dict."""
         for plugin in self._plugins:
-            await plugin.before_run(context, state)  # Dict is mutable, no return needed
+            await plugin.before_run(agent, session, context, session.state)  # Dict is mutable, no return needed
 
     async def after_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
-        state: dict[str, Any],
     ) -> None:
         """Run after_run for all plugins in reverse order."""
         for plugin in reversed(self._plugins):
-            await plugin.after_run(context, state)  # Dict is mutable, no return needed
+            await plugin.after_run(agent, session, context, session.state)  # Dict is mutable, no return needed
 
 
 class ChatAgent:
@@ -894,20 +896,22 @@ class ChatAgent:
         )
 
         # Before-run plugins
-        await self._plugin_runner.before_run(context, session.state)
+        await self._plugin_runner.before_run(self, session, context)
 
         # assemble final input messages from context
 
         # ... actual running, i.e. `get_response` for ChatAgent ...
 
         # After-run plugins
-        await self._plugin_runner.after_run(context, session.state)
+        await self._plugin_runner.after_run(self, session, context)
 
 
 # Plugin that maintains state - modifies dict in place
 class InMemoryStoragePlugin(ContextPlugin):
     async def before_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
@@ -918,6 +922,8 @@ class InMemoryStoragePlugin(ContextPlugin):
 
     async def after_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
@@ -935,6 +941,8 @@ class InMemoryStoragePlugin(ContextPlugin):
 class TimeContextPlugin(ContextPlugin):
     async def before_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
@@ -942,6 +950,8 @@ class TimeContextPlugin(ContextPlugin):
 
     async def after_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
@@ -1096,7 +1106,7 @@ class TimeContextHooks(ContextHooks):
 | Instance state | Natural (instance variables) | Explicit (state dict) |
 | Serialization | Serialize session + plugins | Serialize state only |
 | Factory handling | Resolved at session creation | Not needed (state dict handles per-session needs) |
-| Signature | `before_run(context)` | `before_run(context, state)` |
+| Signature | `before_run(context)` | `before_run(agent, session, context, state)` |
 | Session portability | Works with any agent | Tied to agent's plugins config |
 
 #### Factories Not Needed with Option B
