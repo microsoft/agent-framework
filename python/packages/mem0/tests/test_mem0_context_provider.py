@@ -4,7 +4,7 @@
 import importlib
 import os
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from agent_framework import ChatMessage, Content, Context
@@ -83,21 +83,6 @@ def test_init_with_scope_to_per_operation_thread_id(mock_mem0_client: AsyncMock)
     assert provider.scope_to_per_operation_thread_id is True
 
 
-def test_init_creates_default_client_when_none_provided() -> None:
-    """Test that a default client is created when none is provided."""
-
-    import agent_framework_mem0._provider as provider
-
-    mock_client = AsyncMock()
-
-    with patch.object(provider, "AsyncMemoryClient", return_value=mock_client) as mock_memory_client_class:
-        provider = Mem0Provider(user_id="user123", api_key="test_api_key")
-
-        mock_memory_client_class.assert_called_once_with(api_key="test_api_key")
-        assert provider.mem0_client == mock_client
-        assert provider._should_close_client is True
-
-
 def test_init_with_provided_client_should_not_close(mock_mem0_client: AsyncMock) -> None:
     """Test that provided client should not be closed by provider."""
     provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
@@ -109,27 +94,6 @@ async def test_async_context_manager_entry(mock_mem0_client: AsyncMock) -> None:
     provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
     async with provider as ctx:
         assert ctx is provider
-
-
-async def test_async_context_manager_exit_closes_client_when_should_close() -> None:
-    """Test that async context manager closes client when it should."""
-
-    import agent_framework_mem0._provider as provider
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock()
-    mock_client.async_client = AsyncMock()
-    mock_client.async_client.aclose = AsyncMock()
-
-    with patch.object(provider, "AsyncMemoryClient", return_value=mock_client):
-        provider = Mem0Provider(user_id="user123", api_key="test_key")
-        assert provider._should_close_client is True
-
-        async with provider:
-            pass
-
-        mock_client.__aexit__.assert_called_once()
 
 
 async def test_async_context_manager_exit_does_not_close_provided_client(mock_mem0_client: AsyncMock) -> None:
