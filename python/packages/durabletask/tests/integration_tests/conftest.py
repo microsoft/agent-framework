@@ -418,7 +418,15 @@ def worker_process(
         pytest.fail(f"Failed to start worker subprocess: {e}")
 
     # Wait for worker to initialize
-    time.sleep(2)
+    # The worker needs time to:
+    # 1. Start Python and import modules
+    # 2. Create Azure OpenAI clients
+    # 3. Register agents with the DTS worker
+    # 4. Connect to DTS and be ready to receive signals
+    #
+    # We use a generous wait time because CI environments can be slow,
+    # and the first test that runs depends on the worker being fully ready.
+    time.sleep(8)
 
     # Check if process is still running
     if process.poll() is not None:

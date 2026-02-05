@@ -242,7 +242,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     case _:
                         logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
             else:
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                chat_tools.append(tool)  # type: ignore[arg-type]
         ret_dict: dict[str, Any] = {}
         if chat_tools:
             ret_dict["tools"] = chat_tools
