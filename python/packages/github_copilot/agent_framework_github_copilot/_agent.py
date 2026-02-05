@@ -376,7 +376,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
             if response_event.data.content:
                 response_messages.append(
                     ChatMessage(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         contents=[Content.from_text(response_event.data.content)],
                         message_id=message_id,
                         raw_representation=response_event,
@@ -428,7 +428,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
                 if event.data.delta_content:
                     update = AgentResponseUpdate(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         contents=[Content.from_text(event.data.delta_content)],
                         response_id=event.data.message_id,
                         message_id=event.data.message_id,

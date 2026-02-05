@@ -577,7 +577,7 @@ def test_chat_message_text():
     message = ChatMessage(role="user", text="Hello, how are you?")
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "Hello, how are you?"
@@ -595,7 +595,7 @@ def test_chat_message_contents():
     message = ChatMessage(role="user", contents=[content1, content2])
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 2
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "text"
@@ -605,8 +605,8 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage(role=Role.USER, text="hi")
-    assert m.role == Role.USER
+    m = ChatMessage(role="user", text="hi")
+    assert m.role == "user"
     assert m.text == "hi"
 
 
@@ -622,7 +622,7 @@ def test_chat_response():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "I'm doing well, thank you!"
     assert isinstance(response.messages[0], ChatMessage)
     # __str__ returns text
@@ -642,7 +642,7 @@ def test_chat_response_with_format():
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -661,7 +661,7 @@ def test_chat_response_with_format_init():
     response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
     assert isinstance(response.messages[0], ChatMessage)
     assert response.text == '{"response": "Hello"}'
@@ -1081,7 +1081,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 @fixture
 def chat_message() -> ChatMessage:
-    return ChatMessage(role=Role.USER, text="Hello")
+    return ChatMessage(role="user", text="Hello")
 
 
 @fixture
@@ -1096,7 +1096,7 @@ def agent_response(chat_message: ChatMessage) -> AgentResponse:
 
 @fixture
 def agent_response_update(text_content: Content) -> AgentResponseUpdate:
-    return AgentResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
+    return AgentResponseUpdate(role="assistant", contents=[text_content])
 
 
 # region AgentResponse
@@ -1175,7 +1175,7 @@ def test_agent_run_response_update_created_at() -> None:
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=utc_timestamp,
     )
     assert update.created_at == utc_timestamp
@@ -1186,7 +1186,7 @@ def test_agent_run_response_update_created_at() -> None:
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     update_with_now = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=formatted_utc,
     )
     assert update_with_now.created_at == formatted_utc
@@ -1198,7 +1198,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[ChatMessage(role="assistant", text="Hello")],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1208,7 +1208,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[ChatMessage(role="assistant", text="Hello")],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1297,12 +1297,12 @@ def test_function_call_incompatible_ids_are_not_merged():
 
 
 def test_chat_role_str_and_repr():
-    assert str(Role.USER) == "user"
-    assert "Role(value=" in repr(Role.USER)
+    assert str("user") == "user"
+    assert "Role(value=" in repr("user")
 
 
 def test_chat_finish_reason_constants():
-    assert FinishReason.STOP.value == "stop"
+    assert "stop".value == "stop"
 
 
 def test_response_update_propagates_fields_and_metadata():
@@ -1315,7 +1315,7 @@ def test_response_update_propagates_fields_and_metadata():
         conversation_id="cid",
         model_id="model-x",
         created_at="t0",
-        finish_reason=FinishReason.STOP,
+        finish_reason="stop",
         additional_properties={"k": "v"},
     )
     resp = ChatResponse.from_chat_response_updates([upd])
@@ -1323,9 +1323,9 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
     assert resp.model_id == "model-x"
-    assert resp.finish_reason == FinishReason.STOP
+    assert resp.finish_reason == "stop"
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
-    assert resp.messages[0].role == Role.ASSISTANT
+    assert resp.messages[0].role == "assistant"
     assert resp.messages[0].author_name == "bot"
     assert resp.messages[0].message_id == "mid"
 
@@ -1588,7 +1588,7 @@ def test_chat_message_complex_content_serialization():
         Content.from_function_result(call_id="call1", result="success"),
     ]
 
-    message = ChatMessage(role=Role.ASSISTANT, contents=contents)
+    message = ChatMessage(role="assistant", contents=contents)
 
     # Test to_dict
     message_dict = message.to_dict()
@@ -1796,7 +1796,7 @@ def test_agent_run_response_update_all_content_types():
     update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
     assert isinstance(update.role, Role)
-    assert update.role.value == "assistant"
+    assert update.role == "assistant"
 
     # Test to_dict with role conversion
     update_dict = update.to_dict()
@@ -1808,7 +1808,7 @@ def test_agent_run_response_update_all_content_types():
     update_data_str_role["role"] = "user"
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
     assert isinstance(update_str.role, Role)
-    assert update_str.role.value == "user"
+    assert update_str.role == "user"
 
 
 # region Serialization
@@ -2528,7 +2528,7 @@ def test_validate_uri_data_uri():
 async def _generate_updates(count: int = 5) -> AsyncIterable[ChatResponseUpdate]:
     """Helper to generate test updates."""
     for i in range(count):
-        yield ChatResponseUpdate(contents=[Content.from_text(f"update_{i}")], role=Role.ASSISTANT)
+        yield ChatResponseUpdate(contents=[Content.from_text(f"update_{i}")], role="assistant")
 
 
 def _combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
@@ -2827,7 +2827,7 @@ class TestResponseStreamResultHooks:
         """Result hook can transform the final result."""
 
         def wrap_text(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"[{response.text}]", role=Role.ASSISTANT)
+            return ChatResponse(text=f"[{response.text}]", role="assistant")
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -2843,10 +2843,10 @@ class TestResponseStreamResultHooks:
         """Multiple result hooks are called in order."""
 
         def add_prefix(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"prefix_{response.text}", role=Role.ASSISTANT)
+            return ChatResponse(text=f"prefix_{response.text}", role="assistant")
 
         def add_suffix(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"{response.text}_suffix", role=Role.ASSISTANT)
+            return ChatResponse(text=f"{response.text}_suffix", role="assistant")
 
         stream = ResponseStream(
             _generate_updates(1),
@@ -2894,7 +2894,7 @@ class TestResponseStreamResultHooks:
         """Async result hooks are awaited."""
 
         async def async_hook(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"async_{response.text}", role=Role.ASSISTANT)
+            return ChatResponse(text=f"async_{response.text}", role="assistant")
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -2916,7 +2916,7 @@ class TestResponseStreamFinalizer:
 
         def capturing_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             received_updates.extend(updates)
-            return ChatResponse(messages="done", role=Role.ASSISTANT)
+            return ChatResponse(messages="done", role="assistant")
 
         stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
 
@@ -2941,7 +2941,7 @@ class TestResponseStreamFinalizer:
 
         async def async_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             text = "".join(u.text or "" for u in updates)
-            return ChatResponse(text=f"async_{text}", role=Role.ASSISTANT)
+            return ChatResponse(text=f"async_{text}", role="assistant")
 
         stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
 
@@ -2955,7 +2955,7 @@ class TestResponseStreamFinalizer:
 
         def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             call_count["value"] += 1
-            return ChatResponse(messages="done", role=Role.ASSISTANT)
+            return ChatResponse(messages="done", role="assistant")
 
         stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
 
@@ -3015,7 +3015,7 @@ class TestResponseStreamMapAndWithFinalizer:
 
         def inner_result_hook(response: ChatResponse) -> ChatResponse:
             inner_result_hook_called["value"] = True
-            return ChatResponse(text=f"hooked_{response.text}", role=Role.ASSISTANT)
+            return ChatResponse(text=f"hooked_{response.text}", role="assistant")
 
         inner = ResponseStream(
             _generate_updates(2),
@@ -3035,7 +3035,7 @@ class TestResponseStreamMapAndWithFinalizer:
 
         def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             inner_finalizer_called["value"] = True
-            return ChatResponse(text="inner_result", role=Role.ASSISTANT)
+            return ChatResponse(text="inner_result", role="assistant")
 
         inner = ResponseStream(
             _generate_updates(2),
@@ -3055,7 +3055,7 @@ class TestResponseStreamMapAndWithFinalizer:
         inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
         def outer_hook(response: ChatResponse) -> ChatResponse:
-            return ChatResponse(text=f"outer_{response.text}", role=Role.ASSISTANT)
+            return ChatResponse(text=f"outer_{response.text}", role="assistant")
 
         outer = inner.with_finalizer(_combine_updates).with_result_hook(outer_hook)
 
@@ -3117,7 +3117,7 @@ class TestResponseStreamMapAndWithFinalizer:
         async def counting_generator() -> AsyncIterable[ChatResponseUpdate]:
             consumption_count["value"] += 1
             for i in range(2):
-                yield ChatResponseUpdate(contents=[Content.from_text(f"u{i}")], role=Role.ASSISTANT)
+                yield ChatResponseUpdate(contents=[Content.from_text(f"u{i}")], role="assistant")
 
         inner = ResponseStream(counting_generator(), finalizer=_combine_updates)
         outer = inner.map(lambda u: u, _combine_updates)
@@ -3180,7 +3180,7 @@ class TestResponseStreamExecutionOrder:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             order.append("finalizer")
-            return ChatResponse(messages="done", role=Role.ASSISTANT)
+            return ChatResponse(messages="done", role="assistant")
 
         def result_hook(response: ChatResponse) -> ChatResponse:
             order.append("result")
@@ -3215,7 +3215,7 @@ class TestResponseStreamExecutionOrder:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             order.append("finalizer")
-            return ChatResponse(messages="done", role=Role.ASSISTANT)
+            return ChatResponse(messages="done", role="assistant")
 
         stream = ResponseStream(
             _generate_updates(2),
@@ -3335,7 +3335,7 @@ class TestResponseStreamEdgeCases:
 
         def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
             events.append("finalizer")
-            return ChatResponse(messages="done", role=Role.ASSISTANT)
+            return ChatResponse(messages="done", role="assistant")
 
         def result(r: ChatResponse) -> ChatResponse:
             events.append("result")

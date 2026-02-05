@@ -342,7 +342,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
         if chunk.usage:
             return ChatResponseUpdate(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=[
                     Content.from_usage(
                         usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
@@ -368,7 +368,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
-            role=Role.ASSISTANT,
+            role="assistant",
             model_id=chunk.model,
             additional_properties=chunk_metadata,
             finish_reason=finish_reason,
@@ -455,7 +455,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        Role.TOOL messages need to be formatted different than system/user/assistant messages:
+        "tool" messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -484,9 +484,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 continue
 
             args: dict[str, Any] = {
-                "role": message.role.value if isinstance(message.role, Role) else message.role,
+                "role": message.role if isinstance(message.role, Role) else message.role,
             }
-            if message.author_name and message.role != Role.TOOL:
+            if message.author_name and message.role != "tool":
                 args["name"] = message.author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]

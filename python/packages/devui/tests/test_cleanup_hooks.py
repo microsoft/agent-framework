@@ -39,12 +39,12 @@ class MockAgent:
 
             async def _stream():
                 yield AgentResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Test response")])],
+                    messages=[ChatMessage(role="assistant", contents=[Content.from_text(text="Test response")])],
                 )
 
             return _stream()
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Test response")])],
+            messages=[ChatMessage(role="assistant", contents=[Content.from_text(text="Test response")])],
         )
 
 
@@ -289,12 +289,12 @@ class TestAgent:
         if stream:
             async def _stream():
                 yield AgentResponse(
-                    messages=[ChatMessage(role=Role.ASSISTANT, content=[Content.from_text(text="Test")])],
+                    messages=[ChatMessage(role="assistant", content=[Content.from_text(text="Test")])],
                     inner_messages=[],
                 )
             return _stream()
         return AgentResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, content=[Content.from_text(text="Test")])],
+            messages=[ChatMessage(role="assistant", content=[Content.from_text(text="Test")])],
             inner_messages=[],
         )
 

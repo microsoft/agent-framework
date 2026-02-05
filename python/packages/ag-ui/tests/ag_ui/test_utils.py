@@ -408,7 +408,7 @@ def test_get_role_value_with_enum():
 
     from agent_framework_ag_ui._utils import get_role_value
 
-    message = ChatMessage(role=Role.USER, contents=[Content.from_text("test")])
+    message = ChatMessage(role="user", contents=[Content.from_text("test")])
     result = get_role_value(message)
     assert result == "user"
 

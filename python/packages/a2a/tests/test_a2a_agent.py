@@ -128,7 +128,7 @@ async def test_run_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: M
 
     assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
-    assert response.messages[0].role.value == "assistant"
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Hello from agent!"
     assert response.response_id == "msg-123"
     assert mock_a2a_client.call_count == 1
@@ -143,7 +143,7 @@ async def test_run_with_task_response_single_artifact(a2a_agent: A2AAgent, mock_
 
     assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
-    assert response.messages[0].role.value == "assistant"
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Generated report content"
     assert response.response_id == "task-456"
     assert mock_a2a_client.call_count == 1
@@ -169,7 +169,7 @@ async def test_run_with_task_response_multiple_artifacts(a2a_agent: A2AAgent, mo
 
     # All should be assistant messages
     for message in response.messages:
-        assert message.role.value == "assistant"
+        assert message.role == "assistant"
 
     assert response.response_id == "task-789"
 
@@ -232,7 +232,7 @@ def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
     assert len(result) == 2
     assert result[0].text == "Content 1"
     assert result[1].text == "Content 2"
-    assert all(msg.role.value == "assistant" for msg in result)
+    assert all(msg.role == "assistant" for msg in result)
 
 
 def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
@@ -251,7 +251,7 @@ def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
     result = a2a_agent._parse_message_from_artifact(artifact)
 
     assert isinstance(result, ChatMessage)
-    assert result.role.value == "assistant"
+    assert result.role == "assistant"
     assert result.text == "Artifact content"
     assert result.raw_representation == artifact
 
@@ -359,7 +359,7 @@ async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a
     # Verify streaming response
     assert len(updates) == 1
     assert isinstance(updates[0], AgentResponseUpdate)
-    assert updates[0].role.value == "assistant"
+    assert updates[0].role == "assistant"
     assert len(updates[0].contents) == 1
 
     content = updates[0].contents[0]

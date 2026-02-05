@@ -62,7 +62,7 @@ class MockChatClient:
         async def _get() -> ChatResponse:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
             reply = ChatMessage(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=contents,
             )
             return ChatResponse(messages=reply, response_id="mock_response")
@@ -72,7 +72,7 @@ class MockChatClient:
     def _get_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            yield ChatResponseUpdate(contents=contents, role=Role.ASSISTANT, is_finished=True)
+            yield ChatResponseUpdate(contents=contents, role="assistant", is_finished=True)
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             response_format = options.get("response_format")
@@ -143,7 +143,7 @@ async def test_handoff():
     workflow = (
         HandoffBuilder(participants=[triage, specialist, escalation])
         .with_start_agent(triage)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -195,7 +195,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
     assert isinstance(final_conversation, list)
     conversation_list = cast(list[ChatMessage], final_conversation)
     assert any(
-        msg.role == Role.ASSISTANT and (msg.text or "").startswith("specialist reply") for msg in conversation_list
+        msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list
     )
 
 
@@ -242,7 +242,7 @@ async def test_handoff_async_termination_condition() -> None:
     async def async_termination(conv: list[ChatMessage]) -> bool:
         nonlocal termination_call_count
         termination_call_count += 1
-        user_count = sum(1 for msg in conv if msg.role == Role.USER)
+        user_count = sum(1 for msg in conv if msg.role == "user")
         return user_count >= 2
 
     coordinator = MockHandoffAgent(name="coordinator", handoff_to="worker")
@@ -261,7 +261,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     events = await _drain(
         workflow.send_responses_streaming({
-            requests[-1].request_id: [ChatMessage(role=Role.USER, text="Second user message")]
+            requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]
         })
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
@@ -270,7 +270,7 @@ async def test_handoff_async_termination_condition() -> None:
     final_conversation = outputs[0].data
     assert isinstance(final_conversation, list)
     final_conv_list = cast(list[ChatMessage], final_conversation)
-    user_messages = [msg for msg in final_conv_list if msg.role == Role.USER]
+    user_messages = [msg for msg in final_conv_list if msg.role == "user"]
     assert len(user_messages) == 2
     assert termination_call_count > 0
 
@@ -284,7 +284,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, text="Response")],
+            messages=[ChatMessage(role="assistant", text="Response")],
             response_id="test_response",
         )
 
@@ -500,7 +500,7 @@ async def test_handoff_with_participant_factories():
     workflow = (
         HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
         .with_start_agent("triage")
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -513,7 +513,7 @@ async def test_handoff_with_participant_factories():
 
     # Follow-up message
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role=Role.USER, text="More details")]})
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs
@@ -573,7 +573,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
         .with_start_agent("triage")
         .add_handoff("triage", ["specialist_a", "specialist_b"])
         .add_handoff("specialist_a", ["specialist_b"])
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 3)
         .build()
     )
 
@@ -588,7 +588,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
     # Second user message - specialist_a hands off to specialist_b
     events = await _drain(
         workflow.send_responses_streaming({
-            requests[-1].request_id: [ChatMessage(role=Role.USER, text="Need escalation")]
+            requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]
         })
     )
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
@@ -614,7 +614,7 @@ async def test_handoff_participant_factories_with_checkpointing():
         HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
         .with_start_agent("triage")
         .with_checkpointing(storage)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -624,7 +624,7 @@ async def test_handoff_participant_factories_with_checkpointing():
     assert requests
 
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role=Role.USER, text="follow up")]})
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs, "Should have workflow output after termination condition is met"

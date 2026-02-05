@@ -254,7 +254,7 @@ class TestAzureFunctionsFireAndForget:
         response = result.result
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role.value == "system"
+        assert response.messages[0].role == "system"
         # Check message contains key information
         message_text = response.messages[0].text
         assert "accepted" in message_text.lower()

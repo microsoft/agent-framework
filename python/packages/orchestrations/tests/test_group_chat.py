@@ -52,12 +52,12 @@ class StubAgent(BaseAgent):
         return self._run_impl()
 
     async def _run_impl(self) -> AgentResponse:
-        response = ChatMessage(role=Role.ASSISTANT, text=self._reply_text, author_name=self.name)
+        response = ChatMessage(role="assistant", text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
         yield AgentResponseUpdate(
-            contents=[Content.from_text(text=self._reply_text)], role=Role.ASSISTANT, author_name=self.name
+            contents=[Content.from_text(text=self._reply_text)], role="assistant", author_name=self.name
         )
 
 
@@ -91,7 +91,7 @@ class StubManagerAgent(ChatAgent):
             return AgentResponse(
                 messages=[
                     ChatMessage(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         text=(
                             '{"terminate": false, "reason": "Selecting agent", '
                             '"next_speaker": "agent", "final_message": null}'
@@ -112,7 +112,7 @@ class StubManagerAgent(ChatAgent):
         return AgentResponse(
             messages=[
                 ChatMessage(
-                    role=Role.ASSISTANT,
+                    role="assistant",
                     text=(
                         '{"terminate": true, "reason": "Task complete", '
                         '"next_speaker": null, "final_message": "agent manager final"}'
@@ -147,7 +147,7 @@ class StubMagenticManager(MagenticManagerBase):
         self._round = 0
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=Role.ASSISTANT, text="plan", author_name="magentic_manager")
+        return ChatMessage(role="assistant", text="plan", author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
@@ -173,7 +173,7 @@ class StubMagenticManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage(role=Role.ASSISTANT, text="final", author_name="magentic_manager")
+        return ChatMessage(role="assistant", text="final", author_name="magentic_manager")
 
 
 async def test_group_chat_builder_basic_flow() -> None:
@@ -218,8 +218,8 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     agent = workflow.as_agent(name="group-chat-agent")
     conversation = [
-        ChatMessage(role=Role.USER, text="kickoff", author_name="user"),
-        ChatMessage(role=Role.ASSISTANT, text="noted", author_name="alpha"),
+        ChatMessage(role="user", text="kickoff", author_name="user"),
+        ChatMessage(role="assistant", text="noted", author_name="alpha"),
     ]
     response = await agent.run(conversation)
 
@@ -383,7 +383,7 @@ class TestGroupChatWorkflow:
             return "agent"
 
         def termination_condition(conversation: list[ChatMessage]) -> bool:
-            replies = [msg for msg in conversation if msg.role == Role.ASSISTANT and msg.author_name == "agent"]
+            replies = [msg for msg in conversation if msg.role == "assistant" and msg.author_name == "agent"]
             return len(replies) >= 2
 
         agent = StubAgent("agent", "response")
@@ -405,7 +405,7 @@ class TestGroupChatWorkflow:
 
         assert outputs, "Expected termination to yield output"
         conversation = outputs[-1]
-        agent_replies = [msg for msg in conversation if msg.author_name == "agent" and msg.role == Role.ASSISTANT]
+        agent_replies = [msg for msg in conversation if msg.author_name == "agent" and msg.role == "assistant"]
         assert len(agent_replies) == 2
         final_output = conversation[-1]
         # The orchestrator uses its ID as author_name by default
@@ -511,7 +511,7 @@ class TestConversationHandling:
         def selector(state: GroupChatState) -> str:
             # Verify the conversation has the user message
             assert len(state.conversation) > 0
-            assert state.conversation[0].role == Role.USER
+            assert state.conversation[0].role == "user"
             assert state.conversation[0].text == "test string"
             return "agent"
 
@@ -536,7 +536,7 @@ class TestConversationHandling:
 
     async def test_handle_chat_message_input(self) -> None:
         """Test handling ChatMessage input directly."""
-        task_message = ChatMessage(role=Role.USER, text="test message")
+        task_message = ChatMessage(role="user", text="test message")
 
         def selector(state: GroupChatState) -> str:
             # Verify the task message was preserved in conversation
@@ -566,8 +566,8 @@ class TestConversationHandling:
     async def test_handle_conversation_list_input(self) -> None:
         """Test handling conversation list preserves context."""
         conversation = [
-            ChatMessage(role=Role.SYSTEM, text="system message"),
-            ChatMessage(role=Role.USER, text="user message"),
+            ChatMessage(role="system", text="system message"),
+            ChatMessage(role="user", text="user message"),
         ]
 
         def selector(state: GroupChatState) -> str:
@@ -1076,7 +1076,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 return AgentResponse(
                     messages=[
                         ChatMessage(
-                            role=Role.ASSISTANT,
+                            role="assistant",
                             text=(
                                 '{"terminate": false, "reason": "Selecting alpha", '
                                 '"next_speaker": "alpha", "final_message": null}'
@@ -1096,7 +1096,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
             return AgentResponse(
                 messages=[
                     ChatMessage(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         text=(
                             '{"terminate": true, "reason": "Task complete", '
                             '"next_speaker": null, "final_message": "dynamic manager final"}'

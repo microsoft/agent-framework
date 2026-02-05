@@ -293,7 +293,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentResponseUpdate(
                     contents=contents,
-                    role=Role.ASSISTANT if item.role == A2ARole.agent else Role.USER,
+                    role="assistant" if item.role == A2ARole.agent else "user",
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
@@ -317,7 +317,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         # Empty task
                         yield AgentResponseUpdate(
                             contents=[],
-                            role=Role.ASSISTANT,
+                            role="assistant",
                             response_id=task.id,
                             raw_representation=task,
                         )
@@ -469,7 +469,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             contents = self._parse_contents_from_a2a(history_item.parts)
             messages.append(
                 ChatMessage(
-                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
+                    role="assistant" if history_item.role == A2ARole.agent else "user",
                     contents=contents,
                     raw_representation=history_item,
                 )
@@ -481,7 +481,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """Parse A2A Artifact into ChatMessage using part contents."""
         contents = self._parse_contents_from_a2a(artifact.parts)
         return ChatMessage(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=contents,
             raw_representation=artifact,
         )

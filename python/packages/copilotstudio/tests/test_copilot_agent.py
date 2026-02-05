@@ -131,7 +131,7 @@ class TestCopilotStudioAgent:
         content = response.messages[0].contents[0]
         assert content.type == "text"
         assert content.text == "Test response"
-        assert response.messages[0].role.value == "assistant"
+        assert response.messages[0].role == "assistant"
 
     async def test_run_with_chat_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with ChatMessage."""
@@ -151,7 +151,7 @@ class TestCopilotStudioAgent:
         content = response.messages[0].contents[0]
         assert content.type == "text"
         assert content.text == "Test response"
-        assert response.messages[0].role.value == "assistant"
+        assert response.messages[0].role == "assistant"
 
     async def test_run_with_thread(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with existing thread."""

@@ -496,13 +496,13 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=Role.ASSISTANT,
+                        role="assistant",
                     )
                 elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
                     response_id = response.data.run_id
                 elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
                     delta = response.data.delta
-                    role = Role.USER if delta.role == "user" else Role.ASSISTANT
+                    role = "user" if delta.role == "user" else "assistant"
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
@@ -518,7 +518,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                     contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:
                         yield ChatResponseUpdate(
-                            role=Role.ASSISTANT,
+                            role="assistant",
                             contents=contents,
                             conversation_id=thread_id,
                             message_id=response_id,
@@ -539,7 +539,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                         )
                     )
                     yield ChatResponseUpdate(
-                        role=Role.ASSISTANT,
+                        role="assistant",
                         contents=[usage_content],
                         conversation_id=thread_id,
                         message_id=response_id,
@@ -553,7 +553,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                         message_id=response_id,
                         raw_representation=response.data,
                         response_id=response_id,
-                        role=Role.ASSISTANT,
+                        role="assistant",
                     )
 
     def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Content]:
@@ -689,7 +689,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # since there is no such message roles in OpenAI Assistants.
         # All other messages are added 1:1.
         for chat_message in messages:
-            if chat_message.role.value in ["system", "developer"]:
+            if chat_message.role in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if content.type == "text"]:
                     text = getattr(text_content, "text", None)
                     if text:
@@ -716,7 +716,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                     additional_messages = []
                 additional_messages.append(
                     AdditionalMessage(
-                        role="assistant" if chat_message.role == Role.ASSISTANT else "user",
+                        role="assistant" if chat_message.role == "assistant" else "user",
                         content=message_contents,
                     )
                 )

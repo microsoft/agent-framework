@@ -22,7 +22,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
+        assert update.role == "assistant"
         assert update.additional_properties["thread_id"] == "thread_123"
         assert update.additional_properties["run_id"] == "run_456"
         assert converter.thread_id == "thread_123"
@@ -39,7 +39,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
+        assert update.role == "assistant"
         assert update.message_id == "msg_789"
         assert converter.current_message_id == "msg_789"
 
@@ -55,7 +55,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
+        assert update.role == "assistant"
         assert update.message_id == "msg_1"
         assert len(update.contents) == 1
         assert update.contents[0].text == "Hello"
@@ -101,7 +101,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
+        assert update.role == "assistant"
         assert len(update.contents) == 1
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].name == "get_weather"
@@ -184,7 +184,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.TOOL
+        assert update.role == "tool"
         assert len(update.contents) == 1
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].result == {"temperature": 22, "condition": "sunny"}
@@ -204,8 +204,8 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
-        assert update.finish_reason == FinishReason.STOP
+        assert update.role == "assistant"
+        assert update.finish_reason == "stop"
         assert update.additional_properties["thread_id"] == "thread_123"
         assert update.additional_properties["run_id"] == "run_456"
 
@@ -223,8 +223,8 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
-        assert update.role == Role.ASSISTANT
-        assert update.finish_reason == FinishReason.CONTENT_FILTER
+        assert update.role == "assistant"
+        assert update.finish_reason == "content_filter"
         assert len(update.contents) == 1
         assert update.contents[0].message == "Connection timeout"
         assert update.contents[0].error_code == "RUN_ERROR"

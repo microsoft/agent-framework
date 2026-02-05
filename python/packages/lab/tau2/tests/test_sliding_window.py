@@ -180,7 +180,7 @@ def test_truncate_messages_removes_leading_tool_messages(mock_logger):
 
     # Tool message should be removed from the beginning
     assert len(sliding_window.truncated_messages) == 1
-    assert sliding_window.truncated_messages[0].role.value == "user"
+    assert sliding_window.truncated_messages[0].role == "user"
 
     # Should have logged warning about removing tool message
     mock_logger.warning.assert_called()

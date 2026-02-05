@@ -20,7 +20,7 @@ def test_flip_messages_user_to_assistant():
     flipped = flip_messages(messages)
 
     assert len(flipped) == 1
-    assert flipped[0].role.value == "assistant"
+    assert flipped[0].role == "assistant"
     assert flipped[0].text == "Hello assistant"
     assert flipped[0].author_name == "User1"
     assert flipped[0].message_id == "msg_001"
@@ -40,7 +40,7 @@ def test_flip_messages_assistant_to_user():
     flipped = flip_messages(messages)
 
     assert len(flipped) == 1
-    assert flipped[0].role.value == "user"
+    assert flipped[0].role == "user"
     assert flipped[0].text == "Hello user"
     assert flipped[0].author_name == "Assistant1"
     assert flipped[0].message_id == "msg_002"
@@ -65,7 +65,7 @@ def test_flip_messages_assistant_with_function_calls_filtered():
     flipped = flip_messages(messages)
 
     assert len(flipped) == 1
-    assert flipped[0].role.value == "user"
+    assert flipped[0].role == "user"
     # Function call should be filtered out
     assert len(flipped[0].contents) == 2
     assert all(content.type == "text" for content in flipped[0].contents)
@@ -108,7 +108,7 @@ def test_flip_messages_system_messages_preserved():
     flipped = flip_messages(messages)
 
     assert len(flipped) == 1
-    assert flipped[0].role.value == "system"
+    assert flipped[0].role == "system"
     assert flipped[0].text == "System instruction"
     assert flipped[0].message_id == "sys_001"
 
@@ -134,18 +134,18 @@ def test_flip_messages_mixed_conversation():
     assert len(flipped) == 4
 
     # Check each flipped message
-    assert flipped[0].role.value == "system"
+    assert flipped[0].role == "system"
     assert flipped[0].text == "System prompt"
 
-    assert flipped[1].role.value == "assistant"
+    assert flipped[1].role == "assistant"
     assert flipped[1].text == "User question"
 
-    assert flipped[2].role.value == "user"
+    assert flipped[2].role == "user"
     assert flipped[2].text == "Assistant response"  # Function call filtered out
 
     # Tool message skipped
 
-    assert flipped[3].role.value == "user"
+    assert flipped[3].role == "user"
     assert flipped[3].text == "Final response"
 
 

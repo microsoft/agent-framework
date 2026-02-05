@@ -8,10 +8,9 @@ from ag_ui.core import RunFinishedEvent, RunStartedEvent
 from agent_framework import Content
 from agent_framework._types import AgentResponseUpdate, ChatResponseUpdate
 
-from ._test_utils import StubAgent
 
 
-async def test_service_thread_id_when_there_are_updates():
+async def test_service_thread_id_when_there_are_updates(stub_agent):
     """Test that service-managed thread IDs (conversation_id) are correctly set as the thread_id in events."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
@@ -26,7 +25,7 @@ async def test_service_thread_id_when_there_are_updates():
             ),
         )
     ]
-    agent = StubAgent(updates=updates)
+    agent = stub_agent(updates=updates)
     wrapper = AgentFrameworkAgent(agent=agent)
 
     input_data = {
@@ -43,12 +42,12 @@ async def test_service_thread_id_when_there_are_updates():
     assert isinstance(events[-1], RunFinishedEvent)
 
 
-async def test_service_thread_id_when_no_user_message():
+async def test_service_thread_id_when_no_user_message(stub_agent):
     """Test when user submits no messages, emitted events still have with a thread_id"""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     updates: list[AgentResponseUpdate] = []
-    agent = StubAgent(updates=updates)
+    agent = stub_agent(updates=updates)
     wrapper = AgentFrameworkAgent(agent=agent)
 
     input_data: dict[str, list[dict[str, str]]] = {
@@ -65,12 +64,12 @@ async def test_service_thread_id_when_no_user_message():
     assert isinstance(events[-1], RunFinishedEvent)
 
 
-async def test_service_thread_id_when_user_supplied_thread_id():
+async def test_service_thread_id_when_user_supplied_thread_id(stub_agent):
     """Test that user-supplied thread IDs are preserved in emitted events."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     updates: list[AgentResponseUpdate] = []
-    agent = StubAgent(updates=updates)
+    agent = stub_agent(updates=updates)
     wrapper = AgentFrameworkAgent(agent=agent)
 
     input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Hi"}], "threadId": "conv_12345"}

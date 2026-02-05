@@ -405,7 +405,7 @@ async def test_process_stream_events_thread_run_created(mock_async_openai: Magic
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role.value == "assistant"
+    assert update.role == "assistant"
     assert update.contents == []
     assert update.raw_representation == mock_response.data
 
@@ -449,7 +449,7 @@ async def test_process_stream_events_message_delta_text(mock_async_openai: Magic
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role.value == "assistant"
+    assert update.role == "assistant"
     assert update.text == "Hello from assistant"
     assert update.raw_representation == mock_message_delta
 
@@ -488,7 +488,7 @@ async def test_process_stream_events_requires_action(mock_async_openai: MagicMoc
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role.value == "assistant"
+    assert update.role == "assistant"
     assert len(update.contents) == 1
     assert update.contents[0] == test_function_content
     assert update.raw_representation == mock_run
@@ -568,7 +568,7 @@ async def test_process_stream_events_run_completed_with_usage(
     update = updates[0]
     assert isinstance(update, ChatResponseUpdate)
     assert update.conversation_id == thread_id
-    assert update.role.value == "assistant"
+    assert update.role == "assistant"
     assert len(update.contents) == 1
 
     # Check the usage content
@@ -798,7 +798,7 @@ def test_prepare_options_tool_choice_none_with_tools(mock_async_openai: MagicMoc
         "tools": [test_func],
     }
 
-    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    messages = [ChatMessage(role="user", text="Hello")]
 
     # Call the method
     run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore

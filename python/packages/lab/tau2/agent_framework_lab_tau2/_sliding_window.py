@@ -53,7 +53,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
         # Remove leading tool messages
         while len(self.truncated_messages) > 0:
             role_value = (
-                self.truncated_messages[0].role.value
+                self.truncated_messages[0].role
                 if hasattr(self.truncated_messages[0].role, "value")
                 else self.truncated_messages[0].role
             )

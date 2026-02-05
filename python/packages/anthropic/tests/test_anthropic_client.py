@@ -498,11 +498,11 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     assert response.response_id == "msg_123"
     assert response.model_id == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
-    assert response.messages[0].role.value == "assistant"
+    assert response.messages[0].role == "assistant"
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "Hello there!"
-    assert response.finish_reason.value == "stop"
+    assert response.finish_reason == "stop"
     assert response.usage_details is not None
     assert response.usage_details["input_token_count"] == 10
     assert response.usage_details["output_token_count"] == 5
@@ -532,7 +532,7 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     assert response.messages[0].contents[0].type == "function_call"
     assert response.messages[0].contents[0].call_id == "call_123"
     assert response.messages[0].contents[0].name == "get_weather"
-    assert response.finish_reason.value == "tool_calls"
+    assert response.finish_reason == "tool_calls"
 
 
 def test_parse_usage_from_anthropic_basic(mock_anthropic_client: MagicMock) -> None:
@@ -727,7 +727,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
 
     assert response is not None
     assert len(response.messages) > 0
-    assert response.messages[0].role.value == "assistant"
+    assert response.messages[0].role == "assistant"
     assert len(response.messages[0].text) > 0
     assert response.usage_details is not None
 

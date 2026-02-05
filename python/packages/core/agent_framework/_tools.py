@@ -1848,7 +1848,7 @@ def _replace_approval_contents_with_results(
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
-                        msg.role = Role.TOOL
+                        msg.role = "tool"
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1856,7 +1856,7 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = Role.TOOL
+                    msg.role = "tool"
 
         # Remove approval requests that were duplicates (in reverse order to preserve indices)
         for idx in reversed(contents_to_remove):
@@ -1918,7 +1918,7 @@ def _handle_function_call_results(
     from ._types import ChatMessage
 
     if any(fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results):
-        if response.messages and response.messages[0].role.value == "assistant":
+        if response.messages and response.messages[0].role == "assistant":
             response.messages[0].contents.extend(function_call_results)
         else:
             response.messages.append(ChatMessage(role="assistant", contents=function_call_results))

@@ -665,7 +665,7 @@ class AzureAIAgentClient(
                 match event_data:
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
-                        role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
+                        role = "user" if event_data.delta.role == Message"user" else "assistant"
 
                         # Extract URL citations from the delta chunk
                         url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)
@@ -715,7 +715,7 @@ class AzureAIAgentClient(
                                     )
                                     if function_call_contents:
                                         yield ChatResponseUpdate(
-                                            role=Role.ASSISTANT,
+                                            role="assistant",
                                             contents=function_call_contents,
                                             conversation_id=thread_id,
                                             message_id=response_id,
@@ -731,7 +731,7 @@ class AzureAIAgentClient(
                                     message_id=response_id,
                                     raw_representation=event_data,
                                     response_id=response_id,
-                                    role=Role.ASSISTANT,
+                                    role="assistant",
                                     model_id=event_data.model,
                                 )
 
@@ -760,7 +760,7 @@ class AzureAIAgentClient(
                                         )
                                     )
                                     yield ChatResponseUpdate(
-                                        role=Role.ASSISTANT,
+                                        role="assistant",
                                         contents=[usage_content],
                                         conversation_id=thread_id,
                                         message_id=response_id,
@@ -774,7 +774,7 @@ class AzureAIAgentClient(
                                     message_id=response_id,
                                     raw_representation=event_data,
                                     response_id=response_id,
-                                    role=Role.ASSISTANT,
+                                    role="assistant",
                                 )
                     case RunStepDeltaChunk():  # type: ignore
                         if (
@@ -803,7 +803,7 @@ class AzureAIAgentClient(
                                                     Content.from_hosted_file(file_id=output.image.file_id)
                                                 )
                                     yield ChatResponseUpdate(
-                                        role=Role.ASSISTANT,
+                                        role="assistant",
                                         contents=code_contents,
                                         conversation_id=thread_id,
                                         message_id=response_id,
@@ -822,7 +822,7 @@ class AzureAIAgentClient(
                             message_id=response_id,
                             raw_representation=event_data,  # type: ignore
                             response_id=response_id,
-                            role=Role.ASSISTANT,
+                            role="assistant",
                         )
         except Exception as ex:
             logger.error(f"Error processing stream: {ex}")
@@ -1104,7 +1104,7 @@ class AzureAIAgentClient(
         additional_messages: list[ThreadMessageOptions] | None = None
 
         for chat_message in messages:
-            if chat_message.role.value in ["system", "developer"]:
+            if chat_message.role in ["system", "developer"]:
                 for text_content in [content for content in chat_message.contents if content.type == "text"]:
                     instructions.append(text_content.text)  # type: ignore[arg-type]
                 continue
@@ -1134,7 +1134,7 @@ class AzureAIAgentClient(
                     additional_messages = []
                 additional_messages.append(
                     ThreadMessageOptions(
-                        role=MessageRole.AGENT if chat_message.role == Role.ASSISTANT else MessageRole.USER,
+                        role=MessageRole.AGENT if chat_message.role == "assistant" else Message"user",
                         content=message_contents,
                     )
                 )

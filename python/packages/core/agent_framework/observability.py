@@ -1604,13 +1604,13 @@ def _capture_messages(
         logger.info(
             otel_message,
             extra={
-                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
+                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
                 OtelAttr.PROVIDER_NAME: provider_name,
                 ChatMessageListTimestampFilter.INDEX_KEY: index,
             },
         )
     if finish_reason:
-        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason.value]
+        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
     if system_instructions:
         if not isinstance(system_instructions, list):
@@ -1621,7 +1621,7 @@ def _capture_messages(
 
 def _to_otel_message(message: "ChatMessage") -> dict[str, Any]:
     """Create a otel representation of a message."""
-    return {"role": message.role.value, "parts": [_to_otel_part(content) for content in message.contents]}
+    return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
 
 
 def _to_otel_part(content: "Content") -> dict[str, Any] | None:
@@ -1679,7 +1679,7 @@ def _get_response_attributes(
             getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
         )
     if finish_reason:
-        attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason.value])
+        attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model_id := getattr(response, "model_id", None):
         attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):

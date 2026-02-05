@@ -585,7 +585,7 @@ async def test_executor_handles_streaming_agent():
         async def _run_impl(self, messages):
             return AgentResponse(
                 messages=[
-                    ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=f"Processed: {messages}")])
+                    ChatMessage(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])
                 ],
                 response_id="test_123",
             )
@@ -593,7 +593,7 @@ async def test_executor_handles_streaming_agent():
         async def _stream_impl(self, messages):
             yield AgentResponseUpdate(
                 contents=[Content.from_text(text=f"Processed: {messages}")],
-                role=Role.ASSISTANT,
+                role="assistant",
             )
 
         def get_new_thread(self, **kwargs):

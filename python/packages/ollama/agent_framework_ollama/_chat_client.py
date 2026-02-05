@@ -454,12 +454,12 @@ class OllamaChatClient(
 
     def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
-            Role.SYSTEM.value: self._format_system_message,
-            Role.USER.value: self._format_user_message,
-            Role.ASSISTANT.value: self._format_assistant_message,
-            Role.TOOL.value: self._format_tool_message,
+            "system".value: self._format_system_message,
+            "user".value: self._format_user_message,
+            "assistant".value: self._format_assistant_message,
+            "tool".value: self._format_tool_message,
         }
-        return message_converters[message.role.value](message)
+        return message_converters[message.role](message)
 
     def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
@@ -528,7 +528,7 @@ class OllamaChatClient(
         contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
-            role=Role.ASSISTANT,
+            role="assistant",
             ai_model_id=response.model,
             created_at=response.created_at,
         )
@@ -537,7 +537,7 @@ class OllamaChatClient(
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
+            messages=[ChatMessage(role="assistant", contents=contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(

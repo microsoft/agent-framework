@@ -422,7 +422,7 @@ class TestWorkflowAgent:
         result = await agent.run("test")
 
         assert len(result.messages) == 1
-        assert result.messages[0].role.value == "assistant"
+        assert result.messages[0].role == "assistant"
         assert result.messages[0].text == "response text"
         assert result.messages[0].author_name == "custom-author"
 

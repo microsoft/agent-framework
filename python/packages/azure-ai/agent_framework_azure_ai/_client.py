@@ -495,7 +495,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
 
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         for message in messages:
-            role_value = message.role.value if hasattr(message.role, "value") else message.role
+            role_value = message.role if hasattr(message.role, "value") else message.role
             if role_value in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]

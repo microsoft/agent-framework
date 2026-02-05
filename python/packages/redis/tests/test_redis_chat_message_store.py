@@ -278,9 +278,9 @@ class TestRedisChatMessageStore:
         messages = await redis_store.list_messages()
 
         assert len(messages) == 2
-        assert messages[0].role.value == "user"
+        assert messages[0].role == "user"
         assert messages[0].text == "Hello"
-        assert messages[1].role.value == "assistant"
+        assert messages[1].role == "assistant"
         assert messages[1].text == "Hi there!"
 
     async def test_list_messages_with_initial_messages(self, sample_messages):
@@ -422,7 +422,7 @@ class TestRedisChatMessageStore:
         serialized = store._serialize_message(message)
         deserialized = store._deserialize_message(serialized)
 
-        assert deserialized.role.value == "assistant"
+        assert deserialized.role == "assistant"
         assert deserialized.text == "Hello World"
         assert deserialized.author_name == "TestBot"
         assert deserialized.message_id == "complex_msg"

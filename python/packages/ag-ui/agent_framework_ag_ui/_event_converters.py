@@ -177,7 +177,7 @@ class AGUIEventConverter:
         """Handle RUN_FINISHED event."""
         return ChatResponseUpdate(
             role="assistant",
-            finish_reason=FinishReason.STOP,
+            finish_reason="stop",
             contents=[],
             additional_properties={
                 "thread_id": self.thread_id,
@@ -191,7 +191,7 @@ class AGUIEventConverter:
 
         return ChatResponseUpdate(
             role="assistant",
-            finish_reason=FinishReason.CONTENT_FILTER,
+            finish_reason="content_filter",
             contents=[
                 Content.from_error(
                     message=error_message,

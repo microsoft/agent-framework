@@ -1,18 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Test utilities for AG-UI package tests."""
+"""Shared test fixtures and stubs for AG-UI tests."""
 
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from types import SimpleNamespace
 from typing import Any, Generic, Literal, cast, overload
 
+import pytest
 from agent_framework import (
     AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
+    ChatClientProtocol,
     ChatMessage,
     ChatOptions,
     ChatResponse,
@@ -218,3 +220,24 @@ class StubAgent(AgentProtocol):
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         return AgentThread()
+
+
+# Fixtures
+
+
+@pytest.fixture
+def streaming_chat_client_stub() -> type[ChatClientProtocol]:
+    """Return the StreamingChatClientStub class for creating test instances."""
+    return StreamingChatClientStub  # type: ignore[return-value]
+
+
+@pytest.fixture
+def stream_from_updates_fixture() -> Callable[[list[ChatResponseUpdate]], StreamFn]:
+    """Return the stream_from_updates helper function."""
+    return stream_from_updates
+
+
+@pytest.fixture
+def stub_agent() -> type[AgentProtocol]:
+    """Return the StubAgent class for creating test instances."""
+    return StubAgent  # type: ignore[return-value]

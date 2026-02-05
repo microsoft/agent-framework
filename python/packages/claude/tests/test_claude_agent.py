@@ -375,7 +375,7 @@ class TestClaudeAgentRunStream:
                 updates.append(update)
             # StreamEvent yields text deltas
             assert len(updates) == 3
-            assert updates[0].role == Role.ASSISTANT
+            assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
@@ -687,7 +687,7 @@ class TestFormatPrompt:
         """Test formatting user message."""
         agent = ClaudeAgent()
         msg = ChatMessage(
-            role=Role.USER,
+            role="user",
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
@@ -697,9 +697,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role=Role.USER, contents=[Content.from_text(text="How are you?")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="Hi")]),
+            ChatMessage(role="assistant", contents=[Content.from_text(text="Hello!")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

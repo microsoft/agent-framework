@@ -281,7 +281,7 @@ class TestGitHubCopilotAgentRun:
 
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role.value == "assistant"
+        assert response.messages[0].role == "assistant"
         assert response.messages[0].contents[0].text == "Test response"
 
     async def test_run_chat_message(
@@ -389,7 +389,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         assert len(responses) == 1
         assert isinstance(responses[0], AgentResponseUpdate)
-        assert responses[0].role.value == "assistant"
+        assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
 
     async def test_run_streaming_with_thread(

@@ -924,7 +924,7 @@ class AzureAISearchContextProvider(ContextProvider):
             # Medium/low reasoning uses messages with conversation history
             kb_messages = [
                 KnowledgeBaseMessage(
-                    role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                    role=msg.role if hasattr(msg.role, "value") else str(msg.role),
                     content=[KnowledgeBaseMessageTextContent(text=msg.text)],
                 )
                 for msg in messages
