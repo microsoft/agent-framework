@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
@@ -28,6 +29,16 @@ public class AgentResponse<T> : AgentResponse
     /// <param name="response">The <see cref="AgentResponse"/> from which to populate this <see cref="AgentResponse{T}"/>.</param>
     /// <param name="serializerOptions">The <see cref="JsonSerializerOptions"/> to use when deserializing the result.</param>
     public AgentResponse(AgentResponse response, JsonSerializerOptions serializerOptions) : base(response)
+    {
+        this._serializerOptions = serializerOptions;
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentResponse{T}"/> class.
+    /// </summary>
+    /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentResponse{T}"/>.</param>
+    /// <param name="serializerOptions">The <see cref="JsonSerializerOptions"/> to use when deserializing the result.</param>
+    public AgentResponse(ChatResponse response, JsonSerializerOptions serializerOptions) : base(response)
     {
         this._serializerOptions = serializerOptions;
     }
