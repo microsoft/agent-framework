@@ -84,7 +84,7 @@ async def main():
     )
 
     first_update = True
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         # The outputs of the workflow are whatever the agents produce. So the events are expected to
         # contain `AgentResponseUpdate` from the agents in the workflow.
         if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):

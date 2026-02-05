@@ -68,7 +68,7 @@ async def streaming_example() -> None:
 
         shown_reasoning_label = False
         shown_text_label = False
-        async for chunk in agent.run_stream(query):
+        async for chunk in agent.run(query, stream=True):
             for content in chunk.contents:
                 if content.type == "text_reasoning":
                     if not shown_reasoning_label:

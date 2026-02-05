@@ -285,11 +285,11 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
         evaluated_input = ctx.state.eval_if_expression(input_messages)
         if evaluated_input:
             if isinstance(evaluated_input, str):
-                messages.append(ChatMessage("user", [evaluated_input]))
+                messages.append(ChatMessage(role="user", text=evaluated_input))
             elif isinstance(evaluated_input, list):
                 for msg_item in evaluated_input:  # type: ignore
                     if isinstance(msg_item, str):
-                        messages.append(ChatMessage("user", [msg_item]))
+                        messages.append(ChatMessage(role="user", text=msg_item))
                     elif isinstance(msg_item, ChatMessage):
                         messages.append(msg_item)
                     elif isinstance(msg_item, dict) and "content" in msg_item:
@@ -297,11 +297,11 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                         role: str = str(item_dict.get("role", "user"))
                         content: str = str(item_dict.get("content", ""))
                         if role == "user":
-                            messages.append(ChatMessage("user", [content]))
+                            messages.append(ChatMessage(role="user", text=content))
                         elif role == "assistant":
-                            messages.append(ChatMessage("assistant", [content]))
+                            messages.append(ChatMessage(role="assistant", text=content))
                         elif role == "system":
-                            messages.append(ChatMessage("system", [content]))
+                            messages.append(ChatMessage(role="system", text=content))
 
     # Evaluate and include input arguments
     evaluated_args: dict[str, Any] = {}
@@ -328,128 +328,130 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
     while True:
         # Invoke the agent
         try:
-            # Check if agent supports streaming
-            if hasattr(agent, "run_stream"):
-                updates: list[Any] = []
-                tool_calls: list[Any] = []
+            # Agents use run() with stream parameter
+            if hasattr(agent, "run"):
+                # Try streaming first
+                try:
+                    updates: list[Any] = []
+                    tool_calls: list[Any] = []
 
-                async for chunk in agent.run_stream(messages):
-                    updates.append(chunk)
+                    async for chunk in agent.run(messages, stream=True):
+                        updates.append(chunk)
 
-                    # Yield streaming events for text chunks
-                    if hasattr(chunk, "text") and chunk.text:
-                        yield AgentStreamingChunkEvent(
-                            agent_name=str(agent_name),
-                            chunk=chunk.text,
-                        )
+                        # Yield streaming events for text chunks
+                        if hasattr(chunk, "text") and chunk.text:
+                            yield AgentStreamingChunkEvent(
+                                agent_name=str(agent_name),
+                                chunk=chunk.text,
+                            )
 
-                    # Collect tool calls
-                    if hasattr(chunk, "tool_calls"):
-                        tool_calls.extend(chunk.tool_calls)
+                        # Collect tool calls
+                        if hasattr(chunk, "tool_calls"):
+                            tool_calls.extend(chunk.tool_calls)
 
-                # Build consolidated response from updates
-                response = AgentResponse.from_updates(updates)
-                text = response.text
-                response_messages = response.messages
+                    # Build consolidated response from updates
+                    response = AgentResponse.from_updates(updates)
+                    text = response.text
+                    response_messages = response.messages
 
-                # Update state with result
-                ctx.state.set_agent_result(
-                    text=text,
-                    messages=response_messages,
-                    tool_calls=tool_calls if tool_calls else None,
-                )
+                    # Update state with result
+                    ctx.state.set_agent_result(
+                        text=text,
+                        messages=response_messages,
+                        tool_calls=tool_calls if tool_calls else None,
+                    )
 
-                # Add to conversation history
-                if text:
-                    ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
+                    # Add to conversation history
+                    if text:
+                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
 
-                # Store in output variables (.NET style)
-                if output_messages_var:
-                    output_path_mapped = _normalize_variable_path(output_messages_var)
-                    ctx.state.set(output_path_mapped, response_messages if response_messages else text)
+                    # Store in output variables (.NET style)
+                    if output_messages_var:
+                        output_path_mapped = _normalize_variable_path(output_messages_var)
+                        ctx.state.set(output_path_mapped, response_messages if response_messages else text)
 
-                if output_response_obj_var:
-                    output_path_mapped = _normalize_variable_path(output_response_obj_var)
-                    # Try to extract and parse JSON from the response
-                    try:
-                        parsed = _extract_json_from_response(text) if text else None
-                        logger.debug(
-                            f"InvokeAzureAgent (streaming): parsed responseObject for "
-                            f"'{output_path_mapped}': type={type(parsed).__name__}, "
-                            f"value_preview={str(parsed)[:100] if parsed else None}"
-                        )
-                        ctx.state.set(output_path_mapped, parsed)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning(
-                            f"InvokeAzureAgent (streaming): failed to parse JSON for "
-                            f"'{output_path_mapped}': {e}, text_preview={text[:100] if text else None}"
-                        )
-                        ctx.state.set(output_path_mapped, text)
+                    if output_response_obj_var:
+                        output_path_mapped = _normalize_variable_path(output_response_obj_var)
+                        # Try to extract and parse JSON from the response
+                        try:
+                            parsed = _extract_json_from_response(text) if text else None
+                            logger.debug(
+                                f"InvokeAzureAgent (streaming): parsed responseObject for "
+                                f"'{output_path_mapped}': type={type(parsed).__name__}, "
+                                f"value_preview={str(parsed)[:100] if parsed else None}"
+                            )
+                            ctx.state.set(output_path_mapped, parsed)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(
+                                f"InvokeAzureAgent (streaming): failed to parse JSON for "
+                                f"'{output_path_mapped}': {e}, text_preview={text[:100] if text else None}"
+                            )
+                            ctx.state.set(output_path_mapped, text)
 
-                # Store in output path (Python style)
-                if output_path:
-                    ctx.state.set(output_path, text)
+                    # Store in output path (Python style)
+                    if output_path:
+                        ctx.state.set(output_path, text)
 
-                yield AgentResponseEvent(
-                    agent_name=str(agent_name),
-                    text=text,
-                    messages=response_messages,
-                    tool_calls=tool_calls if tool_calls else None,
-                )
+                    yield AgentResponseEvent(
+                        agent_name=str(agent_name),
+                        text=text,
+                        messages=response_messages,
+                        tool_calls=tool_calls if tool_calls else None,
+                    )
 
-            elif hasattr(agent, "run"):
-                # Non-streaming invocation
-                response = await agent.run(messages)
+                except TypeError:
+                    # Agent doesn't support streaming, fall back to non-streaming
+                    response = await agent.run(messages)
 
-                text = response.text
-                response_messages = response.messages
-                response_tool_calls: list[Any] | None = getattr(response, "tool_calls", None)
+                    text = response.text
+                    response_messages = response.messages
+                    response_tool_calls: list[Any] | None = getattr(response, "tool_calls", None)
 
-                # Update state with result
-                ctx.state.set_agent_result(
-                    text=text,
-                    messages=response_messages,
-                    tool_calls=response_tool_calls,
-                )
+                    # Update state with result
+                    ctx.state.set_agent_result(
+                        text=text,
+                        messages=response_messages,
+                        tool_calls=response_tool_calls,
+                    )
 
-                # Add to conversation history
-                if text:
-                    ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
+                    # Add to conversation history
+                    if text:
+                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
 
-                # Store in output variables (.NET style)
-                if output_messages_var:
-                    output_path_mapped = _normalize_variable_path(output_messages_var)
-                    ctx.state.set(output_path_mapped, response_messages if response_messages else text)
+                    # Store in output variables (.NET style)
+                    if output_messages_var:
+                        output_path_mapped = _normalize_variable_path(output_messages_var)
+                        ctx.state.set(output_path_mapped, response_messages if response_messages else text)
 
-                if output_response_obj_var:
-                    output_path_mapped = _normalize_variable_path(output_response_obj_var)
-                    try:
-                        parsed = _extract_json_from_response(text) if text else None
-                        logger.debug(
-                            f"InvokeAzureAgent (non-streaming): parsed responseObject for "
-                            f"'{output_path_mapped}': type={type(parsed).__name__}, "
-                            f"value_preview={str(parsed)[:100] if parsed else None}"
-                        )
-                        ctx.state.set(output_path_mapped, parsed)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning(
-                            f"InvokeAzureAgent (non-streaming): failed to parse JSON for "
-                            f"'{output_path_mapped}': {e}, text_preview={text[:100] if text else None}"
-                        )
-                        ctx.state.set(output_path_mapped, text)
+                    if output_response_obj_var:
+                        output_path_mapped = _normalize_variable_path(output_response_obj_var)
+                        try:
+                            parsed = _extract_json_from_response(text) if text else None
+                            logger.debug(
+                                f"InvokeAzureAgent (non-streaming): parsed responseObject for "
+                                f"'{output_path_mapped}': type={type(parsed).__name__}, "
+                                f"value_preview={str(parsed)[:100] if parsed else None}"
+                            )
+                            ctx.state.set(output_path_mapped, parsed)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.warning(
+                                f"InvokeAzureAgent (non-streaming): failed to parse JSON for "
+                                f"'{output_path_mapped}': {e}, text_preview={text[:100] if text else None}"
+                            )
+                            ctx.state.set(output_path_mapped, text)
 
-                # Store in output path (Python style)
-                if output_path:
-                    ctx.state.set(output_path, text)
+                    # Store in output path (Python style)
+                    if output_path:
+                        ctx.state.set(output_path, text)
 
-                yield AgentResponseEvent(
-                    agent_name=str(agent_name),
-                    text=text,
-                    messages=response_messages,
-                    tool_calls=response_tool_calls,
-                )
+                    yield AgentResponseEvent(
+                        agent_name=str(agent_name),
+                        text=text,
+                        messages=response_messages,
+                        tool_calls=response_tool_calls,
+                    )
             else:
-                logger.error(f"InvokeAzureAgent: agent '{agent_name}' has no run or run_stream method")
+                logger.error(f"InvokeAzureAgent: agent '{agent_name}' has no run method")
                 break
 
         except Exception as e:
@@ -560,7 +562,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
     # Add input as user message if provided
     if input_value:
         if isinstance(input_value, str):
-            messages.append(ChatMessage("user", [input_value]))
+            messages.append(ChatMessage(role="user", text=input_value))
         elif isinstance(input_value, ChatMessage):
             messages.append(input_value)
 
@@ -568,57 +570,60 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
 
     # Invoke the agent
     try:
-        if hasattr(agent, "run_stream"):
-            updates: list[Any] = []
+        if hasattr(agent, "run"):
+            # Try streaming first
+            try:
+                updates: list[Any] = []
 
-            async for chunk in agent.run_stream(messages):
-                updates.append(chunk)
+                async for chunk in agent.run(messages, stream=True):
+                    updates.append(chunk)
 
-                if hasattr(chunk, "text") and chunk.text:
-                    yield AgentStreamingChunkEvent(
-                        agent_name=agent_name,
-                        chunk=chunk.text,
-                    )
+                    if hasattr(chunk, "text") and chunk.text:
+                        yield AgentStreamingChunkEvent(
+                            agent_name=agent_name,
+                            chunk=chunk.text,
+                        )
 
-            # Build consolidated response from updates
-            response = AgentResponse.from_updates(updates)
-            text = response.text
-            response_messages = response.messages
+                # Build consolidated response from updates
+                response = AgentResponse.from_updates(updates)
+                text = response.text
+                response_messages = response.messages
 
-            ctx.state.set_agent_result(text=text, messages=response_messages)
+                ctx.state.set_agent_result(text=text, messages=response_messages)
 
-            if text:
-                ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
+                if text:
+                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
 
-            if output_path:
-                ctx.state.set(output_path, text)
+                if output_path:
+                    ctx.state.set(output_path, text)
 
-            yield AgentResponseEvent(
-                agent_name=agent_name,
-                text=text,
-                messages=response_messages,
-            )
+                yield AgentResponseEvent(
+                    agent_name=agent_name,
+                    text=text,
+                    messages=response_messages,
+                )
 
-        elif hasattr(agent, "run"):
-            response = await agent.run(messages)
-            text = response.text
-            response_messages = response.messages
+            except TypeError:
+                # Agent doesn't support streaming, fall back to non-streaming
+                response = await agent.run(messages)
+                text = response.text
+                response_messages = response.messages
 
-            ctx.state.set_agent_result(text=text, messages=response_messages)
+                ctx.state.set_agent_result(text=text, messages=response_messages)
 
-            if text:
-                ctx.state.add_conversation_message(ChatMessage("assistant", [text]))
+                if text:
+                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
 
-            if output_path:
-                ctx.state.set(output_path, text)
+                if output_path:
+                    ctx.state.set(output_path, text)
 
-            yield AgentResponseEvent(
-                agent_name=agent_name,
-                text=text,
-                messages=response_messages,
-            )
+                yield AgentResponseEvent(
+                    agent_name=agent_name,
+                    text=text,
+                    messages=response_messages,
+                )
         else:
-            logger.error(f"InvokePromptAgent: agent '{agent_name}' has no run or run_stream method")
+            logger.error(f"InvokePromptAgent: agent '{agent_name}' has no run method")
 
     except Exception as e:
         logger.error(f"InvokePromptAgent: error invoking agent '{agent_name}': {e}")

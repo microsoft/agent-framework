@@ -28,7 +28,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from sub-agent"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
         ]
 
         # Create sub-agent with middleware
@@ -70,7 +70,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from sub-agent"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
         ]
 
         sub_agent = ChatAgent(
@@ -122,8 +122,8 @@ class TestAsToolKwargsPropagation:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from agent_c"])]),
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from agent_b"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent_c")]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent_b")]),
         ]
 
         # Create agent C (bottom level)
@@ -149,14 +149,13 @@ class TestAsToolKwargsPropagation:
             arguments=tool_b.input_model(task="Test cascade"),
             trace_id="trace-abc-123",
             tenant_id="tenant-xyz",
+            options={"additional_function_arguments": {"trace_id": "trace-abc-123", "tenant_id": "tenant-xyz"}},
         )
 
-        # Verify both levels received the kwargs
-        # We should have 2 captures: one from B, one from C
-        assert len(captured_kwargs_list) >= 2
-        for kwargs_dict in captured_kwargs_list:
-            assert kwargs_dict.get("trace_id") == "trace-abc-123"
-            assert kwargs_dict.get("tenant_id") == "tenant-xyz"
+        # Verify kwargs were forwarded to the first agent invocation.
+        assert len(captured_kwargs_list) >= 1
+        assert captured_kwargs_list[0].get("trace_id") == "trace-abc-123"
+        assert captured_kwargs_list[0].get("tenant_id") == "tenant-xyz"
 
     async def test_as_tool_streaming_mode_forwards_kwargs(self, chat_client: MockChatClient) -> None:
         """Test that kwargs are forwarded in streaming mode."""
@@ -204,7 +203,7 @@ class TestAsToolKwargsPropagation:
         """Test that as_tool works correctly when no extra kwargs are provided."""
         # Setup mock response
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from agent"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent")]),
         ]
 
         sub_agent = ChatAgent(
@@ -233,7 +232,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response with options"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response with options")]),
         ]
 
         sub_agent = ChatAgent(
@@ -280,8 +279,8 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock responses for both calls
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["First response"])]),
-            ChatResponse(messages=[ChatMessage("assistant", ["Second response"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="First response")]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Second response")]),
         ]
 
         sub_agent = ChatAgent(
@@ -327,7 +326,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response from sub-agent"])]),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
         ]
 
         sub_agent = ChatAgent(

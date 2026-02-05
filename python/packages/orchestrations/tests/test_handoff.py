@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,25 +12,26 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     RequestInfoEvent,
+    ResponseStream,
     WorkflowEvent,
     WorkflowOutputEvent,
     resolve_agent_id,
-    use_function_invocation,
 )
+from agent_framework._clients import BaseChatClient
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationLayer
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
 
-@use_function_invocation
-class MockChatClient:
+class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
     """Mock chat client for testing handoff workflows."""
-
-    additional_properties: dict[str, Any]
 
     def __init__(
         self,
-        name: str,
         *,
+        name: str = "",
         handoff_to: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the mock chat client.
 
@@ -39,24 +40,45 @@ class MockChatClient:
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
+        ChatMiddlewareLayer.__init__(self)
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
 
-    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
-        contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-        reply = ChatMessage(
-            role="assistant",
-            contents=contents,
-        )
-        return ChatResponse(messages=reply, response_id="mock_response")
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            return self._build_streaming_response(options=dict(options))
 
-    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+        async def _get() -> ChatResponse:
+            contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
+            reply = ChatMessage(
+                role="assistant",
+                contents=contents,
+            )
+            return ChatResponse(messages=reply, response_id="mock_response")
+
+        return _get()
+
+    def _build_streaming_response(self, *, options: dict[str, Any]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            yield ChatResponseUpdate(contents=contents, role="assistant")
+            yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
 
-        return _stream()
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _next_call_id(self) -> str | None:
         if not self._handoff_to:
@@ -99,7 +121,7 @@ class MockHandoffAgent(ChatAgent):
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(chat_client=MockChatClient(name, handoff_to=handoff_to), name=name, id=name)
+        super().__init__(chat_client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
@@ -127,7 +149,7 @@ async def test_handoff():
     # Start conversation - triage hands off to specialist then escalation
     # escalation won't trigger a handoff, so the response from it will become
     # a request for user input because autonomous mode is not enabled by default.
-    events = await _drain(workflow.run_stream("Need technical support"))
+    events = await _drain(workflow.run("Need technical support", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
 
     assert requests
@@ -161,7 +183,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Package arrived broken"))
+    events = await _drain(workflow.run("Package arrived broken", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert not requests, "Autonomous mode should not request additional user input"
 
@@ -187,7 +209,7 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Start"))
+    events = await _drain(workflow.run("Start", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests and len(requests) == 1, "Turn limit should force a user input request"
     assert requests[0].source_executor_id == worker.name
@@ -230,12 +252,14 @@ async def test_handoff_async_termination_condition() -> None:
         .build()
     )
 
-    events = await _drain(workflow.run_stream("First user message"))
+    events = await _drain(workflow.run("First user message", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage("user", ["Second user message"])]})
+        workflow.send_responses_streaming({
+            requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]
+        })
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert len(outputs) == 1
@@ -257,7 +281,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[ChatMessage("assistant", ["Response"])],
+            messages=[ChatMessage(role="assistant", text="Response")],
             response_id="test_response",
         )
 
@@ -480,13 +504,13 @@ async def test_handoff_with_participant_factories():
     # Factories should be called during build
     assert call_count == 2
 
-    events = await _drain(workflow.run_stream("Need help"))
+    events = await _drain(workflow.run("Need help", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
     # Follow-up message
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage("user", ["More details"])]})
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs
@@ -551,7 +575,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
     )
 
     # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
+    events = await _drain(workflow.run("Initial request", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
@@ -560,7 +584,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
 
     # Second user message - specialist_a hands off to specialist_b
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage("user", ["Need escalation"])]})
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]})
     )
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
@@ -590,12 +614,12 @@ async def test_handoff_participant_factories_with_checkpointing():
     )
 
     # Run workflow and capture output
-    events = await _drain(workflow.run_stream("checkpoint test"))
+    events = await _drain(workflow.run("checkpoint test", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage("user", ["follow up"])]})
+        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
     )
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs, "Should have workflow output after termination condition is met"
@@ -668,7 +692,7 @@ async def test_handoff_participant_factories_autonomous_mode():
         .build()
     )
 
-    events = await _drain(workflow.run_stream("Issue"))
+    events = await _drain(workflow.run("Issue", stream=True))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests and len(requests) == 1
     assert requests[0].source_executor_id == "specialist"

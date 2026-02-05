@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any
 
 from pydantic import PrivateAttr
@@ -16,6 +16,7 @@ from agent_framework import (
     ChatMessage,
     Content,
     Executor,
+    ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
@@ -26,30 +27,31 @@ from agent_framework.orchestrations import SequentialBuilder
 
 
 class _SimpleAgent(BaseAgent):
-    """Agent that returns a single assistant message (non-streaming path)."""
+    """Agent that returns a single assistant message."""
 
     def __init__(self, *, reply_text: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        # This agent does not support streaming; yield a single complete response
-        yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+
+        return _run()
 
 
 class _CaptureFullConversation(Executor):
@@ -83,7 +85,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
         .build()
     )
 
-    # Act: use run() instead of run_stream() to test non-streaming mode
+    # Act: use run() to test non-streaming mode
     result = await wf.run("hello world")
 
     # Extract output from run result
@@ -107,14 +109,15 @@ class _CaptureAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        # Normalize and record messages for verification when running non-streaming
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Normalize and record messages for verification
         norm: list[ChatMessage] = []
         if messages:
             for m in messages:  # type: ignore[iteration-over-optional]
@@ -123,25 +126,18 @@ class _CaptureAgent(BaseAgent):
                 elif isinstance(m, str):
                     norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
-        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        # Normalize and record messages for verification when running streaming
-        norm: list[ChatMessage] = []
-        if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
-                if isinstance(m, ChatMessage):
-                    norm.append(m)
-                elif isinstance(m, str):
-                    norm.append(ChatMessage("user", [m]))
-        self._last_messages = norm
-        yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+
+        return _run()
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:
@@ -152,7 +148,7 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     wf = SequentialBuilder().participants([a1, a2]).build()
 
     # Act
-    async for ev in wf.run_stream("hello seq"):
+    async for ev in wf.run("hello seq", stream=True):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             break
 

@@ -20,7 +20,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Class-based Middleware Example
+Class-based MiddlewareTypes Example
 
 This sample demonstrates how to implement middleware using class-based approach by inheriting
 from AgentMiddleware and FunctionMiddleware base classes. The example includes:
@@ -95,7 +95,7 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
 
 async def main() -> None:
     """Example demonstrating class-based middleware."""
-    print("=== Class-based Middleware Example ===")
+    print("=== Class-based MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import pytest
@@ -38,29 +38,26 @@ class StubAgent(BaseAgent):
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        response = ChatMessage("assistant", [self._reply_text], author_name=self.name)
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse:
+        response = ChatMessage(role="assistant", text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
-    def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(
-                contents=[Content.from_text(text=self._reply_text)], role="assistant", author_name=self.name
-            )
-
-        return _stream()
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(
+            contents=[Content.from_text(text=self._reply_text)], role="assistant", author_name=self.name
+        )
 
 
 class MockChatClient:
@@ -68,10 +65,9 @@ class MockChatClient:
 
     additional_properties: dict[str, Any]
 
-    async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
-        raise NotImplementedError
-
-    def get_streaming_response(self, messages: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+    async def get_response(
+        self, messages: Any, stream: bool = False, **kwargs: Any
+    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
         raise NotImplementedError
 
 
@@ -126,48 +122,6 @@ class StubManagerAgent(ChatAgent):
             value=payload,
         )
 
-    def run_stream(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        if self._call_count == 0:
-            self._call_count += 1
-
-            async def _stream_initial() -> AsyncIterable[AgentResponseUpdate]:
-                yield AgentResponseUpdate(
-                    contents=[
-                        Content.from_text(
-                            text=(
-                                '{"terminate": false, "reason": "Selecting agent", '
-                                '"next_speaker": "agent", "final_message": null}'
-                            )
-                        )
-                    ],
-                    role="assistant",
-                    author_name=self.name,
-                )
-
-            return _stream_initial()
-
-        async def _stream_final() -> AsyncIterable[AgentResponseUpdate]:
-            yield AgentResponseUpdate(
-                contents=[
-                    Content.from_text(
-                        text=(
-                            '{"terminate": true, "reason": "Task complete", '
-                            '"next_speaker": null, "final_message": "agent manager final"}'
-                        )
-                    )
-                ],
-                role="assistant",
-                author_name=self.name,
-            )
-
-        return _stream_final()
-
 
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
@@ -192,7 +146,7 @@ class StubMagenticManager(MagenticManagerBase):
         self._round = 0
 
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["plan"], author_name="magentic_manager")
+        return ChatMessage(role="assistant", text="plan", author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
@@ -218,7 +172,7 @@ class StubMagenticManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["final"], author_name="magentic_manager")
+        return ChatMessage(role="assistant", text="final", author_name="magentic_manager")
 
 
 async def test_group_chat_builder_basic_flow() -> None:
@@ -235,7 +189,7 @@ async def test_group_chat_builder_basic_flow() -> None:
     )
 
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream("coordinate task"):
+    async for event in workflow.run("coordinate task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, list):
@@ -263,8 +217,8 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     agent = workflow.as_agent(name="group-chat-agent")
     conversation = [
-        ChatMessage("user", ["kickoff"], author_name="user"),
-        ChatMessage("assistant", ["noted"], author_name="alpha"),
+        ChatMessage(role="user", text="kickoff", author_name="user"),
+        ChatMessage(role="assistant", text="noted", author_name="alpha"),
     ]
     response = await agent.run(conversation)
 
@@ -347,16 +301,19 @@ class TestGroupChatBuilder:
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 
-            async def run(self, messages: Any = None, *, thread: Any = None, **kwargs: Any) -> AgentResponse:
+            def run(
+                self, messages: Any = None, *, stream: bool = False, thread: Any = None, **kwargs: Any
+            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+                if stream:
+
+                    async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                        yield AgentResponseUpdate(contents=[])
+
+                    return _stream()
+                return self._run_impl()
+
+            async def _run_impl(self) -> AgentResponse:
                 return AgentResponse(messages=[])
-
-            def run_stream(
-                self, messages: Any = None, *, thread: Any = None, **kwargs: Any
-            ) -> AsyncIterable[AgentResponseUpdate]:
-                async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-                    yield AgentResponseUpdate(contents=[])
-
-                return _stream()
 
         agent = AgentWithoutName()
 
@@ -404,7 +361,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -439,7 +396,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -467,7 +424,7 @@ class TestGroupChatWorkflow:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -489,7 +446,7 @@ class TestGroupChatWorkflow:
         workflow = GroupChatBuilder().with_orchestrator(selection_func=selector).participants([agent]).build()
 
         with pytest.raises(RuntimeError, match="Selection function returned unknown participant 'unknown_agent'"):
-            async for _ in workflow.run_stream("test task"):
+            async for _ in workflow.run("test task", stream=True):
                 pass
 
 
@@ -515,7 +472,7 @@ class TestCheckpointing:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test task"):
+        async for event in workflow.run("test task", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -544,7 +501,7 @@ class TestConversationHandling:
         )
 
         with pytest.raises(ValueError, match="At least one ChatMessage is required to start the group chat workflow."):
-            async for _ in workflow.run_stream([]):
+            async for _ in workflow.run([], stream=True):
                 pass
 
     async def test_handle_string_input(self) -> None:
@@ -568,7 +525,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test string"):
+        async for event in workflow.run("test string", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -578,7 +535,7 @@ class TestConversationHandling:
 
     async def test_handle_chat_message_input(self) -> None:
         """Test handling ChatMessage input directly."""
-        task_message = ChatMessage("user", ["test message"])
+        task_message = ChatMessage(role="user", text="test message")
 
         def selector(state: GroupChatState) -> str:
             # Verify the task message was preserved in conversation
@@ -597,7 +554,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(task_message):
+        async for event in workflow.run(task_message, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -608,8 +565,8 @@ class TestConversationHandling:
     async def test_handle_conversation_list_input(self) -> None:
         """Test handling conversation list preserves context."""
         conversation = [
-            ChatMessage("system", ["system message"]),
-            ChatMessage("user", ["user message"]),
+            ChatMessage(role="system", text="system message"),
+            ChatMessage(role="user", text="user message"),
         ]
 
         def selector(state: GroupChatState) -> str:
@@ -629,7 +586,7 @@ class TestConversationHandling:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream(conversation):
+        async for event in workflow.run(conversation, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -661,7 +618,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -696,7 +653,7 @@ class TestRoundLimitEnforcement:
         )
 
         outputs: list[list[ChatMessage]] = []
-        async for event in workflow.run_stream("test"):
+        async for event in workflow.run("test", stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 data = event.data
                 if isinstance(data, list):
@@ -728,7 +685,7 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
     )
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -766,7 +723,7 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
             .build()
         )
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if isinstance(ev, WorkflowOutputEvent):
                 baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
             if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -814,7 +771,7 @@ async def test_group_chat_with_request_info_filtering():
 
     # Run until we get a request info event (should be before beta, not alpha)
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             # Don't break - let stream complete naturally when paused
@@ -866,7 +823,7 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
 
     # Run until we get a request info event
     request_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream("test task"):
+    async for event in workflow.run("test task", stream=True):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             break
@@ -970,7 +927,7 @@ async def test_group_chat_with_participant_factories():
     assert call_count == 2
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("coordinate task"):
+    async for event in workflow.run("coordinate task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 
@@ -1035,7 +992,7 @@ async def test_group_chat_participant_factories_with_checkpointing():
     )
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("checkpoint test"):
+    async for event in workflow.run("checkpoint test", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 
@@ -1163,7 +1120,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
     assert factory_call_count == 1
 
     outputs: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream("coordinate task"):
+    async for event in workflow.run("coordinate task", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(event)
 

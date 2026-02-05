@@ -104,7 +104,7 @@ async def main() -> None:
 
     # Keep track of the last executor to format output nicely in streaming mode
     last_response_id: str | None = None
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, MagenticOrchestratorEvent):
             print(f"\n[Magentic Orchestrator Event] Type: {event.event_type.name}")
             if isinstance(event.data, ChatMessage):

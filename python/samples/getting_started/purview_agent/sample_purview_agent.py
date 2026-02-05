@@ -157,7 +157,7 @@ async def run_with_agent_middleware() -> None:
         middleware=[purview_agent_middleware],
     )
 
-    print("-- Agent Middleware Path --")
+    print("-- Agent MiddlewareTypes Path --")
     first: AgentResponse = await agent.run(
         ChatMessage("user", ["Tell me a joke about a pirate."], additional_properties={"user_id": user_id})
     )
@@ -200,7 +200,7 @@ async def run_with_chat_middleware() -> None:
         name=JOKER_NAME,
     )
 
-    print("-- Chat Middleware Path --")
+    print("-- Chat MiddlewareTypes Path --")
     first: AgentResponse = await agent.run(
         ChatMessage(
             role="user",
@@ -305,7 +305,7 @@ async def run_with_custom_cache_provider() -> None:
 
 
 async def main() -> None:
-    print("== Purview Agent Sample (Middleware with Automatic Caching) ==")
+    print("== Purview Agent Sample (MiddlewareTypes with Automatic Caching) ==")
 
     try:
         await run_with_agent_middleware()

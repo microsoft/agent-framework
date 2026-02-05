@@ -590,7 +590,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                             arguments=arguments,
                         )
                     )
-            chat_msg = ChatMessage("assistant", contents)
+            chat_msg = ChatMessage(role="assistant", contents=contents)
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
             result.append(chat_msg)
@@ -620,14 +620,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = ChatMessage(role, approval_contents)  # type: ignore[arg-type]
+            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[call-overload]
         else:
             # Regular text message
             content = msg.get("content", "")
             if isinstance(content, str):
-                chat_msg = ChatMessage(role, [Content.from_text(text=content)])
+                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])  # type: ignore[call-overload]
             else:
-                chat_msg = ChatMessage(role, [Content.from_text(text=str(content))])
+                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])  # type: ignore[call-overload]
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]
@@ -671,7 +671,8 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             continue
 
         # Convert ChatMessage to AG-UI format
-        role = FRAMEWORK_TO_AGUI_ROLE.get(msg.role, "user")
+        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role  # type: ignore[assignment]
+        role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
         content_text = ""
         tool_calls: list[dict[str, Any]] = []

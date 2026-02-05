@@ -85,7 +85,7 @@ async def main() -> None:
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
 
         last_response_id: str | None = None
-        async for update in workflow_agent.run_stream(task):
+        async for update in workflow_agent.run(task, stream=True):
             # Fallback for any other events with text
             if last_response_id != update.response_id:
                 if last_response_id is not None:

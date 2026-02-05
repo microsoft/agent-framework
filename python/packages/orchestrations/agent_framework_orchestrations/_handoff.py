@@ -141,9 +141,11 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await next(context)
             return
 
+        from agent_framework._middleware import MiddlewareTermination
+
         # Short-circuit execution and provide deterministic response payload for the tool call.
         context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
-        context.terminate = True
+        raise MiddlewareTermination(result=context.result)
 
 
 @dataclass
@@ -161,7 +163,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[ChatMessage] = []
         if isinstance(response, str):
-            messages.append(ChatMessage("user", [response]))
+            messages.append(ChatMessage(role="user", text=response))
         elif isinstance(response, ChatMessage):
             messages.append(response)
         elif isinstance(response, list):
@@ -169,7 +171,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, ChatMessage):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(ChatMessage("user", [item]))
+                    messages.append(ChatMessage(role="user", text=item))
                 else:
                     raise TypeError("List items must be either str or ChatMessage instances")
         else:
@@ -428,7 +430,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([ChatMessage("user", [self._autonomous_mode_prompt])])
+            self._cache.extend([ChatMessage(role="user", text=self._autonomous_mode_prompt)])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:
@@ -975,12 +977,12 @@ class HandoffBuilder:
             workflow = HandoffBuilder(participants=[triage, refund, billing]).with_checkpointing(storage).build()
 
             # Run workflow with a session ID for resumption
-            async for event in workflow.run_stream("Help me", session_id="user_123"):
+            async for event in workflow.run("Help me", session_id="user_123", stream=True):
                 # Process events...
                 pass
 
             # Later, resume the same conversation
-            async for event in workflow.run_stream("I need a refund", session_id="user_123"):
+            async for event in workflow.run("I need a refund", session_id="user_123", stream=True):
                 # Conversation continues from where it left off
                 pass
 
@@ -1039,7 +1041,7 @@ class HandoffBuilder:
         - Request/response handling
 
         Returns:
-            A fully configured Workflow ready to execute via `.run()` or `.run_stream()`.
+            A fully configured Workflow ready to execute via `.run()` with optional `stream=True` parameter.
 
         Raises:
             ValueError: If participants or coordinator were not configured, or if

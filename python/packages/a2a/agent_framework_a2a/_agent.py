@@ -4,8 +4,8 @@ import base64
 import json
 import re
 import uuid
-from collections.abc import AsyncIterable, Sequence
-from typing import Any, Final, cast
+from collections.abc import AsyncIterable, Awaitable, Sequence
+from typing import Any, Final, Literal, cast, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -32,10 +32,11 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
+    ResponseStream,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
-from agent_framework.observability import use_agent_instrumentation
+from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent"]
 
@@ -56,8 +57,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-@use_agent_instrumentation
-class A2AAgent(BaseAgent):
+class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
@@ -184,44 +184,92 @@ class A2AAgent(BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
-    async def run(
+    @overload
+    def run(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: Literal[False] = ...,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentResponse object. The caller is blocked until
-        the final result is available.
+        as a single AgentResponse object when stream=False. When stream=True,
+        it returns a ResponseStream that yields AgentResponseUpdate objects.
 
         Args:
             messages: The message(s) to send to the agent.
 
         Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
         Returns:
-            An agent response item.
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, **kwargs)
+
+    async def _run_impl(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        """Non-streaming implementation of run."""
         # Collect all updates and use framework to consolidate updates into response
-        updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
+        updates: list[AgentResponseUpdate] = []
+        async for update in self._stream_updates(messages, thread=thread, **kwargs):
+            updates.append(update)
         return AgentResponse.from_updates(updates)
 
-    async def run_stream(
+    def _run_stream_impl(
         self,
-        messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Streaming implementation of run."""
+
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            return AgentResponse.from_updates(list(updates))
+
+        return ResponseStream(self._stream_updates(messages, thread=thread, **kwargs), finalizer=_finalize)
+
+    async def _stream_updates(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Run the agent as a stream.
-
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentResponseUpdate objects to the caller.
+        """Internal method to stream updates from the A2A agent.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -231,10 +279,10 @@ class A2AAgent(BaseAgent):
             kwargs: Additional keyword arguments.
 
         Yields:
-            An agent response item.
+            AgentResponseUpdate items from the A2A agent.
         """
-        messages = normalize_messages(messages)
-        a2a_message = self._prepare_message_for_a2a(messages[-1])
+        normalized_messages = normalize_messages(messages)
+        a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
 
         response_stream = self.client.send_message(a2a_message)
 

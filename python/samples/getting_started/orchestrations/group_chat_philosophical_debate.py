@@ -240,7 +240,7 @@ Share your perspective authentically. Feel free to:
 
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
-    async for event in workflow.run_stream(f"Please begin the discussion on: {topic}"):
+    async for event in workflow.run(f"Please begin the discussion on: {topic}", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, AgentResponseUpdate):

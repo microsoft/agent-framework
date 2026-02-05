@@ -11,8 +11,9 @@ This example demonstrates advanced AGUIChatClient features including:
 
 import asyncio
 import os
+from typing import cast
 
-from agent_framework import tool
+from agent_framework import ChatResponse, ChatResponseUpdate, ResponseStream, tool
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -69,7 +70,13 @@ async def streaming_example(client: AGUIChatClient, thread_id: str | None = None
     print("\nUser: Tell me a short joke\n")
     print("Assistant: ", end="", flush=True)
 
-    async for update in client.get_streaming_response("Tell me a short joke", metadata=metadata):
+    stream = client.get_response(
+        "Tell me a short joke",
+        stream=True,
+        options={"metadata": metadata} if metadata else None,
+    )
+    stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], stream)
+    async for update in stream:
         if not thread_id and update.additional_properties:
             thread_id = update.additional_properties.get("thread_id")
 

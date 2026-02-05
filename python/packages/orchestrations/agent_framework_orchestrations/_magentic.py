@@ -629,7 +629,7 @@ class StandardMagenticManager(MagenticManagerBase):
             facts=facts_msg.text,
             plan=plan_msg.text,
         )
-        return ChatMessage("assistant", [combined], author_name=MAGENTIC_MANAGER_NAME)
+        return ChatMessage(role="assistant", text=combined, author_name=MAGENTIC_MANAGER_NAME)
 
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         """Update facts and plan when stalling or looping has been detected."""
@@ -640,19 +640,17 @@ class StandardMagenticManager(MagenticManagerBase):
 
         # Update facts
         facts_update_user = ChatMessage(
-            "user",
-            [
-                self.task_ledger_facts_update_prompt.format(
-                    task=magentic_context.task, old_facts=self.task_ledger.facts.text
-                )
-            ],
+            role="user",
+            text=self.task_ledger_facts_update_prompt.format(
+                task=magentic_context.task, old_facts=self.task_ledger.facts.text
+            ),
         )
         updated_facts = await self._complete([*magentic_context.chat_history, facts_update_user])
 
         # Update plan
         plan_update_user = ChatMessage(
-            "user",
-            [self.task_ledger_plan_update_prompt.format(team=team_text)],
+            role="user",
+            text=self.task_ledger_plan_update_prompt.format(team=team_text),
         )
         updated_plan = await self._complete([
             *magentic_context.chat_history,
@@ -674,7 +672,7 @@ class StandardMagenticManager(MagenticManagerBase):
             facts=updated_facts.text,
             plan=updated_plan.text,
         )
-        return ChatMessage("assistant", [combined], author_name=MAGENTIC_MANAGER_NAME)
+        return ChatMessage(role="assistant", text=combined, author_name=MAGENTIC_MANAGER_NAME)
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         """Use the model to produce a JSON progress ledger based on the conversation so far.
@@ -694,7 +692,7 @@ class StandardMagenticManager(MagenticManagerBase):
             team=team_text,
             names=names_csv,
         )
-        user_message = ChatMessage("user", [prompt])
+        user_message = ChatMessage(role="user", text=prompt)
 
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
@@ -721,7 +719,7 @@ class StandardMagenticManager(MagenticManagerBase):
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
         """Ask the model to produce the final answer addressed to the user."""
         prompt = self.final_answer_prompt.format(task=magentic_context.task)
-        user_message = ChatMessage("user", [prompt])
+        user_message = ChatMessage(role="user", text=prompt)
         response = await self._complete([*magentic_context.chat_history, user_message])
         # Ensure role is assistant
         return ChatMessage(
@@ -811,11 +809,11 @@ class MagenticPlanReviewResponse:
     def revise(feedback: str | list[str] | ChatMessage | list[ChatMessage]) -> "MagenticPlanReviewResponse":
         """Create a revision response with feedback."""
         if isinstance(feedback, str):
-            feedback = [ChatMessage("user", [feedback])]
+            feedback = [ChatMessage(role="user", text=feedback)]
         elif isinstance(feedback, ChatMessage):
             feedback = [feedback]
         elif isinstance(feedback, list):
-            feedback = [ChatMessage("user", [item]) if isinstance(item, str) else item for item in feedback]
+            feedback = [ChatMessage(role="user", text=item) if isinstance(item, str) else item for item in feedback]
 
         return MagenticPlanReviewResponse(review=feedback)
 
@@ -1515,7 +1513,7 @@ class MagenticBuilder:
             )
 
             # During execution, handle plan review
-            async for event in workflow.run_stream("task"):
+            async for event in workflow.run("task", stream=True):
                 if isinstance(event, RequestInfoEvent):
                     request = event.data
                     if isinstance(request, MagenticHumanInterventionRequest):
@@ -1563,11 +1561,11 @@ class MagenticBuilder:
 
             # First run
             thread_id = "task-123"
-            async for msg in workflow.run("task", thread_id=thread_id):
+            async for msg in workflow.run("task", thread_id=thread_id, stream=True):
                 print(msg.text)
 
             # Resume from checkpoint
-            async for msg in workflow.run("continue", thread_id=thread_id):
+            async for msg in workflow.run("continue", thread_id=thread_id, stream=True):
                 print(msg.text)
 
         Notes:
@@ -1812,7 +1810,7 @@ class MagenticBuilder:
             class MyManager(MagenticManagerBase):
                 async def plan(self, context: MagenticContext) -> ChatMessage:
                     # Custom planning logic
-                    return ChatMessage("assistant", ["..."])
+                    return ChatMessage(role="assistant", text="...")
 
 
             manager = MyManager()

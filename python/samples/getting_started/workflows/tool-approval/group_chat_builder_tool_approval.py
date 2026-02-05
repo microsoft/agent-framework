@@ -169,7 +169,9 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream("We need to deploy version 2.4.0 to production. Please coordinate the deployment.")
+    stream = workflow.run(
+        "We need to deploy version 2.4.0 to production. Please coordinate the deployment.", stream=True
+    )
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

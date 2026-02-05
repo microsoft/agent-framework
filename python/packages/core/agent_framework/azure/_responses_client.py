@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin
 
@@ -9,11 +9,11 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
-from .._middleware import use_chat_middleware
-from .._tools import use_function_invocation
+from .._middleware import ChatMiddlewareLayer
+from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
-from ..observability import use_instrumentation
-from ..openai._responses_client import OpenAIBaseResponsesClient
+from ..observability import ChatTelemetryLayer
+from ..openai._responses_client import RawOpenAIResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -33,6 +33,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from .._middleware import MiddlewareTypes
     from ..openai._responses_client import OpenAIResponsesOptions
 
 __all__ = ["AzureOpenAIResponsesClient"]
@@ -46,15 +47,15 @@ TAzureOpenAIResponsesOptions = TypeVar(
 )
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureOpenAIResponsesClient(
+class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
+    ChatMiddlewareLayer[TAzureOpenAIResponsesOptions],
+    FunctionInvocationLayer[TAzureOpenAIResponsesOptions],
+    ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
+    RawOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
     Generic[TAzureOpenAIResponsesOptions],
 ):
-    """Azure Responses completion class."""
+    """Azure Responses completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -73,6 +74,8 @@ class AzureOpenAIResponsesClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Responses client.
@@ -104,6 +107,8 @@ class AzureOpenAIResponsesClient(
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Additional keyword arguments.
 
         Examples:
@@ -184,6 +189,8 @@ class AzureOpenAIResponsesClient(
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )
 
     @override

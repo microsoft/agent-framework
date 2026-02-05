@@ -87,7 +87,7 @@ async def main() -> None:
 
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
             if isinstance(data, AgentResponseUpdate):

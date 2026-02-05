@@ -187,7 +187,7 @@ async def main() -> None:
             all_file_ids: list[str] = []
 
             print(f"User: {user_inputs[0]}")
-            events = await _drain(workflow.run_stream(user_inputs[0]))
+            events = await _drain(workflow.run(user_inputs[0], stream=True))
             requests, file_ids = _handle_events(events)
             all_file_ids.extend(file_ids)
             input_index += 1

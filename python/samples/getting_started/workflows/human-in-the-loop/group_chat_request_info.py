@@ -151,9 +151,10 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream(
+    stream = workflow.run(
         "Discuss how our team should approach adopting AI tools for productivity. "
-        "Consider benefits, risks, and implementation strategies."
+        "Consider benefits, risks, and implementation strategies.",
+        stream=True,
     )
 
     pending_responses = await process_event_stream(stream)

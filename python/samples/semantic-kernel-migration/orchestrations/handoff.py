@@ -244,7 +244,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         .build()
     )
 
-    events = await _drain_events(workflow.run_stream(initial_task))
+    events = await _drain_events(workflow.run(initial_task, stream=True))
     pending = _collect_handoff_requests(events)
     scripted_iter = iter(scripted_responses)
 

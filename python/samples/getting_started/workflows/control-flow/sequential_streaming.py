@@ -9,7 +9,7 @@ from typing_extensions import Never
 Sample: Foundational sequential workflow with streaming using function-style executors.
 
 Two lightweight steps run in order. The first converts text to uppercase.
-The second reverses the text and yields the workflow output. Events are printed as they arrive from run_stream.
+The second reverses the text and yields the workflow output. Events are printed as they arrive from a streaming run.
 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
@@ -64,7 +64,7 @@ async def main():
     )
 
     # Step 2: Run the workflow and stream events in real time.
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         # You will see executor invoke and completion events as the workflow progresses.
         print(f"Event: {event}")
         if isinstance(event, WorkflowOutputEvent):

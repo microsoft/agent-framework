@@ -33,14 +33,12 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
 
     # Assistant message with only confirm_changes should be filtered out
     assistant_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
+        msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
     ]
     assert len(assistant_messages) == 0
 
     # No synthetic tool result should be injected since confirm_changes was filtered out
-    tool_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "tool"
-    ]
+    tool_messages = [msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "tool"]
     assert len(tool_messages) == 0
 
 
@@ -182,7 +180,7 @@ def test_sanitize_tool_history_filters_confirm_changes_keeps_other_tools() -> No
 
     # Find the assistant message
     assistant_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
+        msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
     ]
     assert len(assistant_messages) == 1
 
@@ -192,9 +190,7 @@ def test_sanitize_tool_history_filters_confirm_changes_keeps_other_tools() -> No
     assert "confirm_changes" not in function_call_names
 
     # Only one tool message (for call_1), no synthetic for confirm_changes
-    tool_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "tool"
-    ]
+    tool_messages = [msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "tool"]
     assert len(tool_messages) == 1
     assert str(tool_messages[0].contents[0].call_id) == "call_1"
 
@@ -249,7 +245,7 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
 
     # Find the assistant message in sanitized output
     assistant_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
+        msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "assistant"
     ]
 
     assert len(assistant_messages) == 1
@@ -261,9 +257,7 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
     assert "confirm_changes" not in function_call_names
 
     # No synthetic tool result for confirm_changes (it was filtered from the message)
-    tool_messages = [
-        msg for msg in sanitized if (msg.role.value if hasattr(msg.role, "value") else str(msg.role)) == "tool"
-    ]
+    tool_messages = [msg for msg in sanitized if (msg.role if hasattr(msg.role, "value") else str(msg.role)) == "tool"]
     # No tool results expected since there are no completed tool calls
     # (the approval response is handled separately by the framework)
     tool_call_ids = {str(msg.contents[0].call_id) for msg in tool_messages}

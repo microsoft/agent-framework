@@ -484,3 +484,56 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+## Test Organization
+
+### Test Directory Structure
+
+Test folders require specific organization to avoid pytest conflicts when running tests across packages:
+
+1. **No `__init__.py` in test folders**: Test directories should NOT contain `__init__.py` files. This can cause import conflicts when pytest collects tests across multiple packages.
+
+2. **File naming**: Files starting with `test_` are treated as test files by pytest. Do not use this prefix for helper modules or utilities. If you need shared test utilities, put them in `conftest.py` or a file with a different name pattern (e.g., `helpers.py`, `fixtures.py`).
+
+3. **Package-specific conftest location**: The `tests/conftest.py` path is reserved for the core package (`packages/core/tests/conftest.py`). Other packages must place their tests in a uniquely-named subdirectory:
+
+```plaintext
+# ✅ Correct structure for non-core packages
+packages/devui/
+├── tests/
+│   └── devui/           # Unique subdirectory matching package name
+│       ├── conftest.py  # Package-specific fixtures
+│       ├── test_server.py
+│       └── test_mapper.py
+
+packages/anthropic/
+├── tests/
+│   └── anthropic/       # Unique subdirectory
+│       ├── conftest.py
+│       └── test_client.py
+
+# ❌ Incorrect - will conflict with core package
+packages/devui/
+├── tests/
+│   ├── conftest.py      # Conflicts when running all tests
+│   ├── test_server.py
+│   └── test_helpers.py  # Bad name - looks like a test file
+
+# ✅ Core package can use tests/ directly
+packages/core/
+├── tests/
+│   ├── conftest.py      # Core's conftest.py
+│   ├── core/
+│   │   └── test_agents.py
+│   └── openai/
+│       └── test_client.py
+```
+
+4. **Keep the `tests/` folder**: Even when using a subdirectory, keep the `tests/` folder at the package root. Some test discovery commands and tooling rely on this convention.
+
+### Fixture Guidelines
+
+- Use `conftest.py` for shared fixtures within a test directory
+- Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
+- Import factory functions explicitly: `from conftest import create_test_request`
+- Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`

@@ -2,7 +2,7 @@
 
 import asyncio
 import tempfile
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import uuid4
@@ -21,6 +21,7 @@ from agent_framework import (
     FileCheckpointStorage,
     Message,
     RequestInfoEvent,
+    ResponseStream,
     WorkflowBuilder,
     WorkflowCheckpointException,
     WorkflowContext,
@@ -120,7 +121,7 @@ async def test_workflow_run_streaming() -> None:
     )
 
     result: int | None = None
-    async for event in workflow.run_stream(NumberMessage(data=0)):
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
         assert isinstance(event, WorkflowEvent)
         if isinstance(event, WorkflowOutputEvent):
             result = event.data
@@ -143,7 +144,7 @@ async def test_workflow_run_stream_not_completed():
     )
 
     with pytest.raises(WorkflowConvergenceException):
-        async for _ in workflow.run_stream(NumberMessage(data=0)):
+        async for _ in workflow.run(NumberMessage(data=0), stream=True):
             pass
 
 
@@ -302,7 +303,7 @@ async def test_workflow_checkpointing_not_enabled_for_external_restore(
 
     # Attempt to restore from checkpoint without providing external storage should fail
     try:
-        [event async for event in workflow.run_stream(checkpoint_id="fake-checkpoint-id")]
+        [event async for event in workflow.run(checkpoint_id="fake-checkpoint-id", stream=True)]
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
         assert "Cannot restore from checkpoint" in str(e)
@@ -322,7 +323,7 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(
 
     # Attempt to run from checkpoint should fail
     try:
-        async for _ in workflow.run_stream(checkpoint_id="fake_checkpoint_id"):
+        async for _ in workflow.run(checkpoint_id="fake_checkpoint_id", stream=True):
             pass
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
@@ -348,7 +349,7 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
 
         # Attempt to run from non-existent checkpoint should fail
         try:
-            async for _ in workflow.run_stream(checkpoint_id="nonexistent_checkpoint_id"):
+            async for _ in workflow.run(checkpoint_id="nonexistent_checkpoint_id", stream=True):
                 pass
             raise AssertionError("Expected WorkflowCheckpointException to be raised")
         except WorkflowCheckpointException as e:
@@ -381,7 +382,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(
         # Resume from checkpoint using external storage parameter
         try:
             events: list[WorkflowEvent] = []
-            async for event in workflow_without_checkpointing.run_stream(
+            async for event in workflow_without_checkpointing.run(
                 checkpoint_id=checkpoint_id, checkpoint_storage=storage
             ):
                 events.append(event)
@@ -460,7 +461,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
 
         # Resume from checkpoint - pending request events should be emitted
         events: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(checkpoint_id=checkpoint_id):
+        async for event in workflow.run(checkpoint_id=checkpoint_id, stream=True):
             events.append(event)
 
         # Verify that the pending request event was emitted
@@ -782,7 +783,7 @@ async def test_workflow_concurrent_execution_prevention_streaming():
     # Create an async generator that will consume the stream slowly
     async def consume_stream_slowly():
         result: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(NumberMessage(data=0)):
+        async for event in workflow.run(NumberMessage(data=0), stream=True):
             result.append(event)
             await asyncio.sleep(0.01)  # Slow consumption
         return result
@@ -818,7 +819,7 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     # Start a streaming execution
     async def consume_stream():
         result: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(NumberMessage(data=0)):
+        async for event in workflow.run(NumberMessage(data=0), stream=True):
             result.append(event)
             await asyncio.sleep(0.01)
         return result
@@ -837,7 +838,7 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
         RuntimeError,
         match="Workflow is already running. Concurrent executions are not allowed.",
     ):
-        async for _ in workflow.run_stream(NumberMessage(data=0)):
+        async for _ in workflow.run(NumberMessage(data=0), stream=True):
             break
 
     # Wait for the original task to complete
@@ -855,31 +856,31 @@ class _StreamingTestAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        """Non-streaming run - returns complete response."""
-        return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
 
-    async def run_stream(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Streaming run - yields incremental updates."""
-        # Simulate streaming by yielding character by character
-        for char in self._reply_text:
-            yield AgentResponseUpdate(contents=[Content.from_text(text=char)])
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                # Simulate streaming by yielding character by character
+                for char in self._reply_text:
+                    yield AgentResponseUpdate(contents=[Content.from_text(text=char)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+
+        return _run()
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that run() and run_stream() both emits WorkflowOutputEvents correctly with the right data types."""
+    """Test that stream=True/False both emits WorkflowOutputEvents correctly with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
@@ -901,9 +902,9 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     assert agent_response[0].data is not None
     assert agent_response[0].data.messages[0].text == "Hello World"
 
-    # Test streaming mode with run_stream()
+    # Test streaming mode with run(stream=True)
     stream_events: list[WorkflowEvent] = []
-    async for event in workflow.run_stream("test message"):
+    async for event in workflow.run("test message", stream=True):
         stream_events.append(event)
 
     # Filter for agent events
@@ -936,7 +937,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
 
 async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
-    """Test that run() and run_stream() properly validate parameter combinations."""
+    """Test that stream properly validate parameter combinations."""
     workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)
@@ -951,7 +952,7 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
 
     # Invalid: both message and checkpoint_id (streaming)
     with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
-        async for _ in workflow.run_stream(test_message, checkpoint_id="fake_id"):
+        async for _ in workflow.run(test_message, checkpoint_id="fake_id", stream=True):
             pass
 
     # Invalid: none of message or checkpoint_id
@@ -960,21 +961,21 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
 
     # Invalid: none of message or checkpoint_id (streaming)
     with pytest.raises(ValueError, match="Must provide either"):
-        async for _ in workflow.run_stream():
+        async for _ in workflow.run(stream=True):
             pass
 
 
 async def test_workflow_run_stream_parameter_validation(
     simple_executor: Executor,
 ) -> None:
-    """Test run_stream() specific parameter validation scenarios."""
+    """Test stream=True specific parameter validation scenarios."""
     workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     events: list[WorkflowEvent] = []
-    async for event in workflow.run_stream(test_message):
+    async for event in workflow.run(test_message, stream=True):
         events.append(event)
     assert any(isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE for e in events)
 
@@ -1076,7 +1077,7 @@ async def test_output_executors_filters_outputs_streaming() -> None:
 
     # Collect outputs from streaming
     output_events: list[WorkflowOutputEvent] = []
-    async for event in workflow.run_stream(NumberMessage(data=0)):
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
         if isinstance(event, WorkflowOutputEvent):
             output_events.append(event)
 
@@ -1208,7 +1209,7 @@ async def test_output_executors_filtering_with_send_responses_streaming() -> Non
 
     # Run workflow which will request approval
     events_list: list[WorkflowEvent] = []
-    async for event in workflow.run_stream(NumberMessage(data=99)):
+    async for event in workflow.run(NumberMessage(data=99), stream=True):
         events_list.append(event)
 
     # Get request info events

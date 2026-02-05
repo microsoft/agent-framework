@@ -158,9 +158,10 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream(
+    stream = workflow.run(
         "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
-        "your best judgment based on market sentiment. No need to confirm trades with me."
+        "your best judgment based on market sentiment. No need to confirm trades with me.",
+        stream=True,
     )
 
     pending_responses = await process_event_stream(stream)

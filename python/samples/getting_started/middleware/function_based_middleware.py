@@ -16,7 +16,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Function-based Middleware Example
+Function-based MiddlewareTypes Example
 
 This sample demonstrates how to implement middleware using simple async functions instead of classes.
 The example includes:
@@ -80,7 +80,7 @@ async def logging_function_middleware(
 
 async def main() -> None:
     """Example demonstrating function-based middleware."""
-    print("=== Function-based Middleware Example ===")
+    print("=== Function-based MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

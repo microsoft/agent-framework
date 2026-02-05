@@ -65,7 +65,7 @@ class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
     AgentExecutor adapts its behavior based on the workflow execution mode:
-    - run_stream(): Emits incremental WorkflowOutputEvents as the agent produces tokens
+    - run(stream=True): Emits incremental WorkflowOutputEvents as the agent produces tokens
     - run(): Emits a single WorkflowOutputEvent containing the complete response
 
     Use `with_output_from` in WorkflowBuilder to control whether the AgentResponse
@@ -195,7 +195,7 @@ class AgentExecutor(Executor):
 
         if not self._pending_agent_requests:
             # All pending requests have been resolved; resume agent execution
-            self._cache = normalize_messages_input(ChatMessage("user", self._pending_responses_to_agent))
+            self._cache = normalize_messages_input(ChatMessage(role="user", contents=self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 
@@ -334,6 +334,7 @@ class AgentExecutor(Executor):
 
         response = await self._agent.run(
             self._cache,
+            stream=False,
             thread=self._agent_thread,
             **run_kwargs,
         )
@@ -361,8 +362,9 @@ class AgentExecutor(Executor):
 
         updates: list[AgentResponseUpdate] = []
         user_input_requests: list[Content] = []
-        async for update in self._agent.run_stream(
+        async for update in self._agent.run(
             self._cache,
+            stream=True,
             thread=self._agent_thread,
             **run_kwargs,
         ):

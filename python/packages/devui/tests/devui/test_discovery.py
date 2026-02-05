@@ -6,19 +6,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from agent_framework_devui._discovery import EntityDiscovery
 
-
-@pytest.fixture
-def test_entities_dir():
-    """Use the samples directory which has proper entity structure."""
-    # Get the samples directory from the main python samples folder
-    current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
-    return str(samples_dir.resolve())
+# Note: test_entities_dir fixture is provided by conftest.py
 
 
 async def test_discover_agents(test_entities_dir):
@@ -89,7 +79,7 @@ from agent_framework import AgentResponse, AgentThread, ChatMessage, Role, Conte
 class NonStreamingAgent:
     id = "non_streaming"
     name = "Non-Streaming Agent"
-    description = "Agent without run_stream"
+    description = "Agent with run() method"
 
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
@@ -125,7 +115,6 @@ agent = NonStreamingAgent()
         enriched = discovery.get_entity_info(entity.id)
         assert enriched.type == "agent"  # Now correctly identified
         assert enriched.name == "Non-Streaming Agent"
-        assert not enriched.metadata.get("has_run_stream")
 
 
 async def test_lazy_loading():
@@ -210,7 +199,7 @@ class TestAgent:
 
     async def run(self, messages=None, *, thread=None, **kwargs):
         return AgentResponse(
-            messages=[ChatMessage("assistant", [Content.from_text(text="test")])],
+            messages=[ChatMessage(role="assistant", contents=[Content.from_text(text="test")])],
             response_id="test"
         )
 
@@ -342,7 +331,7 @@ class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
 
-    def run_stream(self, input_str):
+    def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
         return f"Weather in {input_str}"
 """)
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import uuid
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import Awaitable, Sequence
 from typing import Any
 
 import pytest
@@ -17,6 +17,7 @@ from agent_framework import (
     ChatMessageStore,
     Content,
     Executor,
+    ResponseStream,
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
@@ -45,7 +46,7 @@ class SimpleExecutor(Executor):
         response_text = f"{self.response_text}: {input_text}"
 
         # Create response message for both streaming and non-streaming cases
-        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
+        response_message = ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)])
 
         if self.streaming:
             # Emit update event.
@@ -125,7 +126,7 @@ class ConversationHistoryCapturingExecutor(Executor):
         message_count = len(messages)
         response_text = f"Received {message_count} messages"
 
-        response_message = ChatMessage("assistant", [Content.from_text(text=response_text)])
+        response_message = ChatMessage(role="assistant", contents=[Content.from_text(text=response_text)])
 
         if self.streaming:
             # Emit streaming update
@@ -199,7 +200,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to capture streaming events
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Test input"):
+        async for update in agent.run("Test input", stream=True):
             updates.append(update)
 
         # Should have received at least one streaming update
@@ -230,7 +231,7 @@ class TestWorkflowAgent:
 
         # Execute workflow streaming to get request info event
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Start request"):
+        async for update in agent.run("Start request", stream=True):
             updates.append(update)
         # Should have received an approval request for the request info
         assert len(updates) > 0
@@ -280,7 +281,7 @@ class TestWorkflowAgent:
             ),
         )
 
-        response_message = ChatMessage("user", [approval_response])
+        response_message = ChatMessage(role="user", contents=[approval_response])
 
         # Continue the workflow with the response
         continuation_result = await agent.run(response_message)
@@ -343,7 +344,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
 
         # Run directly - should return WorkflowOutputEvent in result
-        direct_result = await workflow.run([ChatMessage("user", [Content.from_text(text="hello")])])
+        direct_result = await workflow.run([ChatMessage(role="user", text="hello")])
         direct_outputs = direct_result.get_outputs()
         assert len(direct_outputs) == 1
         assert direct_outputs[0] == "processed: hello"
@@ -368,7 +369,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("hello"):
+        async for update in agent.run("hello", stream=True):
             updates.append(update)
 
         # Should have received updates for both yield_output calls
@@ -451,7 +452,7 @@ class TestWorkflowAgent:
         agent = workflow.as_agent("raw-test-agent")
 
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         # Should have 3 updates
@@ -480,8 +481,8 @@ class TestWorkflowAgent:
         ) -> None:
             # Yield a list of ChatMessages (as SequentialBuilder does)
             msg_list = [
-                ChatMessage("user", [Content.from_text(text="first message")]),
-                ChatMessage("assistant", [Content.from_text(text="second message")]),
+                ChatMessage(role="user", text="first message"),
+                ChatMessage(role="assistant", text="second message"),
                 ChatMessage(
                     role="assistant",
                     contents=[Content.from_text(text="third"), Content.from_text(text="fourth")],
@@ -494,7 +495,7 @@ class TestWorkflowAgent:
 
         # Verify streaming returns the update with all 4 contents before coalescing
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("test"):
+        async for update in agent.run("test", stream=True):
             updates.append(update)
 
         assert len(updates) == 3
@@ -525,8 +526,8 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage("user", ["Previous user message"]),
-            ChatMessage("assistant", ["Previous assistant response"]),
+            ChatMessage(role="user", text="Previous user message"),
+            ChatMessage(role="assistant", text="Previous assistant response"),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
@@ -546,7 +547,7 @@ class TestWorkflowAgent:
     async def test_thread_conversation_history_included_in_workflow_stream(self) -> None:
         """Test that conversation history from thread is included when streaming WorkflowAgent.
 
-        This verifies that run_stream also includes thread history.
+        This verifies that stream=True also includes thread history.
         """
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing_stream")
@@ -555,15 +556,15 @@ class TestWorkflowAgent:
 
         # Create a thread with existing conversation history
         history_messages = [
-            ChatMessage("system", ["You are a helpful assistant"]),
-            ChatMessage("user", ["Hello"]),
+            ChatMessage(role="system", text="You are a helpful assistant"),
+            ChatMessage(role="user", text="Hello"),
             ChatMessage("assistant", ["Hi there!"]),
         ]
         message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
 
         # Stream from the agent with the thread and a new message
-        async for _ in agent.run_stream("How are you?", thread=thread):
+        async for _ in agent.run("How are you?", stream=True, thread=thread):
             pass
 
         # Verify the executor received all messages (3 from history + 1 new)
@@ -603,7 +604,7 @@ class TestWorkflowAgent:
         checkpoint_storage = InMemoryCheckpointStorage()
 
         # Run with checkpoint storage enabled
-        async for _ in agent.run_stream("Test message", checkpoint_storage=checkpoint_storage):
+        async for _ in agent.run("Test message", stream=True, checkpoint_storage=checkpoint_storage):
             pass
 
         # Drain workflow events to get checkpoint
@@ -626,30 +627,47 @@ class TestWorkflowAgent:
             def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(
+            def run(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
+                stream: bool = False,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+                if stream:
+                    return self._run_stream(messages=messages, thread=thread, **kwargs)
+                return self._run(messages=messages, thread=thread, **kwargs)
+
+            async def _run(
+                self,
+                messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+                *,
+                stream: bool = False,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
+
                 return AgentResponse(
                     messages=[ChatMessage("assistant", [self._response_text])],
                 )
 
-            async def run_stream(
+            def _run_stream(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
-            ) -> AsyncIterable[AgentResponseUpdate]:
-                for word in self._response_text.split():
-                    yield AgentResponseUpdate(
-                        contents=[Content.from_text(text=word + " ")],
-                        role="assistant",
-                        author_name=self.name,
-                    )
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+                async def _iter():
+                    for word in self._response_text.split():
+                        yield AgentResponseUpdate(
+                            contents=[Content.from_text(text=word + " ")],
+                            role="assistant",
+                            author_name=self.name,
+                        )
+
+                return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
         async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
@@ -699,27 +717,47 @@ class TestWorkflowAgent:
             def get_new_thread(self, **kwargs: Any) -> AgentThread:
                 return AgentThread()
 
-            async def run(
+            def run(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
+                stream: bool = False,
+                thread: AgentThread | None = None,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+                if stream:
+                    return self._run_stream(messages=messages, thread=thread, **kwargs)
+                return self._run(messages=messages, thread=thread, **kwargs)
+
+            async def _run(
+                self,
+                messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
+                *,
+                stream: bool = False,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
-                return AgentResponse(messages=[ChatMessage("assistant", [self._response_text])])
 
-            async def run_stream(
+                return AgentResponse(
+                    messages=[ChatMessage("assistant", [self._response_text])],
+                )
+
+            def _run_stream(
                 self,
                 messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
                 *,
                 thread: AgentThread | None = None,
                 **kwargs: Any,
-            ) -> AsyncIterable[AgentResponseUpdate]:
-                yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=self._response_text)],
-                    role="assistant",
-                    author_name=self.name,
-                )
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+                async def _iter():
+                    for word in self._response_text.split():
+                        yield AgentResponseUpdate(
+                            contents=[Content.from_text(text=word + " ")],
+                            role="assistant",
+                            author_name=self.name,
+                        )
+
+                return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
         async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -761,7 +799,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify at least one update was received
@@ -797,7 +835,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Verify author_name is preserved (not overwritten with executor_id)
@@ -815,7 +853,7 @@ class TestWorkflowAgentAuthorName:
 
         # Collect streaming updates
         updates: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             updates.append(update)
 
         # Should have updates from both executors
@@ -1089,7 +1127,10 @@ class TestWorkflowAgentMergeUpdates:
             ("text", "assistant"),
         ]
 
-        assert content_sequence == expected_sequence, (
+        # Compare using role.value for Role enum
+        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]
+
+        assert actual_sequence_normalized == expected_sequence, (
             f"FunctionResultContent should come immediately after FunctionCallContent. "
             f"Got: {content_sequence}, Expected: {expected_sequence}"
         )

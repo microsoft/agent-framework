@@ -4,8 +4,8 @@ import asyncio
 import contextlib
 import logging
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -16,6 +16,7 @@ from agent_framework import (
     ChatMessage,
     Content,
     ContextProvider,
+    ResponseStream,
     normalize_messages,
 )
 from agent_framework._tools import FunctionTool, ToolProtocol
@@ -272,7 +273,71 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         self._started = False
 
-    async def run(
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = False,
+        thread: AgentThread | None = None,
+        options: TOptions | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        options: TOptions | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        options: TOptions | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        """Get a response from the agent.
+
+        This method returns the final result of the agent's execution
+        as a single AgentResponse object when stream=False. When stream=True,
+        it returns a ResponseStream that yields AgentResponseUpdate objects.
+
+        Args:
+            messages: The message(s) to send to the agent.
+
+        Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
+            thread: The conversation thread associated with the message(s).
+            options: Runtime options (model, timeout, etc.).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
+
+        Raises:
+            ServiceException: If the request fails.
+        """
+        if stream:
+
+            def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+                return AgentResponse.from_updates(updates)
+
+            return ResponseStream(
+                self._stream_updates(messages=messages, thread=thread, options=options, **kwargs),
+                finalizer=_finalize,
+            )
+        return self._run_impl(messages=messages, thread=thread, options=options, **kwargs)
+
+    async def _run_impl(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -280,26 +345,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        """Get a response from the agent.
-
-        This method returns the final result of the agent's execution
-        as a single AgentResponse object. The caller is blocked until
-        the final result is available.
-
-        Args:
-            messages: The message(s) to send to the agent.
-
-        Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            An agent response item.
-
-        Raises:
-            ServiceException: If the request fails.
-        """
+        """Non-streaming implementation of run."""
         if not self._started:
             await self.start()
 
@@ -339,7 +385,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
 
         return AgentResponse(messages=response_messages, response_id=response_id)
 
-    async def run_stream(
+    async def _stream_updates(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -347,10 +393,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Run the agent as a stream.
-
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentResponseUpdate objects to the caller.
+        """Internal method to stream updates from GitHub Copilot.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -361,7 +404,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
             kwargs: Additional keyword arguments.
 
         Yields:
-            An agent response update for each delta.
+            AgentResponseUpdate items.
 
         Raises:
             ServiceException: If the request fails.
@@ -498,7 +541,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         Args:
             thread: The conversation thread.
             streaming: Whether to enable streaming for the session.
-            runtime_options: Runtime options from run/run_stream that take precedence.
+            runtime_options: Runtime options from run that take precedence.
 
         Returns:
             A CopilotSession instance.

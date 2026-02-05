@@ -111,7 +111,7 @@ async def main() -> None:
     print("Request:", request)
 
     last_response_id: str | None = None
-    async for event in workflow.run_stream(request):
+    async for event in workflow.run(request, stream=True):
         if isinstance(event, HandoffSentEvent):
             print(f"\nHandoff Event: from {event.source} to {event.target}\n")
         elif isinstance(event, WorkflowOutputEvent):

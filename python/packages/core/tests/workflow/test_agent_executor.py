@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 from agent_framework import (
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStore,
     Content,
+    ResponseStream,
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
@@ -28,25 +29,28 @@ class _CountingAgent(BaseAgent):
         super().__init__(**kwargs)
         self.call_count = 0
 
-    async def run(  # type: ignore[override]
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
-        return AgentResponse(messages=[ChatMessage("assistant", [f"Response #{self.call_count}: {self.name}"])])
+        if stream:
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        self.call_count += 1
-        yield AgentResponseUpdate(contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")])
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")]
+                )
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [f"Response #{self.call_count}: {self.name}"])])
+
+        return _run()
 
 
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
@@ -59,8 +63,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Add some initial messages to the thread to verify thread state persistence
     initial_messages = [
-        ChatMessage("user", ["Initial message 1"]),
-        ChatMessage("assistant", ["Initial response 1"]),
+        ChatMessage(role="user", text="Initial message 1"),
+        ChatMessage(role="assistant", text="Initial response 1"),
     ]
     await initial_thread.on_new_messages(initial_messages)
 
@@ -72,7 +76,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Run the workflow with a user message
     first_run_output: AgentExecutorResponse | None = None
-    async for ev in wf.run_stream("First workflow run"):
+    async for ev in wf.run("First workflow run", stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             first_run_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -126,7 +130,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Resume from checkpoint
     resumed_output: AgentExecutorResponse | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=restore_checkpoint.checkpoint_id):
+    async for ev in wf_resume.run(checkpoint_id=restore_checkpoint.checkpoint_id, stream=True):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -163,9 +167,9 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to thread
     thread_messages = [
-        ChatMessage("user", ["Message in thread 1"]),
-        ChatMessage("assistant", ["Thread response 1"]),
-        ChatMessage("user", ["Message in thread 2"]),
+        ChatMessage(role="user", text="Message in thread 1"),
+        ChatMessage(role="assistant", text="Thread response 1"),
+        ChatMessage(role="user", text="Message in thread 2"),
     ]
     await thread.on_new_messages(thread_messages)
 
@@ -173,8 +177,8 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to executor cache
     cache_messages = [
-        ChatMessage("user", ["Cached user message"]),
-        ChatMessage("assistant", ["Cached assistant response"]),
+        ChatMessage(role="user", text="Cached user message"),
+        ChatMessage(role="assistant", text="Cached assistant response"),
     ]
     executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
 

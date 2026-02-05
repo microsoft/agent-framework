@@ -591,7 +591,7 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     workflow1 = _build_checkpoint_test_workflow(storage)
 
     first_request_id: str | None = None
-    async for event in workflow1.run_stream("test_value"):
+    async for event in workflow1.run("test_value", stream=True):
         if isinstance(event, RequestInfoEvent):
             first_request_id = event.request_id
 
@@ -605,7 +605,7 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     workflow2 = _build_checkpoint_test_workflow(storage)
 
     resumed_first_request_id: str | None = None
-    async for event in workflow2.run_stream(checkpoint_id=checkpoint_id):
+    async for event in workflow2.run(checkpoint_id=checkpoint_id, stream=True):
         if isinstance(event, RequestInfoEvent):
             resumed_first_request_id = event.request_id
 

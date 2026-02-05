@@ -41,7 +41,7 @@ async def test_resume_fails_when_graph_mismatch() -> None:
     workflow = build_workflow(storage, finish_id="finish")
 
     # Run once to create checkpoints
-    _ = [event async for event in workflow.run_stream("hello")]  # noqa: F841
+    _ = [event async for event in workflow.run("hello", stream=True)]  # noqa: F841
 
     checkpoints = await storage.list_checkpoints()
     assert checkpoints, "expected at least one checkpoint to be created"
@@ -53,9 +53,10 @@ async def test_resume_fails_when_graph_mismatch() -> None:
     with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
         _ = [
             event
-            async for event in mismatched_workflow.run_stream(
+            async for event in mismatched_workflow.run(
                 checkpoint_id=target_checkpoint.checkpoint_id,
                 checkpoint_storage=storage,
+                stream=True,
             )
         ]
 
@@ -63,7 +64,7 @@ async def test_resume_fails_when_graph_mismatch() -> None:
 async def test_resume_succeeds_when_graph_matches() -> None:
     storage = InMemoryCheckpointStorage()
     workflow = build_workflow(storage, finish_id="finish")
-    _ = [event async for event in workflow.run_stream("hello")]  # noqa: F841
+    _ = [event async for event in workflow.run("hello", stream=True)]  # noqa: F841
 
     checkpoints = sorted(await storage.list_checkpoints(), key=lambda c: c.timestamp)
     target_checkpoint = checkpoints[0]
@@ -72,9 +73,10 @@ async def test_resume_succeeds_when_graph_matches() -> None:
 
     events = [
         event
-        async for event in resumed_workflow.run_stream(
+        async for event in resumed_workflow.run(
             checkpoint_id=target_checkpoint.checkpoint_id,
             checkpoint_storage=storage,
+            stream=True,
         )
     ]
 

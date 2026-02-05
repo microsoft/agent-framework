@@ -364,7 +364,14 @@ class DeclarativeWorkflowState:
         engine = Engine()
         symbols = self._to_powerfx_symbols()
         try:
-            return engine.eval(formula, symbols=symbols)
+            from System.Globalization import CultureInfo
+
+            original_culture = CultureInfo.CurrentCulture
+            CultureInfo.CurrentCulture = CultureInfo("en-US")
+            try:
+                return engine.eval(formula, symbols=symbols)
+            finally:
+                CultureInfo.CurrentCulture = original_culture
         except ValueError as e:
             error_msg = str(e)
             # Handle undefined variable errors gracefully by returning None

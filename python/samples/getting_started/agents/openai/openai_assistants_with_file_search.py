@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import HostedFileSearchTool, HostedVectorStoreContent
+from agent_framework import Content, HostedFileSearchTool
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 
@@ -15,7 +15,7 @@ for document-based question answering and information retrieval.
 """
 
 
-async def create_vector_store(client: AsyncOpenAI) -> tuple[str, HostedVectorStoreContent]:
+async def create_vector_store(client: AsyncOpenAI) -> tuple[str, Content]:
     """Create a vector store with sample documents."""
     file = await client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="user_data"
@@ -28,7 +28,7 @@ async def create_vector_store(client: AsyncOpenAI) -> tuple[str, HostedVectorSto
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: AsyncOpenAI, file_id: str, vector_store_id: str) -> None:
@@ -56,8 +56,10 @@ async def main() -> None:
 
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_stream(
-            query, tool_resources={"file_search": {"vector_store_ids": [vector_store.vector_store_id]}}
+        async for chunk in agent.run(
+            query,
+            stream=True,
+            options={"tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}}},
         ):
             if chunk.text:
                 print(chunk.text, end="", flush=True)

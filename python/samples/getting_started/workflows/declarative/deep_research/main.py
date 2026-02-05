@@ -192,7 +192,7 @@ async def main() -> None:
     # Example input
     task = "What is the weather like in Seattle and how does it compare to the average for this time of year?"
 
-    async for event in workflow.run_stream(task):
+    async for event in workflow.run(task, stream=True):
         if isinstance(event, WorkflowOutputEvent):
             print(f"{event.data}", end="", flush=True)
 

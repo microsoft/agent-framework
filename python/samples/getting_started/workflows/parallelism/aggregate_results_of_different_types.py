@@ -86,7 +86,7 @@ async def main() -> None:
 
     # 2) Run the workflow
     output: list[int | float] | None = None
-    async for event in workflow.run_stream([random.randint(1, 100) for _ in range(10)]):
+    async for event in workflow.run([random.randint(1, 100) for _ in range(10)], stream=True):
         if isinstance(event, WorkflowOutputEvent):
             output = event.data
 

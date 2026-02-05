@@ -47,7 +47,7 @@ async def main() -> None:
 
     # 3) Run and collect outputs
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream("Write a tagline for a budget-friendly eBike."):
+    async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
         if isinstance(event, WorkflowOutputEvent):
             outputs.append(cast(list[ChatMessage], event.data))
 

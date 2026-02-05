@@ -89,7 +89,7 @@ def create_completion_message(
     """
     message_text = text or f"Conversation {reason}."
     return ChatMessage(
-        "assistant",
-        [message_text],
+        role="assistant",
+        text=message_text,
         author_name=author_name,
     )

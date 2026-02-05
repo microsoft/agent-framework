@@ -817,7 +817,7 @@ class DurableAgentStateMessage:
         ]
 
         return DurableAgentStateMessage(
-            role=chat_message.role,
+            role=chat_message.role if hasattr(chat_message.role, "value") else str(chat_message.role),
             contents=contents_list,
             author_name=chat_message.author_name,
             extension_data=dict(chat_message.additional_properties) if chat_message.additional_properties else None,

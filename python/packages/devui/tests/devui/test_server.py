@@ -23,14 +23,7 @@ class _StubExecutor:
             self._handlers = dict(handlers)
 
 
-@pytest.fixture
-def test_entities_dir():
-    """Use the samples directory which has proper entity structure."""
-    # Get the samples directory from the main python samples folder
-    current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
-    return str(samples_dir.resolve())
+# Note: test_entities_dir fixture is provided by conftest.py
 
 
 async def test_server_health_endpoint(test_entities_dir):
@@ -159,6 +152,7 @@ async def test_credential_cleanup() -> None:
     mock_client = Mock()
     mock_client.async_credential = mock_credential
     mock_client.model_id = "test-model"
+    mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
     agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
@@ -191,6 +185,7 @@ async def test_credential_cleanup_error_handling() -> None:
     mock_client = Mock()
     mock_client.async_credential = mock_credential
     mock_client.model_id = "test-model"
+    mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
     agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
@@ -225,6 +220,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client.credential = mock_cred1
     mock_client.async_credential = mock_cred2
     mock_client.model_id = "test-model"
+    mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
     agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
@@ -346,7 +342,7 @@ class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
 
-    def run_stream(self, input_str):
+    def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
         return f"Weather in {input_str} is sunny"
 """)
 

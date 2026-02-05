@@ -158,7 +158,7 @@ class TestRequestInfoMixin:
         ):
             DuplicateExecutor()
 
-    def test_response_handler_function_callable(self):
+    async def test_response_handler_function_callable(self):
         """Test that response handlers can actually be called."""
 
         class TestExecutor(Executor):
@@ -182,7 +182,7 @@ class TestRequestInfoMixin:
         response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
 
         # Create a mock context - we'll just use None since the handler doesn't use it
-        asyncio.run(response_handler_func("test_request", 42, None))  # type: ignore[reportArgumentType]
+        await response_handler_func("test_request", 42, None)  # type: ignore[reportArgumentType]
 
         assert executor.handled_request == "test_request"
         assert executor.handled_response == 42
@@ -303,7 +303,7 @@ class TestRequestInfoMixin:
         assert len(response_handlers) == 1
         assert (str, int) in response_handlers
 
-    def test_same_request_type_different_response_types(self):
+    async def test_same_request_type_different_response_types(self):
         """Test that handlers with same request type but different response types are distinct."""
 
         class TestExecutor(Executor):
@@ -350,15 +350,15 @@ class TestRequestInfoMixin:
         assert str_dict_handler is not None
 
         # Test that handlers are called correctly
-        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(str_bool_handler(True, None))  # type: ignore[reportArgumentType]
-        asyncio.run(str_dict_handler({"key": "value"}, None))  # type: ignore[reportArgumentType]
+        await str_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await str_bool_handler(True, None)  # type: ignore[reportArgumentType]
+        await str_dict_handler({"key": "value"}, None)  # type: ignore[reportArgumentType]
 
         assert executor.str_int_handler_called
         assert executor.str_bool_handler_called
         assert executor.str_dict_handler_called
 
-    def test_different_request_types_same_response_type(self):
+    async def test_different_request_types_same_response_type(self):
         """Test that handlers with different request types but same response type are distinct."""
 
         class TestExecutor(Executor):
@@ -407,9 +407,9 @@ class TestRequestInfoMixin:
         assert list_int_handler is not None
 
         # Test that handlers are called correctly
-        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(dict_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(list_int_handler(42, None))  # type: ignore[reportArgumentType]
+        await str_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await dict_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await list_int_handler(42, None)  # type: ignore[reportArgumentType]
 
         assert executor.str_int_handler_called
         assert executor.dict_int_handler_called
