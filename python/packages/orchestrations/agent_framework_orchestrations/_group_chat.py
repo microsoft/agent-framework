@@ -47,6 +47,7 @@ from agent_framework._workflows._orchestration_request_info import AgentApproval
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
+from ._orchestrator_helpers import clean_conversation
 from pydantic import BaseModel, Field
 from typing_extensions import Never
 
@@ -192,6 +193,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        messages = clean_conversation(messages)
         self._append_messages(messages)
 
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
@@ -359,6 +361,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        messages = clean_conversation(messages)
         self._append_messages(messages)
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
             return
