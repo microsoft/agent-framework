@@ -134,6 +134,53 @@ def test_add_agent_duplicate_id_raises_error():
         builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
 
 
+# Tests for build() with async executor factories
+
+
+async def test_build_async_with_async_executor_factories():
+    """Test that build_async() works with async executor factories."""
+
+    async def create_executor_a() -> MockExecutor:
+        return MockExecutor(id="executor_a")
+
+    async def create_executor_b() -> MockExecutor:
+        return MockExecutor(id="executor_b")
+
+    # Build workflow with async executor factories
+    workflow = await (
+        WorkflowBuilder()
+        .register_executors({
+            "ExecutorA": create_executor_a,
+            "ExecutorB": create_executor_b,
+        })
+        .set_start_executor("ExecutorA")
+        .add_edge("ExecutorA", "ExecutorB")
+        .build_async()
+    )
+
+    assert workflow.start_executor_id == "executor_a"
+    assert len(workflow.executors) == 2
+    assert "executor_a" in workflow.executors
+    assert "executor_b" in workflow.executors
+
+
+def test_build_raises_error_with_async_executor_factories():
+    """Test that build() raises ValueError when async executor factories are detected."""
+
+    async def create_async_executor() -> MockExecutor:
+        return MockExecutor(id="executor_async")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"AsyncExecutor": create_async_executor})
+        .set_start_executor("AsyncExecutor")
+    )
+
+    # Attempting to build synchronously with async factories should raise an error
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
 # Tests for new executor registration patterns
 
 
