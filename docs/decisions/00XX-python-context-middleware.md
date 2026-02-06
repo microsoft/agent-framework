@@ -2522,48 +2522,87 @@ class StorageWithLogging(StorageContextMiddleware):
 
 ### Workplan
 
-#### Phase 1: Core Implementation
-- [ ] Create `ContextMiddleware` base class in `_context_middleware.py` (onion/wrapper pattern)
-- [ ] Create `SessionContext` class with explicit add/get methods
-- [ ] Create `ContextMiddlewarePipeline` with `from_config()` factory method
-- [ ] Create `ContextMiddlewareFactory` type alias and resolution logic
-- [ ] Create `StorageContextMiddleware` base class with load_messages/store flags
-- [ ] Implement pipeline validation (warn if multiple or zero storage middleware have `load_messages=True`)
-- [ ] Add `serialize()` and `restore()` methods to `ContextMiddleware` base class
+The implementation is split into 2 PRs to limit scope and simplify review.
 
-#### Phase 2: AgentSession Implementation
-- [ ] Create `AgentSession` class with `context_pipeline` attribute
-- [ ] Add `context_middleware: Sequence[ContextMiddlewareConfig]` parameter to `BaseAgent` and `ChatAgent`
-- [ ] Implement `create_session()` that resolves factories and creates pipeline
-- [ ] Wire up context pipeline execution in agent invocation flow
-- [ ] Implement `AgentSession.serialize()` to capture middleware states
-- [ ] Implement `Agent.restore_session()` to reconstruct session from serialized state
-- [ ] Remove `AgentThread` completely (no alias, clean break)
+```
+PR1 (New Types) ──► PR2 (Agent Integration + Cleanup)
+```
 
-#### Phase 3: Built-in Middleware
-- [ ] Create `InMemoryStorageMiddleware` (replaces `ChatMessageStore`)
-- [ ] Implement `serialize()`/`restore()` for `InMemoryStorageMiddleware`
-- [ ] Create `@context_middleware` decorator for function-based middleware
+#### PR 1: New Types
 
-#### Phase 4: Migrate Existing Implementations
-- [ ] Migrate `AzureAISearchContextProvider` → `AzureAISearchContextMiddleware`
-- [ ] Migrate `RedisProvider` → `RedisStorageMiddleware`
-- [ ] Migrate `Mem0Provider` → `Mem0ContextMiddleware`
-- [ ] Create optional `ContextProviderAdapter` for gradual migration (if needed)
+**Goal:** Create all new types. No changes to existing code yet.
 
-#### Phase 5: Cleanup & Documentation
-- [ ] Remove `ContextProvider` class
-- [ ] Remove `ChatMessageStore` / `ChatMessageStoreProtocol`
-- [ ] Update all samples to use new middleware pattern
+**Core Package - `packages/core/agent_framework/_sessions.py`:**
+- [ ] `SessionContext` class with explicit add/get methods
+- [ ] `ContextPlugin` base class with `before_run()`/`after_run()`
+- [ ] `StorageContextPlugin` derived class with load_messages/store flags
+- [ ] Add `serialize()` and `restore()` methods to `ContextPlugin` base class
+- [ ] `AgentSession` class with `state: dict[str, Any]`
+- [ ] `InMemoryStoragePlugin(StorageContextPlugin)`
+
+**External Packages:**
+- [ ] `packages/azure-ai-search/` - create `AzureAISearchContextPlugin`
+- [ ] `packages/redis/` - create `RedisStoragePlugin`
+- [ ] `packages/mem0/` - create `Mem0ContextPlugin`
+
+**Testing:**
+- [ ] Unit tests for `SessionContext` methods (add_messages, get_messages, add_instructions, add_tools)
+- [ ] Unit tests for `StorageContextPlugin` load/store flags
+- [ ] Unit tests for `InMemoryStoragePlugin` serialize/restore
+- [ ] Unit tests for source attribution (mandatory source_id)
+
+---
+
+#### PR 2: Agent Integration + Cleanup
+
+**Goal:** Wire up new types into `ChatAgent` and remove old types.
+
+**Changes to `ChatAgent`:**
+- [ ] Replace `thread` parameter with `session` in `agent.run()`
+- [ ] Add `context_plugins` parameter to `ChatAgent.__init__()`
+- [ ] Add `create_session()` method
+- [ ] Add `serialize_session()` / `restore_session()` methods
+- [ ] Wire up plugin iteration (before_run forward, after_run reverse)
+- [ ] Add validation warning if multiple/zero storage plugins have `load_messages=True`
+- [ ] Wire up default `InMemoryStoragePlugin` behavior (auto-add when no plugins and no service_session_id)
+
+**Remove Legacy Types:**
+- [ ] `packages/core/agent_framework/_memory.py` - remove `ContextProvider` class
+- [ ] `packages/core/agent_framework/_threads.py` - remove `ChatMessageStore`, `ChatMessageStoreProtocol`, `AgentThread`
+- [ ] `packages/core/agent_framework/__init__.py` - remove old exports, add new exports from `_sessions.py`
+- [ ] Remove old provider classes from `azure-ai-search`, `redis`, `mem0`
+
+**Documentation & Samples:**
+- [ ] Update all samples in `samples/` to use new API
 - [ ] Write migration guide
 - [ ] Update API documentation
 
-#### Phase 6: Testing
-- [ ] Unit tests for `ContextMiddleware` and pipeline execution order
-- [ ] Unit tests for middleware factory resolution
-- [ ] Unit tests for `StorageContextMiddleware` load/store behavior
-- [ ] Unit tests for pipeline validation warnings (multiple/zero loaders)
-- [ ] Unit tests for source attribution (mandatory source_id)
-- [ ] Unit tests for `store_context_messages` and `store_context_from` options
+**Testing:**
+- [ ] Unit tests for plugin execution order (before_run forward, after_run reverse)
+- [ ] Unit tests for validation warnings (multiple/zero loaders)
 - [ ] Unit tests for session serialization/deserialization
-- [ ] Integration tests for full agent flow with middleware
+- [ ] Integration test: agent with `context_plugins` + `session` works
+- [ ] Integration test: full conversation with memory persistence
+- [ ] Ensure all existing tests still pass (with updated API)
+- [ ] Verify no references to removed types remain
+
+---
+
+#### CHANGELOG (single entry for release)
+
+- **[BREAKING]** Replaced `ContextProvider` with `ContextPlugin` (hooks pattern with `before_run`/`after_run`)
+- **[BREAKING]** Replaced `ChatMessageStore` with `StorageContextPlugin`
+- **[BREAKING]** Replaced `AgentThread` with `AgentSession`
+- **[BREAKING]** Replaced `thread` parameter with `session` in `agent.run()`
+- Added `SessionContext` for invocation state with source attribution
+- Added `InMemoryStoragePlugin` for conversation history
+- Added session serialization (`serialize_session`, `restore_session`)
+
+---
+
+#### Estimated Sizes
+
+| PR | New Lines | Modified Lines | Risk |
+|----|-----------|----------------|------|
+| PR1 | ~500 | ~0 | Low |
+| PR2 | ~150 | ~400 | Medium |
