@@ -19,6 +19,7 @@ HITL (Human-in-the-Loop) Support:
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 from collections import defaultdict
@@ -720,8 +721,6 @@ def run_workflow_orchestrator(
                     # Durable Functions may return a JSON string; parse it if so
                     if isinstance(raw_response, str):
                         try:
-                            import json
-
                             raw_response = json.loads(raw_response)
                             logger.debug("Parsed JSON string response to: %s", type(raw_response).__name__)
                         except (json.JSONDecodeError, TypeError):
@@ -986,8 +985,6 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
     if response_type_str:
         try:
             module_name, class_name = response_type_str.rsplit(":", 1)
-            import importlib
-
             module = importlib.import_module(module_name)
             response_type = getattr(module, class_name, None)
 

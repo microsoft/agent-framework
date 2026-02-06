@@ -9,6 +9,7 @@ and events produced during executor execution within Azure Functions activities.
 from __future__ import annotations
 
 import asyncio
+from copy import copy
 from typing import Any
 
 from agent_framework import (
@@ -54,8 +55,6 @@ class CapturingRunnerContext(RunnerContext):
 
     async def drain_messages(self) -> dict[str, list[Message]]:
         """Drain and return all captured messages."""
-        from copy import copy
-
         messages = copy(self._messages)
         self._messages.clear()
         return messages
