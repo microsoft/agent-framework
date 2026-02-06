@@ -225,8 +225,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
         await run.DisposeAsync();
 
-        await Task.Delay(100);
-
         // Assert
         var capturedActivities = userActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().NotBeEmpty("Activities should be created with user-provided ActivitySource.");
@@ -247,8 +245,6 @@ public sealed class ObservabilityTests : IDisposable
         // Act
         WorkflowBuilder builder = new(uppercase);
         var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowBuild = true).Build();
-
-        await Task.Delay(100);
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
@@ -273,8 +269,6 @@ public sealed class ObservabilityTests : IDisposable
 
         Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
         await run.DisposeAsync();
-
-        await Task.Delay(100);
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
@@ -303,8 +297,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
         await run.DisposeAsync();
 
-        await Task.Delay(100);
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().NotContain(
@@ -326,8 +318,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
         await run.DisposeAsync();
 
-        await Task.Delay(100);
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().NotContain(
@@ -348,8 +338,6 @@ public sealed class ObservabilityTests : IDisposable
         // Act
         Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
         await run.DisposeAsync();
-
-        await Task.Delay(100);
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
@@ -406,8 +394,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
 
-        await Task.Delay(100);
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         var executorActivity = capturedActivities.FirstOrDefault(
@@ -438,8 +424,6 @@ public sealed class ObservabilityTests : IDisposable
 
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
-
-        await Task.Delay(100);
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
@@ -473,8 +457,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
 
-        await Task.Delay(100);
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         var messageSendActivity = capturedActivities.FirstOrDefault(
@@ -506,8 +488,6 @@ public sealed class ObservabilityTests : IDisposable
 
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
-
-        await Task.Delay(100);
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
