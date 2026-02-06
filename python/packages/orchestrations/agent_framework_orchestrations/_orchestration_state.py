@@ -6,6 +6,8 @@ Provides OrchestrationState dataclass for standardized checkpoint serialization
 across GroupChat, Handoff, and Magentic patterns.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,7 +71,7 @@ class OrchestrationState:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "OrchestrationState":
+    def from_dict(cls, data: dict[str, Any]) -> OrchestrationState:
         """Deserialize from checkpointed dict.
 
         Args:

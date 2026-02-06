@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
@@ -23,9 +25,7 @@ from .._types import add_usage_details
 from ..exceptions import AgentExecutionException
 from ._checkpoint import CheckpointStorage
 from ._events import (
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_instance_of, is_type_compatible
@@ -59,11 +59,11 @@ class WorkflowAgent(BaseAgent):
             return json.dumps(self.to_dict())
 
         @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> "WorkflowAgent.RequestInfoFunctionArgs":
+        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
             return cls(request_id=payload.get("request_id", ""), data=payload.get("data"))
 
         @classmethod
-        def from_json(cls, raw: str) -> "WorkflowAgent.RequestInfoFunctionArgs":
+        def from_json(cls, raw: str) -> WorkflowAgent.RequestInfoFunctionArgs:
             try:
                 parsed: Any = json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -74,7 +74,7 @@ class WorkflowAgent(BaseAgent):
 
     def __init__(
         self,
-        workflow: "Workflow",
+        workflow: Workflow,
         *,
         id: str | None = None,
         name: str | None = None,
@@ -93,10 +93,10 @@ class WorkflowAgent(BaseAgent):
             **kwargs: Additional keyword arguments passed to BaseAgent.
 
         Note:
-            Only WorkflowOutputEvents and RequestInfoEvents from the workflow are considered and
-            converted to agent responses of the WorkflowAgent. Other workflow events are ignored.
-            Use `with_output_from` in WorkflowBuilder to control which executors' outputs are surfaced
-            as agent responses.
+            Only output events (type='output') and request_info events (type='request_info') from
+            the workflow are considered and converted to agent responses of the WorkflowAgent.
+            Other workflow events are ignored. Use `with_output_from` in WorkflowBuilder to control
+            which executors' outputs are surfaced as agent responses.
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
@@ -111,15 +111,15 @@ class WorkflowAgent(BaseAgent):
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
-        self._workflow: "Workflow" = workflow
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._workflow: Workflow = workflow
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @property
-    def workflow(self) -> "Workflow":
+    def workflow(self) -> Workflow:
         return self._workflow
 
     @property
-    def pending_requests(self) -> dict[str, RequestInfoEvent]:
+    def pending_requests(self) -> dict[str, WorkflowEvent[Any]]:
         return self._pending_requests
 
     # region Run Methods
@@ -179,6 +179,10 @@ class WorkflowAgent(BaseAgent):
         Returns:
             When stream=True: An AsyncIterable[AgentResponseUpdate] for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
+
+            Output events (type='output') from the workflow will be converted to ChatMessages
+            or AgentResponseUpdate objects. Request info events (type='request_info') will be
+            converted to function call and approval request contents.
         """
         if stream:
             return self._run_streaming(
@@ -228,7 +232,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Internal streaming implementation."""
+        """Internal streaming implementation.
+
+        Yields AgentResponseUpdate objects. Output events (type='output') from the workflow
+        are converted to updates. Request info events (type='request_info') are converted
+        to function call and approval request contents.
+        """
         input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_updates: list[AgentResponseUpdate] = []
@@ -269,11 +278,11 @@ class WorkflowAgent(BaseAgent):
         Returns:
             An AgentResponse representing the workflow execution results.
         """
-        output_events: list[WorkflowOutputEvent | RequestInfoEvent] = []
+        output_events: list[WorkflowEvent[Any]] = []
         async for event in self._run_core(
             input_messages, thread, checkpoint_id, checkpoint_storage, streaming=False, **kwargs
         ):
-            if isinstance(event, WorkflowOutputEvent | RequestInfoEvent):
+            if event.type == "output" or event.type == "request_info":
                 output_events.append(event)
 
         return self._convert_workflow_events_to_agent_response(response_id, output_events)
@@ -304,7 +313,7 @@ class WorkflowAgent(BaseAgent):
         async for event in self._run_core(
             input_messages, thread, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
         ):
-            updates = self._convert_workflow_event_to_agent_response_update(response_id, event)
+            updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
                 yield update
 
@@ -440,7 +449,7 @@ class WorkflowAgent(BaseAgent):
     def _convert_workflow_events_to_agent_response(
         self,
         response_id: str,
-        output_events: list[WorkflowOutputEvent | RequestInfoEvent],
+        output_events: list[WorkflowEvent[Any]],
     ) -> AgentResponse:
         """Convert a list of workflow output events to an AgentResponse."""
         messages: list[ChatMessage] = []
@@ -449,7 +458,7 @@ class WorkflowAgent(BaseAgent):
         latest_created_at: str | None = None
 
         for output_event in output_events:
-            if isinstance(output_event, RequestInfoEvent):
+            if output_event.type == "request_info":
                 function_call, approval_request = self._process_request_info_event(output_event)
                 messages.append(
                     ChatMessage(
@@ -468,7 +477,7 @@ class WorkflowAgent(BaseAgent):
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
                     # responses.
                     raise AgentExecutionException(
-                        "WorkflowOutputEvent with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
+                        "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
                         "Please ensure executors emit AgentResponse for non-streaming workflows."
                     )
 
@@ -514,114 +523,159 @@ class WorkflowAgent(BaseAgent):
             raw_representation=raw_representations,
         )
 
-    def _convert_workflow_event_to_agent_response_update(
+    def _process_request_info_event(
+        self,
+        event: WorkflowEvent[Any],
+    ) -> tuple[Content, Content]:
+        """Convert a request_info event to FunctionCallContent and FunctionApprovalRequestContent.
+
+        Args:
+            event: A WorkflowEvent with type='request_info'.
+
+        Returns:
+            A tuple of (FunctionCallContent, FunctionApprovalRequestContent).
+        """
+        request_id = event.request_id
+        if not request_id:
+            raise ValueError("request_info event must have a request_id")
+
+        self.pending_requests[request_id] = event
+
+        args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
+
+        function_call = Content.from_function_call(
+            call_id=request_id,
+            name=self.REQUEST_INFO_FUNCTION_NAME,
+            arguments=args,
+        )
+        approval_request = Content.from_function_approval_request(
+            id=request_id,
+            function_call=function_call,
+            additional_properties={"request_id": request_id},
+        )
+        return function_call, approval_request
+
+    def _convert_workflow_event_to_agent_response_updates(
         self,
         response_id: str,
-        event: WorkflowEvent,
+        event: WorkflowEvent[Any],
     ) -> list[AgentResponseUpdate]:
-        """Convert a workflow event to an AgentResponseUpdate.
+        """Convert a workflow event to a list of AgentResponseUpdate objects.
 
-        Only WorkflowOutputEvent and RequestInfoEvent are processed.
+        Events with type='output' and type='request_info' are processed.
         Other workflow events are ignored as they are workflow-internal.
+
+        For 'output' events, AgentExecutor yields AgentResponseUpdate for streaming updates
+        via ctx.yield_output(). This method converts those to agent response updates.
+
+        Returns:
+            A list of AgentResponseUpdate objects. Empty list if the event is not relevant.
         """
-        match event:
-            # Convert workflow output to an agent response update.
-            case WorkflowOutputEvent(data=data, executor_id=executor_id):
-                # Handle different data types appropriately.
-                if isinstance(data, AgentResponse):
-                    return [
-                        AgentResponseUpdate(
-                            contents=[content for message in data.messages for content in message.contents],
-                            role="assistant",
-                            author_name=executor_id,
-                            response_id=response_id,
-                            created_at=data.created_at,
-                            raw_representation=data,
-                        )
-                    ]
+        if event.type == "output":
+            # Convert workflow output to agent response updates.
+            # Handle different data types appropriately.
+            data = event.data
+            executor_id = event.executor_id
 
-                if isinstance(data, AgentResponseUpdate):
-                    return [data]
-
-                if isinstance(data, ChatMessage):
-                    return [
-                        AgentResponseUpdate(
-                            contents=list(data.contents),
-                            role=data.role,
-                            author_name=data.author_name,
-                            response_id=response_id,
-                            message_id=data.message_id or str(uuid.uuid4()),
-                            created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                            raw_representation=data,
-                        )
-                    ]
-
-                if is_instance_of(data, list[ChatMessage]):
-                    chat_messages = cast(list[ChatMessage], data)
-                    return [
+            if isinstance(data, AgentResponseUpdate):
+                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
+                if not data.author_name:
+                    data.author_name = executor_id
+                return [data]
+            if isinstance(data, AgentResponse):
+                # Convert each message in AgentResponse to an AgentResponseUpdate
+                updates: list[AgentResponseUpdate] = []
+                for msg in data.messages:
+                    updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
                             role=msg.role,
-                            author_name=msg.author_name,
-                            response_id=response_id,
+                            author_name=msg.author_name or executor_id,
+                            response_id=data.response_id or response_id,
                             message_id=msg.message_id or str(uuid.uuid4()),
-                            created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                            created_at=data.created_at
+                            or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                             raw_representation=msg,
                         )
-                        for msg in chat_messages
-                    ]
-
-                contents = self._extract_contents(data)
-                if not contents:
-                    return []
-
+                    )
+                return updates
+            if isinstance(data, ChatMessage):
                 return [
                     AgentResponseUpdate(
-                        contents=contents,
-                        role="assistant",
-                        author_name=executor_id,
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or executor_id,
                         response_id=response_id,
                         message_id=str(uuid.uuid4()),
                         created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         raw_representation=data,
                     )
                 ]
-
-            case RequestInfoEvent():
-                function_call, approval_request = self._process_request_info_event(event)
-                return [
-                    AgentResponseUpdate(
-                        contents=[function_call, approval_request],
-                        role="assistant",
-                        author_name=self.name,
-                        response_id=response_id,
-                        message_id=str(uuid.uuid4()),
-                        created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            if is_instance_of(data, list[ChatMessage]):
+                # Convert each ChatMessage to an AgentResponseUpdate
+                chat_messages = cast(list[ChatMessage], data)
+                updates = []
+                for msg in chat_messages:
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=list(msg.contents),
+                            role=msg.role,
+                            author_name=msg.author_name or executor_id,
+                            response_id=response_id,
+                            message_id=msg.message_id or str(uuid.uuid4()),
+                            created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                            raw_representation=msg,
+                        )
                     )
-                ]
-            case _:
-                # Ignore workflow-internal events
-                pass
+                return updates
+            contents = self._extract_contents(data)
+            if not contents:
+                return []
+            return [
+                AgentResponseUpdate(
+                    contents=contents,
+                    role="assistant",
+                    author_name=executor_id,
+                    response_id=response_id,
+                    message_id=str(uuid.uuid4()),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    raw_representation=data,
+                )
+            ]
 
+        if event.type == "request_info":
+            # Store the pending request for later correlation
+            request_id = event.request_id
+            if not request_id:
+                raise ValueError("request_info event must have a request_id")
+
+            self.pending_requests[request_id] = event
+
+            args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
+
+            function_call = Content.from_function_call(
+                call_id=request_id,
+                name=self.REQUEST_INFO_FUNCTION_NAME,
+                arguments=args,
+            )
+            approval_request = Content.from_function_approval_request(
+                id=request_id,
+                function_call=function_call,
+                additional_properties={"request_id": request_id},
+            )
+            return [
+                AgentResponseUpdate(
+                    contents=[function_call, approval_request],
+                    role="assistant",
+                    author_name=self.name,
+                    response_id=response_id,
+                    message_id=str(uuid.uuid4()),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                )
+            ]
+
+        # Ignore workflow-internal events
         return []
-
-    def _process_request_info_event(self, event: RequestInfoEvent) -> tuple[Content, Content]:
-        """Process a RequestInfoEvent by adding it to pending requests."""
-        # Store the pending request for later correlation
-        self.pending_requests[event.request_id] = event
-
-        args = self.RequestInfoFunctionArgs(request_id=event.request_id, data=event.data).to_dict()
-        function_call = Content.from_function_call(
-            call_id=event.request_id,
-            name=self.REQUEST_INFO_FUNCTION_NAME,
-            arguments=args,
-        )
-        approval_request = Content.from_function_approval_request(
-            id=event.request_id,
-            function_call=function_call,
-            additional_properties={"request_id": event.request_id},
-        )
-        return function_call, approval_request
 
     def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
         """Extract function responses from input messages."""

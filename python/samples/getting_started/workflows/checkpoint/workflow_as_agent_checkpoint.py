@@ -30,9 +30,9 @@ from agent_framework import (
     ChatAgent,
     ChatMessageStore,
     InMemoryCheckpointStorage,
-    SequentialBuilder,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 
 async def basic_checkpointing() -> None:
@@ -157,7 +157,12 @@ async def streaming_with_checkpoints() -> None:
     print(f"\nCheckpoints created during stream: {len(checkpoints)}")
 
 
+async def main() -> None:
+    """Run all checkpoint examples."""
+    await basic_checkpointing()
+    await checkpointing_with_thread()
+    await streaming_with_checkpoints()
+
+
 if __name__ == "__main__":
-    asyncio.run(basic_checkpointing())
-    asyncio.run(checkpointing_with_thread())
-    asyncio.run(streaming_with_checkpoints())
+    asyncio.run(main())

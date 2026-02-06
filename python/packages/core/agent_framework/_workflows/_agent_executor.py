@@ -65,8 +65,8 @@ class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
     AgentExecutor adapts its behavior based on the workflow execution mode:
-    - run(stream=True): Emits incremental WorkflowOutputEvents as the agent produces tokens
-    - run(): Emits a single WorkflowOutputEvent containing the complete response
+    - run(stream=True): Emits incremental output events (type='output') as the agent produces tokens
+    - run(): Emits a single output event (type='output') containing the complete response
 
     Use `with_output_from` in WorkflowBuilder to control whether the AgentResponse
     or AgentResponseUpdate objects are yielded as workflow outputs.
@@ -296,8 +296,8 @@ class AgentExecutor(Executor):
     ) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
-        Checks ctx.is_streaming() to determine whether to emit WorkflowOutputEvents
-        containing incremental updates (streaming mode) or a single WorkflowOutputEvent
+        Checks ctx.is_streaming() to determine whether to emit output events (type='output')
+        containing incremental updates (streaming mode) or a single output event (type='output')
         containing the complete response (non-streaming mode).
         """
         if ctx.is_streaming():
@@ -332,10 +332,16 @@ class AgentExecutor(Executor):
         """
         run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
+        # Build options dict with additional_function_arguments for tool kwargs propagation
+        options: dict[str, Any] | None = None
+        if run_kwargs:
+            options = {"additional_function_arguments": run_kwargs}
+
         response = await self._agent.run(
             self._cache,
             stream=False,
             thread=self._agent_thread,
+            options=options,
             **run_kwargs,
         )
         await ctx.yield_output(response)
@@ -360,12 +366,18 @@ class AgentExecutor(Executor):
         """
         run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {}
 
+        # Build options dict with additional_function_arguments for tool kwargs propagation
+        options: dict[str, Any] | None = None
+        if run_kwargs:
+            options = {"additional_function_arguments": run_kwargs}
+
         updates: list[AgentResponseUpdate] = []
         user_input_requests: list[Content] = []
         async for update in self._agent.run(
             self._cache,
             stream=True,
             thread=self._agent_thread,
+            options=options,
             **run_kwargs,
         ):
             updates.append(update)

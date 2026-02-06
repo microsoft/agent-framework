@@ -218,7 +218,7 @@ class TestWorkflowAgent:
         assert "Streaming2: Streaming1: Test input" in second_content.text
 
     async def test_end_to_end_request_info_handling(self):
-        """Test end-to-end workflow with RequestInfoEvent handling."""
+        """Test end-to-end workflow with request_info event (type='request_info') handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
         simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", streaming=False)
         requesting_executor = RequestingExecutor(id="requester", streaming=False)
@@ -331,7 +331,7 @@ class TestWorkflowAgent:
     async def test_workflow_as_agent_yield_output_surfaces_as_agent_response(self) -> None:
         """Test that ctx.yield_output() in a workflow executor surfaces as agent output when using .as_agent().
 
-        This validates the fix for issue #2813: WorkflowOutputEvent should be converted to
+        This validates the fix for issue #2813: output event (type='output') should be converted to
         AgentResponseUpdate when the workflow is wrapped via .as_agent().
         """
 
@@ -343,7 +343,7 @@ class TestWorkflowAgent:
 
         workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
 
-        # Run directly - should return WorkflowOutputEvent in result
+        # Run directly - should return output event (type='output') in result
         direct_result = await workflow.run([ChatMessage(role="user", text="hello")])
         direct_outputs = direct_result.get_outputs()
         assert len(direct_outputs) == 1
@@ -779,7 +779,7 @@ class TestWorkflowAgent:
         # Count occurrences of the unique response text
         unique_text_count = sum(1 for msg in result.messages if msg.text and "Unique response text" in msg.text)
 
-        # Should appear exactly once (not duplicated from both streaming and WorkflowOutputEvent)
+        # Should appear exactly once (not duplicated from both streaming and output event)
         assert unique_text_count == 1, f"Response should appear exactly once, but appeared {unique_text_count} times"
 
 
@@ -793,7 +793,7 @@ class TestWorkflowAgentAuthorName:
         identification of which agent produced them in multi-agent workflows.
         """
         # Create workflow with executor that emits AgentResponseUpdate without author_name
-        executor1 = SimpleExecutor(id="my_executor_id", response_text="Response")
+        executor1 = SimpleExecutor(id="my_executor_id", response_text="Response", streaming=True)
         workflow = WorkflowBuilder().set_start_executor(executor1).build()
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
 

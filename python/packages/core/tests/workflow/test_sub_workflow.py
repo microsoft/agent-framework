@@ -8,12 +8,12 @@ from typing_extensions import Never
 
 from agent_framework import (
     Executor,
-    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowExecutor,
     handler,
     response_handler,
@@ -592,7 +592,7 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
 
     first_request_id: str | None = None
     async for event in workflow1.run("test_value", stream=True):
-        if isinstance(event, RequestInfoEvent):
+        if event.type == "request_info":
             first_request_id = event.request_id
 
     assert first_request_id is not None
@@ -606,15 +606,15 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
 
     resumed_first_request_id: str | None = None
     async for event in workflow2.run(checkpoint_id=checkpoint_id, stream=True):
-        if isinstance(event, RequestInfoEvent):
+        if event.type == "request_info":
             resumed_first_request_id = event.request_id
 
     assert resumed_first_request_id is not None
     assert resumed_first_request_id == first_request_id
 
-    request_events: list[RequestInfoEvent] = []
+    request_events: list[WorkflowEvent] = []
     async for event in workflow2.send_responses_streaming({resumed_first_request_id: "first_answer"}):
-        if isinstance(event, RequestInfoEvent):
+        if event.type == "request_info":
             request_events.append(event)
 
     # Key assertion: Only the second request should be received, not a duplicate of the first

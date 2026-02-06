@@ -10,11 +10,9 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatMessage,
     Executor,
-    RequestInfoEvent,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
-    WorkflowOutputEvent,
     handler,
     response_handler,
 )
@@ -46,7 +44,7 @@ Prerequisites:
 
 # How human-in-the-loop is achieved via `request_info` and `send_responses_streaming`:
 # - An executor (TurnManager) calls `ctx.request_info` with a payload (HumanFeedbackRequest).
-# - The workflow run pauses and emits a RequestInfoEvent with the payload and the request_id.
+# - The workflow run pauses and emits a  with the payload and the request_id.
 # - The application captures the event, prompts the user, and collects replies.
 # - The application calls `send_responses_streaming` with a map of request_ids to replies.
 # - The workflow resumes, and the response is delivered to the executor method decorated with @response_handler.
@@ -132,11 +130,13 @@ class TurnManager(Executor):
             return
 
         # Provide feedback to the agent to try again.
-        # We keep the agent's output strictly JSON to ensure stable parsing on the next turn.
-        user_msg = ChatMessage(
-            "user",
-            text=(f'Feedback: {reply}. Return ONLY a JSON object matching the schema {{"guess": <int 1..10>}}.'),
+        # response_format=GuessOutput on the agent ensures JSON output, so we just need to guide the logic.
+        last_guess = original_request.prompt.split(": ")[1].split(".")[0]
+        feedback_text = (
+            f"Feedback: {reply}. Your last guess was {last_guess}. "
+            f"Use this feedback to adjust and make your next guess (1-10)."
         )
+        user_msg = ChatMessage("user", text=feedback_text)
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -147,9 +147,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: list[tuple[str, HumanFeedbackRequest]] = []
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
+        if event.type == "request_info" and isinstance(event.data, HumanFeedbackRequest):
             requests.append((event.request_id, event.data))
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             if isinstance(event.data, AgentResponseUpdate):
                 update = event.data
                 response_id = update.response_id

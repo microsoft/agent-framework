@@ -139,7 +139,18 @@ public abstract class AIAgent
     /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
-    public abstract ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default);
+    public ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        => this.CreateSessionCoreAsync(cancellationToken);
+
+    /// <summary>
+    /// Core implementation of session creation logic.
+    /// </summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance ready for use with this agent.</returns>
+    /// <remarks>
+    /// This is the primary session creation method that implementations must override.
+    /// </remarks>
+    protected abstract ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes an agent session to its JSON representation.
@@ -154,7 +165,19 @@ public abstract class AIAgent
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances. Use <see cref="DeserializeSessionAsync"/> to restore the session.
     /// </remarks>
-    public abstract JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null);
+    public JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => this.SerializeSessionCore(session, jsonSerializerOptions);
+
+    /// <summary>
+    /// Core implementation of session serialization logic.
+    /// </summary>
+    /// <param name="session">The <see cref="AgentSession"/> to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the serialization process.</param>
+    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    /// <remarks>
+    /// This is the primary session serialization method that implementations must override.
+    /// </remarks>
+    protected abstract JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>
     /// Deserializes an agent session from its JSON serialized representation.
@@ -170,7 +193,20 @@ public abstract class AIAgent
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
     /// </remarks>
-    public abstract ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    public ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.DeserializeSessionCoreAsync(serializedState, jsonSerializerOptions, cancellationToken);
+
+    /// <summary>
+    /// Core implementation of session deserialization logic.
+    /// </summary>
+    /// <param name="serializedState">A <see cref="JsonElement"/> containing the serialized session state.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a restored <see cref="AgentSession"/> instance with the state from <paramref name="serializedState"/>.</returns>
+    /// <remarks>
+    /// This is the primary session deserialization method that implementations must override.
+    /// </remarks>
+    protected abstract ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the session.

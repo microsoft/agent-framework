@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     executor,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -128,7 +127,7 @@ async def main() -> None:
     async for event in events:
         # The outputs of the workflow are whatever the agents produce. So the events are expected to
         # contain `AgentResponseUpdate` from the agents in the workflow.
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             update = event.data
             author = update.author_name
             if author != last_author:

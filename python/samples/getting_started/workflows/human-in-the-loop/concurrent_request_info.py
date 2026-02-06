@@ -26,12 +26,10 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from agent_framework import (
+    AgentExecutorResponse,
     ChatMessage,
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
-from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -97,11 +95,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
-            # Display agent output for review and potential modification
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
             requests[event.request_id] = event.data
 
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             # The output of the workflow comes from the aggregator and it's a single string
             print("\n" + "=" * 60)
             print("ANALYSIS COMPLETE")

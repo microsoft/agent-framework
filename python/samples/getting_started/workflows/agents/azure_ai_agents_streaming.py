@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentResponseUpdate, WorkflowBuilder
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
@@ -50,7 +50,7 @@ async def main() -> None:
         async for event in events:
             # The outputs of the workflow are whatever the agents produce. So the events are expected to
             # contain `AgentResponseUpdate` from the agents in the workflow.
-            if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 update = event.data
                 author = update.author_name
                 if author != last_author:

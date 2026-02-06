@@ -12,10 +12,8 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowOutputEvent,
     WorkflowRunnerException,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflows._edge import SingleEdgeGroup
@@ -97,7 +95,7 @@ async def test_runner_run_until_convergence():
     )
     async for event in runner.run_until_convergence():
         assert isinstance(event, WorkflowEvent)
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             result = event.data
 
     assert result is not None and result == 10
@@ -137,7 +135,7 @@ async def test_runner_run_until_convergence_not_completed():
         match="Runner did not converge after 5 iterations.",
     ):
         async for event in runner.run_until_convergence():
-            assert not isinstance(event, WorkflowStatusEvent) or event.state != WorkflowRunState.IDLE
+            assert event.type != "status" or event.state != WorkflowRunState.IDLE
 
 
 async def test_runner_already_running():

@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowOutputEvent
+from agent_framework import ChatMessage, ConcurrentBuilderWorkflowEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
@@ -91,7 +91,7 @@ async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]
 
     outputs: list[list[ChatMessage]] = []
     async for event in workflow.run(prompt, stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(cast(list[ChatMessage], event.data))
 
     return outputs

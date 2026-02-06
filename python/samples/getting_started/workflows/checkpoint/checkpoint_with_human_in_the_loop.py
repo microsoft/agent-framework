@@ -1,9 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, override
+from typing import Any
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 # NOTE: the Azure client imports above are real dependencies. When running this
 # sample outside of Azure-enabled environments you may wish to swap in the
@@ -15,13 +22,10 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
-    RequestInfoEvent,
     Workflow,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowContext,
-    WorkflowOutputEvent,
-    WorkflowStatusEvent,
     get_checkpoint_summary,
     handler,
     response_handler,
@@ -53,7 +57,7 @@ Typical pause/resume flow
 3. Later, restart the script, select that checkpoint, and provide the stored
    human decision when prompted to pre-supply responses.
    Doing so applies the answer immediately on resume, so the system does **not**
-   re-emit the same `RequestInfoEvent`.
+   re-emit the same ``.
 """
 
 # Directory used for the sample's temporary checkpoint files. We isolate the
@@ -259,11 +263,11 @@ async def run_interactive_session(
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 
         async for event in event_stream:
-            if isinstance(event, WorkflowStatusEvent):
+            if event.type == "status":
                 print(event)
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 completed_output = event.data
-            if isinstance(event, RequestInfoEvent):
+            if event.type == "request_info":
                 if isinstance(event.data, HumanApprovalRequest):
                     requests[event.request_id] = event.data
                 else:

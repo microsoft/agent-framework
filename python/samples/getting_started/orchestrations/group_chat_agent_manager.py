@@ -7,7 +7,6 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    WorkflowOutputEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
@@ -74,7 +73,7 @@ async def main() -> None:
         # The agent orchestrator will intelligently decide when to end before this limit but just in case
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 4)
         # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        # Intermediate outputs will be emitted as WorkflowEvent with type "output" events
         .with_intermediate_outputs()
         .build()
     )
@@ -88,7 +87,7 @@ async def main() -> None:
     # Keep track of the last response to format output nicely in streaming mode
     last_response_id: str | None = None
     async for event in workflow.run(task, stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id
@@ -98,7 +97,7 @@ async def main() -> None:
                     print(f"{data.author_name}:", end=" ", flush=True)
                     last_response_id = rid
                 print(data.text, end="", flush=True)
-            else:
+            elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
                 outputs = cast(list[ChatMessage], event.data)
                 print("\n" + "=" * 80)

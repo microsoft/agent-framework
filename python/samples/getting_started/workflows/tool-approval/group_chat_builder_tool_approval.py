@@ -7,14 +7,11 @@ from typing import Annotated, cast
 from agent_framework import (
     ChatMessage,
     Content,
-    GroupChatBuilder,
-    GroupChatState,
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 
 """
 Sample: Group Chat Workflow with Tool Approval Requests
@@ -36,7 +33,7 @@ different agents have different levels of tool access.
 
 Demonstrate:
 - Using set_select_speakers_func with agents that have approval-required tools.
-- Handling RequestInfoEvent in group chat scenarios.
+- Handling request_info events (type='request_info') in group chat scenarios.
 - Multi-round group chat with tool approval interruption and resumption.
 
 Prerequisites:
@@ -99,16 +96,16 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
     """Process events from the workflow stream to capture human feedback requests."""
     requests: dict[str, Content] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, Content):
+        if event.type == "request_info" and isinstance(event.data, Content):
             # We are only expecting tool approval requests in this sample
             requests[event.request_id] = event.data
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             # The output of the workflow comes from the orchestrator and it's a list of messages
             print("\n" + "=" * 60)
             print("Workflow summary:")
             outputs = cast(list[ChatMessage], event.data)
             for msg in outputs:
-                speaker = msg.author_name or msg.role.value
+                speaker = msg.author_name or msg.role
                 print(f"[{speaker}]: {msg.text}")
 
     responses: dict[str, Content] = {}

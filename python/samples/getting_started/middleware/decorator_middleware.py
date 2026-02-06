@@ -20,7 +20,7 @@ to explicitly mark middleware functions without requiring type annotations.
 The framework supports the following middleware detection scenarios:
 
 1. Both decorator and parameter type specified:
-   - Validates that they match (e.g., @agent_middleware with AgentRunContext)
+   - Validates that they match (e.g., @agent_middleware with AgentContext)
    - Throws exception if they don't match for safety
 
 2. Only decorator specified:
@@ -28,7 +28,7 @@ The framework supports the following middleware detection scenarios:
    - No type annotations needed - framework handles context types automatically
 
 3. Only parameter type specified:
-   - Uses type annotations (AgentRunContext, FunctionInvocationContext) for detection
+   - Uses type annotations (AgentContext, FunctionInvocationContext) for detection
 
 4. Neither decorator nor parameter type specified:
    - Throws exception requiring either decorator or type annotation

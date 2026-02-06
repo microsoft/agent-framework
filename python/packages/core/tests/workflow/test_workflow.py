@@ -20,16 +20,13 @@ from agent_framework import (
     Executor,
     FileCheckpointStorage,
     Message,
-    RequestInfoEvent,
     ResponseStream,
     WorkflowBuilder,
     WorkflowCheckpointException,
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowOutputEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -123,7 +120,7 @@ async def test_workflow_run_streaming() -> None:
     result: int | None = None
     async for event in workflow.run(NumberMessage(data=0), stream=True):
         assert isinstance(event, WorkflowEvent)
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             result = event.data
 
     assert result is not None and result == 10
@@ -197,9 +194,10 @@ async def test_fan_out():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # executor_b will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # executor_b will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     # This workflow will converge in 2 supersteps because executor_c will send one more message
     # after executor_b completes
     assert len(events) == 11
@@ -221,9 +219,10 @@ async def test_fan_out_multiple_completed_events():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # executor_b and executor_c will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # executor_b and executor_c will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     # This workflow will converge in 1 superstep because executor_a and executor_b will not send further messages
     assert len(events) == 10
 
@@ -249,9 +248,10 @@ async def test_fan_in():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # aggregator will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # aggregator will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     assert len(events) == 13
 
     assert events.get_final_state() == WorkflowRunState.IDLE
@@ -427,7 +427,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
 async def test_workflow_run_stream_from_checkpoint_with_responses(
     simple_executor: Executor,
 ):
-    """Test that workflow can be resumed from checkpoint with pending RequestInfoEvents."""
+    """Test that workflow can be resumed from checkpoint with pending request_info events."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -439,7 +439,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
             messages={},
             state={},
             pending_request_info_events={
-                "request_123": RequestInfoEvent(
+                "request_123": WorkflowEvent.request_info(
                     request_id="request_123",
                     source_executor_id=simple_executor.id,
                     request_data="Mock",
@@ -465,9 +465,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
             events.append(event)
 
         # Verify that the pending request event was emitted
-        assert next(
-            event for event in events if isinstance(event, RequestInfoEvent) and event.request_id == "request_123"
-        )
+        assert next(event for event in events if event.type == "request_info" and event.request_id == "request_123")
 
         assert len(events) > 0  # Just ensure we processed some events
 
@@ -730,10 +728,12 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
     assert outputs[0] is not None and outputs[0] >= 6  # Should complete when executor_a reaches its limit
 
     # Verify cycling occurred (should have events from both executors)
-    # Check for ExecutorInvokedEvent and ExecutorCompletedEvent types that have executor_id
-    from agent_framework import ExecutorCompletedEvent, ExecutorInvokedEvent
+    # Check for executor events that have executor_id
+    from agent_framework import WorkflowEvent
 
-    executor_events = [e for e in events if isinstance(e, (ExecutorInvokedEvent, ExecutorCompletedEvent))]
+    executor_events = [
+        e for e in events if isinstance(e, WorkflowEvent) and e.type in ("executor_invoked", "executor_completed")
+    ]
     executor_ids = {e.executor_id for e in executor_events}
     assert "exec_a" in executor_ids, "Should have events from executor A"
     assert "exec_b" in executor_ids, "Should have events from executor B"
@@ -880,7 +880,7 @@ class _StreamingTestAgent(BaseAgent):
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that stream=True/False both emits WorkflowOutputEvents correctly with the right data types."""
+    """Test that stream=True/False both emit output events (type='output') with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
@@ -890,17 +890,15 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     result = await workflow.run("test message")
 
     # Filter for agent events (result is a list of events)
-    agent_response = [e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)]
-    agent_response_updates = [
-        e for e in result if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
-    ]
+    agent_run_events = [e for e in result if e.type == "output" and isinstance(e.data, AgentResponse)]
+    agent_update_events = [e for e in result if e.type == "output" and isinstance(e.data, AgentResponseUpdate)]
 
-    # In non-streaming mode, should have AgentResponse, no AgentResponseUpdate
-    assert len(agent_response) == 1, "Expected exactly one AgentResponse in non-streaming mode"
-    assert len(agent_response_updates) == 0, "Expected no AgentResponseUpdate in non-streaming mode"
-    assert agent_response[0].executor_id == "agent_exec"
-    assert agent_response[0].data is not None
-    assert agent_response[0].data.messages[0].text == "Hello World"
+    # In non-streaming mode, should have output event with AgentResponse, no AgentResponseUpdate
+    assert len(agent_run_events) == 1, "Expected exactly one output event with AgentResponse in non-streaming mode"
+    assert len(agent_update_events) == 0, "Expected no output event with AgentResponseUpdate in non-streaming mode"
+    assert agent_run_events[0].executor_id == "agent_exec"
+    assert agent_run_events[0].data is not None
+    assert agent_run_events[0].data.messages[0].text == "Hello World"
 
     # Test streaming mode with run(stream=True)
     stream_events: list[WorkflowEvent] = []
@@ -909,12 +907,10 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
     # Filter for agent events
     agent_response = [
-        cast(AgentResponse, e.data)  # type: ignore
-        for e in stream_events
-        if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponse)
+        cast(AgentResponse, e.data) for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponse)
     ]
     agent_response_updates = [
-        e.data for e in stream_events if isinstance(e, WorkflowOutputEvent) and isinstance(e.data, AgentResponseUpdate)
+        e.data for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponseUpdate)
     ]
 
     # In streaming mode, should have AgentResponseUpdate, no AgentResponse
@@ -977,7 +973,7 @@ async def test_workflow_run_stream_parameter_validation(
     events: list[WorkflowEvent] = []
     async for event in workflow.run(test_message, stream=True):
         events.append(event)
-    assert any(isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE for e in events)
+    assert any(e.type == "status" and e.state == WorkflowRunState.IDLE for e in events)
 
     # Invalid combinations already tested in test_workflow_run_parameter_validation
     # This test ensures streaming works correctly for valid parameters
@@ -1027,7 +1023,7 @@ async def test_output_executors_empty_yields_all_outputs() -> None:
     assert len(outputs) == 2
     assert outputs == [10, 20]
 
-    output_events = [event for event in result if isinstance(event, WorkflowOutputEvent)]
+    output_events = [event for event in result if event.type == "output"]
     assert len(output_events) == 2
     assert output_events[0].executor_id == "executor_a"
     assert output_events[1].executor_id == "executor_b"
@@ -1055,7 +1051,7 @@ async def test_output_executors_filters_outputs_non_streaming() -> None:
     assert len(outputs) == 1
     assert outputs[0] == 20
 
-    output_events = [event for event in result if isinstance(event, WorkflowOutputEvent)]
+    output_events = [event for event in result if event.type == "output"]
     assert len(output_events) == 1
     assert output_events[0].executor_id == "executor_b"
 
@@ -1076,9 +1072,9 @@ async def test_output_executors_filters_outputs_streaming() -> None:
     )
 
     # Collect outputs from streaming
-    output_events: list[WorkflowOutputEvent] = []
+    output_events: list[WorkflowEvent] = []
     async for event in workflow.run(NumberMessage(data=0), stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output_events.append(event)
 
     # Only executor_a's output should be present
@@ -1213,7 +1209,7 @@ async def test_output_executors_filtering_with_send_responses_streaming() -> Non
         events_list.append(event)
 
     # Get request info events
-    request_events = [e for e in events_list if isinstance(e, RequestInfoEvent)]
+    request_events = [e for e in events_list if e.type == "request_info"]
     assert len(request_events) == 1
 
     # Set output_executors to exclude the approval executor
@@ -1221,9 +1217,9 @@ async def test_output_executors_filtering_with_send_responses_streaming() -> Non
 
     # Send approval response via streaming
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
-    output_events: list[WorkflowOutputEvent] = []
+    output_events: list[WorkflowEvent] = []
     async for event in workflow.send_responses_streaming(responses):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output_events.append(event)
 
     # No outputs should be yielded since approval_executor is not in output_executors

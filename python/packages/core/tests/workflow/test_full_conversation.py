@@ -20,7 +20,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
@@ -149,7 +148,7 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
 
     # Act
     async for ev in wf.run("hello seq", stream=True):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     # Assert: second agent should have seen the user prompt and A1's assistant reply

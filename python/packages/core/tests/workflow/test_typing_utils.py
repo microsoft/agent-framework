@@ -5,7 +5,7 @@ from typing import Any, Generic, Optional, TypeVar, Union
 
 import pytest
 
-from agent_framework import RequestInfoEvent
+from agent_framework import WorkflowEvent
 from agent_framework._workflows._typing_utils import (
     deserialize_type,
     is_instance_of,
@@ -308,18 +308,19 @@ def test_serialize_deserialize_roundtrip() -> None:
 
     # Test agent framework type roundtrip
 
-    serialized = serialize_type(RequestInfoEvent)
+    serialized = serialize_type(WorkflowEvent)
     deserialized = deserialize_type(serialized)
-    assert deserialized is RequestInfoEvent
+    assert deserialized is WorkflowEvent
 
-    # Verify we can instantiate the deserialized type
-    instance = deserialized(
+    # Verify we can instantiate the deserialized type via factory method
+    instance = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="executor_1",
         request_data="test",
         response_type=str,
     )
-    assert isinstance(instance, RequestInfoEvent)
+    assert isinstance(instance, WorkflowEvent)
+    assert instance.type == "request_info"
 
 
 def test_deserialize_type_error_handling() -> None:

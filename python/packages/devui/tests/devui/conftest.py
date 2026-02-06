@@ -32,10 +32,8 @@ from agent_framework import (
 from agent_framework._clients import TOptions_co
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._events import (
-    ExecutorCompletedEvent,
-    ExecutorFailedEvent,
-    ExecutorInvokedEvent,
     WorkflowErrorDetails,
+    WorkflowEvent,
 )
 from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
 
@@ -284,7 +282,8 @@ def _create_agent_executor_response(
     executor_id: str = "test_executor",
     response_text: str = "Executor response",
 ) -> AgentExecutorResponse:
-    """Create an AgentExecutorResponse - the type that's nested in ExecutorCompletedEvent.data."""
+    """Create an AgentExecutorResponse - the type that's nested in
+    executor_completed event (type='executor_completed').data."""
     agent_response = _create_agent_run_response(response_text)
     return AgentExecutorResponse(
         executor_id=executor_id,
@@ -306,32 +305,32 @@ def create_agent_run_response(text: str = "Test response") -> AgentResponse:
     return _create_agent_run_response(text)
 
 
-def create_executor_invoked_event(executor_id: str = "test_executor") -> ExecutorInvokedEvent:
-    """Create an ExecutorInvokedEvent."""
-    return ExecutorInvokedEvent(executor_id=executor_id)
+def create_executor_invoked_event(executor_id: str = "test_executor") -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_invoked')."""
+    return WorkflowEvent.executor_invoked(executor_id=executor_id)
 
 
 def create_executor_completed_event(
     executor_id: str = "test_executor",
     with_agent_response: bool = True,
-) -> ExecutorCompletedEvent:
-    """Create an ExecutorCompletedEvent with realistic nested data.
+) -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_completed') with realistic nested data.
 
     This creates the exact data structure that caused the serialization bug:
-    ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
+    WorkflowEvent.data contains AgentExecutorResponse which contains
     AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
     """
     data = _create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
-    return ExecutorCompletedEvent(executor_id=executor_id, data=data)
+    return WorkflowEvent.executor_completed(executor_id=executor_id, data=data)
 
 
 def create_executor_failed_event(
     executor_id: str = "test_executor",
     error_message: str = "Test error",
-) -> ExecutorFailedEvent:
-    """Create an ExecutorFailedEvent."""
+) -> WorkflowEvent[WorkflowErrorDetails]:
+    """Create a WorkflowEvent(type='executor_failed')."""
     details = WorkflowErrorDetails(error_type="TestError", message=error_message)
-    return ExecutorFailedEvent(executor_id=executor_id, details=details)
+    return WorkflowEvent.executor_failed(executor_id=executor_id, details=details)
 
 
 # =============================================================================
@@ -386,28 +385,28 @@ def agent_run_response() -> AgentResponse:
 
 
 @pytest.fixture
-def executor_completed_event() -> ExecutorCompletedEvent:
-    """Create an ExecutorCompletedEvent with realistic nested data.
+def executor_completed_event() -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_completed') with realistic nested data.
 
     This creates the exact data structure that caused the serialization bug:
-    ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
+    executor_completed event (type='executor_completed').data contains AgentExecutorResponse which contains
     AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
     """
     data = _create_agent_executor_response("test_executor")
-    return ExecutorCompletedEvent(executor_id="test_executor", data=data)
+    return WorkflowEvent.executor_completed(executor_id="test_executor", data=data)
 
 
 @pytest.fixture
-def executor_invoked_event() -> ExecutorInvokedEvent:
-    """Create an ExecutorInvokedEvent."""
-    return ExecutorInvokedEvent(executor_id="test_executor")
+def executor_invoked_event() -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_invoked')."""
+    return WorkflowEvent.executor_invoked(executor_id="test_executor")
 
 
 @pytest.fixture
-def executor_failed_event() -> ExecutorFailedEvent:
-    """Create an ExecutorFailedEvent."""
+def executor_failed_event() -> WorkflowEvent[WorkflowErrorDetails]:
+    """Create a WorkflowEvent(type='executor_failed')."""
     details = WorkflowErrorDetails(error_type="TestError", message="Test error")
-    return ExecutorFailedEvent(executor_id="test_executor", details=details)
+    return WorkflowEvent.executor_failed(executor_id="test_executor", details=details)
 
 
 @pytest.fixture

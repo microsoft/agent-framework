@@ -7,7 +7,6 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
 from typing_extensions import Never
@@ -77,7 +76,7 @@ async def main() -> None:
     outputs: list[str] = []
     async for event in workflow.run("hello world", stream=True):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(cast(str, event.data))
 
     if outputs:

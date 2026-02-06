@@ -11,10 +11,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    RequestInfoEvent,
     ResponseStream,
     WorkflowEvent,
-    WorkflowOutputEvent,
     resolve_agent_id,
 )
 from agent_framework._clients import BaseChatClient
@@ -150,7 +148,7 @@ async def test_handoff():
     # escalation won't trigger a handoff, so the response from it will become
     # a request for user input because autonomous mode is not enabled by default.
     events = await _drain(workflow.run("Need technical support", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
 
     assert requests
     assert len(requests) == 1
@@ -184,10 +182,10 @@ async def test_autonomous_mode_yields_output_without_user_request():
     )
 
     events = await _drain(workflow.run("Package arrived broken", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert not requests, "Autonomous mode should not request additional user input"
 
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    outputs = [ev for ev in events if ev.type == "output"]
     assert outputs, "Autonomous mode should yield a workflow output"
 
     final_conversation = outputs[-1].data
@@ -210,7 +208,7 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     )
 
     events = await _drain(workflow.run("Start", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests and len(requests) == 1, "Turn limit should force a user input request"
     assert requests[0].source_executor_id == worker.name
 
@@ -253,7 +251,7 @@ async def test_handoff_async_termination_condition() -> None:
     )
 
     events = await _drain(workflow.run("First user message", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
 
     events = await _drain(
@@ -261,7 +259,7 @@ async def test_handoff_async_termination_condition() -> None:
             requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]
         })
     )
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    outputs = [ev for ev in events if ev.type == "output"]
     assert len(outputs) == 1
 
     final_conversation = outputs[0].data
@@ -505,14 +503,14 @@ async def test_handoff_with_participant_factories():
     assert call_count == 2
 
     events = await _drain(workflow.run("Need help", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
 
     # Follow-up message
     events = await _drain(
         workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
     )
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    outputs = [ev for ev in events if ev.type == "output"]
     assert outputs
 
 
@@ -576,7 +574,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
 
     # Start conversation - triage hands off to specialist_a
     events = await _drain(workflow.run("Initial request", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
 
     # Verify specialist_a executor exists and was called
@@ -586,7 +584,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
     events = await _drain(
         workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]})
     )
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
 
     # Verify specialist_b executor exists
@@ -615,13 +613,13 @@ async def test_handoff_participant_factories_with_checkpointing():
 
     # Run workflow and capture output
     events = await _drain(workflow.run("checkpoint test", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
 
     events = await _drain(
         workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
     )
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    outputs = [ev for ev in events if ev.type == "output"]
     assert outputs, "Should have workflow output after termination condition is met"
 
     # List checkpoints - just verify they were created
@@ -693,7 +691,7 @@ async def test_handoff_participant_factories_autonomous_mode():
     )
 
     events = await _drain(workflow.run("Issue", stream=True))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    requests = [ev for ev in events if ev.type == "request_info"]
     assert requests and len(requests) == 1
     assert requests[0].source_executor_id == "specialist"
 

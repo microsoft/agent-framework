@@ -7,7 +7,8 @@ to other specialized agents based on the task requirements.
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, HandoffAgentUserRequest, WorkflowOutputEvent
+from agent_framework import WorkflowEvent
+from orderedmultidict import Any
 
 
 async def run_autogen() -> None:
@@ -98,12 +99,11 @@ async def run_autogen() -> None:
 async def run_agent_framework() -> None:
     """Agent Framework's HandoffBuilder for agent coordination."""
     from agent_framework import (
-        HandoffBuilder,
-        RequestInfoEvent,
+        AgentResponseUpdate,
         WorkflowRunState,
-        WorkflowStatusEvent,
     )
     from agent_framework.openai import OpenAIChatClient
+    from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
@@ -159,10 +159,10 @@ async def run_agent_framework() -> None:
 
     current_executor = None
     stream_line_open = False
-    pending_requests: list[RequestInfoEvent] = []
+    pending_requests: list[WorkflowEvent] = []
 
     async for event in workflow.run(scripted_responses[0], stream=True):
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
                 if stream_line_open:
@@ -173,10 +173,10 @@ async def run_agent_framework() -> None:
                 stream_line_open = True
             if event.data:
                 print(event.data.text, end="", flush=True)
-        elif isinstance(event, RequestInfoEvent):
+        elif event.type == "request_info":
             if isinstance(event.data, HandoffAgentUserRequest):
                 pending_requests.append(event)
-        elif isinstance(event, WorkflowStatusEvent):
+        elif event.type == "status":
             if event.state in {WorkflowRunState.IDLE_WITH_PENDING_REQUESTS} and stream_line_open:
                 print()
                 stream_line_open = False
@@ -188,13 +188,13 @@ async def run_agent_framework() -> None:
         print("---------- user ----------")
         print(user_response)
 
-        responses = {req.request_id: user_response for req in pending_requests}
+        responses: dict[str, Any] = {req.request_id: user_response for req in pending_requests}  # type: ignore
         pending_requests = []
         current_executor = None
         stream_line_open = False
 
         async for event in workflow.send_responses_streaming(responses):
-            if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 # Print executor name header when switching to a new agent
                 if current_executor != event.executor_id:
                     if stream_line_open:
@@ -205,10 +205,10 @@ async def run_agent_framework() -> None:
                     stream_line_open = True
                 if event.data:
                     print(event.data.text, end="", flush=True)
-            elif isinstance(event, RequestInfoEvent):
+            elif event.type == "request_info":
                 if isinstance(event.data, HandoffAgentUserRequest):
                     pending_requests.append(event)
-            elif isinstance(event, WorkflowStatusEvent):
+            elif event.type == "status":
                 if (
                     event.state in {WorkflowRunState.IDLE_WITH_PENDING_REQUESTS, WorkflowRunState.IDLE}
                     and stream_line_open

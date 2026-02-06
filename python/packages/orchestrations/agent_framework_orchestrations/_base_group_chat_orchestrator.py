@@ -61,48 +61,22 @@ GroupChatWorkflowContextOutT: TypeAlias = AgentExecutorRequest | GroupChatReques
 
 
 # region Group chat events
-class GroupChatEvent(WorkflowEvent):
-    """Base class for group chat workflow events."""
-
-    def __init__(self, round_index: int, data: Any | None = None) -> None:
-        """Initialize group chat event.
-
-        Args:
-            round_index: Current round index
-            data: Optional event-specific data
-        """
-        super().__init__(data)
-        self.round_index = round_index
 
 
-class GroupChatResponseReceivedEvent(GroupChatEvent):
-    """Event emitted when a participant response is received."""
+@dataclass
+class GroupChatRequestSentEvent:
+    """Data payload for group_chat request sent events."""
 
-    def __init__(self, round_index: int, participant_name: str, data: Any | None = None) -> None:
-        """Initialize response received event.
-
-        Args:
-            round_index: Current round index
-            participant_name: Name of the participant who sent the response
-            data: Optional event-specific data
-        """
-        super().__init__(round_index, data)
-        self.participant_name = participant_name
+    round_index: int
+    participant_name: str
 
 
-class GroupChatRequestSentEvent(GroupChatEvent):
-    """Event emitted when a request is sent to a participant."""
+@dataclass
+class GroupChatResponseReceivedEvent:
+    """Data payload for group_chat response received events."""
 
-    def __init__(self, round_index: int, participant_name: str, data: Any | None = None) -> None:
-        """Initialize request sent event.
-
-        Args:
-            round_index: Current round index
-            participant_name: Name of the participant to whom the request was sent
-            data: Optional event-specific data
-        """
-        super().__init__(round_index, data)
-        self.participant_name = participant_name
+    round_index: int
+    participant_name: str
 
 
 # endregion
@@ -273,10 +247,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
         """
         await ctx.add_event(
-            GroupChatResponseReceivedEvent(
-                round_index=self._round_index,
-                participant_name=ctx.source_executor_ids[0] if ctx.source_executor_ids else "unknown",
-                data=response,
+            WorkflowEvent(
+                "group_chat",
+                data=GroupChatResponseReceivedEvent(
+                    round_index=self._round_index,
+                    participant_name=ctx.source_executor_ids[0] if ctx.source_executor_ids else "unknown",
+                ),
             )
         )
         await self._handle_response(response, ctx)
@@ -469,10 +445,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             request = AgentExecutorRequest(messages=messages, should_respond=True)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
-                GroupChatRequestSentEvent(
-                    round_index=self._round_index,
-                    participant_name=target,
-                    data=request,
+                WorkflowEvent(
+                    "group_chat",
+                    data=GroupChatRequestSentEvent(
+                        round_index=self._round_index,
+                        participant_name=target,
+                    ),
                 )
             )
         else:
@@ -480,10 +458,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)  # type: ignore[assignment]
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
-                GroupChatRequestSentEvent(
-                    round_index=self._round_index,
-                    participant_name=target,
-                    data=request,
+                WorkflowEvent(
+                    "group_chat",
+                    data=GroupChatRequestSentEvent(
+                        round_index=self._round_index,
+                        participant_name=target,
+                    ),
                 )
             )
 

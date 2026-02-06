@@ -13,7 +13,7 @@ using the standard request_info pattern for consistency.
 
 Demonstrate:
 - Configuring request info with `.with_request_info()`
-- Handling RequestInfoEvent with AgentInputRequest data
+- Handling  with AgentInputRequest data
 - Injecting responses back into the workflow via send_responses_streaming
 
 Prerequisites:
@@ -28,9 +28,7 @@ from typing import cast
 from agent_framework import (
     AgentExecutorResponse,
     ChatMessage,
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, SequentialBuilder
@@ -42,10 +40,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
             requests[event.request_id] = event.data
 
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             # The output of the sequential workflow is a list of ChatMessages
             print("\n" + "=" * 60)
             print("WORKFLOW COMPLETE")

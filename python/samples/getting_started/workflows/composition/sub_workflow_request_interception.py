@@ -11,7 +11,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    WorkflowOutputEvent,
     handler,
     response_handler,
 )
@@ -303,7 +302,7 @@ async def main() -> None:
     for email in test_emails:
         print(f"\n🚀 Processing email to '{email.recipient}'")
         async for event in workflow.run(email, stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 print(f"🎉 Final result for '{email.recipient}': {'Delivered' if event.data else 'Blocked'}")
 
 

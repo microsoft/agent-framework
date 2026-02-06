@@ -2135,6 +2135,9 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
+        # Remove additional_function_arguments from options passed to underlying chat client
+        # It's for tool invocation only and not recognized by chat service APIs
+        mutable_options.pop("additional_function_arguments", None)
 
         if not stream:
 

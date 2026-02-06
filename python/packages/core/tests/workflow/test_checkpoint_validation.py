@@ -8,7 +8,6 @@ from agent_framework import (
     WorkflowCheckpointException,
     WorkflowContext,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -80,4 +79,4 @@ async def test_resume_succeeds_when_graph_matches() -> None:
         )
     ]
 
-    assert any(isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE for event in events)
+    assert any(event.type == "status" and event.state == WorkflowRunState.IDLE for event in events)

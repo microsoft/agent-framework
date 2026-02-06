@@ -102,7 +102,7 @@ Tool approval samples demonstrate using `@tool(approval_mode="always_require")` 
 
 | Sample                   | File                                                                                   | Concepts                                                                                                               |
 | ------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Executor I/O Observation | [observability/executor_io_observation.py](./observability/executor_io_observation.py) | Observe executor input/output data via ExecutorInvokedEvent and ExecutorCompletedEvent without modifying executor code |
+| Executor I/O Observation | [observability/executor_io_observation.py](./observability/executor_io_observation.py) | Observe executor input/output data via executor_invoked events (type='executor_invoked') and executor_completed events (type='executor_completed') without modifying executor code |
 
 For additional observability samples in Agent Framework, see the [observability getting started samples](../observability/README.md). The [sample](../observability/workflow_observability.py) demonstrates integrating observability into workflows.
 
@@ -162,8 +162,8 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 
 - "input-conversation" normalizes input to `list[ChatMessage]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
-- "complete" publishes the final `WorkflowOutputEvent`
-  These may appear in event streams (ExecutorInvoke/Completed). They’re analogous to
+- "complete" publishes the final output event (type='output')
+  These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
 ### Environment Variables

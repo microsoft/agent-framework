@@ -7,9 +7,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunContext,
     ChatContext,
     ChatMessage,
     ChatResponse,
@@ -104,9 +104,7 @@ async def validate_weather_middleware(context: ChatContext, next: Callable[[Chat
         context.result.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
 
 
-async def agent_cleanup_middleware(
-    context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-) -> None:
+async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
     """Agent middleware that validates chat middleware effects and cleans the result."""
     await next(context)
 

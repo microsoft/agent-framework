@@ -8,10 +8,8 @@ import pytest
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
-    RequestInfoEvent,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -428,13 +426,13 @@ class TestIntegration:
         # Run workflow until it reaches IDLE_WITH_PENDING_REQUESTS (after checkpoint is created)
         saw_request_event = False
         async for event in test_workflow.run(WorkflowTestData(value="test"), stream=True):
-            if isinstance(event, RequestInfoEvent):
+            if event.type == "request_info":
                 saw_request_event = True
             # Wait for IDLE_WITH_PENDING_REQUESTS status (comes after checkpoint creation)
-            if isinstance(event, WorkflowStatusEvent) and "IDLE_WITH_PENDING_REQUESTS" in str(event.state):
+            if event.type == "status" and "IDLE_WITH_PENDING_REQUESTS" in str(event.state):
                 break
 
-        assert saw_request_event, "Test workflow should have emitted RequestInfoEvent"
+        assert saw_request_event, "Test workflow should have emitted request_info event (type='request_info')"
 
         # Verify checkpoint was AUTOMATICALLY saved to our storage by the framework
         checkpoints_after = await checkpoint_storage.list_checkpoints()

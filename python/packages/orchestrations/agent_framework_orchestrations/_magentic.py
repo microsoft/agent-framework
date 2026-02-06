@@ -19,7 +19,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._events import ExecutorEvent
+from agent_framework._workflows._events import WorkflowEvent
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._model_utils import DictConvertible, encode_value
 from agent_framework._workflows._request_info_mixin import response_handler
@@ -771,20 +771,11 @@ class MagenticOrchestratorEventType(str, Enum):
 
 
 @dataclass
-class MagenticOrchestratorEvent(ExecutorEvent):
-    """Base class for Magentic orchestrator events."""
+class MagenticOrchestratorEvent:
+    """Data payload for magentic_orchestrator events."""
 
-    def __init__(
-        self,
-        executor_id: str,
-        event_type: MagenticOrchestratorEventType,
-        data: ChatMessage | MagenticProgressLedger,
-    ) -> None:
-        super().__init__(executor_id, data)
-        self.event_type = event_type
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, event_type={self.event_type})"
+    event_type: MagenticOrchestratorEventType
+    content: ChatMessage | MagenticProgressLedger
 
 
 # region Request info related types
@@ -928,10 +919,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Initial planning using the manager with real model calls
         self._task_ledger = await self._manager.plan(self._magentic_context.clone(deep=True))
         await ctx.add_event(
-            MagenticOrchestratorEvent(
+            WorkflowEvent(
+                "magentic_orchestrator",
                 executor_id=self.id,
-                event_type=MagenticOrchestratorEventType.PLAN_CREATED,
-                data=self._task_ledger,
+                data=MagenticOrchestratorEvent(
+                    event_type=MagenticOrchestratorEventType.PLAN_CREATED,
+                    content=self._task_ledger,
+                ),
             )
         )
 
@@ -1006,10 +1000,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         self._magentic_context.chat_history.extend(response.review)
         self._task_ledger = await self._manager.replan(self._magentic_context.clone(deep=True))
         await ctx.add_event(
-            MagenticOrchestratorEvent(
+            WorkflowEvent(
+                "magentic_orchestrator",
                 executor_id=self.id,
-                event_type=MagenticOrchestratorEventType.REPLANNED,
-                data=self._task_ledger,
+                data=MagenticOrchestratorEvent(
+                    event_type=MagenticOrchestratorEventType.REPLANNED,
+                    content=self._task_ledger,
+                ),
             )
         )
         # Continue the review process by sending the new plan for review again until approved
@@ -1072,10 +1069,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
             return
 
         await ctx.add_event(
-            MagenticOrchestratorEvent(
+            WorkflowEvent(
+                "magentic_orchestrator",
                 executor_id=self.id,
-                event_type=MagenticOrchestratorEventType.PROGRESS_LEDGER_UPDATED,
-                data=self._progress_ledger,
+                data=MagenticOrchestratorEvent(
+                    event_type=MagenticOrchestratorEventType.PROGRESS_LEDGER_UPDATED,
+                    content=self._progress_ledger,
+                ),
             )
         )
 
@@ -1149,10 +1149,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Replan
         self._task_ledger = await self._manager.replan(self._magentic_context.clone(deep=True))
         await ctx.add_event(
-            MagenticOrchestratorEvent(
+            WorkflowEvent(
+                "magentic_orchestrator",
                 executor_id=self.id,
-                event_type=MagenticOrchestratorEventType.REPLANNED,
-                data=self._task_ledger,
+                data=MagenticOrchestratorEvent(
+                    event_type=MagenticOrchestratorEventType.REPLANNED,
+                    content=self._task_ledger,
+                ),
             )
         )
         # If a human must sign off, ask now and return. The response handler will resume.
@@ -1515,7 +1518,7 @@ class MagenticBuilder:
 
             # During execution, handle plan review
             async for event in workflow.run("task", stream=True):
-                if isinstance(event, RequestInfoEvent):
+                if event.type == "request_info":
                     request = event.data
                     if isinstance(request, MagenticHumanInterventionRequest):
                         if request.kind == MagenticHumanInterventionKind.PLAN_REVIEW:

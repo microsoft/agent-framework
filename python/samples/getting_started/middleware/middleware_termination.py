@@ -6,9 +6,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
     ChatMessage,
     tool,
 )
@@ -47,8 +47,8 @@ class PreTerminationMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         # Check if the user message contains any blocked words
         last_message = context.messages[-1] if context.messages else None
@@ -87,8 +87,8 @@ class PostTerminationMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         print(f"[PostTerminationMiddleware] Processing request (response count: {self.response_count})")
 

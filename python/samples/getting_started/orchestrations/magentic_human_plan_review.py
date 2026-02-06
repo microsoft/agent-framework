@@ -9,9 +9,7 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest, MagenticPlanReviewResponse
@@ -46,10 +44,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: dict[str, MagenticPlanReviewRequest] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+        if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:
             requests[event.request_id] = cast(MagenticPlanReviewRequest, event.data)
 
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id
@@ -68,7 +66,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
                 # To make the type checker happy, we cast event.data to the expected type
                 outputs = cast(list[ChatMessage], event.data)
                 for msg in outputs:
-                    speaker = msg.author_name or msg.role.value
+                    speaker = msg.author_name or msg.role
                     print(f"[{speaker}]: {msg.text}")
 
     responses: dict[str, MagenticPlanReviewResponse] = {}
@@ -129,7 +127,7 @@ async def main() -> None:
         # Request human input for plan review
         .with_plan_review()
         # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        # Intermediate outputs will be emitted as WorkflowEvent with type "output"
         .with_intermediate_outputs()
         .build()
     )

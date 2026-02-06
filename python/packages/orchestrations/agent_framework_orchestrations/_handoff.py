@@ -64,20 +64,14 @@ logger = logging.getLogger(__name__)
 
 
 # region Handoff events
-class HandoffSentEvent(WorkflowEvent):
-    """Base class for handoff workflow events."""
 
-    def __init__(self, source: str, target: str, data: Any | None = None) -> None:
-        """Initialize handoff sent event.
 
-        Args:
-            source: Identifier of the source agent initiating the handoff
-            target: Identifier of the target agent receiving the handoff
-            data: Optional event-specific data
-        """
-        super().__init__(data)
-        self.source = source
-        self.target = target
+@dataclass
+class HandoffSentEvent:
+    """Data payload for handoff_sent events."""
+
+    source: str
+    target: str
 
 
 # endregion
@@ -421,7 +415,9 @@ class HandoffAgentExecutor(AgentExecutor):
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
                 AgentExecutorRequest(messages=[], should_respond=True), target_id=handoff_target
             )
-            await ctx.add_event(HandoffSentEvent(source=self.id, target=handoff_target))
+            await ctx.add_event(
+                WorkflowEvent("handoff_sent", data=HandoffSentEvent(source=self.id, target=handoff_target))
+            )
             self._autonomous_mode_turns = 0  # Reset autonomous mode turn counter on handoff
             return
 

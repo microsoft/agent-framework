@@ -55,7 +55,7 @@ agent_framework/
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
-- **`AgentRunContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
+- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
 
 ### Threads (`_threads.py`)
 
@@ -114,10 +114,10 @@ agent = OpenAIChatClient().as_agent(
 ### Middleware Pipeline
 
 ```python
-from agent_framework import ChatAgent, AgentMiddleware, AgentRunContext
+from agent_framework import ChatAgent, AgentMiddleware, AgentContext
 
 class LoggingMiddleware(AgentMiddleware):
-    async def invoke(self, context: AgentRunContext, next) -> AgentResponse:
+    async def process(self, context: AgentContext, next) -> AgentResponse:
         print(f"Input: {context.messages}")
         response = await next(context)
         print(f"Output: {response}")

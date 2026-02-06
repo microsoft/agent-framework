@@ -11,12 +11,9 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatMessage,
     Executor,
-    RequestInfoEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
-    WorkflowOutputEvent,
     handler,
     response_handler,
 )
@@ -30,13 +27,13 @@ Sample: AzureOpenAI Chat Agents in workflow with human feedback
 Pipeline layout:
 writer_agent -> Coordinator -> writer_agent -> Coordinator -> final_editor_agent -> Coordinator -> output
 
-The writer agent drafts marketing copy. A custom executor emits a RequestInfoEvent so a human can comment,
-then relays the human guidance back into the conversation before the final editor agent produces the polished
-output.
+The writer agent drafts marketing copy. A custom executor emits a request_info event (type='request_info') so a
+human can comment, then relays the human guidance back into the conversation before the final editor agent 
+produces the polished output.
 
 Demonstrates:
 - Capturing agent responses in a custom executor.
-- Emitting RequestInfoEvent to request human input.
+- Emitting request_info events (type='request_info') to request human input.
 - Handling human feedback and routing it to the appropriate agents.
 
 Prerequisites:
@@ -103,8 +100,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation
-                    + [ChatMessage(Role.USER, text="The draft is approved as-is.")],
+                    messages=original_request.conversation + [ChatMessage("user", text="The draft is approved as-is.")],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_name,
@@ -119,7 +115,7 @@ class Coordinator(Executor):
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(ChatMessage(Role.USER, text=instruction))
+        conversation.append(ChatMessage("user", text=instruction))
         await ctx.send_message(
             AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_name
         )
@@ -132,9 +128,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: list[tuple[str, DraftFeedbackRequest]] = []
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, DraftFeedbackRequest):
+        if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
             requests.append((event.request_id, event.data))
-        elif isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+        elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             # This workflow should only produce AgentResponseUpdate as outputs.
             # Streaming updates from an agent will be consecutive, because no two agents run simultaneously
             # in this workflow. So we can use last_author to format output nicely.

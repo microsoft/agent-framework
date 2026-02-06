@@ -15,10 +15,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    RequestInfoEvent,
-    WorkflowOutputEvent,
+    WorkflowEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
@@ -190,7 +188,7 @@ async def test_group_chat_builder_basic_flow() -> None:
 
     outputs: list[list[ChatMessage]] = []
     async for event in workflow.run("coordinate task", stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             data = event.data
             if isinstance(data, list):
                 outputs.append(cast(list[ChatMessage], data))
@@ -362,7 +360,7 @@ class TestGroupChatWorkflow:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test task", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -397,7 +395,7 @@ class TestGroupChatWorkflow:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test task", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -425,7 +423,7 @@ class TestGroupChatWorkflow:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test task", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -473,7 +471,7 @@ class TestCheckpointing:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test task", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -526,7 +524,7 @@ class TestConversationHandling:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test string", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -555,7 +553,7 @@ class TestConversationHandling:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run(task_message, stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -587,7 +585,7 @@ class TestConversationHandling:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run(conversation, stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -619,7 +617,7 @@ class TestRoundLimitEnforcement:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -654,7 +652,7 @@ class TestRoundLimitEnforcement:
 
         outputs: list[list[ChatMessage]] = []
         async for event in workflow.run("test", stream=True):
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 data = event.data
                 if isinstance(data, list):
                     outputs.append(cast(list[ChatMessage], data))
@@ -686,9 +684,9 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
-        if isinstance(ev, WorkflowOutputEvent):
+        if ev.type == "output":
             baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -724,9 +722,9 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
         )
         baseline_output: list[ChatMessage] | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
-            if isinstance(ev, WorkflowOutputEvent):
+            if ev.type == "output":
                 baseline_output = cast(list[ChatMessage], ev.data) if isinstance(ev.data, list) else None  # type: ignore
-            if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+            if ev.type == "status" and ev.state in (
                 WorkflowRunState.IDLE,
                 WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
             ):
@@ -770,9 +768,9 @@ async def test_group_chat_with_request_info_filtering():
     )
 
     # Run until we get a request info event (should be before beta, not alpha)
-    request_events: list[RequestInfoEvent] = []
+    request_events: list[WorkflowEvent] = []
     async for event in workflow.run("test task", stream=True):
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             # Don't break - let stream complete naturally when paused
 
@@ -785,11 +783,11 @@ async def test_group_chat_with_request_info_filtering():
     assert request_event.source_executor_id == "beta"
 
     # Continue the workflow with a response
-    outputs: list[WorkflowOutputEvent] = []
+    outputs: list[WorkflowEvent] = []
     async for event in workflow.send_responses_streaming({
         request_event.request_id: AgentRequestInfoResponse.approve()
     }):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(event)
 
     # Workflow should complete
@@ -822,9 +820,9 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
     )
 
     # Run until we get a request info event
-    request_events: list[RequestInfoEvent] = []
+    request_events: list[WorkflowEvent] = []
     async for event in workflow.run("test task", stream=True):
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
             request_events.append(event)
             break
 
@@ -926,9 +924,9 @@ async def test_group_chat_with_participant_factories():
     # Factories should be called during build
     assert call_count == 2
 
-    outputs: list[WorkflowOutputEvent] = []
+    outputs: list[WorkflowEvent] = []
     async for event in workflow.run("coordinate task", stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(event)
 
     assert len(outputs) == 1
@@ -991,9 +989,9 @@ async def test_group_chat_participant_factories_with_checkpointing():
         .build()
     )
 
-    outputs: list[WorkflowOutputEvent] = []
+    outputs: list[WorkflowEvent] = []
     async for event in workflow.run("checkpoint test", stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(event)
 
     assert outputs, "Should have workflow output"
@@ -1119,9 +1117,9 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
     # Factory should be called during build
     assert factory_call_count == 1
 
-    outputs: list[WorkflowOutputEvent] = []
+    outputs: list[WorkflowEvent] = []
     async for event in workflow.run("coordinate task", stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(event)
 
     assert len(outputs) == 1

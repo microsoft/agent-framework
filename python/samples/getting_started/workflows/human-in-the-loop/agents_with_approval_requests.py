@@ -47,7 +47,7 @@ Demonstrate:
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
-- Basic familiarity with WorkflowBuilder, edges, events, RequestInfoEvent, and streaming runs.
+- Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
 """
 
 

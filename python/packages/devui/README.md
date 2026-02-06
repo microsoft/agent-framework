@@ -249,9 +249,9 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `response.created` + `response.in_progress`                  | `AgentStartedEvent`               | OpenAI   |
 | `response.completed`                                         | `AgentCompletedEvent`             | OpenAI   |
 | `response.failed`                                            | `AgentFailedEvent`                | OpenAI   |
-| `response.created` + `response.in_progress`                  | `WorkflowStartedEvent`            | OpenAI   |
-| `response.completed`                                         | `WorkflowCompletedEvent`          | OpenAI   |
-| `response.failed`                                            | `WorkflowFailedEvent`             | OpenAI   |
+| `response.created` + `response.in_progress`                  | `WorkflowEvent (type='started')`  | OpenAI   |
+| `response.completed`                                         | `WorkflowEvent (type='status')`   | OpenAI   |
+| `response.failed`                                            | `WorkflowEvent (type='failed')`   | OpenAI   |
 |                                                              | **Content Types**                 |          |
 | `response.content_part.added` + `response.output_text.delta` | `TextContent`                     | OpenAI   |
 | `response.reasoning_text.delta`                              | `TextReasoningContent`            | OpenAI   |
@@ -267,13 +267,13 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `error`                                                      | `ErrorContent`                    | OpenAI   |
 | Final `Response.usage` field (not streamed)                  | `UsageContent`                    | OpenAI   |
 |                                                              | **Workflow Events**               |          |
-| `response.output_item.added` (ExecutorActionItem)*           | `ExecutorInvokedEvent`            | OpenAI   |
-| `response.output_item.done` (ExecutorActionItem)*            | `ExecutorCompletedEvent`          | OpenAI   |
-| `response.output_item.done` (ExecutorActionItem with error)* | `ExecutorFailedEvent`             | OpenAI   |
-| `response.output_item.added` (ResponseOutputMessage)         | `WorkflowOutputEvent`             | OpenAI   |
-| `response.workflow_event.complete`                           | `WorkflowEvent` (other)           | DevUI    |
-| `response.trace.complete`                                    | `WorkflowStatusEvent`             | DevUI    |
-| `response.trace.complete`                                    | `WorkflowWarningEvent`            | DevUI    |
+| `response.output_item.added` (ExecutorActionItem)*           | `WorkflowEvent (type='executor_invoked')`   | OpenAI   |
+| `response.output_item.done` (ExecutorActionItem)*            | `WorkflowEvent (type='executor_completed')` | OpenAI   |
+| `response.output_item.done` (ExecutorActionItem with error)* | `WorkflowEvent (type='executor_failed')`    | OpenAI   |
+| `response.output_item.added` (ResponseOutputMessage)         | `WorkflowEvent (type='output')`             | OpenAI   |
+| `response.workflow_event.complete`                           | `WorkflowEvent` (other types)               | DevUI    |
+| `response.trace.complete`                                    | `WorkflowEvent (type='status')`             | DevUI    |
+| `response.trace.complete`                                    | `WorkflowEvent (type='warning')`            | DevUI    |
 |                                                              | **Trace Content**                 |          |
 | `response.trace.complete`                                    | `DataContent` (no data/errors)    | DevUI    |
 | `response.trace.complete`                                    | `UriContent` (unsupported MIME)   | DevUI    |

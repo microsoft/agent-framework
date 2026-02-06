@@ -219,7 +219,7 @@ class SequentialBuilder:
 
         This enables human-in-the-loop (HIL) scenarios for the sequential orchestration.
         When enabled, the workflow pauses after each agent participant runs, emitting
-        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        a request_info event (type='request_info') that allows the caller to review the conversation and optionally
         inject guidance for the agent participant to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 

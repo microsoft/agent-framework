@@ -19,11 +19,10 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    RequestInfoEvent,
     ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
+    WorkflowEvent,
     executor,
     tool,
 )
@@ -100,9 +99,9 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
 
     # Act: run in streaming mode
-    events: list[WorkflowOutputEvent] = []
+    events: list[WorkflowEvent[AgentResponseUpdate]] = []
     async for event in workflow.run("What's the weather?", stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             events.append(event)
 
     # Assert: we should receive 4 events (text, function call, function result, text)
@@ -290,9 +289,9 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
 
     # Act
-    request_info_events: list[RequestInfoEvent] = []
+    request_info_events: list[WorkflowEvent] = []
     async for event in workflow.run("Invoke tool requiring approval", stream=True):
-        if isinstance(event, RequestInfoEvent):
+        if event.type == "request_info":
             request_info_events.append(event)
 
     # Assert
@@ -307,7 +306,7 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     async for event in workflow.send_responses_streaming({
         approval_request.request_id: approval_request.data.to_function_approval_response(True)
     }):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output = event.data
 
     # Assert
@@ -367,9 +366,9 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
     workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
 
     # Act
-    request_info_events: list[RequestInfoEvent] = []
+    request_info_events: list[WorkflowEvent] = []
     async for event in workflow.run("Invoke tool requiring approval", stream=True):
-        if isinstance(event, RequestInfoEvent):
+        if event.type == "request_info":
             request_info_events.append(event)
 
     # Assert
@@ -387,7 +386,7 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
 
     output: str | None = None
     async for event in workflow.send_responses_streaming(responses):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output = event.data
 
     # Assert

@@ -6,12 +6,11 @@ from typing import Annotated, Any
 
 from agent_framework import (
     ChatMessage,
-    SequentialBuilder,
     WorkflowExecutor,
-    WorkflowOutputEvent,
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 """
 Sample: Sub-Workflow kwargs Propagation
@@ -32,7 +31,9 @@ Prerequisites:
 
 
 # Define tools that access custom context via **kwargs
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py and
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_authenticated_data(
     resource: Annotated[str, "The resource to fetch"],
@@ -129,7 +130,7 @@ async def main() -> None:
         user_token=user_token,
         service_config=service_config,
     ):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output_data = event.data
             if isinstance(output_data, list):
                 for item in output_data:  # type: ignore
@@ -139,6 +140,50 @@ async def main() -> None:
     print("\n" + "=" * 70)
     print("Sample Complete - kwargs successfully flowed through sub-workflow!")
     print("=" * 70)
+
+    """
+    Sample Output:
+
+    ======================================================================
+    Sub-Workflow kwargs Propagation Demo
+    ======================================================================
+
+    Context being passed to parent workflow:
+    user_token: {
+        "user_name": "alice@contoso.com",
+        "access_level": "admin",
+        "session_id": "sess_12345"
+    }
+    service_config: {
+        "services": {
+            "users": "https://api.example.com/v1/users",
+            "orders": "https://api.example.com/v1/orders",
+            "inventory": "https://api.example.com/v1/inventory"
+        },
+        "timeout": 30
+    }
+
+    ----------------------------------------------------------------------
+    Workflow Execution (kwargs flow: parent -> sub-workflow -> agent -> tool):
+    ----------------------------------------------------------------------
+
+    [get_authenticated_data] kwargs keys: ['user_token', 'service_config']
+    [get_authenticated_data] User: alice@contoso.com, Access: admin
+
+    [call_configured_service] kwargs keys: ['user_token', 'service_config']
+    [call_configured_service] Available services: ['users', 'orders', 'inventory']
+
+    [Final Answer]: Please fetch my profile data and then call the users service.
+
+    [Final Answer]: - Your profile data has been fetched.
+    - The users service has been called.
+
+    Would you like details from either the profile data or the users service response?
+
+    ======================================================================
+    Sample Complete - kwargs successfully flowed through sub-workflow!
+    ======================================================================
+    """
 
 
 if __name__ == "__main__":

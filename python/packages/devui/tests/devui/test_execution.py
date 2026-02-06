@@ -292,7 +292,7 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
     """CRITICAL TEST: Verify ALL events from workflow execution can be JSON serialized.
 
     This is particularly important for workflows with AgentExecutor because:
-    - AgentExecutor produces ExecutorCompletedEvent with AgentExecutorResponse
+    - AgentExecutor produces executor_completed event (type='executor_completed') with AgentExecutorResponse
     - AgentExecutorResponse contains AgentResponse and ChatMessage objects
     - These are SerializationMixin objects, not Pydantic, which caused the original bug
 
@@ -672,10 +672,10 @@ async def test_full_pipeline_concurrent_workflow(concurrent_workflow):
 
 @pytest.mark.asyncio
 async def test_full_pipeline_workflow_output_event_serialization():
-    """Test that WorkflowOutputEvent from ctx.yield_output() serializes correctly.
+    """Test that output event (type='output') from ctx.yield_output() serializes correctly.
 
     This tests the pattern where executors yield output via ctx.yield_output(),
-    which emits WorkflowOutputEvent that DevUI must serialize for SSE.
+    which emits output event (type='output') that DevUI must serialize for SSE.
     """
     from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 

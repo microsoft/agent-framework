@@ -3,7 +3,7 @@
 import asyncio
 import random
 
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from typing_extensions import Never
 
 """
@@ -87,7 +87,7 @@ async def main() -> None:
     # 2) Run the workflow
     output: list[int | float] | None = None
     async for event in workflow.run([random.randint(1, 100) for _ in range(10)], stream=True):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output = event.data
 
     if output is not None:

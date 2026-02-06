@@ -24,20 +24,24 @@ Prerequisites:
 """
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from random import random
-from typing import Any, override
+from typing import Any
 
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
-    SuperStepCompletedEvent,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 @dataclass
@@ -126,12 +130,12 @@ async def main():
 
         output: str | None = None
         async for event in event_stream:
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 output = event.data
                 break
-            if isinstance(event, SuperStepCompletedEvent) and random() < 0.5:
+            if event.type == "superstep_completed" and random() < 0.5:
                 # Randomly simulate system interruptions
-                # The `SuperStepCompletedEvent` ensures we only interrupt after
+                # The type="superstep_completed" event ensures we only interrupt after
                 # the current super-step is fully complete and checkpointed.
                 # If we interrupt mid-step, the workflow may resume from an earlier point.
                 print("\n** Simulating workflow interruption. Stopping execution. **")

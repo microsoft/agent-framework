@@ -9,16 +9,13 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    AgentRunUpdateEvent,
+    AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
     Executor,
-    FunctionCallContent,
-    FunctionResultContent,
-    RequestInfoEvent,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
+    WorkflowEvent,
     handler,
     response_handler,
     tool,
@@ -36,7 +33,7 @@ writer_agent (uses Azure OpenAI tools) -> Coordinator -> writer_agent
 -> Coordinator -> final_editor_agent -> Coordinator -> output
 
 The writer agent calls tools to gather product facts before drafting copy. A custom executor
-packages the draft and emits a RequestInfoEvent so a human can comment, then replays the human
+packages the draft and emits a request_info event (type='request_info') so a human can comment, then replays the human
 guidance back into the conversation before the final editor agent produces the polished output.
 
 Demonstrates:
@@ -50,7 +47,9 @@ Prerequisites:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py and
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def fetch_product_brief(
     product_name: Annotated[str, Field(description="Product name to look up.")],
@@ -147,8 +146,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation
-                    + [ChatMessage("user", text="The draft is approved as-is.")],
+                    messages=original_request.conversation + [ChatMessage("user", text="The draft is approved as-is.")],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -194,15 +192,15 @@ def create_final_editor_agent() -> ChatAgent:
     )
 
 
-def display_agent_run_update(event: AgentRunUpdateEvent, last_executor: str | None) -> None:
+def display_agent_run_update(event: WorkflowEvent, last_executor: str | None) -> None:
     """Display an AgentRunUpdateEvent in a readable format."""
     printed_tool_calls: set[str] = set()
     printed_tool_results: set[str] = set()
     executor_id = event.executor_id
     update = event.data
     # Extract and print any new tool calls or results from the update.
-    function_calls = [c for c in update.contents if isinstance(c, FunctionCallContent)]  # type: ignore[union-attr]
-    function_results = [c for c in update.contents if isinstance(c, FunctionResultContent)]  # type: ignore[union-attr]
+    function_calls = [c for c in update.contents if c.type == "function_call"]  # type: ignore[union-attr]
+    function_results = [c for c in update.contents if c.type == "function_result"]  # type: ignore[union-attr]
     if executor_id != last_executor:
         if last_executor is not None:
             print()
@@ -291,18 +289,22 @@ async def main() -> None:
         requests: list[tuple[str, DraftFeedbackRequest]] = []
 
         async for event in stream:
-            if isinstance(event, AgentRunUpdateEvent) and display_agent_run_update_switch:
+            if (
+                event.type == "output"
+                and isinstance(event.data, AgentResponseUpdate)
+                and display_agent_run_update_switch
+            ):
                 display_agent_run_update(event, last_executor)
-            if isinstance(event, RequestInfoEvent) and isinstance(event.data, DraftFeedbackRequest):
+            if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
                 # Stash the request so we can prompt the human after the stream completes.
                 requests.append((event.request_id, event.data))
                 last_executor = None
-            elif isinstance(event, WorkflowOutputEvent):
+            elif event.type == "output" and not isinstance(event.data, AgentResponseUpdate):
+                # Only mark as completed for final outputs, not streaming updates
                 last_executor = None
                 response = event.data
-                print("\n===== Final output =====")
                 final_text = getattr(response, "text", str(response))
-                print(final_text.strip())
+                print(final_text, flush=True, end="")
                 completed = True
 
         if requests and not completed:

@@ -477,12 +477,12 @@ class SerializationMixin:
 
             .. code-block:: python
 
-                from agent_framework._middleware import AgentRunContext
+                from agent_framework._middleware import AgentContext
                 from agent_framework import BaseAgent
 
-                # AgentRunContext has INJECTABLE = {"agent", "result"}
+                # AgentContext has INJECTABLE = {"agent", "result"}
                 context_data = {
-                    "type": "agent_run_context",
+                    "type": "agent_context",
                     "messages": [{"role": "user", "text": "Hello"}],
                     "stream": False,
                     "metadata": {"session_id": "abc123"},
@@ -492,14 +492,14 @@ class SerializationMixin:
                 # Inject agent and result during middleware processing
                 my_agent = BaseAgent(name="test-agent")
                 dependencies = {
-                    "agent_run_context": {
+                    "agent_context": {
                         "agent": my_agent,
                         "result": None,  # Will be populated during execution
                     }
                 }
 
                 # Reconstruct context with agent dependency for middleware chain
-                context = AgentRunContext.from_dict(context_data, dependencies=dependencies)
+                context = AgentContext.from_dict(context_data, dependencies=dependencies)
                 # MiddlewareTypes can now access context.agent and process the execution
 
             This injection system allows the agent framework to maintain clean separation
