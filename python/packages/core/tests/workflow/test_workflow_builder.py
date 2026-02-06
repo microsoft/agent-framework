@@ -134,34 +134,7 @@ def test_add_agent_duplicate_id_raises_error():
         builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
 
 
-# Tests for build() with async executor factories
-
-
-async def test_build_async_with_async_executor_factories():
-    """Test that build_async() works with async executor factories."""
-
-    async def create_executor_a() -> MockExecutor:
-        return MockExecutor(id="executor_a")
-
-    async def create_executor_b() -> MockExecutor:
-        return MockExecutor(id="executor_b")
-
-    # Build workflow with async executor factories
-    workflow = await (
-        WorkflowBuilder()
-        .register_executors({
-            "ExecutorA": create_executor_a,
-            "ExecutorB": create_executor_b,
-        })
-        .set_start_executor("ExecutorA")
-        .add_edge("ExecutorA", "ExecutorB")
-        .build_async()
-    )
-
-    assert workflow.start_executor_id == "executor_a"
-    assert len(workflow.executors) == 2
-    assert "executor_a" in workflow.executors
-    assert "executor_b" in workflow.executors
+# Tests for build() and build_async() with executor factories
 
 
 def test_build_raises_error_with_async_executor_factories():
@@ -198,6 +171,172 @@ def test_build_raises_error_when_factory_returns_non_executor():
         builder.build()
 
 
+def test_build_raises_error_when_factory_returns_none():
+    """Test that build() raises TypeError when a factory returns None."""
+
+    def create_none_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return None  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder().register_executors({"NoneExecutor": create_none_executor}).set_start_executor("NoneExecutor")
+    )
+
+    # Attempting to build with a factory that returns None should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'NoneExecutor' returned NoneType instead of an Executor\."):
+        builder.build()
+
+
+def test_build_raises_error_when_sync_factory_raises_exception():
+    """Test that build() propagates exceptions raised by sync factories."""
+
+    def create_failing_executor() -> MockExecutor:
+        raise RuntimeError("Sync factory failed!")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # Exception from sync factory should propagate
+    with pytest.raises(RuntimeError, match="Sync factory failed!"):
+        builder.build()
+
+
+def test_build_raises_error_when_close_throws_exception():
+    """Test that build() raises ValueError even when instance.close() throws an exception."""
+
+    class FailingCoroutine:
+        """A mock coroutine that raises an exception when close() is called."""
+
+        def close(self):
+            raise RuntimeError("Close failed!")
+
+        def __await__(self):
+            # This makes it awaitable but we won't get here
+            return self  # type: ignore[return-value]
+
+    def create_failing_async_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return FailingCoroutine()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_async_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # The ValueError about async factories should still be raised despite close() failing
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
+def test_build_calls_close_on_async_factory():
+    """Test that build() actually calls close() on awaitable instances."""
+    close_called = {"value": False}
+
+    class TrackingCoroutine:
+        """A mock coroutine that tracks if close() is called."""
+
+        def close(self):
+            close_called["value"] = True
+
+        def __await__(self):
+            return self  # type: ignore[return-value]
+
+    def create_tracking_async_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return TrackingCoroutine()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"TrackingExecutor": create_tracking_async_executor})
+        .set_start_executor("TrackingExecutor")
+    )
+
+    # Build should detect async factory and call close()
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+    # Verify close() was actually called
+    assert close_called["value"], "close() should have been called on the awaitable instance"
+
+
+def test_build_handles_awaitable_without_close_method():
+    """Test that build() handles awaitable instances that don't have a close() method."""
+
+    class AwaitableWithoutClose:
+        """A mock awaitable without a close() method."""
+
+        def __await__(self):
+            return self  # type: ignore[return-value]
+
+    def create_awaitable_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return AwaitableWithoutClose()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"AwaitableExecutor": create_awaitable_executor})
+        .set_start_executor("AwaitableExecutor")
+    )
+
+    # Should still raise ValueError about async factories, even without close() method
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
+async def test_build_async_with_async_executor_factories():
+    """Test that build_async() works with async executor factories."""
+
+    async def create_executor_a() -> MockExecutor:
+        return MockExecutor(id="executor_a")
+
+    async def create_executor_b() -> MockExecutor:
+        return MockExecutor(id="executor_b")
+
+    # Build workflow with async executor factories
+    workflow = await (
+        WorkflowBuilder()
+        .register_executors({
+            "ExecutorA": create_executor_a,
+            "ExecutorB": create_executor_b,
+        })
+        .set_start_executor("ExecutorA")
+        .add_edge("ExecutorA", "ExecutorB")
+        .build_async()
+    )
+
+    assert workflow.start_executor_id == "executor_a"
+    assert len(workflow.executors) == 2
+    assert "executor_a" in workflow.executors
+    assert "executor_b" in workflow.executors
+
+
+async def test_build_async_with_mixed_sync_and_async_factories():
+    """Test that build_async() works with a mix of sync and async executor factories."""
+
+    def create_sync_executor() -> MockExecutor:
+        return MockExecutor(id="executor_sync")
+
+    async def create_async_executor() -> MockExecutor:
+        return MockExecutor(id="executor_async")
+
+    # Build workflow with mixed sync and async executor factories
+    workflow = await (
+        WorkflowBuilder()
+        .register_executors({
+            "SyncExecutor": create_sync_executor,
+            "AsyncExecutor": create_async_executor,
+        })
+        .set_start_executor("SyncExecutor")
+        .add_edge("SyncExecutor", "AsyncExecutor")
+        .build_async()
+    )
+
+    assert workflow.start_executor_id == "executor_sync"
+    assert len(workflow.executors) == 2
+    assert "executor_sync" in workflow.executors
+    assert "executor_async" in workflow.executors
+
+
 async def test_build_async_raises_error_when_factory_returns_non_executor():
     """Test that build_async() raises TypeError when an async factory returns a non-Executor type."""
 
@@ -212,6 +351,23 @@ async def test_build_async_raises_error_when_factory_returns_non_executor():
 
     # Attempting to build with an async factory that returns non-Executor should raise TypeError
     with pytest.raises(TypeError, match=r"Factory 'InvalidExecutor' returned NoneType instead of an Executor\."):
+        await builder.build_async()
+
+
+async def test_build_async_raises_error_when_factory_raises_exception():
+    """Test that build_async() propagates exceptions raised by async factories."""
+
+    async def create_failing_executor() -> MockExecutor:
+        raise RuntimeError("Factory failed!")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # Exception from async factory should propagate
+    with pytest.raises(RuntimeError, match="Factory failed!"):
         await builder.build_async()
 
 
@@ -261,6 +417,33 @@ def test_register_multiple_executors():
     assert workflow.start_executor_id == "ExecutorA"
 
 
+def test_register_executors_multiple_calls_with_non_overlapping_names():
+    """Test that register_executors can be called multiple times with non-overlapping names."""
+    builder = WorkflowBuilder()
+
+    # First registration
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+
+    # Second registration with different names
+    builder.register_executors({
+        "ExecutorB": lambda: MockExecutor(id="ExecutorB"),
+        "ExecutorC": lambda: MockExecutor(id="ExecutorC"),
+    })
+
+    # Build workflow and verify all executors are present
+    workflow = (
+        builder
+        .set_start_executor("ExecutorA")
+        .add_edge("ExecutorA", "ExecutorB")
+        .add_edge("ExecutorB", "ExecutorC")
+        .build()
+    )
+
+    assert "ExecutorA" in workflow.executors
+    assert "ExecutorB" in workflow.executors
+    assert "ExecutorC" in workflow.executors
+
+
 def test_register_executors_rejects_empty_inputs():
     """Test that empty executor mappings and entries are rejected."""
     builder = WorkflowBuilder()
@@ -270,6 +453,9 @@ def test_register_executors_rejects_empty_inputs():
 
     with pytest.raises(ValueError, match="name cannot be empty"):
         builder.register_executors({"": lambda: MockExecutor(id="ExecutorA")})
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        builder.register_executors({"   ": lambda: MockExecutor(id="ExecutorA")})
 
     with pytest.raises(TypeError, match="must be callable"):
         builder.register_executors({"ExecutorA": None})  # type: ignore[arg-type]
