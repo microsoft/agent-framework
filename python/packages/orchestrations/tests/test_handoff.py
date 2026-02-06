@@ -307,8 +307,6 @@ async def test_tool_choice_preserved_from_agent_config():
 
 async def test_context_provider_preserved_during_handoff():
     """Verify that context_provider is preserved when cloning agents in handoff workflows."""
-    from agent_framework import Context, ContextProvider
-
     # Track whether context provider methods were called
     provider_calls: list[str] = []
 
@@ -319,37 +317,32 @@ async def test_context_provider_preserved_during_handoff():
             provider_calls.append("invoking")
             return Context(instructions="Test context from provider.")
 
-    # Create a mock chat client that validates context_provider is present
-    async def mock_get_response_with_context_check(
-        messages: Sequence[ChatMessage], options: dict[str, Any] | None = None, **kwargs: Any
-    ) -> ChatResponse:
-        return ChatResponse(
-            messages=[ChatMessage(role="assistant", text="Response with context")],
-            response_id="test_response",
-        )
-
-    mock_client = MagicMock()
-    mock_client.get_response = AsyncMock(side_effect=mock_get_response_with_context_check)
-
     # Create context provider
     context_provider = TestContextProvider()
 
-    # Create agent with context provider
-    agent = ChatAgent(
-        chat_client=mock_client,
-        name="test_agent",
-        context_provider=context_provider,
-    )
+    # Create agent with context provider using the MockHandoffAgent pattern
+    agent = MockHandoffAgent(name="test_agent")
+    
+    # Manually set the context_provider on the agent
+    agent.context_provider = context_provider
 
-    # Build handoff workflow
+    # Verify the original agent has the context provider
+    assert agent.context_provider is context_provider, "Original agent should have context provider"
+
+    # Build handoff workflow - this should clone the agent and preserve context_provider
     workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
 
-    # Run the workflow
-    await agent.run("Test message")
-
-    # Verify context provider was invoked
-    assert len(provider_calls) > 0, "Context provider should be called during agent execution"
-    assert provider_calls[0] == "invoking", "Context provider invoking method should be called"
+    # Get the cloned agent from the workflow executor
+    cloned_executor = workflow.executors.get("test_agent")
+    assert cloned_executor is not None, "Agent executor should exist in workflow"
+    
+    # Verify the context_provider is preserved in the cloned agent
+    # The executor wraps the agent in the _agent property
+    assert hasattr(cloned_executor, '_agent'), "Executor should have _agent property"
+    cloned_agent = cloned_executor._agent
+    assert cloned_agent.context_provider is context_provider, (
+        "Context provider should be preserved when cloning agent for handoff workflow"
+    )
 
 
 # region Participant Factory Tests
