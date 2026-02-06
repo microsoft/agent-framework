@@ -1233,9 +1233,11 @@ class WorkflowBuilder:
             instance = executor_factory()
             if inspect.isawaitable(instance):
                 # Close un-awaited coroutines to avoid runtime warnings or memory leaks
-                if hasattr(instance, "close"):
-                    instance.close()  # type: ignore[reportGeneralTypeIssues]
-                raise ValueError("Async executor factories were detected. Use build_async() instead.")
+                try:
+                    if hasattr(instance, "close"):
+                        instance.close()  # type: ignore[reportGeneralTypeIssues]
+                finally:
+                    raise ValueError("Async executor factories were detected. Use build_async() instead.")
             factory_name_to_instance[name] = instance
 
         return self._process_instantiated_executors(factory_name_to_instance)
