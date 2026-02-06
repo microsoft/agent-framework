@@ -2747,6 +2747,8 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
                 # the case where _stream_source and _inner_stream_source are the same
                 # coroutine (e.g., from from_awaitable), avoiding double-await errors.
                 await self._get_stream()
+            if self._inner_stream is None:
+                raise RuntimeError("Inner stream not available")
             if not self._finalized:
                 # Consume outer stream (which delegates to inner) if not already consumed
                 if not self._consumed:

@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Any, Never
+from typing import Any
+
+from typing_extensions import Never
 
 from agent_framework import (
     ChatAgent,
