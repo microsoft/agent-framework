@@ -504,28 +504,29 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         instructions_list: list[str] = []
         instructions: str | None = None
 
+        # When using response chaining, find the index of the last assistant message
+        # Messages after that are "new" and should be included
+        last_assistant_idx = -1
+        if use_response_chaining:
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].role == "assistant":
+                    last_assistant_idx = i
+                    break
+
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
-        for message in messages:
+        for idx, message in enumerate(messages):
             if message.role in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]
             elif use_response_chaining:
-                # When using response chaining, filter messages to avoid re-submitting old content:
-                # - Keep NEW user messages (messages that were just added this turn)
-                # - Skip old function results and assistant messages (already in server history)
-
-                # A message is "new" if it only contains user input text/files, not function results
-                is_new_user_message = (
-                    message.role == "user"
-                    and any(
-                        content.type in ["text", "image", "hosted_file", "input_audio"] for content in message.contents
-                    )
-                    and not any(content.type == "function_result" for content in message.contents)
-                )
-
-                if is_new_user_message:
-                    result.append(message)
-                # Skip assistant messages and function result messages when using response chaining
+                # When using response chaining, only include messages after the last assistant message
+                # These are the "new" messages from the current turn
+                if idx > last_assistant_idx:
+                    # Also filter out function result messages
+                    has_function_result = any(content.type == "function_result" for content in message.contents)
+                    if not has_function_result:
+                        result.append(message)
+                # Skip all messages at or before the last assistant message (already in server history)
             else:
                 result.append(message)
 
