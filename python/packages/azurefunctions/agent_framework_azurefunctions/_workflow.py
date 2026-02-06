@@ -37,6 +37,7 @@ from agent_framework import (
     Workflow,
 )
 from agent_framework._workflows._edge import (
+    Edge,
     EdgeGroup,
     FanInEdgeGroup,
     FanOutEdgeGroup,
@@ -133,21 +134,21 @@ DEFAULT_HITL_TIMEOUT_HOURS = 72.0
 # ============================================================================
 
 
-def _evaluate_edge_condition_sync(edge: Any, message: Any) -> bool:
+def _evaluate_edge_condition_sync(edge: Edge, message: Any) -> bool:
     """Evaluate an edge's condition synchronously.
 
     This is needed because Durable Functions orchestrators use generators,
     not async/await, so we cannot call async methods like edge.should_route().
 
     Args:
-        edge: The Edge object with a _condition attribute
+        edge: The Edge with an optional _condition callable
         message: The message to evaluate against the condition
 
     Returns:
         True if the edge should be traversed, False otherwise
     """
     # Access the internal condition directly since should_route is async
-    condition = getattr(edge, "_condition", None)
+    condition = edge._condition
     if condition is None:
         return True
     result = condition(message)
