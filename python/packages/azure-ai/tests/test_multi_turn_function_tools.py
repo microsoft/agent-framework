@@ -122,10 +122,7 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
     turn2_input = turn2_request["input"]
 
     # Count function_call_output items in turn 2
-    sum(
-        1 for item in turn2_input
-        if isinstance(item, dict) and item.get("type") == "function_call_output"
-    )
+    sum(1 for item in turn2_input if isinstance(item, dict) and item.get("type") == "function_call_output")
 
     # The key assertion: Turn 2 should only have NEW function outputs (from turn 2's function calls)
     # If it has function outputs from turn 1, that's the bug we're fixing
@@ -204,36 +201,22 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
     thread = agent.get_new_thread()
 
     # Simulate turn 1 already completed - add messages to thread manually
-    turn1_user_msg = ChatMessage(
-        role="user",
-        contents=[Content.from_text("Calculate 15% tip on $85")]
-    )
+    turn1_user_msg = ChatMessage(role="user", contents=[Content.from_text("Calculate 15% tip on $85")])
     turn1_function_call = ChatMessage(
         role="assistant",
-        contents=[Content.from_function_call(
-            call_id="call_old_123",
-            name="calculate_tip",
-            arguments='{"bill_amount": 85, "tip_percent": 15}'
-        )]
+        contents=[
+            Content.from_function_call(
+                call_id="call_old_123", name="calculate_tip", arguments='{"bill_amount": 85, "tip_percent": 15}'
+            )
+        ],
     )
     turn1_function_result = ChatMessage(
         role="user",
-        contents=[Content.from_function_result(
-            call_id="call_old_123",
-            result="Tip: $12.75, Total: $97.75"
-        )]
+        contents=[Content.from_function_result(call_id="call_old_123", result="Tip: $12.75, Total: $97.75")],
     )
-    turn1_assistant_msg = ChatMessage(
-        role="assistant",
-        contents=[Content.from_text("The tip is $12.75")]
-    )
+    turn1_assistant_msg = ChatMessage(role="assistant", contents=[Content.from_text("The tip is $12.75")])
 
-    await thread.on_new_messages([
-        turn1_user_msg,
-        turn1_function_call,
-        turn1_function_result,
-        turn1_assistant_msg
-    ])
+    await thread.on_new_messages([turn1_user_msg, turn1_function_call, turn1_function_result, turn1_assistant_msg])
 
     # Set the service_thread_id to simulate having a previous response
     thread._service_thread_id = "resp_turn1"
@@ -260,8 +243,5 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
     )
 
     # Turn 2 should only have the NEW user message
-    user_messages = [
-        item for item in turn2_input
-        if isinstance(item, dict) and item.get("role") == "user"
-    ]
+    user_messages = [item for item in turn2_input if isinstance(item, dict) and item.get("role") == "user"]
     assert len(user_messages) == 1, "Turn 2 should only have the NEW user message"

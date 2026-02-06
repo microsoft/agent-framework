@@ -518,13 +518,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 is_new_user_message = (
                     message.role == "user"
                     and any(
-                        content.type in ["text", "image", "hosted_file", "input_audio"]
-                        for content in message.contents
+                        content.type in ["text", "image", "hosted_file", "input_audio"] for content in message.contents
                     )
-                    and not any(
-                        content.type == "function_result"
-                        for content in message.contents
-                    )
+                    and not any(content.type == "function_result" for content in message.contents)
                 )
 
                 if is_new_user_message:
