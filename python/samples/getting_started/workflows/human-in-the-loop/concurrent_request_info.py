@@ -26,15 +26,14 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from agent_framework import (
-    AgentRequestInfoResponse,
     ChatMessage,
-    ConcurrentBuilder,
     RequestInfoEvent,
     WorkflowEvent,
     WorkflowOutputEvent,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
 
 # Store chat client at module level for aggregator access
