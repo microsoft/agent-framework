@@ -154,11 +154,11 @@ async def main() -> None:
         words = ["Hello", " ", "from", " ", "the", " ", "streaming", " ", "response", "!"]
         for word in words:
             await asyncio.sleep(0.05)  # Simulate network delay
-            yield ChatResponseUpdate(contents=[Content.from_text(word)], role=Role.ASSISTANT)
+            yield ChatResponseUpdate(contents=[Content.from_text(word)], role="assistant")
 
     def combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
         """Finalizer that combines all updates into a single response."""
-        return ChatResponse.from_chat_response_updates(updates)
+        return ChatResponse.from_updates(updates)
 
     stream = ResponseStream(generate_updates(), finalizer=combine_updates)
 

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Content, HostedMCPTool, HostedWebSearchTool
+from agent_framework import HostedMCPTool, HostedWebSearchTool
 from agent_framework.anthropic import AnthropicClient
 from anthropic import AsyncAnthropicFoundry
 

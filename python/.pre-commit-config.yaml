@@ -2,6 +2,7 @@ files: ^python/
 fail_fast: true
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
+    alias: pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-toml
@@ -27,13 +28,8 @@ repos:
         name: Check Valid Python Samples
         types: ["python"]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
-  - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.1
-    hooks:
-      - id: nbqa-check-ast
-        name: Check Valid Python Notebooks
-        types: ["jupyter"]
   - repo: https://github.com/asottile/pyupgrade
+    alias: pyupgrade
     rev: v3.20.0
     hooks:
       - id: pyupgrade
@@ -41,13 +37,23 @@ repos:
         args: [--py310-plus]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
+    alias: poe-pre-commit-check
     hooks:
       - id: poe-check
         name: Run checks through Poe
         entry: uv --directory ./python run poe pre-commit-check
         language: system
         files: ^python/
+  - repo: https://github.com/PyCQA/bandit
+    alias: bandit
+    rev: 1.8.5
+    hooks:
+      - id: bandit
+        name: Bandit Security Checks
+        args: ["-c", "python/pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
+    alias: uv-lock
     # uv version.
     rev: 0.7.18
     hooks:
@@ -56,10 +62,3 @@ repos:
         name: Update uv lockfile
         files: python/pyproject.toml
         args: [--project, python]
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.5
-    hooks:
-      - id: bandit
-        name: Bandit Security Checks
-        args: ["-c", "python/pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]

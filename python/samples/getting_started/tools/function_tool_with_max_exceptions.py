@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import Content, tool
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
