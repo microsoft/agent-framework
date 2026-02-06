@@ -6,9 +6,9 @@ import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -18,10 +18,11 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionTool,
-    use_chat_middleware,
-    use_function_invocation,
+    ResponseStream,
 )
-from agent_framework.observability import use_instrumentation
+from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
+from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -42,6 +43,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework._middleware import ChatAndFunctionMiddlewareTypes
+
     from ._types import AGUIChatOptions
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -67,35 +70,51 @@ TAGUIChatOptions = TypeVar(
 def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
-    original_get_streaming_response = chat_client.get_streaming_response
-
-    @wraps(original_get_streaming_response)
-    async def streaming_wrapper(self: Any, *args: Any, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
-        async for update in original_get_streaming_response(self, *args, **kwargs):
-            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-            yield update
-
-    chat_client.get_streaming_response = streaming_wrapper  # type: ignore[assignment]
-
     original_get_response = chat_client.get_response
 
     @wraps(original_get_response)
-    async def response_wrapper(self: Any, *args: Any, **kwargs: Any) -> ChatResponse:
-        response: ChatResponse[Any] = await original_get_response(self, *args, **kwargs)  # type: ignore[var-annotated]
+    def response_wrapper(
+        self, *args: Any, stream: bool = False, **kwargs: Any
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            stream_response = original_get_response(self, *args, stream=True, **kwargs)
+            if isinstance(stream_response, ResponseStream):
+                return stream_response.with_transform_hook(_map_update)
+            return ResponseStream(_stream_wrapper_impl(stream_response))
+        return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
+
+    async def _response_wrapper_impl(self, original_func: Any, *args: Any, **kwargs: Any) -> ChatResponse:
+        """Non-streaming wrapper implementation."""
+        response = await original_func(self, *args, stream=False, **kwargs)
         if response.messages:
             for message in response.messages:
                 _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
-        return response
+        return response  # type: ignore[no-any-return]
+
+    async def _stream_wrapper_impl(stream: Any) -> AsyncIterable[ChatResponseUpdate]:
+        """Streaming wrapper implementation."""
+        if isinstance(stream, Awaitable):
+            stream = await stream
+        async for update in stream:
+            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
+            yield update
+
+    def _map_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
+        return update
 
     chat_client.get_response = response_wrapper  # type: ignore[assignment]
     return chat_client
 
 
 @_apply_server_function_call_unwrap
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]):
+class AGUIChatClient(
+    ChatMiddlewareLayer[TAGUIChatOptions],
+    FunctionInvocationLayer[TAGUIChatOptions],
+    ChatTelemetryLayer[TAGUIChatOptions],
+    BaseChatClient[TAGUIChatOptions],
+    Generic[TAGUIChatOptions],
+):
     """Chat client for communicating with AG-UI compliant servers.
 
     This client implements the BaseChatClient interface and automatically handles:
@@ -103,6 +122,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
     - State synchronization between client and server
     - Server-Sent Events (SSE) streaming
     - Event conversion to Agent Framework types
+    - MiddlewareTypes, telemetry, and function invocation support
 
     Important: Message History Management
         This client sends exactly the messages it receives to the server. It does NOT
@@ -115,10 +135,10 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
     Important: Tool Handling (Hybrid Execution - matches .NET)
         1. Client tool metadata sent to server - LLM knows about both client and server tools
         2. Server has its own tools that execute server-side
-        3. When LLM calls a client tool, @use_function_invocation executes it locally
+        3. When LLM calls a client tool, function invocation executes it locally
         4. Both client and server tools work together (hybrid pattern)
 
-        The wrapping ChatAgent's @use_function_invocation handles client tool execution
+        The wrapping ChatAgent's function invocation handles client tool execution
         automatically when the server's LLM decides to call them.
 
     Examples:
@@ -159,7 +179,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
 
         .. code-block:: python
 
-            async for update in client.get_streaming_response("Tell me a story"):
+            async for update in client.get_response("Tell me a story", stream=True):
                 if update.contents:
                     for content in update.contents:
                         if hasattr(content, "text"):
@@ -196,6 +216,8 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence["ChatAndFunctionMiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the AG-UI chat client.
@@ -205,9 +227,16 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
             http_client: Optional httpx.AsyncClient instance. If None, one will be created.
             timeout: Request timeout in seconds (default: 60.0)
             additional_properties: Additional properties to store
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             **kwargs: Additional arguments passed to BaseChatClient
         """
-        super().__init__(additional_properties=additional_properties, **kwargs)
+        super().__init__(
+            additional_properties=additional_properties,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self._http_service = AGUIHttpService(
             endpoint=endpoint,
             http_client=http_client,
@@ -230,9 +259,10 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         """Register a declaration-only placeholder so function invocation skips execution."""
 
         config = getattr(self, "function_invocation_configuration", None)
-        if not config:
+        if not isinstance(config, dict):
             return
-        if any(getattr(tool, "name", None) == tool_name for tool in config.additional_tools):
+        additional_tools = list(config.get("additional_tools", []))
+        if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
             return
 
         placeholder: FunctionTool[Any, Any] = FunctionTool(
@@ -240,7 +270,8 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
             description="Server-managed tool placeholder (AG-UI)",
             func=None,
         )
-        config.additional_tools = list(config.additional_tools) + [placeholder]
+        additional_tools.append(placeholder)
+        config["additional_tools"] = additional_tools
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
         self._registered_server_tools = registered  # type: ignore[attr-defined]
@@ -250,7 +281,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(
-        self, messages: MutableSequence[ChatMessage]
+        self, messages: Sequence[ChatMessage]
     ) -> tuple[list[ChatMessage], dict[str, Any] | None]:
         """Extract state from last message if present.
 
@@ -297,7 +328,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         """
         return agent_framework_messages_to_agui(messages)
 
-    def _get_thread_id(self, options: dict[str, Any]) -> str:
+    def _get_thread_id(self, options: Mapping[str, Any]) -> str:
         """Get or generate thread ID from chat options.
 
         Args:
@@ -317,43 +348,57 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         return thread_id
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        stream: bool = False,
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal method to get non-streaming response.
 
         Keyword Args:
             messages: List of chat messages
+            stream: Whether to stream the response.
             options: Chat options for the request
             **kwargs: Additional keyword arguments
 
         Returns:
             ChatResponse object
         """
-        return await ChatResponse.from_update_generator(
-            self._inner_get_streaming_response(
-                messages=messages,
-                options=options,
-                **kwargs,
+        if stream:
+            return ResponseStream(
+                self._streaming_impl(
+                    messages=messages,
+                    options=options,
+                    **kwargs,
+                ),
+                finalizer=ChatResponse.from_updates,
             )
-        )
 
-    @override
-    async def _inner_get_streaming_response(
+        async def _get_response() -> ChatResponse:
+            return await ChatResponse.from_update_generator(
+                self._streaming_impl(
+                    messages=messages,
+                    options=options,
+                    **kwargs,
+                )
+            )
+
+        return _get_response()
+
+    async def _streaming_impl(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Internal method to get streaming response.
 
         Keyword Args:
-            messages: List of chat messages
+            messages: Sequence of chat messages
             options: Chat options for the request
             **kwargs: Additional keyword arguments
 
@@ -368,7 +413,7 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
         agui_messages = self._convert_messages_to_agui_format(messages_to_send)
 
         # Send client tools to server so LLM knows about them
-        # Client tools execute via ChatAgent's @use_function_invocation wrapper
+        # Client tools execute via ChatAgent's function invocation wrapper
         agui_tools = convert_tools_to_agui_format(options.get("tools"))
 
         # Build set of client tool names (matches .NET clientToolSet)
@@ -415,12 +460,12 @@ class AGUIChatClient(BaseChatClient[TAGUIChatOptions], Generic[TAGUIChatOptions]
                             f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"  # type: ignore[attr-defined]
                         )
                         if content.name in client_tool_set:  # type: ignore[attr-defined]
-                            # Client tool - let @use_function_invocation execute it
+                            # Client tool - let function invocation execute it
                             if not content.additional_properties:  # type: ignore[attr-defined]
                                 content.additional_properties = {}  # type: ignore[attr-defined]
                             content.additional_properties["agui_thread_id"] = thread_id  # type: ignore[attr-defined]
                         else:
-                            # Server tool - wrap so @use_function_invocation ignores it
+                            # Server tool - wrap so function invocation ignores it
                             logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")  # type: ignore[union-attr]
                             self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore

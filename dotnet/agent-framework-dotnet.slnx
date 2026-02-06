@@ -81,7 +81,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyChatHistoryStorage/Agent_Step07_3rdPartyChatHistoryStorage.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step08_Observability/Agent_Step08_Observability.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
@@ -131,6 +131,7 @@
     <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step01_Running/Agent_Anthropic_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step02_Reasoning/Agent_Anthropic_Step02_Reasoning.csproj" />
     <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step03_UsingFunctionTools/Agent_Anthropic_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step04_UsingSkills/Agent_Anthropic_Step04_UsingSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithMemory/">
     <File Path="samples/GettingStarted/AgentWithMemory/README.md" />

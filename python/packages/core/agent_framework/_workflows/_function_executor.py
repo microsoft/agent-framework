@@ -64,11 +64,11 @@ class FunctionExecutor(Executor):
             output: Optional explicit output type(s) that can be sent via ``ctx.send_message()``.
                 Supports union types (e.g., ``str | int``) and string forward references.
                 When provided, takes precedence over introspection from the ``WorkflowContext``
-                first generic parameter (T_Out).
+                first generic parameter (OutT).
             workflow_output: Optional explicit output type(s) that can be yielded via
                 ``ctx.yield_output()``. Supports union types (e.g., ``str | int``) and string
                 forward references. When provided, takes precedence over introspection from the
-                ``WorkflowContext`` second generic parameter (T_W_Out).
+                ``WorkflowContext`` second generic parameter (W_OutT).
 
         Raises:
             ValueError: If func is a staticmethod or classmethod (use @handler on instance methods instead)
@@ -262,11 +262,11 @@ def executor(
         output: Optional explicit output type(s) that can be sent via ``ctx.send_message()``.
             Supports union types (e.g., ``str | int``) and string forward references.
             When provided, takes precedence over introspection from the ``WorkflowContext``
-            first generic parameter (T_Out).
+            first generic parameter (OutT).
         workflow_output: Optional explicit output type(s) that can be yielded via
             ``ctx.yield_output()``. Supports union types (e.g., ``str | int``) and string
             forward references. When provided, takes precedence over introspection from the
-            ``WorkflowContext`` second generic parameter (T_W_Out).
+            ``WorkflowContext`` second generic parameter (W_OutT).
 
     Returns:
         A FunctionExecutor instance that can be wired into a Workflow.

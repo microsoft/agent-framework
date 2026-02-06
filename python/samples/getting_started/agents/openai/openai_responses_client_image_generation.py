@@ -3,7 +3,7 @@
 import asyncio
 import base64
 
-from agent_framework import Content, HostedImageGenerationTool, ImageGenerationToolResultContent
+from agent_framework import HostedImageGenerationTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -70,7 +70,7 @@ async def main() -> None:
     # Show information about the generated image
     for message in result.messages:
         for content in message.contents:
-            if isinstance(content, ImageGenerationToolResultContent) and content.outputs:
+            if content.type == "image_generation" and content.outputs:
                 for output in content.outputs:
                     if output.type in ("data", "uri") and output.uri:
                         show_image_info(output.uri)

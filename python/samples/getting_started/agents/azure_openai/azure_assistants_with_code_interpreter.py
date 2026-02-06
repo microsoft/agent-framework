@@ -55,7 +55,7 @@ async def main() -> None:
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
-        async for chunk in agent.run_stream(query):
+        async for chunk in agent.run(query, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
             code_interpreter_chunk = get_code_interpreter_chunk(chunk)

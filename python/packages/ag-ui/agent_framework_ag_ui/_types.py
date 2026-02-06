@@ -102,7 +102,7 @@ class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], tota
         stop: Stop sequences.
         tools: List of tools - sent to server so LLM knows about client tools.
             Server executes its own tools; client tools execute locally via
-            @use_function_invocation middleware.
+            function invocation middleware.
         tool_choice: How the model should use tools.
         metadata: Metadata dict containing thread_id for conversation continuity.
 

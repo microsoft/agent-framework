@@ -9,7 +9,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._state import State
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework.observability import (
@@ -170,7 +170,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
 
 async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> None:
     """Test trace context propagation and handling in messages and executors."""
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
     executor = MockExecutor("test-executor")
 
@@ -180,7 +180,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
         executor,
         ["source"],
-        shared_state,
+        state,
         ctx,
         trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
         source_span_ids=["1234567890123456"],
@@ -202,7 +202,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     await executor.execute(
         "test message",
         ["source"],  # source_executor_ids
-        shared_state,  # shared_state
+        state,  # state
         ctx,  # runner_context
         trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
         source_span_ids=["1234567890123456"],
@@ -236,13 +236,13 @@ async def test_trace_context_disabled_when_tracing_disabled(
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
     executor = MockExecutor("test-executor")
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
         executor,
         ["source"],
-        shared_state,
+        state,
         ctx,
     )
 
@@ -315,7 +315,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Run workflow (this should create run spans)
     events = []
-    async for event in workflow.run_stream("test input"):
+    async for event in workflow.run("test input", stream=True):
         events.append(event)
 
     # Verify workflow executed correctly
@@ -416,7 +416,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
 
     # Run workflow and expect error
     with pytest.raises(ValueError, match="Test error"):
-        async for _ in workflow.run_stream("test input"):
+        async for _ in workflow.run("test input", stream=True):
             pass
 
     spans = span_exporter.get_finished_spans()
@@ -452,7 +452,7 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     await ctx.send_message(message)
 
     # Create a checkpoint that includes the message
-    checkpoint_id = await ctx.create_checkpoint(SharedState(), 0)
+    checkpoint_id = await ctx.create_checkpoint(State(), 0)
     checkpoint = await ctx.load_checkpoint(checkpoint_id)
     assert checkpoint is not None
 

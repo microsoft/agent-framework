@@ -8,9 +8,9 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
+    Sequence,
 )
-from typing import Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -28,12 +28,13 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
-from .._middleware import use_chat_middleware
+from .._middleware import ChatMiddlewareLayer
 from .._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
-    use_function_invocation,
 )
 from .._types import (
     ChatMessage,
@@ -41,11 +42,12 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ResponseStream,
     UsageDetails,
     prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
-from ..observability import use_instrumentation
+from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 13):
@@ -63,6 +65,8 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
+if TYPE_CHECKING:
+    from .._middleware import MiddlewareTypes
 
 __all__ = [
     "AssistantToolResources",
@@ -198,15 +202,15 @@ TOpenAIAssistantsOptions = TypeVar(
 # endregion
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIAssistantsClient(
+class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
+    ChatMiddlewareLayer[TOpenAIAssistantsOptions],
+    FunctionInvocationLayer[TOpenAIAssistantsOptions],
+    ChatTelemetryLayer[TOpenAIAssistantsOptions],
     BaseChatClient[TOpenAIAssistantsOptions],
     Generic[TOpenAIAssistantsOptions],
 ):
-    """OpenAI Assistants client."""
+    """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -223,6 +227,8 @@ class OpenAIAssistantsClient(
         async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Assistants client.
@@ -249,6 +255,8 @@ class OpenAIAssistantsClient(
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Other keyword parameters.
 
         Examples:
@@ -308,6 +316,8 @@ class OpenAIAssistantsClient(
             default_headers=default_headers,
             client=async_client,
             base_url=openai_settings.base_url,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )
         self.assistant_id: str | None = assistant_id
         self.assistant_name: str | None = assistant_name
@@ -337,44 +347,51 @@ class OpenAIAssistantsClient(
             object.__setattr__(self, "_should_delete_assistant", False)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        return await ChatResponse.from_update_generator(
-            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
-            output_format_type=options.get("response_format"),
-        )
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            # Streaming mode - return the async generator directly
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                # prepare
+                run_options, tool_results = self._prepare_options(messages, options, **kwargs)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        run_options, tool_results = self._prepare_options(messages, options, **kwargs)
+                # Get the thread ID
+                thread_id: str | None = options.get(
+                    "conversation_id", run_options.get("conversation_id", self.thread_id)
+                )
 
-        # Get the thread ID
-        thread_id: str | None = options.get("conversation_id", run_options.get("conversation_id", self.thread_id))
+                if thread_id is None and tool_results is not None:
+                    raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
-        if thread_id is None and tool_results is not None:
-            raise ValueError("No thread ID was provided, but chat messages includes tool results.")
+                # Determine which assistant to use and create if needed
+                assistant_id = await self._get_assistant_id_or_create()
 
-        # Determine which assistant to use and create if needed
-        assistant_id = await self._get_assistant_id_or_create()
+                # execute
+                stream_obj, thread_id = await self._create_assistant_stream(
+                    thread_id, assistant_id, run_options, tool_results
+                )
 
-        # execute
-        stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
+                # process
+                async for update in self._process_stream_events(stream_obj, thread_id):
+                    yield update
 
-        # process
-        async for update in self._process_stream_events(stream, thread_id):
-            yield update
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
+
+        # Non-streaming mode - collect updates and convert to response
+        async def _get_response() -> ChatResponse:
+            stream_result = self._inner_get_response(messages=messages, options=options, stream=True, **kwargs)
+            return await ChatResponse.from_update_generator(
+                updates=stream_result,  # type: ignore[arg-type]
+                output_format_type=options.get("response_format"),  # type: ignore[arg-type]
+            )
+
+        return _get_response()
 
     async def _get_assistant_id_or_create(self) -> str:
         """Determine which assistant to use and create if needed.
@@ -489,8 +506,8 @@ class OpenAIAssistantsClient(
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             yield ChatResponseUpdate(
-                                role=role,
-                                contents=[Content.from_text(text=delta_block.text.value)],
+                                role=role,  # type: ignore[arg-type]
+                                contents=[Content.from_text(delta_block.text.value)],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
@@ -586,8 +603,8 @@ class OpenAIAssistantsClient(
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
         from .._types import validate_tool_mode
@@ -618,7 +635,9 @@ class OpenAIAssistantsClient(
 
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []
-        if tool_mode["mode"] != "none" and tools is not None:
+        # Always include tools if provided, regardless of tool_choice
+        # tool_choice="none" means the model won't call tools, but tools should still be available
+        if tools is not None:
             for tool in tools:
                 if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]

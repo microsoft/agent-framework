@@ -346,4 +346,65 @@ public class AgentResponseTests
         // Act & Assert.
         Assert.False(response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out _));
     }
+
+    [Fact]
+    public void ToAgentResponseUpdatesWithNoMessagesProducesEmptyArray()
+    {
+        // Arrange
+        AgentResponse response = new();
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        Assert.Empty(updates);
+    }
+
+    [Fact]
+    public void ToAgentResponseUpdatesWithUsageOnlyProducesSingleUpdate()
+    {
+        // Arrange
+        AgentResponse response = new()
+        {
+            Usage = new UsageDetails { TotalTokenCount = 100 }
+        };
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        AgentResponseUpdate update = Assert.Single(updates);
+        UsageContent usageContent = Assert.IsType<UsageContent>(update.Contents[0]);
+        Assert.Equal(100, usageContent.Details.TotalTokenCount);
+    }
+
+    [Fact]
+    public void ToAgentResponseUpdatesWithAdditionalPropertiesOnlyProducesSingleUpdate()
+    {
+        // Arrange
+        AgentResponse response = new()
+        {
+            AdditionalProperties = new() { ["key"] = "value" }
+        };
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        AgentResponseUpdate update = Assert.Single(updates);
+        Assert.NotNull(update.AdditionalProperties);
+        Assert.Equal("value", update.AdditionalProperties!["key"]);
+    }
+
+    [Fact]
+    public void Deserialize_ThrowsWhenDeserializationReturnsNull()
+    {
+        // Arrange
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "null"));
+
+        // Act & Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
+        Assert.Equal("The deserialized response is null.", exception.Message);
+    }
 }

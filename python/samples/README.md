@@ -95,7 +95,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/agents/custom/custom_agent.py`](./getting_started/agents/custom/custom_agent.py) | Custom Agent Implementation Example |
-| [`getting_started/agents/custom/custom_chat_client.py`](./getting_started/agents/custom/custom_chat_client.py) | Custom Chat Client Implementation Example |
+| [`getting_started/chat_client/custom_chat_client.py`](./getting_started/chat_client/custom_chat_client.py) | Custom Chat Client Implementation Example |
 
 ### Ollama
 

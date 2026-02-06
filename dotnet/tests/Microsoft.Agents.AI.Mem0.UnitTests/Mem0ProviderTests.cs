@@ -18,6 +18,9 @@ namespace Microsoft.Agents.AI.Mem0.UnitTests;
 /// </summary>
 public sealed class Mem0ProviderTests : IDisposable
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
+
     private readonly Mock<ILogger<Mem0Provider>> _loggerMock;
     private readonly Mock<ILoggerFactory> _loggerFactoryMock;
     private readonly RecordingHandler _handler = new();
@@ -96,7 +99,7 @@ public sealed class Mem0ProviderTests : IDisposable
             UserId = "user"
         };
         var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "What is my name?")]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "What is my name?")]);
 
         // Act
         var aiContext = await sut.InvokingAsync(invokingContext);
@@ -161,7 +164,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
 
         var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Who am I?")]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Who am I?")]);
 
         // Act
         await sut.InvokingAsync(invokingContext, CancellationToken.None);
@@ -215,7 +218,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
 
         // Assert
         var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
@@ -242,7 +245,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = null, InvokeException = new InvalidOperationException("Request Failed") });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, aiContextProviderMessages: null) { ResponseMessages = null, InvokeException = new InvalidOperationException("Request Failed") });
 
         // Assert
         Assert.Empty(this._handler.Requests);
@@ -268,7 +271,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
 
         // Assert
         this._loggerMock.Verify(
@@ -318,7 +321,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
 
         // Assert
         Assert.Equal(expectedLogCount, this._loggerMock.Invocations.Count);
@@ -400,7 +403,7 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
         var provider = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Q?")]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);

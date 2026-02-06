@@ -66,8 +66,21 @@ public sealed class A2AAgent : AIAgent
         => new(new A2AAgentSession() { ContextId = contextId });
 
     /// <inheritdoc/>
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new A2AAgentSession(serializedSession, jsonSerializerOptions));
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not A2AAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new A2AAgentSession(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

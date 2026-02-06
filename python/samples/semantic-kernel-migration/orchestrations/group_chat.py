@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import ChatAgent, ChatMessage, GroupChatBuilder, WorkflowOutputEvent
+from agent_framework import ChatAgent, ChatMessage, GroupChatBuilderWorkflowEvent
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
@@ -239,8 +239,8 @@ async def run_agent_framework_example(task: str) -> str:
     )
 
     final_response = ""
-    async for event in workflow.run_stream(task):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(task, stream=True):
+        if event.type == "output":
             data = event.data
             if isinstance(data, list) and len(data) > 0:
                 # Get the final message from the conversation

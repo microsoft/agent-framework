@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import sys
@@ -12,8 +14,8 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import INTERNAL_SOURCE_ID
-from ._events import RequestInfoEvent, WorkflowEvent
-from ._shared_state import SharedState
+from ._events import WorkflowEvent
+from ._state import State
 from ._typing_utils import is_instance_of
 
 if sys.version_info >= (3, 11):
@@ -51,7 +53,7 @@ class Message:
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
 
     # For response messages, the original request data
-    original_request_info_event: RequestInfoEvent | None = None
+    original_request_info_event: WorkflowEvent[Any] | None = None
 
     # Backward compatibility properties
     @property
@@ -77,7 +79,7 @@ class Message:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Message":
+    def from_dict(data: dict[str, Any]) -> Message:
         """Create a Message from a dictionary."""
         # Validation
         if "data" not in data:
@@ -104,7 +106,7 @@ class _WorkflowState(TypedDict):
     """
 
     messages: dict[str, list[dict[str, Any]]]
-    shared_state: dict[str, Any]
+    state: dict[str, Any]
     iteration_count: int
     pending_request_info_events: dict[str, dict[str, Any]]
 
@@ -203,7 +205,7 @@ class RunnerContext(Protocol):
         """Set whether agents should stream incremental updates.
 
         Args:
-            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+            streaming: True for streaming mode (stream=True), False for non-streaming (stream=False).
         """
         ...
 
@@ -217,16 +219,16 @@ class RunnerContext(Protocol):
 
     async def create_checkpoint(
         self,
-        shared_state: SharedState,
+        state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Create a checkpoint of the current workflow state.
 
         Args:
-            shared_state: The shared state to include in the checkpoint.
-                          This is needed to capture the full state of the workflow.
-                          The shared state is not managed by the context itself.
+            state: The state to include in the checkpoint.
+                   This is needed to capture the full state of the workflow.
+                   The state is not managed by the context itself.
             iteration_count: The current iteration count of the workflow.
             metadata: Optional metadata to associate with the checkpoint.
 
@@ -254,11 +256,11 @@ class RunnerContext(Protocol):
         """
         ...
 
-    async def add_request_info_event(self, event: RequestInfoEvent) -> None:
-        """Add a RequestInfoEvent to the context and track it for correlation.
+    async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
+        """Add a request_info event to the context and track it for correlation.
 
         Args:
-            event: The RequestInfoEvent to be added.
+            event: The WorkflowEvent with type='request_info' to be added.
         """
         ...
 
@@ -271,11 +273,11 @@ class RunnerContext(Protocol):
         """
         ...
 
-    async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
-        """Get the mapping of request IDs to their corresponding RequestInfoEvent.
+    async def get_pending_request_info_events(self) -> dict[str, WorkflowEvent[Any]]:
+        """Get the mapping of request IDs to their corresponding request_info events.
 
         Returns:
-            A dictionary mapping request IDs to their corresponding RequestInfoEvent.
+            A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         ...
 
@@ -290,18 +292,18 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: dict[str, list[Message]] = {}
-        # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
+        # Event queue for immediate streaming of events
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
         # An additional storage for pending request info events
-        self._pending_request_info_events: dict[str, RequestInfoEvent] = {}
+        self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
 
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
         self._runtime_checkpoint_storage: CheckpointStorage | None = None
         self._workflow_id: str | None = None
 
-        # Streaming flag - set by workflow's run_stream() vs run()
+        # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
 
     # region Messaging and Events
@@ -374,7 +376,7 @@ class InProcRunnerContext:
 
     async def create_checkpoint(
         self,
-        shared_state: SharedState,
+        state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
@@ -383,14 +385,14 @@ class InProcRunnerContext:
             raise ValueError("Checkpoint storage not configured")
 
         self._workflow_id = self._workflow_id or str(uuid.uuid4())
-        state = await self._get_serialized_workflow_state(shared_state, iteration_count)
+        workflow_state = self._get_serialized_workflow_state(state, iteration_count)
 
         checkpoint = WorkflowCheckpoint(
             workflow_id=self._workflow_id,
-            messages=state["messages"],
-            shared_state=state["shared_state"],
-            pending_request_info_events=state["pending_request_info_events"],
-            iteration_count=state["iteration_count"],
+            messages=workflow_state["messages"],
+            state=workflow_state["state"],
+            pending_request_info_events=workflow_state["pending_request_info_events"],
+            iteration_count=workflow_state["iteration_count"],
             metadata=metadata or {},
         )
         checkpoint_id = await storage.save_checkpoint(checkpoint)
@@ -426,7 +428,7 @@ class InProcRunnerContext:
         self._pending_request_info_events.clear()
         pending_requests_data = checkpoint.pending_request_info_events
         for request_id, request_data in pending_requests_data.items():
-            request_info_event = RequestInfoEvent.from_dict(request_data)
+            request_info_event = WorkflowEvent.from_dict(request_data)
             self._pending_request_info_events[request_id] = request_info_event
             await self.add_event(request_info_event)
 
@@ -442,7 +444,7 @@ class InProcRunnerContext:
         """Set whether agents should stream incremental updates.
 
         Args:
-            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+            streaming: True for streaming mode (run(stream=True)), False for non-streaming.
         """
         self._streaming = streaming
 
@@ -454,7 +456,7 @@ class InProcRunnerContext:
         """
         return self._streaming
 
-    async def _get_serialized_workflow_state(self, shared_state: SharedState, iteration_count: int) -> _WorkflowState:
+    def _get_serialized_workflow_state(self, state: State, iteration_count: int) -> _WorkflowState:
         serialized_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
             serialized_messages[source_id] = [msg.to_dict() for msg in message_list]
@@ -465,17 +467,19 @@ class InProcRunnerContext:
 
         return {
             "messages": serialized_messages,
-            "shared_state": encode_checkpoint_value(await shared_state.export_state()),
+            "state": encode_checkpoint_value(state.export_state()),
             "iteration_count": iteration_count,
             "pending_request_info_events": serialized_pending_request_info_events,
         }
 
-    async def add_request_info_event(self, event: RequestInfoEvent) -> None:
-        """Add a RequestInfoEvent to the context and track it for correlation.
+    async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
+        """Add a request_info event to the context and track it for correlation.
 
         Args:
-            event: The RequestInfoEvent to be added.
+            event: The WorkflowEvent with type='request_info' to be added.
         """
+        if event.request_id is None:
+            raise ValueError("request_info event must have a request_id")
         self._pending_request_info_events[event.request_id] = event
         await self.add_event(event)
 
@@ -497,21 +501,23 @@ class InProcRunnerContext:
                 f"expected {event.response_type.__name__}, got {type(response).__name__}"
             )
 
+        source_executor_id = event.source_executor_id
+
         # Create ResponseMessage instance
         response_msg = Message(
             data=response,
-            source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
-            target_id=event.source_executor_id,
+            source_id=INTERNAL_SOURCE_ID(source_executor_id),
+            target_id=source_executor_id,
             type=MessageType.RESPONSE,
             original_request_info_event=event,
         )
 
         await self.send_message(response_msg)
 
-    async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
-        """Get the mapping of request IDs to their corresponding RequestInfoEvent.
+    async def get_pending_request_info_events(self) -> dict[str, WorkflowEvent[Any]]:
+        """Get the mapping of request IDs to their corresponding request_info events.
 
         Returns:
-            A dictionary mapping request IDs to their corresponding RequestInfoEvent.
+            A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         return dict(self._pending_request_info_events)

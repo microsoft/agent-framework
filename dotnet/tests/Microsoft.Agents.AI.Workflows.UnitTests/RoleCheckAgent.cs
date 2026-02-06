@@ -16,8 +16,11 @@ internal sealed class RoleCheckAgent(bool allowOtherAssistantRoles, string? id =
 
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new RoleCheckAgentSession());
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => new(new RoleCheckAgentSession());
 

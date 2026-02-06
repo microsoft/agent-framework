@@ -1,15 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
+
+from __future__ import annotations
+
 import base64
 import json
 import re
 import sys
-from collections.abc import (
-    AsyncIterable,
-    Callable,
-    Mapping,
-    MutableMapping,
-    Sequence,
-)
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
@@ -40,13 +37,19 @@ __all__ = [
     "Content",
     "FinishReason",
     "FinishReasonLiteral",
+    "ResponseStream",
     "Role",
     "RoleLiteral",
+    "TFinal",
+    "TOuterFinal",
+    "TOuterUpdate",
+    "TUpdate",
     "TextSpanRegion",
     "ToolMode",
     "UsageDetails",
     "add_usage_details",
     "detect_media_type_from_base64",
+    "map_chat_to_agent_update",
     "merge_chat_options",
     "normalize_messages",
     "normalize_tools",
@@ -63,7 +66,7 @@ logger = get_logger("agent_framework")
 # region Content Parsing Utilities
 
 
-def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
+def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     """Parse a list of content data into appropriate Content objects.
 
     Args:
@@ -72,7 +75,7 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
     Returns:
         List of Content objects with unknown types logged and ignored
     """
-    contents: list["Content"] = []
+    contents: list[Content] = []
     for content_data in contents_data:
         if content_data is None:
             continue
@@ -184,7 +187,7 @@ def detect_media_type_from_base64(
     return None
 
 
-def _get_data_bytes_as_str(content: "Content") -> str | None:
+def _get_data_bytes_as_str(content: Content) -> str | None:
     """Extract base64 data string from data URI.
 
     Args:
@@ -213,7 +216,7 @@ def _get_data_bytes_as_str(content: "Content") -> str | None:
     return data  # type: ignore[return-value, no-any-return]
 
 
-def _get_data_bytes(content: "Content") -> bytes | None:
+def _get_data_bytes(content: Content) -> bytes | None:
     """Extract and decode binary data from data URI.
 
     Args:
@@ -484,8 +487,8 @@ class Content:
         file_id: str | None = None,
         vector_store_id: str | None = None,
         # Code interpreter tool fields
-        inputs: list["Content"] | None = None,
-        outputs: list["Content"] | Any | None = None,
+        inputs: list[Content] | None = None,
+        outputs: list[Content] | Any | None = None,
         # Image generation tool fields
         image_id: str | None = None,
         # MCP server tool fields
@@ -494,7 +497,7 @@ class Content:
         output: Any = None,
         # Function approval fields
         id: str | None = None,
-        function_call: "Content | None" = None,
+        function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
         # Common fields
@@ -845,7 +848,7 @@ class Content:
         cls: type[TContent],
         *,
         call_id: str | None = None,
-        inputs: Sequence["Content"] | None = None,
+        inputs: Sequence[Content] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -865,7 +868,7 @@ class Content:
         cls: type[TContent],
         *,
         call_id: str | None = None,
-        outputs: Sequence["Content"] | None = None,
+        outputs: Sequence[Content] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -966,7 +969,7 @@ class Content:
     def from_function_approval_request(
         cls: type[TContent],
         id: str,
-        function_call: "Content",
+        function_call: Content,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -988,7 +991,7 @@ class Content:
         cls: type[TContent],
         approved: bool,
         id: str,
-        function_call: "Content",
+        function_call: Content,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -1008,7 +1011,7 @@ class Content:
     def to_function_approval_response(
         self,
         approved: bool,
-    ) -> "Content":
+    ) -> Content:
         """Convert a function approval request content to a function approval response content."""
         if self.type != "function_approval_request":
             raise ContentError(
@@ -1125,7 +1128,7 @@ class Content:
             **remaining,
         )
 
-    def __add__(self, other: "Content") -> "Content":
+    def __add__(self, other: Content) -> Content:
         """Concatenate or merge two Content instances."""
         if not isinstance(other, Content):
             raise TypeError(f"Incompatible type: Cannot add Content with {type(other).__name__}")
@@ -1143,7 +1146,7 @@ class Content:
             return self._add_usage_content(other)
         raise ContentError(f"Addition not supported for content type: {self.type}")
 
-    def _add_text_content(self, other: "Content") -> "Content":
+    def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
         # Merge raw representations
         if self.raw_representation is None:
@@ -1174,7 +1177,7 @@ class Content:
             raw_representation=raw_representation,
         )
 
-    def _add_text_reasoning_content(self, other: "Content") -> "Content":
+    def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
         # Merge raw representations
         if self.raw_representation is None:
@@ -1214,7 +1217,7 @@ class Content:
             raw_representation=raw_representation,
         )
 
-    def _add_function_call_content(self, other: "Content") -> "Content":
+    def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
@@ -1258,7 +1261,7 @@ class Content:
             raw_representation=raw_representation,
         )
 
-    def _add_usage_content(self, other: "Content") -> "Content":
+    def _add_usage_content(self, other: Content) -> Content:
         """Add two UsageContent instances by combining their usage details."""
         self_details = getattr(self, "usage_details", {})
         other_details = getattr(other, "usage_details", {})
@@ -1372,7 +1375,7 @@ class Content:
 # endregion
 
 
-def _prepare_function_call_results_as_dumpable(content: "Content | Any | list[Content | Any]") -> Any:
+def _prepare_function_call_results_as_dumpable(content: Content | Any | list[Content | Any]) -> Any:
     if isinstance(content, list):
         # Particularly deal with lists of Content
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
@@ -1388,7 +1391,7 @@ def _prepare_function_call_results_as_dumpable(content: "Content | Any | list[Co
     return content
 
 
-def prepare_function_call_results(content: "Content | Any | list[Content | Any]") -> str:
+def prepare_function_call_results(content: Content | Any | list[Content | Any]) -> str:
     """Prepare the values of the function call results."""
     if isinstance(content, Content):
         # For BaseContent objects, use to_dict and serialize to JSON
@@ -1510,7 +1513,7 @@ class ChatMessage(SerializationMixin):
     def __init__(
         self,
         role: RoleLiteral | str,
-        contents: "Sequence[Content | str | Mapping[str, Any]] | None" = None,
+        contents: Sequence[Content | str | Mapping[str, Any]] | None = None,
         *,
         text: str | None = None,
         author_name: str | None = None,
@@ -1684,9 +1687,7 @@ def prepend_instructions_to_messages(
 # region ChatResponse
 
 
-def _process_update(
-    response: "ChatResponse | AgentResponse", update: "ChatResponseUpdate | AgentResponseUpdate"
-) -> None:
+def _process_update(response: ChatResponse | AgentResponse, update: ChatResponseUpdate | AgentResponseUpdate) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
     if (
@@ -1760,11 +1761,11 @@ def _process_update(
             response.model_id = update.model_id
 
 
-def _coalesce_text_content(contents: list["Content"], type_str: Literal["text", "text_reasoning"]) -> None:
+def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents: list["Content"] = []
+    coalesced_contents: list[Content] = []
     first_new_content: Any | None = None
     for content in contents:
         if content.type == type_str:
@@ -1787,7 +1788,7 @@ def _coalesce_text_content(contents: list["Content"], type_str: Literal["text", 
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
+def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
@@ -1855,7 +1856,7 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: TResponseModel | None = None,
         response_format: type[BaseModel] | None = None,
@@ -1896,7 +1897,10 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
+        # Handle legacy dict format for finish_reason
+        if isinstance(finish_reason, dict) and "value" in finish_reason:
+            finish_reason = finish_reason["value"]
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: TResponseModel | None = value
         self._response_format: type[BaseModel] | None = response_format
@@ -1907,25 +1911,25 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     @overload
     @classmethod
     def from_updates(
-        cls: type["ChatResponse[Any]"],
-        updates: Sequence["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
         *,
         output_format_type: type[TResponseModelT],
-    ) -> "ChatResponse[TResponseModelT]": ...
+    ) -> ChatResponse[TResponseModelT]: ...
 
     @overload
     @classmethod
     def from_updates(
-        cls: type["ChatResponse[Any]"],
-        updates: Sequence["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "ChatResponse[Any]": ...
+    ) -> ChatResponse[Any]: ...
 
     @classmethod
     def from_updates(
         cls: type[TChatResponse],
-        updates: Sequence["ChatResponseUpdate"],
+        updates: Sequence[ChatResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
@@ -1962,25 +1966,25 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     @overload
     @classmethod
     async def from_update_generator(
-        cls: type["ChatResponse[Any]"],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
         output_format_type: type[TResponseModelT],
-    ) -> "ChatResponse[TResponseModelT]": ...
+    ) -> ChatResponse[TResponseModelT]: ...
 
     @overload
     @classmethod
     async def from_update_generator(
-        cls: type["ChatResponse[Any]"],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "ChatResponse[Any]": ...
+    ) -> ChatResponse[Any]: ...
 
     @classmethod
     async def from_update_generator(
         cls: type[TChatResponse],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
@@ -2096,14 +2100,14 @@ class ChatResponseUpdate(SerializationMixin):
         self,
         *,
         contents: Sequence[Content] | None = None,
-        role: RoleLiteral | str | None = None,
+        role: RoleLiteral | Role | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2138,20 +2142,14 @@ class ChatResponseUpdate(SerializationMixin):
                     processed_contents.append(c)
             self.contents = processed_contents
 
-        # Handle legacy dict formats for role and finish_reason
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
-
-        self.role: str | None = role
+        self.role = role
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
         self.model_id = model_id
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
+        self.finish_reason = finish_reason
         self.additional_properties = additional_properties
         self.raw_representation = raw_representation
 
@@ -2304,25 +2302,25 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     @overload
     @classmethod
     def from_updates(
-        cls: type["AgentResponse[Any]"],
-        updates: Sequence["AgentResponseUpdate"],
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[TResponseModelT],
-    ) -> "AgentResponse[TResponseModelT]": ...
+    ) -> AgentResponse[TResponseModelT]: ...
 
     @overload
     @classmethod
     def from_updates(
-        cls: type["AgentResponse[Any]"],
-        updates: Sequence["AgentResponseUpdate"],
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "AgentResponse[Any]": ...
+    ) -> AgentResponse[Any]: ...
 
     @classmethod
     def from_updates(
         cls: type[TAgentRunResponse],
-        updates: Sequence["AgentResponseUpdate"],
+        updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
@@ -2342,26 +2340,26 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    async def from_agent_response_generator(
-        cls: type["AgentResponse[Any]"],
-        updates: AsyncIterable["AgentResponseUpdate"],
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
         output_format_type: type[TResponseModelT],
-    ) -> "AgentResponse[TResponseModelT]": ...
+    ) -> AgentResponse[TResponseModelT]: ...
 
     @overload
     @classmethod
-    async def from_agent_response_generator(
-        cls: type["AgentResponse[Any]"],
-        updates: AsyncIterable["AgentResponseUpdate"],
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "AgentResponse[Any]": ...
+    ) -> AgentResponse[Any]: ...
 
     @classmethod
-    async def from_agent_response_generator(
+    async def from_update_generator(
         cls: type[TAgentRunResponse],
-        updates: AsyncIterable["AgentResponseUpdate"],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
@@ -2504,6 +2502,353 @@ class AgentResponseUpdate(SerializationMixin):
         return self.text
 
 
+# region ResponseStream
+
+
+def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
+    return AgentResponseUpdate(
+        contents=update.contents,
+        role=update.role,
+        author_name=update.author_name or agent_name,
+        response_id=update.response_id,
+        message_id=update.message_id,
+        created_at=update.created_at,
+        additional_properties=update.additional_properties,
+        raw_representation=update,
+    )
+
+
+# Type variables for ResponseStream
+TUpdate = TypeVar("TUpdate")
+TFinal = TypeVar("TFinal")
+TOuterUpdate = TypeVar("TOuterUpdate")
+TOuterFinal = TypeVar("TOuterFinal")
+
+
+class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
+    """Async stream wrapper that supports iteration and deferred finalization."""
+
+    def __init__(
+        self,
+        stream: AsyncIterable[TUpdate] | Awaitable[AsyncIterable[TUpdate]],
+        *,
+        finalizer: Callable[[Sequence[TUpdate]], TFinal | Awaitable[TFinal]] | None = None,
+        transform_hooks: list[Callable[[TUpdate], TUpdate | Awaitable[TUpdate] | None]] | None = None,
+        cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
+        result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None]] | None = None,
+    ) -> None:
+        """A Async Iterable stream of updates.
+
+        Args:
+            stream: An async iterable or awaitable that resolves to an async iterable of updates.
+
+        Keyword Args:
+            finalizer: An optional callable that takes the list of all updates and produces a final result.
+            transform_hooks: Optional list of callables that transform each update as it is yielded.
+            cleanup_hooks: Optional list of callables that run after the stream is fully consumed (before finalizer).
+            result_hooks: Optional list of callables that transform the final result (after finalizer).
+
+        """
+        self._stream_source = stream
+        self._finalizer = finalizer
+        self._stream: AsyncIterable[TUpdate] | None = None
+        self._iterator: AsyncIterator[TUpdate] | None = None
+        self._updates: list[TUpdate] = []
+        self._consumed: bool = False
+        self._finalized: bool = False
+        self._final_result: TFinal | None = None
+        self._transform_hooks: list[Callable[[TUpdate], TUpdate | Awaitable[TUpdate] | None]] = (
+            transform_hooks if transform_hooks is not None else []
+        )
+        self._result_hooks: list[Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None]] = (
+            result_hooks if result_hooks is not None else []
+        )
+        self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = (
+            cleanup_hooks if cleanup_hooks is not None else []
+        )
+        self._cleanup_run: bool = False
+        self._inner_stream: ResponseStream[Any, Any] | None = None
+        self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
+        self._wrap_inner: bool = False
+        self._map_update: Callable[[Any], Any | Awaitable[Any]] | None = None
+
+    def map(
+        self,
+        transform: Callable[[TUpdate], TOuterUpdate | Awaitable[TOuterUpdate]],
+        finalizer: Callable[[Sequence[TOuterUpdate]], TOuterFinal | Awaitable[TOuterFinal]],
+    ) -> ResponseStream[TOuterUpdate, TOuterFinal]:
+        """Create a new stream that transforms each update.
+
+        The returned stream delegates iteration to this stream, ensuring single consumption.
+        Each update is transformed by the provided function before being yielded.
+
+        Since the update type changes, a new finalizer MUST be provided that works with
+        the transformed update type. The inner stream's finalizer cannot be used as it
+        expects the original update type.
+
+        When ``get_final_response()`` is called on the mapped stream:
+        1. The inner stream's finalizer runs first (on the original updates)
+        2. The inner stream's result_hooks run (on the inner final result)
+        3. The outer stream's finalizer runs (on the transformed updates)
+        4. The outer stream's result_hooks run (on the outer final result)
+
+        This ensures that post-processing hooks registered on the inner stream (e.g.,
+        context provider notifications, telemetry) are still executed.
+
+        Args:
+            transform: Function to transform each update to a new type.
+            finalizer: Function to convert collected (transformed) updates to the final type.
+                This is required because the inner stream's finalizer won't work with
+                the new update type.
+
+        Returns:
+            A new ResponseStream with transformed update and final types.
+
+        Example:
+            >>> chat_stream.map(
+            ...     lambda u: AgentResponseUpdate(...),
+            ...     AgentResponse.from_updates,
+            ... )
+        """
+        stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        stream._map_update = transform
+        return stream  # type: ignore[return-value]
+
+    def with_finalizer(
+        self,
+        finalizer: Callable[[Sequence[TUpdate]], TOuterFinal | Awaitable[TOuterFinal]],
+    ) -> ResponseStream[TUpdate, TOuterFinal]:
+        """Create a new stream with a different finalizer.
+
+        The returned stream delegates iteration to this stream, ensuring single consumption.
+        When `get_final_response()` is called, the new finalizer is used instead of any
+        existing finalizer.
+
+        **IMPORTANT**: The inner stream's finalizer and result_hooks are NOT called when
+        a new finalizer is provided via this method.
+
+        Args:
+            finalizer: Function to convert collected updates to the final response type.
+
+        Returns:
+            A new ResponseStream with the new final type.
+
+        Example:
+            >>> stream.with_finalizer(AgentResponse.from_updates)
+        """
+        stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        return stream  # type: ignore[return-value]
+
+    @classmethod
+    def from_awaitable(
+        cls,
+        awaitable: Awaitable[ResponseStream[TUpdate, TFinal]],
+    ) -> ResponseStream[TUpdate, TFinal]:
+        """Create a ResponseStream from an awaitable that resolves to a ResponseStream.
+
+        This is useful when you have an async function that returns a ResponseStream
+        and you want to wrap it to add hooks or use it in a pipeline.
+
+        The returned stream delegates to the inner stream once it resolves, using the
+        inner stream's finalizer if no new finalizer is provided.
+
+        Args:
+            awaitable: An awaitable that resolves to a ResponseStream.
+
+        Returns:
+            A new ResponseStream that wraps the awaitable.
+
+        Example:
+            >>> async def get_stream() -> ResponseStream[Update, Response]: ...
+            >>> stream = ResponseStream.from_awaitable(get_stream())
+        """
+        stream: ResponseStream[Any, Any] = cls(awaitable)  # type: ignore[arg-type]
+        stream._inner_stream_source = awaitable  # type: ignore[assignment]
+        stream._wrap_inner = True
+        return stream  # type: ignore[return-value]
+
+    async def _get_stream(self) -> AsyncIterable[TUpdate]:
+        if self._stream is None:
+            if hasattr(self._stream_source, "__aiter__"):
+                self._stream = self._stream_source  # type: ignore[assignment]
+            else:
+                self._stream = await self._stream_source  # type: ignore[assignment]
+            if isinstance(self._stream, ResponseStream) and self._wrap_inner:
+                self._inner_stream = self._stream
+                return self._stream
+        return self._stream  # type: ignore[return-value]
+
+    def __aiter__(self) -> ResponseStream[TUpdate, TFinal]:
+        return self
+
+    async def __anext__(self) -> TUpdate:
+        if self._iterator is None:
+            stream = await self._get_stream()
+            self._iterator = stream.__aiter__()
+        try:
+            update = await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._consumed = True
+            await self._run_cleanup_hooks()
+            raise
+        except Exception:
+            await self._run_cleanup_hooks()
+            raise
+        if self._map_update is not None:
+            mapped = self._map_update(update)
+            if isinstance(mapped, Awaitable):
+                update = await mapped
+            else:
+                update = mapped  # type: ignore[assignment]
+        self._updates.append(update)
+        for hook in self._transform_hooks:
+            hooked = hook(update)
+            if isinstance(hooked, Awaitable):
+                update = await hooked
+            elif hooked is not None:
+                update = hooked  # type: ignore[assignment]
+        return update
+
+    def __await__(self) -> Any:
+        async def _wrap() -> ResponseStream[TUpdate, TFinal]:
+            await self._get_stream()
+            return self
+
+        return _wrap().__await__()
+
+    async def get_final_response(self) -> TFinal:
+        """Get the final response by applying the finalizer to all collected updates.
+
+        If a finalizer is configured, it receives the list of updates and returns the final type.
+        Result hooks are then applied in order to transform the result.
+
+        If no finalizer is configured, returns the collected updates as Sequence[TUpdate].
+
+        For wrapped streams (created via .map() or .from_awaitable()):
+        - The inner stream's finalizer is called first to produce the inner final result.
+        - The inner stream's result_hooks are then applied to that inner result.
+        - The outer stream's finalizer is called to convert the outer (mapped) updates to the final type.
+        - The outer stream's result_hooks are then applied to transform the outer result.
+
+        This ensures that post-processing hooks registered on the inner stream (e.g., context
+        provider notifications) are still executed even when the stream is wrapped/mapped.
+        """
+        if self._wrap_inner:
+            if self._inner_stream is None:
+                if self._inner_stream_source is None:
+                    raise ValueError("No inner stream configured for this stream.")
+                if isinstance(self._inner_stream_source, ResponseStream):
+                    self._inner_stream = self._inner_stream_source
+                else:
+                    self._inner_stream = await self._inner_stream_source
+            if not self._finalized:
+                # Consume outer stream (which delegates to inner) if not already consumed
+                if not self._consumed:
+                    async for _ in self:
+                        pass
+
+                # First, finalize the inner stream and run its result hooks
+                # This ensures inner post-processing (e.g., context provider notifications) runs
+                if self._inner_stream._finalizer is not None:
+                    inner_result: Any = self._inner_stream._finalizer(self._inner_stream._updates)
+                    if isinstance(inner_result, Awaitable):
+                        inner_result = await inner_result
+                else:
+                    inner_result = self._inner_stream._updates
+                # Run inner stream's result hooks
+                for hook in self._inner_stream._result_hooks:
+                    hooked = hook(inner_result)
+                    if isinstance(hooked, Awaitable):
+                        hooked = await hooked
+                    if hooked is not None:
+                        inner_result = hooked
+                self._inner_stream._final_result = inner_result
+                self._inner_stream._finalized = True
+
+                # Now finalize the outer stream with its own finalizer
+                # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
+                if self._finalizer is not None:
+                    result: Any = self._finalizer(self._updates)
+                    if isinstance(result, Awaitable):
+                        result = await result
+                else:
+                    # No outer finalizer - use inner's finalized result
+                    result = inner_result
+                # Apply outer's result_hooks
+                for hook in self._result_hooks:
+                    hooked = hook(result)
+                    if isinstance(hooked, Awaitable):
+                        hooked = await hooked
+                    if hooked is not None:
+                        result = hooked
+                self._final_result = result
+                self._finalized = True
+            return self._final_result  # type: ignore[return-value]
+        if not self._finalized:
+            if not self._consumed:
+                async for _ in self:
+                    pass
+            # Use finalizer if configured, otherwise return collected updates
+            if self._finalizer is not None:
+                result = self._finalizer(self._updates)
+                if isinstance(result, Awaitable):
+                    result = await result
+            else:
+                result = self._updates
+            for hook in self._result_hooks:
+                hooked = hook(result)
+                if isinstance(hooked, Awaitable):
+                    hooked = await hooked
+                if hooked is not None:
+                    result = hooked
+            self._final_result = result
+            self._finalized = True
+        return self._final_result  # type: ignore[return-value]
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[TUpdate], TUpdate | Awaitable[TUpdate] | None],
+    ) -> ResponseStream[TUpdate, TFinal]:
+        """Register a transform hook executed for each update during iteration."""
+        self._transform_hooks.append(hook)
+        return self
+
+    def with_result_hook(
+        self,
+        hook: Callable[[TFinal], TFinal | Awaitable[TFinal | None] | None],
+    ) -> ResponseStream[TUpdate, TFinal]:
+        """Register a result hook executed after finalization."""
+        self._result_hooks.append(hook)
+        self._finalized = False
+        self._final_result = None
+        return self
+
+    def with_cleanup_hook(
+        self,
+        hook: Callable[[], Awaitable[None] | None],
+    ) -> ResponseStream[TUpdate, TFinal]:
+        """Register a cleanup hook executed after stream consumption (before finalizer)."""
+        self._cleanup_hooks.append(hook)
+        return self
+
+    async def _run_cleanup_hooks(self) -> None:
+        if self._cleanup_run:
+            return
+        self._cleanup_run = True
+        for hook in self._cleanup_hooks:
+            result = hook()
+            if isinstance(result, Awaitable):
+                await result
+
+    @property
+    def updates(self) -> Sequence[TUpdate]:
+        return self._updates
+
+
 # region ChatOptions
 
 
@@ -2570,7 +2915,13 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    )
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 

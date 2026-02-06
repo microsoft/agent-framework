@@ -233,7 +233,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-For more advanced orchestration patterns including Sequential, GroupChat, Concurrent, Magentic, and Handoff orchestrations, see the [orchestration samples](samples/getting_started/workflows/orchestration).
+For more advanced orchestration patterns including Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations, see the [orchestration samples](samples/getting_started/orchestrations).
 
 ## More Examples & Samples
 

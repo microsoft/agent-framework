@@ -6,9 +6,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
     ChatMessage,
     tool,
 )
@@ -17,7 +17,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Middleware Termination Example
+MiddlewareTypes Termination Example
 
 This sample demonstrates how middleware can terminate execution using the `context.terminate` flag.
 The example includes:
@@ -40,15 +40,15 @@ def get_weather(
 
 
 class PreTerminationMiddleware(AgentMiddleware):
-    """Middleware that terminates execution before calling the agent."""
+    """MiddlewareTypes that terminates execution before calling the agent."""
 
     def __init__(self, blocked_words: list[str]):
         self.blocked_words = [word.lower() for word in blocked_words]
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         # Check if the user message contains any blocked words
         last_message = context.messages[-1] if context.messages else None
@@ -79,7 +79,7 @@ class PreTerminationMiddleware(AgentMiddleware):
 
 
 class PostTerminationMiddleware(AgentMiddleware):
-    """Middleware that allows processing but terminates after reaching max responses across multiple runs."""
+    """MiddlewareTypes that allows processing but terminates after reaching max responses across multiple runs."""
 
     def __init__(self, max_responses: int = 1):
         self.max_responses = max_responses
@@ -87,8 +87,8 @@ class PostTerminationMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         print(f"[PostTerminationMiddleware] Processing request (response count: {self.response_count})")
 
@@ -109,7 +109,7 @@ class PostTerminationMiddleware(AgentMiddleware):
 
 async def pre_termination_middleware() -> None:
     """Demonstrate pre-termination middleware that blocks requests with certain words."""
-    print("\n--- Example 1: Pre-termination Middleware ---")
+    print("\n--- Example 1: Pre-termination MiddlewareTypes ---")
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(credential=credential).as_agent(
@@ -136,7 +136,7 @@ async def pre_termination_middleware() -> None:
 
 async def post_termination_middleware() -> None:
     """Demonstrate post-termination middleware that limits responses across multiple runs."""
-    print("\n--- Example 2: Post-termination Middleware ---")
+    print("\n--- Example 2: Post-termination MiddlewareTypes ---")
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(credential=credential).as_agent(
@@ -170,7 +170,7 @@ async def post_termination_middleware() -> None:
 
 async def main() -> None:
     """Example demonstrating middleware termination functionality."""
-    print("=== Middleware Termination Example ===")
+    print("=== MiddlewareTypes Termination Example ===")
     await pre_termination_middleware()
     await post_termination_middleware()
 

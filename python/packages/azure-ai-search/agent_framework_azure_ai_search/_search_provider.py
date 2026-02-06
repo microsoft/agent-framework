@@ -524,8 +524,13 @@ class AzureAISearchContextProvider(ContextProvider):
         # Convert to list and filter to USER/ASSISTANT messages with text only
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
 
+        def get_role_value(role: str | Any) -> str:
+            return role.value if hasattr(role, "value") else str(role)
+
         filtered_messages = [
-            msg for msg in messages_list if msg and msg.text and msg.text.strip() and msg.role in ["user", "assistant"]
+            msg
+            for msg in messages_list
+            if msg and msg.text and msg.text.strip() and get_role_value(msg.role) in ["user", "assistant"]
         ]
 
         if not filtered_messages:
@@ -546,8 +551,8 @@ class AzureAISearchContextProvider(ContextProvider):
             return Context()
 
         # Create context messages: first message with prompt, then one message per result part
-        context_messages = [ChatMessage("user", [self.context_prompt])]
-        context_messages.extend([ChatMessage("user", [part]) for part in search_result_parts])
+        context_messages = [ChatMessage(role="user", text=self.context_prompt)]
+        context_messages.extend([ChatMessage(role="user", text=part) for part in search_result_parts])
 
         return Context(messages=context_messages)
 

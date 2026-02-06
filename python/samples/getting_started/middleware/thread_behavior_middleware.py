@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
-    AgentRunContext,
+    AgentContext,
     ChatMessageStore,
     tool,
 )
@@ -14,12 +14,12 @@ from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
-Thread Behavior Middleware Example
+Thread Behavior MiddlewareTypes Example
 
 This sample demonstrates how middleware can access and track thread state across multiple agent runs.
 The example shows:
 
-- How AgentRunContext.thread property behaves across multiple runs
+- How AgentContext.thread property behaves across multiple runs
 - How middleware can access conversation history through the thread
 - The timing of when thread messages are populated (before vs after next() call)
 - How to track thread state changes across runs
@@ -45,16 +45,16 @@ def get_weather(
 
 
 async def thread_tracking_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
-    """Middleware that tracks and logs thread behavior across runs."""
+    """MiddlewareTypes that tracks and logs thread behavior across runs."""
     thread_messages = []
     if context.thread and context.thread.message_store:
         thread_messages = await context.thread.message_store.list_messages()
 
-    print(f"[Middleware pre-execution] Current input messages: {len(context.messages)}")
-    print(f"[Middleware pre-execution] Thread history messages: {len(thread_messages)}")
+    print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
+    print(f"[MiddlewareTypes pre-execution] Thread history messages: {len(thread_messages)}")
 
     # Call next to execute the agent
     await next(context)
@@ -64,12 +64,12 @@ async def thread_tracking_middleware(
     if context.thread and context.thread.message_store:
         updated_thread_messages = await context.thread.message_store.list_messages()
 
-    print(f"[Middleware post-execution] Updated thread messages: {len(updated_thread_messages)}")
+    print(f"[MiddlewareTypes post-execution] Updated thread messages: {len(updated_thread_messages)}")
 
 
 async def main() -> None:
     """Example demonstrating thread behavior in middleware across multiple runs."""
-    print("=== Thread Behavior Middleware Example ===")
+    print("=== Thread Behavior MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

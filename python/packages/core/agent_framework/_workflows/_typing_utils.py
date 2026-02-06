@@ -1,9 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from types import UnionType
-from typing import Any, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
-T = TypeVar("T")
+from .._agents import ChatAgent
+
+
+def is_chat_agent(agent: Any) -> TypeGuard[ChatAgent]:
+    """Check if the given agent is a ChatAgent.
+
+    Args:
+        agent (Any): The agent to check.
+
+    Returns:
+        TypeGuard[ChatAgent]: True if the agent is a ChatAgent, False otherwise.
+    """
+    return isinstance(agent, ChatAgent)
 
 
 def resolve_type_annotation(

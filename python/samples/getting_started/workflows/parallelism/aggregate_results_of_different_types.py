@@ -3,7 +3,7 @@
 import asyncio
 import random
 
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from typing_extensions import Never
 
 """
@@ -13,7 +13,6 @@ Purpose:
 Show how to construct a parallel branch pattern in workflows. Demonstrate:
 - Fan out by targeting multiple executors from one dispatcher.
 - Fan in by collecting a list of results from the executors.
-- Simple tracing using AgentRunEvent to observe execution order and progress.
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
@@ -87,8 +86,8 @@ async def main() -> None:
 
     # 2) Run the workflow
     output: list[int | float] | None = None
-    async for event in workflow.run_stream([random.randint(1, 100) for _ in range(10)]):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run([random.randint(1, 100) for _ in range(10)], stream=True):
+        if event.type == "output":
             output = event.data
 
     if output is not None:

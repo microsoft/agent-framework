@@ -4,30 +4,34 @@ import asyncio
 import json
 import sys
 from collections import deque
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, Literal
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReasonLiteral,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
+    ResponseStream,
     ToolProtocol,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
     validate_tool_mode,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
@@ -190,7 +194,7 @@ ROLE_MAP: dict[str, str] = {
     "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, str] = {
+FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "end_turn": "stop",
     "stop_sequence": "stop",
     "max_tokens": "length",
@@ -212,11 +216,14 @@ class BedrockSettings(AFBaseSettings):
     session_token: SecretStr | None = None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
-    """Async chat client for Amazon Bedrock's Converse API."""
+class BedrockChatClient(
+    ChatMiddlewareLayer[TBedrockChatOptions],
+    FunctionInvocationLayer[TBedrockChatOptions],
+    ChatTelemetryLayer[TBedrockChatOptions],
+    BaseChatClient[TBedrockChatOptions],
+    Generic[TBedrockChatOptions],
+):
+    """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -230,6 +237,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -244,6 +253,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            middleware: Optional sequence of middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
             kwargs: Additional arguments forwarded to ``BaseChatClient``.
@@ -289,7 +300,11 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self._bedrock_client = client
         self.model_id = settings.chat_model_id
         self.region = settings.region
@@ -305,41 +320,45 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         return Boto3Session(**session_kwargs)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         request = self._prepare_options(messages, options, **kwargs)
-        raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
-        return self._process_converse_response(raw_response)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
-        contents = list(response.messages[0].contents if response.messages else [])
-        if response.usage_details:
-            contents.append(Content.from_usage(usage_details=response.usage_details))  # type: ignore[arg-type]
-        yield ChatResponseUpdate(
-            response_id=response.response_id,
-            contents=contents,
-            model_id=response.model_id,
-            finish_reason=response.finish_reason,
-            raw_representation=response.raw_representation,
-        )
+        if stream:
+            # Streaming mode - simulate streaming by yielding a single update
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+                parsed_response = self._process_converse_response(response)
+                contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
+                if parsed_response.usage_details:
+                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                yield ChatResponseUpdate(
+                    response_id=parsed_response.response_id,
+                    contents=contents,
+                    model_id=parsed_response.model_id,
+                    finish_reason=parsed_response.finish_reason,
+                    raw_representation=parsed_response.raw_representation,
+                )
+
+            return self._build_response_stream(_stream())
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+            return self._process_converse_response(raw_response)
+
+        return _get_response()
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         model_id = options.get("model_id") or self.model_id
@@ -572,7 +591,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage("assistant", contents, raw_representation=message)
+        chat_message = ChatMessage(role="assistant", contents=contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
@@ -640,7 +659,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> str | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())

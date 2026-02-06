@@ -1,24 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import AsyncIterable, Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable
 from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunContext,
+    ChatContext,
     ChatMessage,
-    Content,
+    ChatResponse,
+    ChatResponseUpdate,
+    ResponseStream,
+    Role,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
 """
-Result Override with Middleware (Regular and Streaming)
+Result Override with MiddlewareTypes (Regular and Streaming)
 
 This sample demonstrates how to use middleware to intercept and modify function results
 after execution, supporting both regular and streaming agent responses. The example shows:
@@ -26,7 +30,7 @@ after execution, supporting both regular and streaming agent responses. The exam
 - How to execute the original function first and then modify its result
 - Replacing function outputs with custom messages or transformed data
 - Using middleware for result filtering, formatting, or enhancement
-- Detecting streaming vs non-streaming execution using context.is_streaming
+- Detecting streaming vs non-streaming execution using context.stream
 - Overriding streaming results with custom async generators
 
 The weather override middleware lets the original weather function execute normally,
@@ -45,10 +49,8 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def weather_override_middleware(
-    context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-) -> None:
-    """Middleware that overrides weather results for both streaming and non-streaming cases."""
+async def weather_override_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+    """Chat middleware that overrides weather results for both streaming and non-streaming cases."""
 
     # Let the original agent execution complete first
     await next(context)
@@ -57,56 +59,157 @@ async def weather_override_middleware(
     if context.result is not None:
         # Create custom weather message
         chunks = [
-            "Weather Advisory - ",
             "due to special atmospheric conditions, ",
             "all locations are experiencing perfect weather today! ",
             "Temperature is a comfortable 22°C with gentle breezes. ",
             "Perfect day for outdoor activities!",
         ]
 
-        if context.is_streaming:
-            # For streaming: create an async generator that yields chunks
-            async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
-                for chunk in chunks:
-                    yield AgentResponseUpdate(contents=[Content.from_text(text=chunk)])
+        if context.stream and isinstance(context.result, ResponseStream):
+            index = {"value": 0}
 
-            context.result = override_stream()
+            def _update_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+                for content in update.contents or []:
+                    if not content.text:
+                        continue
+                    content.text = f"Weather Advisory: [{index['value']}] {content.text}"
+                    index["value"] += 1
+                return update
+
+            context.result.with_update_hook(_update_hook)
         else:
-            # For non-streaming: just replace with the string message
-            custom_message = "".join(chunks)
-            context.result = AgentResponse(messages=[ChatMessage("assistant", [custom_message])])
+            # For non-streaming: just replace with a new message
+            current_text = context.result.text or ""
+            custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
+            context.result = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
+
+
+async def validate_weather_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+    """Chat middleware that simulates result validation for both streaming and non-streaming cases."""
+    await next(context)
+
+    validation_note = "Validation: weather data verified."
+
+    if context.result is None:
+        return
+
+    if context.stream and isinstance(context.result, ResponseStream):
+
+        def _append_validation_note(response: ChatResponse) -> ChatResponse:
+            response.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
+            return response
+
+        context.result.with_finalizer(_append_validation_note)
+    elif isinstance(context.result, ChatResponse):
+        context.result.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
+
+
+async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+    """Agent middleware that validates chat middleware effects and cleans the result."""
+    await next(context)
+
+    if context.result is None:
+        return
+
+    validation_note = "Validation: weather data verified."
+
+    state = {"found_prefix": False}
+
+    def _sanitize(response: AgentResponse) -> AgentResponse:
+        found_prefix = state["found_prefix"]
+        found_validation = False
+        cleaned_messages: list[ChatMessage] = []
+
+        for message in response.messages:
+            text = message.text
+            if text is None:
+                cleaned_messages.append(message)
+                continue
+
+            if validation_note in text:
+                found_validation = True
+                text = text.replace(validation_note, "").strip()
+                if not text:
+                    continue
+
+            if "Weather Advisory:" in text:
+                found_prefix = True
+                text = text.replace("Weather Advisory:", "")
+
+            text = re.sub(r"\[\d+\]\s*", "", text)
+
+            cleaned_messages.append(
+                ChatMessage(
+                    role=message.role,
+                    text=text.strip(),
+                    author_name=message.author_name,
+                    message_id=message.message_id,
+                    additional_properties=message.additional_properties,
+                    raw_representation=message.raw_representation,
+                )
+            )
+
+        if not found_prefix:
+            raise RuntimeError("Expected chat middleware prefix not found in agent response.")
+        if not found_validation:
+            raise RuntimeError("Expected validation note not found in agent response.")
+
+        cleaned_messages.append(ChatMessage(role=Role.ASSISTANT, text=" Agent: OK"))
+        response.messages = cleaned_messages
+        return response
+
+    if context.stream and isinstance(context.result, ResponseStream):
+
+        def _clean_update(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            for content in update.contents or []:
+                if not content.text:
+                    continue
+                text = content.text
+                if "Weather Advisory:" in text:
+                    state["found_prefix"] = True
+                    text = text.replace("Weather Advisory:", "")
+                text = re.sub(r"\[\d+\]\s*", "", text)
+                content.text = text
+            return update
+
+        context.result.with_update_hook(_clean_update)
+        context.result.with_finalizer(_sanitize)
+    elif isinstance(context.result, AgentResponse):
+        context.result = _sanitize(context.result)
 
 
 async def main() -> None:
     """Example demonstrating result override with middleware for both streaming and non-streaming."""
-    print("=== Result Override Middleware Example ===")
+    print("=== Result Override MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
-            name="WeatherAgent",
-            instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
-            tools=get_weather,
-            middleware=[weather_override_middleware],
-        ) as agent,
-    ):
-        # Non-streaming example
-        print("\n--- Non-streaming Example ---")
-        query = "What's the weather like in Seattle?"
-        print(f"User: {query}")
-        result = await agent.run(query)
-        print(f"Agent: {result}")
+    agent = OpenAIResponsesClient(
+        middleware=[validate_weather_middleware, weather_override_middleware],
+    ).as_agent(
+        name="WeatherAgent",
+        instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
+        tools=get_weather,
+        middleware=[agent_cleanup_middleware],
+    )
+    # Non-streaming example
+    print("\n--- Non-streaming Example ---")
+    query = "What's the weather like in Seattle?"
+    print(f"User: {query}")
+    result = await agent.run(query)
+    print(f"Agent: {result}")
 
-        # Streaming example
-        print("\n--- Streaming Example ---")
-        query = "What's the weather like in Portland?"
-        print(f"User: {query}")
-        print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_stream(query):
-            if chunk.text:
-                print(chunk.text, end="", flush=True)
+    # Streaming example
+    print("\n--- Streaming Example ---")
+    query = "What's the weather like in Portland?"
+    print(f"User: {query}")
+    print("Agent: ", end="", flush=True)
+    response = agent.run(query, stream=True)
+    async for chunk in response:
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print("\n")
+    print(f"Final Result: {(await response.get_final_response()).text}")
 
 
 if __name__ == "__main__":

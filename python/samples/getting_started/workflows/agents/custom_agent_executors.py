@@ -14,15 +14,17 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
-Step 2: Agents in a Workflow non-streaming
+Sample: Custom Agent Executors in a Workflow
 
 This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler pattern
-with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder, and finish
-by yielding outputs from the terminal node.
+Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler
+pattern with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder,
+and finish by yielding outputs from the terminal node.
+
+Note: When an agent is passed to a workflow, the workflow essenatially wrap the agent in a more sophisticated executor.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -105,17 +107,13 @@ class Reviewer(Executor):
 
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
+    # Create the executors
+    writer = Writer()
+    reviewer = Reviewer()
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = (
-        WorkflowBuilder()
-        .register_executor(Writer, name="writer")
-        .register_executor(Reviewer, name="reviewer")
-        .set_start_executor("writer")
-        .add_edge("writer", "reviewer")
-        .build()
-    )
+    workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the workflow output.

@@ -101,7 +101,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        AIAgentHostState state = new(this._session?.Serialize(), this._currentTurnEmitEvents);
+        JsonElement? sessionState = this._session is not null ? this._agent.SerializeSession(this._session) : null;
+        AIAgentHostState state = new(sessionState, this._currentTurnEmitEvents);
         Task coreStateTask = context.QueueStateUpdateAsync(AIAgentHostStateKey, state, cancellationToken: cancellationToken).AsTask();
         Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
         Task functionCallRequestsTask = this._functionCallHandler?.OnCheckpointingAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
