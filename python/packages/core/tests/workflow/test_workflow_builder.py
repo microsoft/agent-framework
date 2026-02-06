@@ -285,7 +285,26 @@ def test_register_duplicate_id_raises_error():
     builder.set_start_executor("MyExecutor1")
 
     # Registering second executor with same ID should raise ValueError
-    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been registered."):
+    with pytest.raises(
+        ValueError,
+        match=r"Executor with ID 'executor' from factory 'MyExecutor2' conflicts with existing factory 'MyExecutor1'\.",
+    ):
+        builder.build()
+
+
+def test_register_factory_conflicts_with_direct_executor():
+    """Test that a factory-produced executor conflicting with a directly-added executor raises an error."""
+    # Add an executor directly via add_edge
+    direct_executor = MockExecutor(id="executor")
+    builder = WorkflowBuilder()
+    builder.add_edge(direct_executor, direct_executor)  # Add it to self._executors
+
+    # Now register a factory that produces the same ID
+    builder.register_executors({"MyFactory": lambda: MockExecutor(id="executor")})
+    builder.set_start_executor("MyFactory")
+
+    # Building should raise ValueError
+    with pytest.raises(ValueError, match=r"Executor with ID 'executor' has already been added to the workflow\."):
         builder.build()
 
 

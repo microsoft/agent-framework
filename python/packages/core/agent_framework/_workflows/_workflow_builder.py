@@ -1185,14 +1185,19 @@ class WorkflowBuilder:
             start_executor = self._start_executor
 
         deferred_edge_groups: list[EdgeGroup] = []
-        executor_ids_seen: set[str] = set()
+        # Map of executor IDs to their factory names for error message clarity
+        executor_id_to_factory_name: dict[str, str] = {}
 
         for name, instance in factory_name_to_instance.items():
-            if instance.id in executor_ids_seen:
-                raise ValueError(f"Executor with ID '{instance.id}' has already been registered.")
+            if instance.id in executor_id_to_factory_name:
+                existing_factory = executor_id_to_factory_name[instance.id]
+                raise ValueError(
+                    f"Executor with ID '{instance.id}' from factory '{name}' "
+                    f"conflicts with existing factory '{existing_factory}'."
+                )
             if instance.id in self._executors:
-                raise ValueError(f"Executor ID collision: An executor with ID '{instance.id}' already exists.")
-            executor_ids_seen.add(instance.id)
+                raise ValueError(f"Executor with ID '{instance.id}' has already been added to the workflow.")
+            executor_id_to_factory_name[instance.id] = name
 
             if isinstance(self._start_executor, str) and name == self._start_executor:
                 start_executor = instance
