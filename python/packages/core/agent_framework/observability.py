@@ -70,7 +70,7 @@ __all__ = [
 ]
 
 
-TAgent = TypeVar("TAgent", bound="SupportsAgentRun")
+AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 
 

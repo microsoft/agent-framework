@@ -64,7 +64,7 @@ __all__ = [
     "function_middleware",
 ]
 
-TAgent = TypeVar("TAgent", bound="SupportsAgentRun")
+AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 TContext = TypeVar("TContext")
 TUpdate = TypeVar("TUpdate")
 
