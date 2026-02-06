@@ -533,6 +533,35 @@ def test_register_factory_conflicts_with_direct_executor():
         builder.build()
 
 
+def test_unregistered_factory_name_in_edge_raises_error():
+    """Test that referencing an unregistered factory name in an edge raises ValueError."""
+    builder = WorkflowBuilder()
+
+    # Register only ExecutorA
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+    builder.set_start_executor("ExecutorA")
+
+    # Add edge to unregistered ExecutorB
+    builder.add_edge("ExecutorA", "ExecutorB")
+
+    # Building should raise ValueError because ExecutorB was never registered
+    with pytest.raises(ValueError, match="Factory 'ExecutorB' has not been registered"):
+        builder.build()
+
+
+def test_unregistered_start_executor_factory_name_raises_error():
+    """Test that setting an unregistered factory name as start executor raises ValueError."""
+    builder = WorkflowBuilder()
+
+    # Register ExecutorA but set start to unregistered ExecutorB
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+    builder.set_start_executor("ExecutorB")
+
+    # Building should raise ValueError because ExecutorB was never registered
+    with pytest.raises(ValueError, match="Failed to resolve starting executor from registered factories"):
+        builder.build()
+
+
 def test_register_agent_basic():
     """Test basic agent registration with lazy initialization."""
     builder = WorkflowBuilder()
