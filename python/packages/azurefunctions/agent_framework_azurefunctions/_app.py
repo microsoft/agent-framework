@@ -44,11 +44,7 @@ from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import (
-    deserialize_value,
-    reconstruct_message_for_handler,
-    serialize_message,
-)
+from ._serialization import deserialize_value, serialize_value
 from ._workflow import (
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
@@ -290,8 +286,9 @@ class AgentFunctionApp(DFAppBase):
             if not executor:
                 raise ValueError(f"Unknown executor: {captured_executor_id}")
 
-            # Reconstruct message - try to match handler's expected types using public input_types
-            message = reconstruct_message_for_handler(message_data, executor.input_types)
+            # Reconstruct message - deserialize_value restores the original typed objects
+            # from the encoded data (with type markers)
+            message = deserialize_value(message_data)
 
             # Check if this is a HITL response message by examining source_executor_ids
             is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
@@ -344,7 +341,7 @@ class AgentFunctionApp(DFAppBase):
                 outputs: list[Any] = []
                 for event in events:
                     if isinstance(event, WorkflowOutputEvent):
-                        outputs.append(serialize_message(event.data))
+                        outputs.append(serialize_value(event.data))
 
                 # Get pending request info events for HITL
                 pending_request_info_events = await runner_context.get_pending_request_info_events()
@@ -355,7 +352,7 @@ class AgentFunctionApp(DFAppBase):
                     serialized_pending_requests.append({
                         "request_id": event.request_id,
                         "source_executor_id": event.source_executor_id,
-                        "data": serialize_message(event.data),
+                        "data": serialize_value(event.data),
                         "request_type": f"{type(event.data).__module__}:{type(event.data).__name__}",
                         "response_type": f"{event.response_type.__module__}:{event.response_type.__name__}"
                         if event.response_type
@@ -367,12 +364,12 @@ class AgentFunctionApp(DFAppBase):
                 for _source_id, msg_list in sent_messages.items():
                     for msg in msg_list:
                         serialized_sent_messages.append({
-                            "message": serialize_message(msg.data),
+                            "message": serialize_value(msg.data),
                             "target_id": msg.target_id,
                             "source_id": msg.source_id,
                         })
 
-                serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
+                serialized_updates = {k: serialize_value(v) for k, v in updates.items()}
 
                 return {
                     "sent_messages": serialized_sent_messages,
