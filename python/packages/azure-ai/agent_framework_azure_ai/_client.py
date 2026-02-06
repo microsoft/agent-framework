@@ -515,7 +515,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 # - Skip old function results and assistant messages (already in server history)
 
                 # A message is "new" if it only contains user input text/files, not function results
-                # Function results are paired with function calls from the assistant
                 is_new_user_message = (
                     message.role == "user"
                     and any(
@@ -523,7 +522,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                         for content in message.contents
                     )
                     and not any(
-                        content.type in ["function_result", "function_call"]
+                        content.type == "function_result"
                         for content in message.contents
                     )
                 )
