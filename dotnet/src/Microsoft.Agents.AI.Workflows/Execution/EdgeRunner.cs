@@ -24,5 +24,5 @@ internal abstract class EdgeRunner<TEdgeData>(
     protected IRunnerContext RunContext { get; } = Throw.IfNull(runContext);
     protected TEdgeData EdgeData { get; } = Throw.IfNull(edgeData);
 
-    protected Activity? StartActivity(string name) => this.RunContext.TelemetryContext.StartEdgeGroupProcessActivity();
+    protected Activity? StartActivity() => this.RunContext.TelemetryContext.StartEdgeGroupProcessActivity();
 }

@@ -192,7 +192,7 @@ public sealed class ObservabilityTests : IDisposable
         var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
 
         WorkflowBuilder builder = new(uppercase);
-        var workflow = builder.Build(); // No WithOpenTelemetry() call
+        builder.Build(); // No WithOpenTelemetry() call
         // Assert - No activities should be created
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
@@ -244,7 +244,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Act
         WorkflowBuilder builder = new(uppercase);
-        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowBuild = true).Build();
+        builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowBuild = true).Build();
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();

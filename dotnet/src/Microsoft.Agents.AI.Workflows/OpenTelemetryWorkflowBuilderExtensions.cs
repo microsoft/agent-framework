@@ -12,25 +12,18 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public static class OpenTelemetryWorkflowBuilderExtensions
 {
-    private const string DefaultSourceName = "Microsoft.Agents.AI.Workflows";
-
     /// <summary>
     /// Enables OpenTelemetry instrumentation for the workflow, providing comprehensive observability for workflow operations.
     /// </summary>
     /// <param name="builder">The <see cref="WorkflowBuilder"/> to which OpenTelemetry support will be added.</param>
-    /// <param name="sourceName">
-    /// An optional source name that will be used to identify telemetry data from this workflow.
-    /// If not specified, a default source name will be used. This parameter is ignored when
-    /// <paramref name="activitySource"/> is provided.
-    /// </param>
     /// <param name="configure">
     /// An optional callback that provides additional configuration of the <see cref="WorkflowTelemetryOptions"/> instance.
     /// This allows for fine-tuning telemetry behavior such as enabling sensitive data collection.
     /// </param>
     /// <param name="activitySource">
     /// An optional <see cref="ActivitySource"/> to use for telemetry. If provided, this activity source will be used
-    /// directly and the caller retains ownership (responsible for disposal). If <see langword="null"/>, a new
-    /// activity source will be created using <paramref name="sourceName"/>.
+    /// directly and the caller retains ownership (responsible for disposal). If <see langword="null"/>, a shared
+    /// default activity source named "Microsoft.Agents.AI.Workflows" will be used.
     /// </param>
     /// <returns>The <see cref="WorkflowBuilder"/> with OpenTelemetry instrumentation enabled, enabling method chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
@@ -53,13 +46,12 @@ public static class OpenTelemetryWorkflowBuilderExtensions
     /// <code>
     /// var workflow = new WorkflowBuilder(startExecutor)
     ///     .AddEdge(executor1, executor2)
-    ///     .WithOpenTelemetry("MyApp.Workflows", cfg => cfg.EnableSensitiveData = true)
+    ///     .WithOpenTelemetry(cfg => cfg.EnableSensitiveData = true)
     ///     .Build();
     /// </code>
     /// </example>
     public static WorkflowBuilder WithOpenTelemetry(
         this WorkflowBuilder builder,
-        string? sourceName = null,
         Action<WorkflowTelemetryOptions>? configure = null,
         ActivitySource? activitySource = null)
     {
@@ -68,8 +60,7 @@ public static class OpenTelemetryWorkflowBuilderExtensions
         WorkflowTelemetryOptions options = new();
         configure?.Invoke(options);
 
-        string effectiveSourceName = string.IsNullOrEmpty(sourceName) ? DefaultSourceName : sourceName!;
-        WorkflowTelemetryContext context = new(effectiveSourceName, options, activitySource);
+        WorkflowTelemetryContext context = new(options, activitySource);
 
         builder.SetTelemetryContext(context);
 

@@ -11,6 +11,9 @@ namespace Microsoft.Agents.AI.Workflows.Observability;
 /// </summary>
 internal sealed class WorkflowTelemetryContext
 {
+    private const string DefaultSourceName = "Microsoft.Agents.AI.Workflows";
+    private static readonly ActivitySource s_defaultActivitySource = new(DefaultSourceName);
+
     /// <summary>
     /// Gets a shared instance representing disabled telemetry.
     /// </summary>
@@ -29,30 +32,29 @@ internal sealed class WorkflowTelemetryContext
     /// <summary>
     /// Gets the activity source used for creating telemetry spans.
     /// </summary>
-    public ActivitySource? ActivitySource { get; }
+    public ActivitySource ActivitySource { get; }
 
     private WorkflowTelemetryContext()
     {
         this.IsEnabled = false;
         this.Options = new WorkflowTelemetryOptions();
-        this.ActivitySource = null;
+        this.ActivitySource = s_defaultActivitySource;
     }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowTelemetryContext"/> class with telemetry enabled.
     /// </summary>
-    /// <param name="sourceName">The source name for the activity source. Used only when <paramref name="activitySource"/> is <see langword="null"/>.</param>
     /// <param name="options">The telemetry options.</param>
     /// <param name="activitySource">
     /// An optional activity source to use. If provided, this activity source will be used directly
-    /// and the caller retains ownership (responsible for disposal). If <see langword="null"/>, a new
-    /// activity source will be created using <paramref name="sourceName"/>.
+    /// and the caller retains ownership (responsible for disposal). If <see langword="null"/>, the
+    /// shared default activity source will be used.
     /// </param>
-    public WorkflowTelemetryContext(string sourceName, WorkflowTelemetryOptions options, ActivitySource? activitySource = null)
+    public WorkflowTelemetryContext(WorkflowTelemetryOptions options, ActivitySource? activitySource = null)
     {
         this.IsEnabled = true;
         this.Options = options;
-        this.ActivitySource = activitySource ?? new ActivitySource(sourceName);
+        this.ActivitySource = activitySource ?? s_defaultActivitySource;
     }
 
     /// <summary>
@@ -63,7 +65,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if telemetry is enabled and the activity is sampled, otherwise null.</returns>
     public Activity? StartActivity(string name, ActivityKind kind = ActivityKind.Internal)
     {
-        return this.ActivitySource?.StartActivity(name, kind);
+        if (!this.IsEnabled)
+        {
+            return null;
+        }
+
+        return this.ActivitySource.StartActivity(name, kind);
     }
 
     /// <summary>
@@ -72,12 +79,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if workflow build telemetry is enabled, otherwise null.</returns>
     public Activity? StartWorkflowBuildActivity()
     {
-        if (this.Options.DisableWorkflowBuild)
+        if (!this.IsEnabled || this.Options.DisableWorkflowBuild)
         {
             return null;
         }
 
-        return this.ActivitySource?.StartActivity(ActivityNames.WorkflowBuild);
+        return this.ActivitySource.StartActivity(ActivityNames.WorkflowBuild);
     }
 
     /// <summary>
@@ -86,12 +93,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
     public Activity? StartWorkflowRunActivity()
     {
-        if (this.Options.DisableWorkflowRun)
+        if (!this.IsEnabled || this.Options.DisableWorkflowRun)
         {
             return null;
         }
 
-        return this.ActivitySource?.StartActivity(ActivityNames.WorkflowRun);
+        return this.ActivitySource.StartActivity(ActivityNames.WorkflowRun);
     }
 
     /// <summary>
@@ -104,12 +111,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if executor process telemetry is enabled, otherwise null.</returns>
     public Activity? StartExecutorProcessActivity(string executorId, string? executorType, string messageType, object? message)
     {
-        if (this.Options.DisableExecutorProcess)
+        if (!this.IsEnabled || this.Options.DisableExecutorProcess)
         {
             return null;
         }
 
-        Activity? activity = this.ActivitySource?.StartActivity(ActivityNames.ExecutorProcess + " " + executorId);
+        Activity? activity = this.ActivitySource.StartActivity(ActivityNames.ExecutorProcess + " " + executorId);
         if (activity is null)
         {
             return null;
@@ -146,12 +153,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if edge group process telemetry is enabled, otherwise null.</returns>
     public Activity? StartEdgeGroupProcessActivity()
     {
-        if (this.Options.DisableEdgeGroupProcess)
+        if (!this.IsEnabled || this.Options.DisableEdgeGroupProcess)
         {
             return null;
         }
 
-        return this.ActivitySource?.StartActivity(ActivityNames.EdgeGroupProcess);
+        return this.ActivitySource.StartActivity(ActivityNames.EdgeGroupProcess);
     }
 
     /// <summary>
@@ -163,12 +170,12 @@ internal sealed class WorkflowTelemetryContext
     /// <returns>An activity if message send telemetry is enabled, otherwise null.</returns>
     public Activity? StartMessageSendActivity(string sourceId, string? targetId, object? message)
     {
-        if (this.Options.DisableMessageSend)
+        if (!this.IsEnabled || this.Options.DisableMessageSend)
         {
             return null;
         }
 
-        Activity? activity = this.ActivitySource?.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        Activity? activity = this.ActivitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
         if (activity is null)
         {
             return null;

@@ -25,6 +25,9 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     private const string WorkflowBuildActivityName = "workflow.build";
     private const string WorkflowRunActivityName = "workflow_invoke";
 
+    // The default activity source name used by the workflow telemetry context.
+    private const string DefaultTelemetrySourceName = "Microsoft.Agents.AI.Workflows";
+
     private const string SimpleWorkflowYaml = """
         kind: Workflow
         trigger:
@@ -44,9 +47,8 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         this._activityListener = new ActivityListener
         {
             ShouldListenTo = source =>
-                source.Name.Contains(typeof(Workflow).Namespace!) ||
-                source.Name == "TestSource" ||
-                source.Name == "Test.Workflows",
+                source.Name == DefaultTelemetrySourceName ||
+                source.Name == "TestSource",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
             ActivityStarted = activity => this._capturedActivities.Add(activity),
         };
@@ -57,36 +59,6 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     {
         this._activityListener.Dispose();
         this._activitySource.Dispose();
-    }
-
-    [Fact]
-    public void TelemetrySourceName_DefaultIsNull()
-    {
-        // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
-
-        // Act
-        DeclarativeWorkflowOptions options = new(mockProvider.Object);
-
-        // Assert
-        Assert.Null(options.TelemetrySourceName);
-    }
-
-    [Fact]
-    public void TelemetrySourceName_CanBeSet()
-    {
-        // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
-        const string SourceName = "MyApp.Workflows";
-
-        // Act
-        DeclarativeWorkflowOptions options = new(mockProvider.Object)
-        {
-            TelemetrySourceName = SourceName
-        };
-
-        // Assert
-        Assert.Equal(SourceName, options.TelemetrySourceName);
     }
 
     [Fact]
@@ -157,15 +129,14 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     }
 
     [Fact]
-    public async Task BuildWorkflow_WithTelemetrySourceName_AppliesTelemetryAsync()
+    public async Task BuildWorkflow_WithDefaultTelemetry_AppliesTelemetryAsync()
     {
         // Arrange
-        using Activity testActivity = new Activity("TelemetrySourceNameTest").Start()!;
+        using Activity testActivity = new Activity("DefaultTelemetryTest").Start()!;
         Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
-        const string SourceName = "Test.Workflows";
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
-            TelemetrySourceName = SourceName,
+            ConfigureTelemetry = _ => { },
             LoggerFactory = NullLoggerFactory.Instance
         };
 
@@ -177,7 +148,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
 
         // Assert
         Activity[] capturedActivities = this._capturedActivities
-            .Where(a => a.RootId == testActivity.RootId)
+            .Where(a => a.RootId == testActivity.RootId && a.Source.Name == DefaultTelemetrySourceName)
             .ToArray();
 
         Assert.NotEmpty(capturedActivities);
@@ -221,7 +192,6 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         bool configureInvoked = false;
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
-            TelemetrySourceName = "Test.Workflows",
             ConfigureTelemetry = opt =>
             {
                 configureInvoked = true;
@@ -240,7 +210,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         Assert.True(configureInvoked);
 
         Activity[] capturedActivities = this._capturedActivities
-            .Where(a => a.RootId == testActivity.RootId)
+            .Where(a => a.RootId == testActivity.RootId && a.Source.Name == DefaultTelemetrySourceName)
             .ToArray();
 
         Assert.NotEmpty(capturedActivities);
@@ -273,27 +243,6 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             .ToArray();
 
         Assert.Empty(capturedActivities);
-    }
-
-    [Fact]
-    public void BuildWorkflow_WithConfigureTelemetryOnly_ThrowsInvalidOperationException()
-    {
-        // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
-        DeclarativeWorkflowOptions options = new(mockProvider.Object)
-        {
-            ConfigureTelemetry = opt => opt.EnableSensitiveData = true,
-            LoggerFactory = NullLoggerFactory.Instance
-        };
-
-        // Act & Assert
-        using StringReader reader = new(SimpleWorkflowYaml);
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
-            () => DeclarativeWorkflowBuilder.Build<string>(reader, options));
-
-        Assert.Contains(nameof(DeclarativeWorkflowOptions.ConfigureTelemetry), exception.Message);
-        Assert.Contains(nameof(DeclarativeWorkflowOptions.TelemetrySourceName), exception.Message);
-        Assert.Contains(nameof(DeclarativeWorkflowOptions.TelemetryActivitySource), exception.Message);
     }
 
     private static Mock<WorkflowAgentProvider> CreateMockProvider()

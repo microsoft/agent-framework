@@ -46,12 +46,6 @@ public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvid
     public ILoggerFactory LoggerFactory { get; init; } = NullLoggerFactory.Instance;
 
     /// <summary>
-    /// Gets the telemetry source name for OpenTelemetry instrumentation.
-    /// If <see langword="null"/>, telemetry is disabled unless <see cref="TelemetryActivitySource"/> is provided.
-    /// </summary>
-    public string? TelemetrySourceName { get; init; }
-
-    /// <summary>
     /// Gets the callback to configure telemetry options.
     /// </summary>
     public Action<WorkflowTelemetryOptions>? ConfigureTelemetry { get; init; }
@@ -59,6 +53,14 @@ public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvid
     /// <summary>
     /// Gets an optional <see cref="ActivitySource"/> for telemetry.
     /// If provided, the caller retains ownership and is responsible for disposal.
+    /// If <see langword="null"/> but <see cref="ConfigureTelemetry"/> is set, a shared default
+    /// activity source named "Microsoft.Agents.AI.Workflows" will be used.
     /// </summary>
     public ActivitySource? TelemetryActivitySource { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether telemetry is enabled.
+    /// Telemetry is enabled when either <see cref="ConfigureTelemetry"/> or <see cref="TelemetryActivitySource"/> is set.
+    /// </summary>
+    internal bool IsTelemetryEnabled => this.ConfigureTelemetry is not null || this.TelemetryActivitySource is not null;
 }
