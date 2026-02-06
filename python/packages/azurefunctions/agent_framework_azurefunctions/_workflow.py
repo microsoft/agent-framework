@@ -862,46 +862,11 @@ def _extract_message_content(message: Any) -> str:
         # Extract text from the last message in the request
         message_content = message.messages[-1].text or ""
     elif isinstance(message, dict):
-        message_content = _extract_message_content_from_dict(message)
+        logger.warning("Unexpected dict message in _extract_message_content. Keys: %s", list(message.keys()))
     elif isinstance(message, str):
         message_content = message
 
     return message_content
-
-
-def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
-    """Extract text content from serialized message dictionaries.
-
-    Uses MAF's from_dict() methods to reconstruct objects before extracting text.
-    Returns empty string if the message format is not recognized.
-    """
-    # Try to reconstruct as AgentExecutorResponse
-    if "executor_id" in message and "agent_response" in message:
-        try:
-            reconstructed = AgentExecutorResponse.from_dict(message)
-            return _extract_message_content(reconstructed)
-        except Exception:
-            logger.debug("Could not reconstruct AgentExecutorResponse")
-
-    # Try to reconstruct as AgentExecutorRequest
-    if "messages" in message and "should_respond" in message:
-        try:
-            reconstructed = AgentExecutorRequest.from_dict(message)
-            return _extract_message_content(reconstructed)
-        except Exception:
-            logger.debug("Could not reconstruct AgentExecutorRequest")
-
-    # Try to reconstruct as ChatMessage
-    if message.get("type") == "chat_message" or "contents" in message:
-        try:
-            reconstructed = ChatMessage.from_dict(message)
-            return reconstructed.text or ""
-        except Exception:
-            logger.debug("Could not reconstruct ChatMessage")
-
-    # Unrecognized format - return empty string
-    logger.debug("Unrecognized message format, returning empty string. Keys: %s", list(message.keys()))
-    return ""
 
 
 # ============================================================================

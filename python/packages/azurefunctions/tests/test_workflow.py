@@ -23,7 +23,6 @@ from agent_framework._workflows._edge import (
 
 from agent_framework_azurefunctions._workflow import (
     _extract_message_content,
-    _extract_message_content_from_dict,
     build_agent_executor_response,
     route_message_through_edge_groups,
 )
@@ -249,72 +248,17 @@ class TestExtractMessageContent:
 
         assert result == "Last request"
 
-    def test_extract_from_dict_agent_executor_request(self) -> None:
-        """Test extracting from serialized AgentExecutorRequest dict."""
-        msg_dict = {
-            "messages": [
-                {
-                    "type": "chat_message",
-                    "contents": [{"type": "text", "text": "Hello from dict"}],
-                }
-            ]
-        }
+    def test_extract_from_dict_returns_empty(self) -> None:
+        """Test that dict messages return empty string (unexpected input)."""
+        msg_dict = {"messages": [{"text": "Hello"}]}
 
         result = _extract_message_content(msg_dict)
 
-        assert result == "Hello from dict"
+        assert result == ""
 
     def test_extract_returns_empty_for_unknown_type(self) -> None:
         """Test that unknown types return empty string."""
         result = _extract_message_content(12345)
-
-        assert result == ""
-
-
-class TestExtractMessageContentFromDict:
-    """Test suite for _extract_message_content_from_dict function."""
-
-    def test_extract_from_messages_with_contents(self) -> None:
-        """Test extracting from messages with contents structure."""
-        msg_dict = {"messages": [{"contents": [{"type": "text", "text": "Content text"}]}]}
-
-        result = _extract_message_content_from_dict(msg_dict)
-
-        assert result == "Content text"
-
-    def test_extract_from_messages_with_direct_text(self) -> None:
-        """Test extracting from messages with direct text field."""
-        msg_dict = {"messages": [{"text": "Direct text"}]}
-
-        result = _extract_message_content_from_dict(msg_dict)
-
-        assert result == "Direct text"
-
-    def test_extract_from_agent_response(self) -> None:
-        """Test extracting from agent_response dict."""
-        msg_dict = {"agent_response": {"text": "Response text"}}
-
-        result = _extract_message_content_from_dict(msg_dict)
-
-        assert result == "Response text"
-
-    def test_extract_from_agent_response_with_messages(self) -> None:
-        """Test extracting from agent_response with messages."""
-        msg_dict = {"agent_response": {"messages": [{"contents": [{"type": "text", "text": "Nested content"}]}]}}
-
-        result = _extract_message_content_from_dict(msg_dict)
-
-        assert result == "Nested content"
-
-    def test_extract_returns_empty_for_empty_dict(self) -> None:
-        """Test that empty dict returns empty string."""
-        result = _extract_message_content_from_dict({})
-
-        assert result == ""
-
-    def test_extract_returns_empty_for_empty_messages(self) -> None:
-        """Test that empty messages list returns empty string."""
-        result = _extract_message_content_from_dict({"messages": []})
 
         assert result == ""
 
