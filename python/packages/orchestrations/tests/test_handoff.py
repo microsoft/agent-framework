@@ -338,7 +338,7 @@ async def test_context_provider_preserved_during_handoff():
     workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
 
     # Run workflow with a simple message to trigger context provider
-    events = await _drain(workflow.run("Test message", stream=True))
+    await _drain(workflow.run("Test message", stream=True))
     
     # Verify context provider was invoked during the workflow execution
     assert len(provider_calls) > 0, (
