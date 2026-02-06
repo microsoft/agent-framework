@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage, Content
+from agent_framework import ChatMessage, Content, WorkflowOutputEvent
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -179,11 +179,10 @@ class MessageMapper:
         # Import Agent Framework types for proper isinstance checks
         try:
             from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
-            from agent_framework._workflows._events import AgentRunUpdateEvent
 
             # Handle AgentRunUpdateEvent - workflow event wrapping AgentResponseUpdate
             # This must be checked BEFORE generic WorkflowEvent check
-            if isinstance(raw_event, AgentRunUpdateEvent):
+            if isinstance(raw_event, WorkflowOutputEvent):
                 # Extract the AgentResponseUpdate from the event's data attribute
                 if raw_event.data and isinstance(raw_event.data, AgentResponseUpdate):
                     # Preserve executor_id in context for proper output routing

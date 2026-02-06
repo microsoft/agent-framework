@@ -302,7 +302,7 @@ async def main() -> None:
     # Execute the workflow
     for email in test_emails:
         print(f"\n🚀 Processing email to '{email.recipient}'")
-        async for event in workflow.run_stream(email):
+        async for event in workflow.run(email, stream=True):
             if isinstance(event, WorkflowOutputEvent):
                 print(f"🎉 Final result for '{email.recipient}': {'Delivered' if event.data else 'Blocked'}")
 

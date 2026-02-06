@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -131,6 +131,8 @@ async def stream_widget(
     yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -169,6 +171,7 @@ def get_weather(
     return WeatherResponse(text, weather_data)
 
 
+@tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
@@ -176,6 +179,7 @@ def get_time() -> str:
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
 
+@tool(approval_mode="never_require")
 def show_city_selector() -> str:
     """Show an interactive city selector widget to the user.
 
@@ -362,7 +366,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.info(f"Running agent with {len(agent_messages)} message(s)")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
@@ -459,7 +463,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:

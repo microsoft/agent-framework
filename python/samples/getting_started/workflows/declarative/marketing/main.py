@@ -84,7 +84,7 @@ async def main() -> None:
     # Pass a simple string input - like .NET
     product = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours."
 
-    async for event in workflow.run_stream(product):
+    async for event in workflow.run(product, stream=True):
         if isinstance(event, WorkflowOutputEvent):
             print(f"{event.data}", end="", flush=True)
 

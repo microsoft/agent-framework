@@ -334,11 +334,21 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new FakeInMemoryAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedSession, jsonSerializerOptions));
+    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
+
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is not FakeInMemoryAgentSession fakeSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return fakeSession.Serialize(jsonSerializerOptions);
+    }
 
     private sealed class FakeInMemoryAgentSession : InMemoryAgentSession
     {
@@ -351,6 +361,9 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
             : base(serializedSession, jsonSerializerOptions)
         {
         }
+
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+            => base.Serialize(jsonSerializerOptions);
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;

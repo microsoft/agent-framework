@@ -30,13 +30,15 @@ Run:
 import asyncio
 import os
 
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage, tool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
 
@@ -126,9 +128,9 @@ async def main() -> None:
 
     # Build sample chat messages to persist to Redis
     messages = [
-        ChatMessage(role=Role.USER, text="runA CONVO: User Message"),
-        ChatMessage(role=Role.ASSISTANT, text="runA CONVO: Assistant Message"),
-        ChatMessage(role=Role.SYSTEM, text="runA CONVO: System Message"),
+        ChatMessage("user", ["runA CONVO: User Message"]),
+        ChatMessage("assistant", ["runA CONVO: Assistant Message"]),
+        ChatMessage("system", ["runA CONVO: System Message"]),
     ]
 
     # Declare/start a conversation/thread and write messages under 'runA'.
@@ -140,7 +142,7 @@ async def main() -> None:
     # Retrieve relevant memories for a hypothetical model call. The provider uses
     # the current request messages as the retrieval query and returns context to
     # be injected into the model's instructions.
-    ctx = await provider.invoking([ChatMessage(role=Role.SYSTEM, text="B: Assistant Message")])
+    ctx = await provider.invoking([ChatMessage("system", ["B: Assistant Message"])])
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)

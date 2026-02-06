@@ -12,12 +12,13 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     Role,
     TextContent,
-    ai_function,
     chat_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
@@ -53,11 +54,11 @@ async def security_filter_middleware(
                     "or other sensitive data."
                 )
 
-                if context.is_streaming:
+                if context.stream:
                     # Streaming mode: return async generator
                     async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[TextContent(text=error_message)],
+                            contents=[Content.from_text(text=error_message)],
                             role=Role.ASSISTANT,
                         )
 
@@ -98,6 +99,8 @@ async def atlantis_location_filter_middleware(
     await next(context)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -107,6 +110,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
+@tool(approval_mode="never_require")
 def get_forecast(
     location: Annotated[str, "The location to get the forecast for."],
     days: Annotated[int, "Number of days for forecast"] = 3,
@@ -123,7 +127,7 @@ def get_forecast(
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def send_email(
     recipient: Annotated[str, "The email address of the recipient."],
     subject: Annotated[str, "The subject of the email."],

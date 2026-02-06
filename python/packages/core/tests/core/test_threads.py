@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from agent_framework import AgentThread, ChatMessage, ChatMessageStore, Role
+from agent_framework import AgentThread, ChatMessage, ChatMessageStore
 from agent_framework._threads import AgentThreadState, ChatMessageStoreState
 from agent_framework.exceptions import AgentThreadException
 
@@ -44,16 +44,16 @@ class MockChatMessageStore:
 def sample_messages() -> list[ChatMessage]:
     """Fixture providing sample chat messages for testing."""
     return [
-        ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-        ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
-        ChatMessage(role=Role.USER, text="How are you?", message_id="msg3"),
+        ChatMessage(role="user", text="Hello", message_id="msg1"),
+        ChatMessage(role="assistant", text="Hi there!", message_id="msg2"),
+        ChatMessage(role="user", text="How are you?", message_id="msg3"),
     ]
 
 
 @pytest.fixture
 def sample_message() -> ChatMessage:
     """Fixture providing a single sample chat message for testing."""
-    return ChatMessage(role=Role.USER, text="Test message", message_id="test1")
+    return ChatMessage(role="user", text="Test message", message_id="test1")
 
 
 class TestAgentThread:
@@ -178,7 +178,7 @@ class TestAgentThread:
 
     async def test_on_new_messages_with_existing_store(self, sample_message: ChatMessage) -> None:
         """Test _on_new_messages adds to existing message store."""
-        initial_messages = [ChatMessage(role=Role.USER, text="Initial", message_id="init1")]
+        initial_messages = [ChatMessage(role="user", text="Initial", message_id="init1")]
         store = ChatMessageStore(initial_messages)
         thread = AgentThread(message_store=store)
 
@@ -446,3 +446,155 @@ class TestThreadState:
         assert state.service_thread_id is None
         assert state.chat_message_store_state is not None
         assert state.chat_message_store_state.messages == []
+
+    def test_init_with_chat_message_store_state_object(self) -> None:
+        """Test AgentThreadState initialization with ChatMessageStoreState object."""
+        store_state = ChatMessageStoreState(messages=[ChatMessage(role="user", text="test")])
+        state = AgentThreadState(chat_message_store_state=store_state)
+
+        assert state.service_thread_id is None
+        assert state.chat_message_store_state is store_state
+        assert len(state.chat_message_store_state.messages) == 1
+
+    def test_init_with_invalid_chat_message_store_state_type(self) -> None:
+        """Test AgentThreadState initialization with invalid chat_message_store_state type."""
+        with pytest.raises(TypeError, match="Could not parse ChatMessageStoreState"):
+            AgentThreadState(chat_message_store_state="invalid_type")  # type: ignore[arg-type]
+
+
+class TestChatMessageStoreStateEdgeCases:
+    """Additional edge case tests for ChatMessageStoreState."""
+
+    def test_init_with_invalid_messages_type(self) -> None:
+        """Test ChatMessageStoreState initialization with invalid messages type."""
+        with pytest.raises(TypeError, match="Messages should be a list"):
+            ChatMessageStoreState(messages="invalid")  # type: ignore[arg-type]
+
+    def test_init_with_dict_messages(self) -> None:
+        """Test ChatMessageStoreState initialization with dict messages."""
+        messages = [
+            {"role": "user", "text": "Hello"},
+            {"role": "assistant", "text": "Hi there!"},
+        ]
+        state = ChatMessageStoreState(messages=messages)
+
+        assert len(state.messages) == 2
+        assert isinstance(state.messages[0], ChatMessage)
+        assert state.messages[0].text == "Hello"
+
+
+class TestChatMessageStoreEdgeCases:
+    """Additional edge case tests for ChatMessageStore."""
+
+    async def test_deserialize_class_method(self) -> None:
+        """Test ChatMessageStore.deserialize class method."""
+        serialized_data = {
+            "messages": [
+                {"role": "user", "text": "Hello", "message_id": "msg1"},
+            ]
+        }
+
+        store = await ChatMessageStore.deserialize(serialized_data)
+
+        assert isinstance(store, ChatMessageStore)
+        messages = await store.list_messages()
+        assert len(messages) == 1
+        assert messages[0].text == "Hello"
+
+    async def test_deserialize_empty_state(self) -> None:
+        """Test ChatMessageStore.deserialize with empty state."""
+        serialized_data: dict[str, Any] = {"messages": []}
+
+        store = await ChatMessageStore.deserialize(serialized_data)
+
+        assert isinstance(store, ChatMessageStore)
+        messages = await store.list_messages()
+        assert len(messages) == 0
+
+
+class TestAgentThreadEdgeCases:
+    """Additional edge case tests for AgentThread."""
+
+    def test_is_initialized_with_service_thread_id(self) -> None:
+        """Test is_initialized property when service_thread_id is set."""
+        thread = AgentThread(service_thread_id="test-123")
+        assert thread.is_initialized is True
+
+    def test_is_initialized_with_message_store(self) -> None:
+        """Test is_initialized property when message_store is set."""
+        store = ChatMessageStore()
+        thread = AgentThread(message_store=store)
+        assert thread.is_initialized is True
+
+    def test_is_initialized_with_nothing(self) -> None:
+        """Test is_initialized property when nothing is set."""
+        thread = AgentThread()
+        assert thread.is_initialized is False
+
+    async def test_deserialize_with_custom_message_store(self) -> None:
+        """Test deserialize using a custom message store."""
+        serialized_data = {
+            "service_thread_id": None,
+            "chat_message_store_state": {
+                "messages": [{"role": "user", "text": "Hello"}],
+            },
+        }
+        custom_store = MockChatMessageStore()
+
+        thread = await AgentThread.deserialize(serialized_data, message_store=custom_store)
+
+        assert thread.message_store is custom_store
+        messages = await custom_store.list_messages()
+        assert len(messages) == 1
+
+    async def test_deserialize_with_failing_message_store_raises(self) -> None:
+        """Test deserialize raises AgentThreadException when message store fails."""
+
+        class FailingStore:
+            async def add_messages(self, messages: Sequence[ChatMessage], **kwargs: Any) -> None:
+                raise RuntimeError("Store failed")
+
+        serialized_data = {
+            "service_thread_id": None,
+            "chat_message_store_state": {
+                "messages": [{"role": "user", "text": "Hello"}],
+            },
+        }
+        failing_store = FailingStore()
+
+        with pytest.raises(AgentThreadException, match="Failed to deserialize"):
+            await AgentThread.deserialize(serialized_data, message_store=failing_store)
+
+    async def test_update_from_thread_state_with_service_thread_id(self) -> None:
+        """Test update_from_thread_state sets service_thread_id."""
+        thread = AgentThread()
+        serialized_data = {"service_thread_id": "new-thread-id"}
+
+        await thread.update_from_thread_state(serialized_data)
+
+        assert thread.service_thread_id == "new-thread-id"
+
+    async def test_update_from_thread_state_with_empty_chat_state(self) -> None:
+        """Test update_from_thread_state with empty chat_message_store_state."""
+        thread = AgentThread()
+        serialized_data = {"service_thread_id": None, "chat_message_store_state": None}
+
+        await thread.update_from_thread_state(serialized_data)
+
+        assert thread.message_store is None
+
+    async def test_update_from_thread_state_creates_message_store(self) -> None:
+        """Test update_from_thread_state creates message store if not existing."""
+        thread = AgentThread()
+        serialized_data = {
+            "service_thread_id": None,
+            "chat_message_store_state": {
+                "messages": [{"role": "user", "text": "Hello"}],
+            },
+        }
+
+        await thread.update_from_thread_state(serialized_data)
+
+        assert thread.message_store is not None
+        messages = await thread.message_store.list_messages()
+        assert len(messages) == 1

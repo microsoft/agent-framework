@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncIterable,
+    Awaitable,
     Callable,
+    Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from typing import (
@@ -15,24 +15,21 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Protocol,
     TypedDict,
+    cast,
+    overload,
     runtime_checkable,
 )
 
+from pydantic import BaseModel
+
 from ._logging import get_logger
 from ._memory import ContextProvider
-from ._middleware import (
-    ChatMiddleware,
-    ChatMiddlewareCallable,
-    FunctionMiddleware,
-    FunctionMiddlewareCallable,
-    Middleware,
-)
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
 from ._tools import (
-    FUNCTION_INVOKING_CHAT_CLIENT_MARKER,
     FunctionInvocationConfiguration,
     ToolProtocol,
 )
@@ -40,21 +37,27 @@ from ._types import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    ResponseStream,
     prepare_messages,
     validate_chat_options,
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
+    from ._middleware import (
+        MiddlewareTypes,
+    )
     from ._types import ChatOptions
 
 
 TInput = TypeVar("TInput", contravariant=True)
+
 TEmbedding = TypeVar("TEmbedding")
 TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
@@ -72,13 +75,16 @@ __all__ = [
 TOptions_contra = TypeVar(
     "TOptions_contra",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     contravariant=True,
 )
 
+# Used for the overloads that capture the response model type from options
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+
 
 @runtime_checkable
-class ChatClientProtocol(Protocol[TOptions_contra]):  #
+class ChatClientProtocol(Protocol[TOptions_contra]):
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
@@ -100,17 +106,22 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
 
             # Any class implementing the required methods is compatible
             class CustomChatClient:
-                async def get_response(self, messages, **kwargs):
-                    # Your custom implementation
-                    return ChatResponse(messages=[], response_id="custom")
+                additional_properties: dict = {}
 
-                def get_streaming_response(self, messages, **kwargs):
-                    async def _stream():
-                        from agent_framework import ChatResponseUpdate
+                def get_response(self, messages, *, stream=False, **kwargs):
+                    if stream:
+                        from agent_framework import ChatResponseUpdate, ResponseStream
 
-                        yield ChatResponseUpdate()
+                        async def _stream():
+                            yield ChatResponseUpdate()
 
-                    return _stream()
+                        return ResponseStream(_stream())
+                    else:
+
+                        async def _response():
+                            return ChatResponse(messages=[], response_id="custom")
+
+                        return _response()
 
 
             # Verify the instance satisfies the protocol
@@ -120,44 +131,58 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
 
     additional_properties: dict[str, Any]
 
-    async def get_response(
+    @overload
+    def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions_contra | None = None,
+        stream: Literal[False] = ...,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: "TOptions_contra | ChatOptions[None] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
 
         Args:
             messages: The sequence of input messages to send.
+            stream: Whether to stream the response. Defaults to False.
             options: Chat options as a TypedDict.
             **kwargs: Additional chat options.
 
         Returns:
-            The response messages generated by the client.
+            When stream=False: An awaitable ChatResponse from the client.
+            When stream=True: A ResponseStream yielding partial updates.
 
         Raises:
             ValueError: If the input message sequence is ``None``.
-        """
-        ...
-
-    def get_streaming_response(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
-        *,
-        options: TOptions_contra | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Send input messages and stream the response.
-
-        Args:
-            messages: The sequence of input messages to send.
-            options: Chat options as a TypedDict.
-            **kwargs: Additional chat options.
-
-        Yields:
-            ChatResponseUpdate: Partial response updates as they're generated.
         """
         ...
 
@@ -171,24 +196,30 @@ class ChatClientProtocol(Protocol[TOptions_contra]):  #
 TOptions_co = TypeVar(
     "TOptions_co",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
+    default="ChatOptions[None]",
     covariant=True,
 )
 
 
 class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
-    """Base class for chat clients.
+    """Abstract base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
-    including middleware support, message preparation, and tool normalization.
+    including message preparation and tool normalization, but without middleware,
+    telemetry, or function invocation support.
 
     The generic type parameter TOptions specifies which options TypedDict this client
     accepts. This enables IDE autocomplete and type checking for provider-specific options
-    when using the typed overloads of get_response and get_streaming_response.
+    when using the typed overloads of get_response.
 
     Note:
         BaseChatClient cannot be instantiated directly as it's an abstract base class.
-        Subclasses must implement ``_inner_get_response()`` and ``_inner_get_streaming_response()``.
+        Subclasses must implement ``_inner_get_response()`` with a stream parameter to handle both
+        streaming and non-streaming responses.
+
+        For full-featured clients with middleware, telemetry, and function invocation support,
+        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
+        which compose these layers correctly.
 
     Examples:
         .. code-block:: python
@@ -198,17 +229,20 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
 
             class CustomChatClient(BaseChatClient):
-                async def _inner_get_response(self, *, messages, options, **kwargs):
-                    # Your custom implementation
-                    return ChatResponse(
-                        messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
-                    )
+                async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                    if stream:
+                        # Streaming implementation
+                        from agent_framework import ChatResponseUpdate
 
-                async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
-                    # Your custom streaming implementation
-                    from agent_framework import ChatResponseUpdate
+                        async def _stream():
+                            yield ChatResponseUpdate(role="assistant", contents=[{"type": "text", "text": "Hello!"}])
 
-                    yield ChatResponseUpdate(role="assistant", contents=[{"type": "text", "text": "Hello!"}])
+                        return _stream()
+                    else:
+                        # Non-streaming implementation
+                        return ChatResponse(
+                            messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
+                        )
 
 
             # Create an instance of your custom client
@@ -216,6 +250,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
             # Use the client to get responses
             response = await client.get_response("Hello, how are you?")
+            # Or stream responses
+            async for update in client.get_response("Hello!", stream=True):
+                print(update)
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
@@ -225,28 +262,17 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     def __init__(
         self,
         *,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a BaseChatClient instance.
 
         Keyword Args:
-            middleware: Middleware for the client.
             additional_properties: Additional properties for the client.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
-        # Merge kwargs into additional_properties
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs)
-
-        self.middleware = middleware
-
-        self.function_invocation_configuration = (
-            FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
-        )
+        super().__init__(**kwargs)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.
@@ -269,102 +295,127 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
         return result
 
-    # region Internal methods to be implemented by the derived classes
+    async def _validate_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate and normalize chat options.
+
+        Subclasses should call this at the start of _inner_get_response to validate options.
+
+        Args:
+            options: The raw options dict.
+
+        Returns:
+            The validated and normalized options dict.
+        """
+        return await validate_chat_options(dict(options))
+
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
+        """Finalize response updates into a single ChatResponse."""
+        output_format_type = response_format if isinstance(response_format, type) else None
+        return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+
+    def _build_response_stream(
+        self,
+        stream: AsyncIterable[ChatResponseUpdate] | Awaitable[AsyncIterable[ChatResponseUpdate]],
+        *,
+        response_format: Any | None = None,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Create a ResponseStream with the standard finalizer."""
+        return ResponseStream(
+            stream,
+            finalizer=lambda updates: self._finalize_response_updates(updates, response_format=response_format),
+        )
+
+    # region Internal method to be implemented by derived classes
 
     @abstractmethod
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
 
+        Subclasses must implement this method to handle both streaming and non-streaming
+        responses based on the stream parameter. Implementations should call
+        ``await self._validate_options(options)`` at the start to validate options.
+
         Keyword Args:
-            messages: The chat messages to send.
-            options: The options dict for the request.
+            messages: The prepared chat messages to send.
+            stream: Whether to stream the response.
+            options: The options dict for the request (call _validate_options first).
             kwargs: Any additional keyword arguments.
 
         Returns:
-            The chat response contents representing the response(s).
+            When stream=False: An Awaitable ChatResponse from the model.
+            When stream=True: A ResponseStream of ChatResponseUpdate instances.
         """
-
-    @abstractmethod
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Send a streaming chat request to the AI service.
-
-        Keyword Args:
-            messages: The chat messages to send.
-            options: The options dict for the request.
-            kwargs: Any additional keyword arguments.
-
-        Yields:
-            ChatResponseUpdate: The streaming chat message contents.
-        """
-        # Below is needed for mypy: https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators
-        if False:
-            yield
-        await asyncio.sleep(0)  # pragma: no cover
-        # This is a no-op, but it allows the method to be async and return an AsyncIterable.
-        # The actual implementation should yield ChatResponseUpdate instances as needed.
-
-    # endregion
 
     # region Public method
 
-    async def get_response(
+    @overload
+    def get_response(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        options: TOptions_co | None = None,
+        stream: Literal[False] = ...,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
 
         Args:
             messages: The message or messages to send to the model.
+            stream: Whether to stream the response. Defaults to False.
             options: Chat options as a TypedDict.
             **kwargs: Other keyword arguments, can be used to pass function specific parameters.
 
         Returns:
-            A chat response from the model.
+            When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        return await self._inner_get_response(
-            messages=prepare_messages(messages),
-            options=await validate_chat_options(dict(options) if options else {}),
+        prepared_messages = prepare_messages(messages)
+        return self._inner_get_response(
+            messages=prepared_messages,
+            stream=stream,
+            options=options or {},  # type: ignore[arg-type]
             **kwargs,
         )
-
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
-        *,
-        options: TOptions_co | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a streaming response from a chat client.
-
-        Args:
-            messages: The message or messages to send to the model.
-            options: Chat options as a TypedDict.
-            **kwargs: Other keyword arguments, can be used to pass function specific parameters.
-
-        Yields:
-            ChatResponseUpdate: A stream representing the response(s) from the LLM.
-        """
-        async for update in self._inner_get_streaming_response(
-            messages=prepare_messages(messages),
-            options=await validate_chat_options(dict(options) if options else {}),
-            **kwargs,
-        ):
-            yield update
 
     def service_url(self) -> str:
         """Get the URL of the service.
@@ -389,10 +440,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: TOptions_co | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent with this client.
@@ -410,10 +462,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             default_options: A TypedDict containing chat options. When using a typed client like
                 ``OpenAIChatClient``, this enables IDE autocomplete for provider-specific options
                 including temperature, max_tokens, model_id, tool_choice, and more.
+                Note: response_format typing does not flow into run outputs when set via default_options,
+                and dict literals are accepted without specialized option typing.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
             context_provider: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
@@ -446,9 +501,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             description=description,
             instructions=instructions,
             tools=tools,
-            default_options=default_options,
+            default_options=cast(Any, default_options),
             chat_message_store_factory=chat_message_store_factory,
             context_provider=context_provider,
             middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )

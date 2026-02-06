@@ -5,11 +5,11 @@ Sample: Workflow as Agent with Checkpointing
 
 Purpose:
 This sample demonstrates how to use checkpointing with a workflow wrapped as an agent.
-It shows how to enable checkpoint storage when calling agent.run() or agent.run_stream(),
+It shows how to enable checkpoint storage when calling agent.run(),
 allowing workflow execution state to be persisted and potentially resumed.
 
 What you learn:
-- How to pass checkpoint_storage to WorkflowAgent.run() and run_stream()
+- How to pass checkpoint_storage to WorkflowAgent.run()
 - How checkpoints are created during workflow-as-agent execution
 - How to combine thread conversation history with workflow checkpointing
 - How to resume a workflow-as-agent from a checkpoint
@@ -69,7 +69,7 @@ async def basic_checkpointing() -> None:
     response = await agent.run(query, checkpoint_storage=checkpoint_storage)
 
     for msg in response.messages:
-        speaker = msg.author_name or msg.role.value
+        speaker = msg.author_name or msg.role
         print(f"[{speaker}]: {msg.text}")
 
     # Show checkpoints that were created
@@ -147,7 +147,7 @@ async def streaming_with_checkpoints() -> None:
     print("[assistant]: ", end="", flush=True)
 
     # Stream with checkpointing
-    async for update in agent.run_stream(query, checkpoint_storage=checkpoint_storage):
+    async for update in agent.run(query, checkpoint_storage=checkpoint_storage, stream=True):
         if update.text:
             print(update.text, end="", flush=True)
 

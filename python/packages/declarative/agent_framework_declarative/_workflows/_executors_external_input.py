@@ -84,7 +84,7 @@ class QuestionExecutor(DeclarativeActionExecutor):
         allow_free_text = self._action_def.get("allowFreeText", True)
 
         # Evaluate the question text if it's an expression
-        evaluated_question = await state.eval_if_expression(question_text)
+        evaluated_question = state.eval_if_expression(question_text)
 
         # Build choices metadata
         choices_data: list[dict[str, str]] | None = None
@@ -101,8 +101,8 @@ class QuestionExecutor(DeclarativeActionExecutor):
                     choices_data.append({"value": str(c), "label": str(c)})
 
         # Store output property in shared state for response handler
-        await ctx.shared_state.set("_question_output_property", output_property)
-        await ctx.shared_state.set("_question_default_value", default_value)
+        ctx.state.set("_question_output_property", output_property)
+        ctx.state.set("_question_default_value", default_value)
 
         # Request external input - workflow pauses here
         await ctx.request_info(
@@ -128,13 +128,13 @@ class QuestionExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Handle the user's response to the question."""
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.answer")
         answer = response.value if response.value is not None else response.user_input
 
         if output_property:
-            await state.set(output_property, answer)
+            state.set(output_property, answer)
 
         await ctx.send_message(ActionComplete())
 
@@ -163,7 +163,7 @@ class ConfirmationExecutor(DeclarativeActionExecutor):
         default_value = self._action_def.get("defaultValue", False)
 
         # Evaluate the message if it's an expression
-        evaluated_message = await state.eval_if_expression(message)
+        evaluated_message = state.eval_if_expression(message)
 
         # Request confirmation - workflow pauses here
         await ctx.request_info(
@@ -189,7 +189,7 @@ class ConfirmationExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Handle the user's confirmation response."""
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.confirmed")
 
@@ -202,7 +202,7 @@ class ConfirmationExecutor(DeclarativeActionExecutor):
             confirmed = user_input_lower in ("yes", "y", "true", "1", "confirm", "ok")
 
         if output_property:
-            await state.set(output_property, confirmed)
+            state.set(output_property, confirmed)
 
         await ctx.send_message(ActionComplete())
 
@@ -231,7 +231,7 @@ class WaitForInputExecutor(DeclarativeActionExecutor):
 
         # Emit prompt if specified
         if prompt:
-            evaluated_prompt = await state.eval_if_expression(prompt)
+            evaluated_prompt = state.eval_if_expression(prompt)
             await ctx.yield_output(str(evaluated_prompt))
 
         # Request user input - workflow pauses here
@@ -256,12 +256,12 @@ class WaitForInputExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete, str],
     ) -> None:
         """Handle the user's input."""
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.input")
 
         if output_property:
-            await state.set(output_property, response.user_input)
+            state.set(output_property, response.user_input)
 
         await ctx.send_message(ActionComplete())
 
@@ -292,7 +292,7 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
         metadata = self._action_def.get("metadata", {})
 
         # Evaluate the message if it's an expression
-        evaluated_message = await state.eval_if_expression(message)
+        evaluated_message = state.eval_if_expression(message)
 
         # Build request metadata
         request_metadata: dict[str, Any] = {
@@ -323,14 +323,14 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Handle the external input response."""
-        state = self._get_state(ctx.shared_state)
+        state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.externalInput")
 
         # Store the response value or user_input
         result = response.value if response.value is not None else response.user_input
         if output_property:
-            await state.set(output_property, result)
+            state.set(output_property, result)
 
         await ctx.send_message(ActionComplete())
 

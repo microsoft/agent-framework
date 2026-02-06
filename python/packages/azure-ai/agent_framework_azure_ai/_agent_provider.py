@@ -2,14 +2,14 @@
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     ChatAgent,
     ContextProvider,
-    Middleware,
+    FunctionTool,
+    MiddlewareTypes,
     ToolProtocol,
     normalize_tools,
 )
@@ -27,9 +27,13 @@ if TYPE_CHECKING:
     from ._chat_client import AzureAIAgentOptions
 
 if sys.version_info >= (3, 13):
-    from typing import Self, TypeVar  # pragma: no cover
+    from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self, TypeVar  # pragma: no cover
+    from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 # Type variable for options - allows typed ChatAgent[TOptions] returns
@@ -171,7 +175,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
     ) -> "ChatAgent[TOptions_co]":
         """Create a new agent on the Azure AI service and return a ChatAgent.
@@ -268,7 +272,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
     ) -> "ChatAgent[TOptions_co]":
         """Retrieve an existing agent from the service and return a ChatAgent.
@@ -324,7 +328,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
     ) -> "ChatAgent[TOptions_co]":
         """Wrap an existing Agent SDK object as a ChatAgent without making HTTP calls.
@@ -377,7 +381,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         agent: Agent,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
     ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent from an Agent SDK object.
@@ -445,9 +449,9 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         # Add user-provided function tools and MCP tools
         if provided_tools:
             for provided_tool in provided_tools:
-                # AIFunction - has implementation for function calling
+                # FunctionTool - has implementation for function calling
                 # MCPTool - ChatAgent handles MCP connection and tool discovery at runtime
-                if isinstance(provided_tool, (AIFunction, MCPTool)):
+                if isinstance(provided_tool, (FunctionTool, MCPTool)):
                     merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 
         return merged
@@ -488,7 +492,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         provided_names: set[str] = set()
         if provided_tools:
             for tool in provided_tools:
-                if isinstance(tool, AIFunction):
+                if isinstance(tool, FunctionTool):
                     provided_names.add(tool.name)
 
         # Check for missing implementations

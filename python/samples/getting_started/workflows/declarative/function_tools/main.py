@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from agent_framework import FileCheckpointStorage, RequestInfoEvent, WorkflowOutputEvent
+from agent_framework import FileCheckpointStorage, RequestInfoEvent, WorkflowOutputEvent, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
@@ -38,16 +38,20 @@ MENU_ITEMS = [
 ]
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_menu() -> list[dict[str, Any]]:
     """Get all menu items."""
     return [{"category": i.category, "name": i.name, "price": i.price} for i in MENU_ITEMS]
 
 
+@tool(approval_mode="never_require")
 def get_specials() -> list[dict[str, Any]]:
     """Get today's specials."""
     return [{"category": i.category, "name": i.name, "price": i.price} for i in MENU_ITEMS if i.is_special]
 
 
+@tool(approval_mode="never_require")
 def get_item_price(name: Annotated[str, Field(description="Menu item name")]) -> str:
     """Get price of a menu item."""
     for item in MENU_ITEMS:
@@ -88,7 +92,7 @@ async def main():
             response = ExternalInputResponse(user_input=user_input)
             stream = workflow.send_responses_streaming({pending_request_id: response})
         else:
-            stream = workflow.run_stream({"userInput": user_input})
+            stream = workflow.run({"userInput": user_input}, stream=True)
 
         pending_request_id = None
         first_response = True

@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from pytest import raises
 
 from agent_framework import (
@@ -17,16 +18,18 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatMessageStore,
+    ChatOptions,
     ChatResponse,
     Content,
     Context,
     ContextProvider,
     HostedCodeInterpreterTool,
-    Role,
-    ai_function,
+    ToolProtocol,
+    tool,
 )
+from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentExecutionException
+from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -39,7 +42,7 @@ def test_agent_type(agent: AgentProtocol) -> None:
 
 async def test_agent_run(agent: AgentProtocol) -> None:
     response = await agent.run("test")
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Response"
 
 
@@ -47,7 +50,7 @@ async def test_agent_run_streaming(agent: AgentProtocol) -> None:
     async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
 
-    updates = await collect_updates(agent.run_stream(messages="test"))
+    updates = await collect_updates(agent.run("test", stream=True))
     assert len(updates) == 1
     assert updates[0].text == "Response"
 
@@ -86,7 +89,7 @@ async def test_chat_client_agent_run(chat_client: ChatClientProtocol) -> None:
 async def test_chat_client_agent_run_streaming(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
 
-    result = await AgentResponse.from_agent_response_generator(agent.run_stream("Hello"))
+    result = await AgentResponse.from_update_generator(agent.run("Hello", stream=True))
 
     assert result.text == "test streaming response another update"
 
@@ -100,12 +103,12 @@ async def test_chat_client_agent_get_new_thread(chat_client: ChatClientProtocol)
 
 async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatClientProtocol) -> None:
     agent = ChatAgent(chat_client=chat_client)
-    message = ChatMessage(role=Role.USER, text="Hello")
+    message = ChatMessage(role="user", text="Hello")
     thread = AgentThread(message_store=ChatMessageStore(messages=[message]))
 
     _, _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
-        input_messages=[ChatMessage(role=Role.USER, text="Test")],
+        input_messages=[ChatMessage(role="user", text="Test")],
     )
 
     assert len(result_messages) == 2
@@ -123,7 +126,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
     _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
-        input_messages=[ChatMessage(role=Role.USER, text="Test")],
+        input_messages=[ChatMessage(role="user", text="Test")],
     )
 
     assert prepared_chat_options.get("tools") is not None
@@ -135,7 +138,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: Ch
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
+        messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
         conversation_id="123",
     )
     chat_client_base.run_responses = [mock_response]
@@ -199,9 +202,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
     chat_client_base.run_responses = [
         ChatResponse(
             messages=[
-                ChatMessage(
-                    role=Role.ASSISTANT, contents=[Content.from_text("test response")], author_name="TestAuthor"
-                )
+                ChatMessage(role="assistant", contents=[Content.from_text("test response")], author_name="TestAuthor")
             ]
         )
     ]
@@ -252,7 +253,7 @@ class MockContextProvider(ContextProvider):
 
 async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClientProtocol) -> None:
     """Test that context providers' invoking is called during agent run."""
-    mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Test context instructions")])
+    mock_provider = MockContextProvider(messages=[ChatMessage(role="system", text="Test context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
     await agent.run("Hello")
@@ -265,7 +266,7 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
+            messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
             conversation_id="test-thread-id",
         )
     ]
@@ -297,14 +298,14 @@ async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClie
 
     # We need to test the _prepare_thread_and_messages method directly
     _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
+        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
     )
 
     # Should have context instructions, and user message
     assert len(messages) == 2
-    assert messages[0].role == Role.SYSTEM
+    assert messages[0].role == "system"
     assert messages[0].text == "Context-specific instructions"
-    assert messages[1].role == Role.USER
+    assert messages[1].role == "user"
     assert messages[1].text == "Hello"
     # instructions system message is added by a chat_client
 
@@ -315,24 +316,27 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_provider=mock_provider)
 
     _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
+        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
     )
 
     # Should have agent instructions and user message only
     assert len(messages) == 1
-    assert messages[0].role == Role.USER
+    assert messages[0].role == "user"
     assert messages[0].text == "Hello"
 
 
 async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientProtocol) -> None:
-    """Test that context providers work with run_stream method."""
-    mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Stream context instructions")])
+    """Test that context providers work with run method."""
+    mock_provider = MockContextProvider(messages=[ChatMessage(role="system", text="Stream context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_provider=mock_provider)
 
-    # Collect all stream updates
+    # Collect all stream updates and get final response
+    stream = agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []
-    async for update in agent.run_stream("Hello"):
+    async for update in stream:
         updates.append(update)
+    # Get final response to trigger post-processing hooks (including context provider notification)
+    await stream.get_final_response()
 
     # Verify context provider was called
     assert mock_provider.invoking_called
@@ -346,7 +350,7 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text("test response")])],
+            messages=[ChatMessage(role="assistant", contents=[Content.from_text("test response")])],
             conversation_id="service-thread-123",
         )
     ]
@@ -423,7 +427,7 @@ async def test_chat_agent_as_tool_no_name(chat_client: ChatClientProtocol) -> No
 
 
 async def test_chat_agent_as_tool_function_execution(chat_client: ChatClientProtocol) -> None:
-    """Test that the generated AIFunction can be executed."""
+    """Test that the generated FunctionTool can be executed."""
     agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent")
 
     tool = agent.as_tool()
@@ -564,7 +568,7 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
 
     captured: dict[str, Any] = {}
 
-    @ai_function(name="echo_thread_info")
+    @tool(name="echo_thread_info", approval_mode="never_require")
     def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
         thread = kwargs.get("thread")
         captured["has_thread"] = thread is not None
@@ -589,16 +593,14 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
     )
     thread = agent.get_new_thread()
 
-    result = await agent.run("hello", thread=thread)
+    result = await agent.run("hello", thread=thread, options={"additional_function_arguments": {"thread": thread}})
 
     assert result.text == "done"
     assert captured.get("has_thread") is True
     assert captured.get("has_message_store") is True
 
 
-async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice passed to run() overrides agent-level tool_choice."""
 
     captured_options: list[dict[str, Any]] = []
@@ -617,7 +619,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool (tools required for tool_choice to be meaningful)
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         options={"tool_choice": "auto"},
     )
 
@@ -630,11 +632,9 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(
 
 
 async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specified(
-    chat_client_base: Any, ai_function_tool: Any
+    chat_client_base: Any, tool_tool: Any
 ) -> None:
     """Verify that agent-level tool_choice is used when run() doesn't specify one."""
-    from agent_framework import ChatOptions
-
     captured_options: list[ChatOptions] = []
 
     original_inner = chat_client_base._inner_get_response
@@ -650,7 +650,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     # Create agent with agent-level tool_choice="required" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "required"},
     )
 
@@ -664,12 +664,8 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     assert captured_options[0]["tool_choice"] == "required"
 
 
-async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
-    chat_client_base: Any, ai_function_tool: Any
-) -> None:
+async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
     """Verify that tool_choice=None at run() uses agent-level default."""
-    from agent_framework import ChatOptions
-
     captured_options: list[ChatOptions] = []
 
     original_inner = chat_client_base._inner_get_response
@@ -685,7 +681,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     # Create agent with agent-level tool_choice="auto" and a tool
     agent = ChatAgent(
         chat_client=chat_client_base,
-        tools=[ai_function_tool],
+        tools=[tool_tool],
         default_options={"tool_choice": "auto"},
     )
 
@@ -695,3 +691,290 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
     assert captured_options[0]["tool_choice"] == "auto"
+
+
+# region Test _merge_options
+
+
+def test_merge_options_basic():
+    """Test _merge_options merges two dicts with override precedence."""
+    base = {"key1": "value1", "key2": "value2"}
+    override = {"key2": "new_value2", "key3": "value3"}
+
+    result = _merge_options(base, override)
+
+    assert result["key1"] == "value1"
+    assert result["key2"] == "new_value2"
+    assert result["key3"] == "value3"
+
+
+def test_merge_options_none_values_ignored():
+    """Test _merge_options ignores None values in override."""
+    base = {"key1": "value1"}
+    override = {"key1": None, "key2": "value2"}
+
+    result = _merge_options(base, override)
+
+    assert result["key1"] == "value1"  # None didn't override
+    assert result["key2"] == "value2"
+
+
+def test_merge_options_tools_combined():
+    """Test _merge_options combines tool lists without duplicates."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    tool1 = MockTool("tool1")
+    tool2 = MockTool("tool2")
+    tool3 = MockTool("tool1")  # Duplicate name
+
+    base = {"tools": [tool1]}
+    override = {"tools": [tool2, tool3]}
+
+    result = _merge_options(base, override)
+
+    # Should have tool1 and tool2, but not duplicate tool3
+    assert len(result["tools"]) == 2
+    tool_names = [t.name for t in result["tools"]]
+    assert "tool1" in tool_names
+    assert "tool2" in tool_names
+
+
+def test_merge_options_logit_bias_merged():
+    """Test _merge_options merges logit_bias dicts."""
+    base = {"logit_bias": {"token1": 1.0}}
+    override = {"logit_bias": {"token2": 2.0}}
+
+    result = _merge_options(base, override)
+
+    assert result["logit_bias"]["token1"] == 1.0
+    assert result["logit_bias"]["token2"] == 2.0
+
+
+def test_merge_options_metadata_merged():
+    """Test _merge_options merges metadata dicts."""
+    base = {"metadata": {"key1": "value1"}}
+    override = {"metadata": {"key2": "value2"}}
+
+    result = _merge_options(base, override)
+
+    assert result["metadata"]["key1"] == "value1"
+    assert result["metadata"]["key2"] == "value2"
+
+
+def test_merge_options_instructions_concatenated():
+    """Test _merge_options concatenates instructions."""
+    base = {"instructions": "First instruction."}
+    override = {"instructions": "Second instruction."}
+
+    result = _merge_options(base, override)
+
+    assert "First instruction." in result["instructions"]
+    assert "Second instruction." in result["instructions"]
+    assert "\n" in result["instructions"]
+
+
+# endregion
+
+
+# region Test _sanitize_agent_name
+
+
+def test_sanitize_agent_name_none():
+    """Test _sanitize_agent_name returns None for None input."""
+    assert _sanitize_agent_name(None) is None
+
+
+def test_sanitize_agent_name_valid():
+    """Test _sanitize_agent_name returns valid names unchanged."""
+    assert _sanitize_agent_name("valid_name") == "valid_name"
+    assert _sanitize_agent_name("ValidName123") == "ValidName123"
+
+
+def test_sanitize_agent_name_replaces_invalid_chars():
+    """Test _sanitize_agent_name replaces invalid characters."""
+    result = _sanitize_agent_name("Agent Name!")
+    # Should replace spaces and special chars with underscores
+    assert " " not in result
+    assert "!" not in result
+
+
+# endregion
+
+
+# region Test AgentProtocol.get_new_thread and deserialize_thread
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread(chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol):
+    """Test that get_new_thread returns a new AgentThread."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
+
+    thread = agent.get_new_thread()
+
+    assert thread is not None
+    assert isinstance(thread, AgentThread)
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread_with_context_provider(
+    chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol
+):
+    """Test that get_new_thread passes context_provider to the thread."""
+
+    class TestContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context()
+
+    provider = TestContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool], context_provider=provider)
+
+    thread = agent.get_new_thread()
+
+    assert thread is not None
+    assert thread.context_provider is provider
+
+
+@pytest.mark.asyncio
+async def test_agent_get_new_thread_with_service_thread_id(
+    chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol
+):
+    """Test that get_new_thread passes kwargs like service_thread_id to the thread."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
+
+    thread = agent.get_new_thread(service_thread_id="test-thread-123")
+
+    assert thread is not None
+    assert thread.service_thread_id == "test-thread-123"
+
+
+@pytest.mark.asyncio
+async def test_agent_deserialize_thread(chat_client_base: ChatClientProtocol, tool_tool: ToolProtocol):
+    """Test deserialize_thread restores a thread from serialized state."""
+    agent = ChatAgent(chat_client=chat_client_base, tools=[tool_tool])
+
+    # Create serialized thread state with messages
+    serialized_state = {
+        "service_thread_id": None,
+        "chat_message_store_state": {
+            "messages": [{"role": "user", "text": "Hello"}],
+        },
+    }
+
+    thread = await agent.deserialize_thread(serialized_state)
+
+    assert thread is not None
+    assert isinstance(thread, AgentThread)
+    assert thread.message_store is not None
+    messages = await thread.message_store.list_messages()
+    assert len(messages) == 1
+    assert messages[0].text == "Hello"
+
+
+# endregion
+
+
+# region Test ChatAgent initialization edge cases
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_raises_with_both_conversation_id_and_store():
+    """Test ChatAgent raises error with both conversation_id and chat_message_store_factory."""
+    mock_client = MagicMock()
+    mock_store_factory = MagicMock()
+
+    with pytest.raises(AgentInitializationError, match="Cannot specify both"):
+        ChatAgent(
+            chat_client=mock_client,
+            default_options={"conversation_id": "test_id"},
+            chat_message_store_factory=mock_store_factory,
+        )
+
+
+def test_chat_agent_calls_update_agent_name_on_client():
+    """Test that ChatAgent calls _update_agent_name_and_description on client if available."""
+    mock_client = MagicMock()
+    mock_client._update_agent_name_and_description = MagicMock()
+
+    ChatAgent(
+        chat_client=mock_client,
+        name="TestAgent",
+        description="Test description",
+    )
+
+    assert mock_client._update_agent_name_and_description.call_count == 1
+    mock_client._update_agent_name_and_description.assert_called_with("TestAgent", "Test description")
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(chat_client_base: ChatClientProtocol):
+    """Test that context provider tools are used when agent has no default tools."""
+
+    @tool
+    def context_tool(text: str) -> str:
+        """A tool provided by context."""
+        return text
+
+    class ToolContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context(tools=[context_tool])
+
+    provider = ToolContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, context_provider=provider)
+
+    # Agent starts with empty tools list
+    assert agent.default_options.get("tools") == []
+
+    # Run the agent and verify context tools are added
+    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+    )
+
+    # The context tools should now be in the options
+    assert options.get("tools") is not None
+    assert len(options["tools"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none(chat_client_base: ChatClientProtocol):
+    """Test that context provider instructions are used when agent has no default instructions."""
+
+    class InstructionContextProvider(ContextProvider):
+        async def invoking(self, messages, **kwargs):
+            return Context(instructions="Context-provided instructions")
+
+    provider = InstructionContextProvider()
+    agent = ChatAgent(chat_client=chat_client_base, context_provider=provider)
+
+    # Verify agent has no default instructions
+    assert agent.default_options.get("instructions") is None
+
+    # Run the agent and verify context instructions are available
+    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=None, input_messages=[ChatMessage(role="user", text="Hello")]
+    )
+
+    # The context instructions should now be in the options
+    assert options.get("instructions") == "Context-provided instructions"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_raises_on_conversation_id_mismatch(chat_client_base: ChatClientProtocol):
+    """Test that ChatAgent raises when thread and agent have different conversation IDs."""
+    agent = ChatAgent(
+        chat_client=chat_client_base,
+        default_options={"conversation_id": "agent-conversation-id"},
+    )
+
+    # Create a thread with a different service_thread_id
+    thread = AgentThread(service_thread_id="different-thread-id")
+
+    with pytest.raises(AgentExecutionException, match="conversation_id set on the agent is different"):
+        await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+            thread=thread, input_messages=[ChatMessage(role="user", text="Hello")]
+        )
+
+
+# endregion

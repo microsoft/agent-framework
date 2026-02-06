@@ -24,7 +24,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
+from .._tools import FunctionTool, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -138,11 +138,12 @@ class OpenAIBase(SerializationMixin):
         if model_id:
             self.model_id = model_id.strip()
 
-        # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
+        # Call super().__init__() to continue MRO chain (e.g., RawChatClient)
         # Extract known kwargs that belong to other base classes
         additional_properties = kwargs.pop("additional_properties", None)
         middleware = kwargs.pop("middleware", None)
         instruction_role = kwargs.pop("instruction_role", None)
+        function_invocation_configuration = kwargs.pop("function_invocation_configuration", None)
 
         # Build super().__init__() args
         super_kwargs = {}
@@ -150,6 +151,8 @@ class OpenAIBase(SerializationMixin):
             super_kwargs["additional_properties"] = additional_properties
         if middleware is not None:
             super_kwargs["middleware"] = middleware
+        if function_invocation_configuration is not None:
+            super_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         # Call super().__init__() with filtered kwargs
         super().__init__(**super_kwargs)
@@ -273,8 +276,8 @@ class OpenAIConfigMixin(OpenAIBase):
         if instruction_role:
             args["instruction_role"] = instruction_role
 
-        # Ensure additional_properties and middleware are passed through kwargs to BaseChatClient
-        # These are consumed by BaseChatClient.__init__ via kwargs
+        # Ensure additional_properties and middleware are passed through kwargs to RawChatClient
+        # These are consumed by RawChatClient.__init__ via kwargs
         super().__init__(**args, **kwargs)
 
 
@@ -295,7 +298,7 @@ def to_assistant_tools(
     tool_definitions: list[dict[str, Any]] = []
 
     for tool in tools:
-        if isinstance(tool, AIFunction):
+        if isinstance(tool, FunctionTool):
             tool_definitions.append(tool.to_json_schema_spec())
         elif isinstance(tool, HostedCodeInterpreterTool):
             tool_definitions.append({"type": "code_interpreter"})

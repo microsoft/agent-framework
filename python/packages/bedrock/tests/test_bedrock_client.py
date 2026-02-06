@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
-from agent_framework import ChatMessage, Content, Role
+from agent_framework import ChatMessage, Content
 from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_bedrock import BedrockChatClient
@@ -33,7 +32,7 @@ class _StubBedrockRuntime:
         }
 
 
-def test_get_response_invokes_bedrock_runtime() -> None:
+async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
         model_id="amazon.titan-text",
@@ -42,11 +41,11 @@ def test_get_response_invokes_bedrock_runtime() -> None:
     )
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are concise.")]),
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="hello")]),
+        ChatMessage(role="system", contents=[Content.from_text(text="You are concise.")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="hello")]),
     ]
 
-    response = asyncio.run(client.get_response(messages=messages, options={"max_tokens": 32}))
+    response = await client.get_response(messages=messages, options={"max_tokens": 32})
 
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]
@@ -63,7 +62,7 @@ def test_build_request_requires_non_system_messages() -> None:
         client=_StubBedrockRuntime(),
     )
 
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="Only system text")])]
+    messages = [ChatMessage(role="system", contents=[Content.from_text(text="Only system text")])]
 
     with pytest.raises(ServiceInitializationError):
         client._prepare_options(messages, {})

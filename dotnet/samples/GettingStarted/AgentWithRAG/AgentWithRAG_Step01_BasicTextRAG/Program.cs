@@ -70,7 +70,7 @@ AIAgent agent = azureOpenAIClient
             .WithAIContextProviderMessageRemoval()),
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
 Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));

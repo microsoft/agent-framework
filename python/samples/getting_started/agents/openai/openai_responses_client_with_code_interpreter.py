@@ -4,10 +4,7 @@ import asyncio
 
 from agent_framework import (
     ChatAgent,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
     HostedCodeInterpreterTool,
-    TextContent,
 )
 from agent_framework.openai import OpenAIResponsesClient
 
@@ -35,18 +32,18 @@ async def main() -> None:
     print(f"Result: {result}\n")
 
     for message in result.messages:
-        code_blocks = [c for c in message.contents if isinstance(c, CodeInterpreterToolCallContent)]
-        outputs = [c for c in message.contents if isinstance(c, CodeInterpreterToolResultContent)]
+        code_blocks = [c for c in message.contents if c.type == "code_interpreter_tool_input"]
+        outputs = [c for c in message.contents if c.type == "code_interpreter_tool_result"]
         if code_blocks:
             code_inputs = code_blocks[0].inputs or []
             for content in code_inputs:
-                if isinstance(content, TextContent):
+                if content.type == "text":
                     print(f"Generated code:\n{content.text}")
                     break
         if outputs:
             print("Execution outputs:")
             for out in outputs[0].outputs or []:
-                if isinstance(out, TextContent):
+                if out.type == "text":
                     print(out.text)
 
 

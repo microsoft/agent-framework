@@ -55,12 +55,15 @@ async def main() -> None:
     workflow = (
         MagenticBuilder()
         .participants([researcher_agent, coder_agent])
-        .with_standard_manager(
+        .with_manager(
             agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,
         )
+        # Enable intermediate outputs to observe the conversation as it unfolds
+        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        .with_intermediate_outputs()
         .build()
     )
 
@@ -80,9 +83,17 @@ async def main() -> None:
         # Wrap the workflow as an agent for composition scenarios
         print("\nWrapping workflow as an agent and running...")
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
-        async for response in workflow_agent.run_stream(task):
+
+        last_response_id: str | None = None
+        async for update in workflow_agent.run(task, stream=True):
             # Fallback for any other events with text
-            print(response.text, end="", flush=True)
+            if last_response_id != update.response_id:
+                if last_response_id is not None:
+                    print()  # Newline between different responses
+                print(f"{update.author_name}: ", end="", flush=True)
+                last_response_id = update.response_id
+            else:
+                print(update.text, end="", flush=True)
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

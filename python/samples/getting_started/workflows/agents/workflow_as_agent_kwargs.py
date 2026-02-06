@@ -4,22 +4,23 @@ import asyncio
 import json
 from typing import Annotated, Any
 
-from agent_framework import SequentialBuilder, ai_function
+from agent_framework import tool
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from pydantic import Field
 
 """
-Sample: Workflow as Agent with kwargs Propagation to @ai_function Tools
+Sample: Workflow as Agent with kwargs Propagation to @tool Tools
 
 This sample demonstrates how to flow custom context (skill data, user tokens, etc.)
-through a workflow exposed via .as_agent() to @ai_function tools using the **kwargs pattern.
+through a workflow exposed via .as_agent() to @tool functions using the **kwargs pattern.
 
 Key Concepts:
 - Build a workflow using SequentialBuilder (or any builder pattern)
 - Expose the workflow as a reusable agent via workflow.as_agent()
-- Pass custom context as kwargs when invoking workflow_agent.run() or run_stream()
-- kwargs are stored in SharedState and propagated to all agent invocations
-- @ai_function tools receive kwargs via **kwargs parameter
+- Pass custom context as kwargs when invoking workflow_agent.run()
+- kwargs are stored in State and propagated to all agent invocations
+- @tool functions receive kwargs via **kwargs parameter
 
 When to use workflow.as_agent():
 - To treat an entire workflow orchestration as a single agent
@@ -32,7 +33,8 @@ Prerequisites:
 
 
 # Define tools that accept custom context via **kwargs
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_user_data(
     query: Annotated[str, Field(description="What user data to retrieve")],
     **kwargs: Any,
@@ -49,7 +51,7 @@ def get_user_data(
     return f"Retrieved data for user {user_name} with {access_level} access: {query}"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def call_api(
     endpoint_name: Annotated[str, Field(description="Name of the API endpoint to call")],
     **kwargs: Any,
@@ -95,7 +97,7 @@ async def main() -> None:
     # Expose the workflow as an agent using .as_agent()
     workflow_agent = workflow.as_agent(name="WorkflowAgent")
 
-    # Define custom context that will flow to ai_functions via kwargs
+    # Define custom context that will flow to tools via kwargs
     custom_data = {
         "api_config": {
             "base_url": "https://api.example.com",
@@ -119,13 +121,13 @@ async def main() -> None:
     print("Workflow Agent Execution (watch for [tool_name] logs showing kwargs received):")
     print("-" * 70)
 
-    # Run workflow agent with kwargs - these will flow through to ai_functions
-    # Note: kwargs are passed to workflow_agent.run_stream() just like workflow.run_stream()
+    # Run workflow agent with kwargs - these will flow through to tools
+    # Note: kwargs are passed to workflow.run()
     print("\n===== Streaming Response =====")
-    async for update in workflow_agent.run_stream(
+    async for update in workflow_agent.run(
         "Please get my user data and then call the users API endpoint.",
-        custom_data=custom_data,
-        user_token=user_token,
+        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        stream=True,
     ):
         if update.text:
             print(update.text, end="", flush=True)

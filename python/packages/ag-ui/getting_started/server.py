@@ -5,7 +5,7 @@
 import logging
 import os
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.azure import AzureOpenAIChatClient
 from dotenv import load_dotenv
@@ -87,7 +87,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
 
 
 # Server-side tool (executes on server)
-@ai_function(description="Get the time zone for a location.")
+@tool(description="Get the time zone for a location.")
 def get_time_zone(location: str) -> str:
     """Get the time zone for a location.
 
@@ -112,7 +112,7 @@ def get_time_zone(location: str) -> str:
 # - get_time_zone: SERVER-ONLY tool (only server has this)
 # - get_weather: CLIENT-ONLY tool (client provides this, server should NOT include it)
 # The client will send get_weather tool metadata so the LLM knows about it,
-# and @use_function_invocation on AGUIChatClient will execute it client-side.
+# and the function invocation mixin on AGUIChatClient will execute it client-side.
 # This matches the .NET AG-UI hybrid execution pattern.
 agent = ChatAgent(
     name="AGUIAssistant",

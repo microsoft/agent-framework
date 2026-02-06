@@ -256,7 +256,7 @@ async def main() -> None:
             pending_request_id = None
         else:
             # Start workflow
-            stream = workflow.run_stream(user_input)
+            stream = workflow.run(user_input, stream=True)
 
         async for event in stream:
             if isinstance(event, WorkflowOutputEvent):

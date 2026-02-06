@@ -3,26 +3,28 @@
 import json
 import logging
 import sys
-from collections.abc import Mapping
-from typing import Any, Generic, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Generic
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agent_framework import (
     Annotation,
+    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    use_chat_middleware,
-    use_function_invocation,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
-from agent_framework.openai._chat_client import OpenAIBaseChatClient, OpenAIChatOptions
+from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.openai import OpenAIChatOptions
+from agent_framework.openai._chat_client import RawOpenAIChatClient
 
 from ._shared import (
     AzureOpenAIConfigMixin,
@@ -36,11 +38,20 @@ else:
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 __all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
+
+TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
 
 
 # region Azure OpenAI Chat Options TypedDict
@@ -68,7 +79,7 @@ class AzureUserSecurityContext(TypedDict, total=False):
     """The original client's IP address."""
 
 
-class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
+class AzureOpenAIChatOptions(OpenAIChatOptions[TResponseModel], Generic[TResponseModel], total=False):
     """Azure OpenAI-specific chat options dict.
 
     Extends OpenAIChatOptions with Azure-specific options including
@@ -137,13 +148,15 @@ TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
 TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureOpenAIChatClient(
-    AzureOpenAIConfigMixin, OpenAIBaseChatClient[TAzureOpenAIChatOptions], Generic[TAzureOpenAIChatOptions]
+class AzureOpenAIChatClient(  # type: ignore[misc]
+    AzureOpenAIConfigMixin,
+    ChatMiddlewareLayer[TAzureOpenAIChatOptions],
+    FunctionInvocationLayer[TAzureOpenAIChatOptions],
+    ChatTelemetryLayer[TAzureOpenAIChatOptions],
+    RawOpenAIChatClient[TAzureOpenAIChatOptions],
+    Generic[TAzureOpenAIChatOptions],
 ):
-    """Azure OpenAI Chat completion class."""
+    """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -162,6 +175,8 @@ class AzureOpenAIChatClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
@@ -193,6 +208,8 @@ class AzureOpenAIChatClient(
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Other keyword parameters.
 
         Examples:
@@ -263,6 +280,8 @@ class AzureOpenAIChatClient(
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
 
@@ -270,7 +289,7 @@ class AzureOpenAIChatClient(
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
         """Parse the choice into a Content object with type='text'.
 
-        Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
+        Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """

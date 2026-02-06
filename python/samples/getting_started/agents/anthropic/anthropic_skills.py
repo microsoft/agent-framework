@@ -53,7 +53,7 @@ async def main() -> None:
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     files: list[HostedFileContent] = []
-    async for chunk in agent.run_stream(query):
+    async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
             match content.type:
                 case "text":

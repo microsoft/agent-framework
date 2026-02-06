@@ -78,7 +78,7 @@ async def main() -> None:
     response1 = await agent.run(query1, thread=thread)
     if response1.messages:
         for msg in response1.messages:
-            speaker = msg.author_name or msg.role.value
+            speaker = msg.author_name or msg.role
             print(f"[{speaker}]: {msg.text}")
 
     # Second turn: Reference the previous topic
@@ -88,7 +88,7 @@ async def main() -> None:
     response2 = await agent.run(query2, thread=thread)
     if response2.messages:
         for msg in response2.messages:
-            speaker = msg.author_name or msg.role.value
+            speaker = msg.author_name or msg.role
             print(f"[{speaker}]: {msg.text}")
 
     # Third turn: Ask a follow-up question
@@ -98,7 +98,7 @@ async def main() -> None:
     response3 = await agent.run(query3, thread=thread)
     if response3.messages:
         for msg in response3.messages:
-            speaker = msg.author_name or msg.role.value
+            speaker = msg.author_name or msg.role
             print(f"[{speaker}]: {msg.text}")
 
     # Show the accumulated conversation history
@@ -108,7 +108,7 @@ async def main() -> None:
     if thread.message_store:
         history = await thread.message_store.list_messages()
         for i, msg in enumerate(history, start=1):
-            role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            role = msg.role if hasattr(msg.role, "value") else str(msg.role)
             speaker = msg.author_name or role
             text_preview = msg.text[:80] + "..." if len(msg.text) > 80 else msg.text
             print(f"{i:02d}. [{speaker}]: {text_preview}")

@@ -34,10 +34,10 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework import ChatAgent
-    from agent_framework._tools import ai_function
+    from agent_framework._tools import tool
     from agent_framework.openai import OpenAIResponsesClient
 
-    @ai_function(name="add", description="Add two numbers")
+    @tool(name="add", description="Add two numbers")
     async def add(a: float, b: float) -> float:
         return a + b
 

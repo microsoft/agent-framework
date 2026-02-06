@@ -10,7 +10,7 @@ public sealed class DurableAgentSessionTests
     public void BuiltInSerialization()
     {
         AgentSessionId sessionId = AgentSessionId.WithRandomKey("test-agent");
-        AgentSession session = new DurableAgentSession(sessionId);
+        DurableAgentSession session = new(sessionId);
 
         JsonElement serializedSession = session.Serialize();
 

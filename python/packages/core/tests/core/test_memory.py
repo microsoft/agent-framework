@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import MutableSequence
 from typing import Any
 
-from agent_framework import ChatMessage, Role
+from agent_framework import ChatMessage
 from agent_framework._memory import Context, ContextProvider
 
 
@@ -44,6 +45,18 @@ class MockContextProvider(ContextProvider):
         return context
 
 
+class MinimalContextProvider(ContextProvider):
+    """Minimal ContextProvider that only implements the required abstract method.
+
+    Used to test the base class default implementations of thread_created,
+    invoked, __aenter__, and __aexit__.
+    """
+
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+        """Return empty context."""
+        return Context()
+
+
 class TestContext:
     """Tests for Context class."""
 
@@ -56,7 +69,7 @@ class TestContext:
 
     def test_context_with_values(self) -> None:
         """Test Context can be initialized with values."""
-        messages = [ChatMessage(role=Role.USER, text="Test message")]
+        messages = [ChatMessage(role="user", text="Test message")]
         context = Context(instructions="Test instructions", messages=messages)
         assert context.instructions == "Test instructions"
         assert len(context.messages) == 1
@@ -76,18 +89,48 @@ class TestContextProvider:
     async def test_invoked(self) -> None:
         """Test invoked is called."""
         provider = MockContextProvider()
-        message = ChatMessage(role=Role.USER, text="Test message")
+        message = ChatMessage(role="user", text="Test message")
         await provider.invoked(message)
         assert provider.invoked_called
         assert provider.new_messages == message
 
     async def test_invoking(self) -> None:
         """Test invoking is called and returns context."""
-        provider = MockContextProvider(messages=[ChatMessage(role=Role.USER, text="Context message")])
-        message = ChatMessage(role=Role.USER, text="Test message")
+        provider = MockContextProvider(messages=[ChatMessage(role="user", text="Context message")])
+        message = ChatMessage(role="user", text="Test message")
         context = await provider.invoking(message)
         assert provider.invoking_called
         assert provider.model_invoking_messages == message
         assert context.messages is not None
         assert len(context.messages) == 1
         assert context.messages[0].text == "Context message"
+
+    async def test_base_thread_created_does_nothing(self) -> None:
+        """Test that base ContextProvider.thread_created does nothing by default."""
+        provider = MinimalContextProvider()
+        await provider.thread_created("some-thread-id")
+        await provider.thread_created(None)
+
+    async def test_base_invoked_does_nothing(self) -> None:
+        """Test that base ContextProvider.invoked does nothing by default."""
+        provider = MinimalContextProvider()
+        message = ChatMessage(role="user", text="Test")
+        await provider.invoked(message)
+        await provider.invoked(message, response_messages=message)
+        await provider.invoked(message, invoke_exception=Exception("test"))
+
+    async def test_base_aenter_returns_self(self) -> None:
+        """Test that base ContextProvider.__aenter__ returns self."""
+        provider = MinimalContextProvider()
+        async with provider as p:
+            assert p is provider
+
+    async def test_base_aexit_does_nothing(self) -> None:
+        """Test that base ContextProvider.__aexit__ handles exceptions gracefully."""
+        provider = MinimalContextProvider()
+        await provider.__aexit__(None, None, None)
+        try:
+            raise ValueError("test error")
+        except ValueError:
+            exc_info = sys.exc_info()
+            await provider.__aexit__(exc_info[0], exc_info[1], exc_info[2])

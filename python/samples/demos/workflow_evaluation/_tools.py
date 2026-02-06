@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Annotated
 
-from agent_framework import ai_function
+from agent_framework import tool
 from pydantic import Field
 
 # --- Travel Planning Tools ---
@@ -13,7 +13,7 @@ from pydantic import Field
 
 
 # Mock hotel search tool
-@ai_function(name="search_hotels", description="Search for available hotels based on location and dates.")
+@tool(name="search_hotels", description="Search for available hotels based on location and dates.")
 def search_hotels(
     location: Annotated[str, Field(description="City or region to search for hotels.")],
     check_in: Annotated[str, Field(description="Check-in date (e.g., 'December 15, 2025').")],
@@ -70,7 +70,7 @@ def search_hotels(
                 "availability": "Available"
             }
         ]
-    
+
     return json.dumps({
         "location": location,
         "check_in": check_in,
@@ -83,7 +83,7 @@ def search_hotels(
 
 
 # Mock hotel details tool
-@ai_function(name="get_hotel_details", description="Get detailed information about a specific hotel.")
+@tool(name="get_hotel_details", description="Get detailed information about a specific hotel.")
 def get_hotel_details(
     hotel_name: Annotated[str, Field(description="Name of the hotel to get details for.")],
 ) -> str:
@@ -140,7 +140,7 @@ def get_hotel_details(
             "nearby_attractions": ["Eiffel Tower (0.2 mi)", "Seine River Cruise Dock (0.3 mi)", "Trocadéro (0.5 mi)"]
         }
     }
-    
+
     details = hotel_details.get(hotel_name, {
         "name": hotel_name,
         "description": "Comfortable hotel with modern amenities",
@@ -150,7 +150,7 @@ def get_hotel_details(
         "reviews": {"total": 0, "recent_comments": []},
         "nearby_attractions": []
     })
-    
+
     return json.dumps({
         "hotel_name": hotel_name,
         "details": details
@@ -158,7 +158,7 @@ def get_hotel_details(
 
 
 # Mock flight search tool
-@ai_function(name="search_flights", description="Search for available flights between two locations.")
+@tool(name="search_flights", description="Search for available flights between two locations.")
 def search_flights(
     origin: Annotated[str, Field(description="Departure airport or city (e.g., 'JFK' or 'New York').")],
     destination: Annotated[str, Field(description="Arrival airport or city (e.g., 'CDG' or 'Paris').")],
@@ -270,7 +270,7 @@ def search_flights(
                 "stops": "Nonstop"
             }
         ]
-    
+
     return json.dumps({
         "origin": origin,
         "destination": destination,
@@ -284,7 +284,7 @@ def search_flights(
 
 
 # Mock flight details tool
-@ai_function(name="get_flight_details", description="Get detailed information about a specific flight.")
+@tool(name="get_flight_details", description="Get detailed information about a specific flight.")
 def get_flight_details(
     flight_number: Annotated[str, Field(description="Flight number (e.g., 'AF007' or 'DL264').")],
 ) -> str:
@@ -317,14 +317,14 @@ def get_flight_details(
         },
         "amenities": ["WiFi", "In-flight entertainment", "Meals included"]
     }
-    
+
     return json.dumps({
         "flight_details": mock_details
     })
 
 
 # Mock activity search tool
-@ai_function(name="search_activities", description="Search for available activities and attractions at a destination.")
+@tool(name="search_activities", description="Search for available activities and attractions at a destination.")
 def search_activities(
     location: Annotated[str, Field(description="City or region to search for activities.")],
     date: Annotated[str | None, Field(description="Date for the activity (e.g., 'December 16, 2025').")] = None,
@@ -439,7 +439,7 @@ def search_activities(
                 "booking_required": False
             }
         ]
-        
+
         if category:
             activities = [act for act in all_activities if act["category"] == category]
         else:
@@ -456,7 +456,7 @@ def search_activities(
                 "availability": "Daily at 10:00 AM and 2:00 PM"
             }
         ]
-    
+
     return json.dumps({
         "location": location,
         "date": date,
@@ -468,7 +468,7 @@ def search_activities(
 
 
 # Mock activity details tool
-@ai_function(name="get_activity_details", description="Get detailed information about a specific activity.")
+@tool(name="get_activity_details", description="Get detailed information about a specific activity.")
 def get_activity_details(
     activity_name: Annotated[str, Field(description="Name of the activity to get details for.")],
 ) -> str:
@@ -523,7 +523,7 @@ def get_activity_details(
             "reviews_count": 2341
         }
     }
-    
+
     details = activity_details_map.get(activity_name, {
         "name": activity_name,
         "description": "An immersive experience that showcases the best of local culture and attractions.",
@@ -538,14 +538,14 @@ def get_activity_details(
         "rating": 4.5,
         "reviews_count": 100
     })
-    
+
     return json.dumps({
         "activity_details": details
     })
 
 
 # Mock booking confirmation tool
-@ai_function(name="confirm_booking", description="Confirm a booking reservation.")
+@tool(name="confirm_booking", description="Confirm a booking reservation.")
 def confirm_booking(
     booking_type: Annotated[str, Field(description="Type of booking (e.g., 'hotel', 'flight', 'activity').")],
     booking_id: Annotated[str, Field(description="Unique booking identifier.")],
@@ -558,7 +558,7 @@ def confirm_booking(
         booking status, customer information, and next steps.
     """
     confirmation_number = f"CONF-{booking_type.upper()}-{booking_id}"
-    
+
     confirmation_data = {
         "confirmation_number": confirmation_number,
         "booking_type": booking_type,
@@ -572,14 +572,14 @@ def confirm_booking(
             "Bring confirmation number and valid ID"
         ]
     }
-    
+
     return json.dumps({
         "confirmation": confirmation_data
     })
 
 
 # Mock hotel availability check tool
-@ai_function(name="check_hotel_availability", description="Check availability for hotel rooms.")
+@tool(name="check_hotel_availability", description="Check availability for hotel rooms.")
 def check_hotel_availability(
     hotel_name: Annotated[str, Field(description="Name of the hotel to check availability for.")],
     check_in: Annotated[str, Field(description="Check-in date (e.g., 'December 15, 2025').")],
@@ -595,7 +595,7 @@ def check_hotel_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "hotel",
         "hotel_name": hotel_name,
@@ -607,14 +607,14 @@ def check_hotel_availability(
         "price_per_night": "$185",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
 
 
 # Mock flight availability check tool
-@ai_function(name="check_flight_availability", description="Check availability for flight seats.")
+@tool(name="check_flight_availability", description="Check availability for flight seats.")
 def check_flight_availability(
     flight_number: Annotated[str, Field(description="Flight number to check availability for.")],
     date: Annotated[str, Field(description="Flight date (e.g., 'December 15, 2025').")],
@@ -629,7 +629,7 @@ def check_flight_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "flight",
         "flight_number": flight_number,
@@ -640,14 +640,14 @@ def check_flight_availability(
         "price_per_passenger": "$520",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
 
 
 # Mock activity availability check tool
-@ai_function(name="check_activity_availability", description="Check availability for activity bookings.")
+@tool(name="check_activity_availability", description="Check availability for activity bookings.")
 def check_activity_availability(
     activity_name: Annotated[str, Field(description="Name of the activity to check availability for.")],
     date: Annotated[str, Field(description="Activity date (e.g., 'December 16, 2025').")],
@@ -662,7 +662,7 @@ def check_activity_availability(
         and last checked timestamp.
     """
     availability_status = "Available"
-    
+
     availability_data = {
         "service_type": "activity",
         "activity_name": activity_name,
@@ -673,14 +673,14 @@ def check_activity_availability(
         "price_per_person": "$45",
         "last_checked": datetime.now().isoformat()
     }
-    
+
     return json.dumps({
         "availability": availability_data
     })
 
 
 # Mock payment processing tool
-@ai_function(name="process_payment", description="Process payment for a booking.")
+@tool(name="process_payment", description="Process payment for a booking.")
 def process_payment(
     amount: Annotated[float, Field(description="Payment amount.")],
     currency: Annotated[str, Field(description="Currency code (e.g., 'USD', 'EUR').")],
@@ -694,7 +694,7 @@ def process_payment(
         payment method details, and receipt URL.
     """
     transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     payment_result = {
         "transaction_id": transaction_id,
         "amount": amount,
@@ -706,15 +706,14 @@ def process_payment(
         "timestamp": datetime.now().isoformat(),
         "receipt_url": f"https://payments.travelagency.com/receipt/{transaction_id}"
     }
-    
+
     return json.dumps({
         "payment_result": payment_result
     })
 
 
-
 # Mock payment validation tool
-@ai_function(name="validate_payment_method", description="Validate a payment method before processing.")
+@tool(name="validate_payment_method", description="Validate a payment method before processing.")
 def validate_payment_method(
     payment_method: Annotated[dict, Field(description="Payment method to validate (type, number, expiry, cvv).")],
 ) -> str:
@@ -725,11 +724,11 @@ def validate_payment_method(
         validation messages, supported currencies, and processing fee information.
     """
     method_type = payment_method.get("type", "credit_card")
-    
+
     # Validation logic
     is_valid = True
     validation_messages = []
-    
+
     if method_type == "credit_card":
         if not payment_method.get("number"):
             is_valid = False
@@ -740,7 +739,7 @@ def validate_payment_method(
         if not payment_method.get("cvv"):
             is_valid = False
             validation_messages.append("CVV is required")
-    
+
     validation_result = {
         "is_valid": is_valid,
         "payment_method_type": method_type,
@@ -748,7 +747,7 @@ def validate_payment_method(
         "supported_currencies": ["USD", "EUR", "GBP", "JPY"],
         "processing_fee": "2.5%"
     }
-    
+
     return json.dumps({
         "validation_result": validation_result
     })

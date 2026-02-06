@@ -31,7 +31,6 @@ Purpose:
 Show how to construct a parallel branch pattern in workflows. Demonstrate:
 - Fan out by targeting multiple AgentExecutor nodes from one dispatcher.
 - Fan in by collecting a list of AgentExecutorResponse objects and reducing them to a single result.
-- Simple tracing using AgentRunEvent to observe execution order and progress.
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
@@ -141,7 +140,9 @@ async def main() -> None:
     )
 
     # 3) Run with a single prompt and print progress plus the final consolidated output
-    async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
+    async for event in workflow.run(
+        "We are launching a new budget-friendly electric bike for urban commuters.", stream=True
+    ):
         if isinstance(event, ExecutorInvokedEvent):
             # Show when executors are invoked and completed for lightweight observability.
             print(f"{event.executor_id} invoked")

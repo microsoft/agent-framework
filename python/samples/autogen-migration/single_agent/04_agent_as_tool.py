@@ -43,7 +43,7 @@ async def run_autogen() -> None:
 
     # Run coordinator with streaming - it will delegate to writer
     print("[AutoGen]")
-    await Console(coordinator.run_stream(task="Create a tagline for a coffee shop"))
+    await Console(coordinator.run(task="Create a tagline for a coffee shop", stream=True))
 
 
 async def run_agent_framework() -> None:
@@ -80,7 +80,7 @@ async def run_agent_framework() -> None:
     # Track accumulated function calls (they stream in incrementally)
     accumulated_calls: dict[str, FunctionCallContent] = {}
 
-    async for chunk in coordinator.run_stream("Create a tagline for a coffee shop"):
+    async for chunk in coordinator.run("Create a tagline for a coffee shop", stream=True):
         # Stream text tokens
         if chunk.text:
             print(chunk.text, end="", flush=True)

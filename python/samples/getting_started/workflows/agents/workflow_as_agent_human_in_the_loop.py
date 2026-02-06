@@ -17,10 +17,8 @@ if str(_SAMPLES_ROOT) not in sys.path:
 
 from agent_framework import (  # noqa: E402
     ChatMessage,
+    Content,
     Executor,
-    FunctionCallContent,
-    FunctionResultContent,
-    Role,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
@@ -130,10 +128,10 @@ async def main() -> None:
     )
 
     # Locate the human review function call in the response messages.
-    human_review_function_call: FunctionCallContent | None = None
+    human_review_function_call: Content | None = None
     for message in response.messages:
         for content in message.contents:
-            if isinstance(content, FunctionCallContent) and content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
+            if content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
                 human_review_function_call = content
 
     # Handle the human review if required.
@@ -162,12 +160,12 @@ async def main() -> None:
         human_response = ReviewResponse(request_id=request_id, feedback="Approved", approved=True)
 
         # Create the function call result object to send back to the agent.
-        human_review_function_result = FunctionResultContent(
-            call_id=human_review_function_call.call_id,
+        human_review_function_result = Content.from_function_result(
+            call_id=human_review_function_call.call_id,  # type: ignore
             result=human_response,
         )
         # Send the human review result back to the agent.
-        response = await agent.run(ChatMessage(role=Role.TOOL, contents=[human_review_function_result]))
+        response = await agent.run(ChatMessage("tool", [human_review_function_result]))
         print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)

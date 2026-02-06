@@ -8,6 +8,7 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     CitationAnnotation,
+    Content,
     HostedCodeInterpreterTool,
     HostedFileContent,
     TextContent,
@@ -137,7 +138,7 @@ async def non_streaming_example() -> None:
         # AgentResponse has messages property, which contains ChatMessage objects
         for message in result.messages:
             for content in message.contents:
-                if isinstance(content, TextContent) and content.annotations:
+                if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
                         if isinstance(annotation, CitationAnnotation) and annotation.file_id:
                             annotations_found.append(annotation)
@@ -177,10 +178,10 @@ async def streaming_example() -> None:
         file_contents_found: list[HostedFileContent] = []
         text_chunks: list[str] = []
 
-        async for update in agent.run_stream(QUERY):
+        async for update in agent.run(QUERY, stream=True):
             if isinstance(update, AgentResponseUpdate):
                 for content in update.contents:
-                    if isinstance(content, TextContent):
+                    if content.type == "text":
                         if content.text:
                             text_chunks.append(content.text)
                         if content.annotations:

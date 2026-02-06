@@ -16,12 +16,22 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
-    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return serializedSession.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.GetNewSessionAsync(cancellationToken);
+        return serializedState.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.CreateSessionAsync(cancellationToken);
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) =>
+    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        if (session is not EchoAgentSession typedSession)
+        {
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+        }
+
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
         new(new EchoAgentSession());
 
     private static ChatMessage UpdateSession(ChatMessage message, InMemoryAgentSession? session = null)
@@ -89,5 +99,11 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         }
     }
 
-    private sealed class EchoAgentSession : InMemoryAgentSession;
+    private sealed class EchoAgentSession : InMemoryAgentSession
+    {
+        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            return base.Serialize(jsonSerializerOptions);
+        }
+    }
 }

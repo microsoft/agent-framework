@@ -95,7 +95,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/agents/custom/custom_agent.py`](./getting_started/agents/custom/custom_agent.py) | Custom Agent Implementation Example |
-| [`getting_started/agents/custom/custom_chat_client.py`](./getting_started/agents/custom/custom_chat_client.py) | Custom Chat Client Implementation Example |
+| [`getting_started/chat_client/custom_chat_client.py`](./getting_started/chat_client/custom_chat_client.py) | Custom Chat Client Implementation Example |
 
 ### Ollama
 
@@ -253,6 +253,21 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 | [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
 | [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
 | [`getting_started/azure_functions/07_single_agent_orchestration_hitl/`](./getting_started/azure_functions/07_single_agent_orchestration_hitl/) | Implement a human-in-the-loop approval loop that iterates on agent output inside a durable orchestration. |
+| [`getting_started/azure_functions/08_mcp_server/`](./getting_started/azure_functions/08_mcp_server/) | Configure agents as both HTTP endpoints and MCP tools for flexible integration patterns. |
+
+## Durable Task
+
+These samples demonstrate durable agent hosting using the Durable Task Scheduler with a worker-client architecture pattern, enabling distributed agent execution with persistent conversation state.
+
+| Sample | Description |
+|--------|-------------|
+| [`getting_started/durabletask/01_single_agent/`](./getting_started/durabletask/01_single_agent/) | Host a single conversational agent with worker-client architecture and agent state management. |
+| [`getting_started/durabletask/02_multi_agent/`](./getting_started/durabletask/02_multi_agent/) | Host multiple domain-specific agents and route requests based on question topic. |
+| [`getting_started/durabletask/03_single_agent_streaming/`](./getting_started/durabletask/03_single_agent_streaming/) | Implement reliable streaming using Redis Streams with cursor-based resumption for durable agents. |
+| [`getting_started/durabletask/04_single_agent_orchestration_chaining/`](./getting_started/durabletask/04_single_agent_orchestration_chaining/) | Chain multiple agent invocations using durable orchestration while preserving conversation context. |
+| [`getting_started/durabletask/05_multi_agent_orchestration_concurrency/`](./getting_started/durabletask/05_multi_agent_orchestration_concurrency/) | Run multiple agents concurrently within an orchestration and aggregate their responses. |
+| [`getting_started/durabletask/06_multi_agent_orchestration_conditionals/`](./getting_started/durabletask/06_multi_agent_orchestration_conditionals/) | Implement conditional branching with spam detection using structured outputs and activity functions. |
+| [`getting_started/durabletask/07_single_agent_orchestration_hitl/`](./getting_started/durabletask/07_single_agent_orchestration_hitl/) | Human-in-the-loop pattern with external event handling, timeouts, and iterative refinement. |
 
 ## Observability
 
@@ -277,16 +292,22 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 
 ## Tools
 
+Note: Many tool samples set `approval_mode="never_require"` to keep the examples concise. For production scenarios,
+keep `approval_mode="always_require"` unless you are confident in the tool behavior and approval flow. See
+`getting_started/tools/function_tool_with_approval.py` and
+`getting_started/tools/function_tool_with_approval_and_threads.py`, plus the workflow approval samples in
+`getting_started/workflows/tool-approval/`, for end-to-end approval handling.
+
 | File | Description |
 |------|-------------|
-| [`getting_started/tools/ai_function_declaration_only.py`](./getting_started/tools/ai_function_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
-| [`getting_started/tools/ai_function_from_dict_with_dependency_injection.py`](./getting_started/tools/ai_function_from_dict_with_dependency_injection.py) | Creating AI functions from dictionary definitions using dependency injection |
-| [`getting_started/tools/ai_function_recover_from_failures.py`](./getting_started/tools/ai_function_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
-| [`getting_started/tools/ai_function_with_approval.py`](./getting_started/tools/ai_function_with_approval.py) | User approval workflows for function calls without threads |
-| [`getting_started/tools/ai_function_with_approval_and_threads.py`](./getting_started/tools/ai_function_with_approval_and_threads.py) | Tool approval workflows using threads for conversation history management |
-| [`getting_started/tools/ai_function_with_max_exceptions.py`](./getting_started/tools/ai_function_with_max_exceptions.py) | Limiting tool failure exceptions using max_invocation_exceptions |
-| [`getting_started/tools/ai_function_with_max_invocations.py`](./getting_started/tools/ai_function_with_max_invocations.py) | Limiting total tool invocations using max_invocations |
-| [`getting_started/tools/ai_functions_in_class.py`](./getting_started/tools/ai_functions_in_class.py) | Using ai_function decorator with class methods for stateful tools |
+| [`getting_started/tools/function_tool_declaration_only.py`](./getting_started/tools/function_tool_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
+| [`getting_started/tools/function_tool_from_dict_with_dependency_injection.py`](./getting_started/tools/function_tool_from_dict_with_dependency_injection.py) | Creating local tools from dictionary definitions using dependency injection |
+| [`getting_started/tools/function_tool_recover_from_failures.py`](./getting_started/tools/function_tool_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
+| [`getting_started/tools/function_tool_with_approval.py`](./getting_started/tools/function_tool_with_approval.py) | User approval workflows for function calls without threads |
+| [`getting_started/tools/function_tool_with_approval_and_threads.py`](./getting_started/tools/function_tool_with_approval_and_threads.py) | Tool approval workflows using threads for conversation history management |
+| [`getting_started/tools/function_tool_with_max_exceptions.py`](./getting_started/tools/function_tool_with_max_exceptions.py) | Limiting tool failure exceptions using max_invocation_exceptions |
+| [`getting_started/tools/function_tool_with_max_invocations.py`](./getting_started/tools/function_tool_with_max_invocations.py) | Limiting total tool invocations using max_invocations |
+| [`getting_started/tools/tool_in_class.py`](./getting_started/tools/tool_in_class.py) | Using the tool decorator with class methods for stateful tools |
 
 ## Workflows
 

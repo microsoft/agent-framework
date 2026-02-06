@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import types
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -26,9 +27,9 @@ from ._workflow import WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override
+    from typing_extensions import override  # type: ignore # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -302,13 +303,13 @@ class WorkflowExecutor(Executor):
         self._propagate_request = propagate_request
 
     @property
-    def input_types(self) -> list[type[Any]]:
+    def input_types(self) -> list[type[Any] | types.UnionType]:
         """Get the input types based on the underlying workflow's input types plus WorkflowExecutor-specific types.
 
         Returns:
             A list of input types that the WorkflowExecutor can accept.
         """
-        input_types = list(self.workflow.input_types)
+        input_types: list[type[Any] | types.UnionType] = list(self.workflow.input_types)
 
         # WorkflowExecutor can also handle SubWorkflowResponseMessage for sub-workflow responses
         if SubWorkflowResponseMessage not in input_types:
@@ -317,7 +318,7 @@ class WorkflowExecutor(Executor):
         return input_types
 
     @property
-    def output_types(self) -> list[type[Any]]:
+    def output_types(self) -> list[type[Any] | types.UnionType]:
         """Get the output types based on the underlying workflow's output types.
 
         Returns:
@@ -325,7 +326,7 @@ class WorkflowExecutor(Executor):
             Includes the SubWorkflowRequestMessage type if any executor in the
             sub-workflow is request-response capable.
         """
-        output_types = list(self.workflow.output_types)
+        output_types: list[type[Any] | types.UnionType] = list(self.workflow.output_types)
 
         is_request_response_capable = any(
             executor.is_request_response_capable for executor in self.workflow.executors.values()
@@ -385,8 +386,8 @@ class WorkflowExecutor(Executor):
         logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution {execution_id}")
 
         try:
-            # Get kwargs from parent workflow's SharedState to propagate to subworkflow
-            parent_kwargs: dict[str, Any] = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY) or {}
+            # Get kwargs from parent workflow's State to propagate to subworkflow
+            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {}
 
             # Run the sub-workflow and collect all events, passing parent kwargs
             result = await self.workflow.run(input_data, **parent_kwargs)
@@ -651,6 +652,24 @@ class WorkflowExecutor(Executor):
         try:
             # Resume the sub-workflow with all collected responses
             result = await self.workflow.send_responses(responses_to_send)
+            # Remove handled requests from result. The result may contain the original
+            # RequestInfoEvents that were already handled. This is due to checkpointing
+            # and rehydration of the workflow that re-adds the RequestInfoEvents to the
+            # workflow's _runner_context thus the event queue. When the workflow is resumed,
+            # those events will be emitted at the very beginning of the superstep, prior to
+            # processing messages/responses, creating the illusion that the workflow is
+            # requesting the same information again.
+            for request_id in responses_to_send:
+                event_to_remove = next(
+                    (
+                        event
+                        for event in result
+                        if isinstance(event, RequestInfoEvent) and event.request_id == request_id
+                    ),
+                    None,
+                )
+                if event_to_remove:
+                    result.remove(event_to_remove)
 
             # Process the workflow result using shared logic
             await self._process_workflow_result(result, execution_context, ctx)

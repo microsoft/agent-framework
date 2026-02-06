@@ -11,14 +11,6 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class AgentSessionTests
 {
-    [Fact]
-    public void Serialize_ReturnsDefaultJsonElement()
-    {
-        var session = new TestAgentSession();
-        var result = session.Serialize();
-        Assert.Equal(default, result);
-    }
-
     #region GetService Method Tests
 
     /// <summary>

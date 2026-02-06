@@ -33,7 +33,7 @@ async def handle_approvals_without_thread(query: str, agent: "AgentProtocol"):
             new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")])
+                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs)
@@ -56,7 +56,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             new_input.append(
                 ChatMessage(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread, store=True)
@@ -72,7 +72,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AgentProtoc
     while new_input_added:
         new_input_added = False
         new_input.append(ChatMessage(role="user", text=query))
-        async for update in agent.run_stream(new_input, thread=thread, store=True):
+        async for update in agent.run(new_input, thread=thread, options={"store": True}, stream=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
                     print(
@@ -82,7 +82,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AgentProtoc
                     user_approval = input("Approve function call? (y/n): ")
                     new_input.append(
                         ChatMessage(
-                            role="user", contents=[user_input_needed.create_response(user_approval.lower() == "y")]
+                            role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")]
                         )
                     )
                     new_input_added = True

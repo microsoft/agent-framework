@@ -96,8 +96,8 @@ async def main():
     client = OpenAIChatClient()
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=Role.USER, text="Write a haiku about Agent Framework.")
+        ChatMessage("system", ["You are a helpful assistant."]),
+        ChatMessage("user", ["Write a haiku about Agent Framework."])
     ]
 
     response = await client.get_response(messages)
@@ -213,10 +213,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Note**: GroupChat, Sequential, and Concurrent orchestrations are available today. See examples in:
-- [python/samples/getting_started/workflows/orchestration/](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflows/orchestration)
-- [group_chat_simple_selector.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_simple_selector.py)
-- [group_chat_prompt_based_manager.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_prompt_based_manager.py)
+**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](../../samples/getting_started/orchestrations).
 
 ## More Examples & Samples
 

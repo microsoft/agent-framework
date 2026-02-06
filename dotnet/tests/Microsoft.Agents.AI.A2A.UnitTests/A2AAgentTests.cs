@@ -148,7 +148,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync(inputMessages, session);
@@ -168,7 +168,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -201,7 +201,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -272,7 +272,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, session))
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -316,7 +316,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -440,7 +440,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
@@ -466,7 +466,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync("Start a task", session);
@@ -492,7 +492,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var result = await this._agent.RunAsync("Start a long-running task", session);
@@ -586,7 +586,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         // Act
@@ -613,7 +613,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", session))
@@ -686,7 +686,7 @@ public sealed class A2AAgentTests : IDisposable
             ]
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -725,7 +725,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Working }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -768,7 +768,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -1026,6 +1026,127 @@ public sealed class A2AAgentTests : IDisposable
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await this._agent.RunStreamingAsync(inputMessages, invalidSession).ToListAsync());
     }
+
+    #region GetService Method Tests
+
+    /// <summary>
+    /// Verify that GetService returns A2AClient when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AClient_ReturnsA2AClient()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(A2AClient));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._a2aClient, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns AIAgentMetadata when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsMetadata()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.IsType<AIAgentMetadata>(result);
+        var metadata = (AIAgentMetadata)result;
+        Assert.Equal("a2a", metadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingUnknownServiceType_ReturnsNull()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService with serviceKey parameter returns null for unknown service types.
+    /// </summary>
+    [Fact]
+    public void GetService_WithServiceKey_ReturnsNull()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(string), "test-key");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting A2AAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(A2AAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first and returns the agent itself when requesting AIAgent type.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentType_ReturnsBaseImplementation()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(AIAgent));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._agent, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService calls base.GetService() first but continues to derived logic when base returns null.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingA2AClientWithServiceKey_CallsBaseFirstThenDerivedLogic()
+    {
+        // Arrange & Act - Request A2AClient with a service key (base.GetService will return null due to serviceKey)
+        var result = this._agent.GetService(typeof(A2AClient), "some-key");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._a2aClient, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns consistent AIAgentMetadata across multiple calls.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingAIAgentMetadata_ReturnsConsistentMetadata()
+    {
+        // Arrange & Act
+        var result1 = this._agent.GetService(typeof(AIAgentMetadata));
+        var result2 = this._agent.GetService(typeof(AIAgentMetadata));
+
+        // Assert
+        Assert.NotNull(result1);
+        Assert.NotNull(result2);
+        Assert.Same(result1, result2); // Should return the same instance
+        Assert.IsType<AIAgentMetadata>(result1);
+        var metadata = (AIAgentMetadata)result1;
+        Assert.Equal("a2a", metadata.ProviderName);
+    }
+
+    #endregion
 
     public void Dispose()
     {

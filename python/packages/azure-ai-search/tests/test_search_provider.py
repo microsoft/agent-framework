@@ -5,7 +5,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context, Role
+from agent_framework import ChatMessage, Context
 from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
@@ -39,7 +39,7 @@ def mock_index_client() -> AsyncMock:
 def sample_messages() -> list[ChatMessage]:
     """Create sample chat messages for testing."""
     return [
-        ChatMessage(role=Role.USER, text="What is in the documents?"),
+        ChatMessage(role="user", text="What is in the documents?"),
     ]
 
 
@@ -318,7 +318,7 @@ class TestSemanticSearch:
         )
 
         # Empty message
-        context = await provider.invoking([ChatMessage(role=Role.USER, text="")])
+        context = await provider.invoking([ChatMessage(role="user", text="")])
 
         assert isinstance(context, Context)
         assert len(context.messages) == 0
@@ -520,10 +520,10 @@ class TestMessageFiltering:
 
         # Mix of message types
         messages = [
-            ChatMessage(role=Role.SYSTEM, text="System message"),
-            ChatMessage(role=Role.USER, text="User message"),
-            ChatMessage(role=Role.ASSISTANT, text="Assistant message"),
-            ChatMessage(role=Role.TOOL, text="Tool message"),
+            ChatMessage(role="system", text="System message"),
+            ChatMessage(role="user", text="User message"),
+            ChatMessage(role="assistant", text="Assistant message"),
+            ChatMessage(role="tool", text="Tool message"),
         ]
 
         context = await provider.invoking(messages)
@@ -548,9 +548,9 @@ class TestMessageFiltering:
 
         # Messages with empty/whitespace text
         messages = [
-            ChatMessage(role=Role.USER, text=""),
-            ChatMessage(role=Role.USER, text="   "),
-            ChatMessage(role=Role.USER, text=None),
+            ChatMessage(role="user", text=""),
+            ChatMessage(role="user", text="   "),
+            ChatMessage(role="user", text=""),  # ChatMessage with None text becomes empty string
         ]
 
         context = await provider.invoking(messages)
@@ -581,7 +581,7 @@ class TestCitations:
             mode="semantic",
         )
 
-        context = await provider.invoking([ChatMessage(role=Role.USER, text="test query")])
+        context = await provider.invoking([ChatMessage(role="user", text="test query")])
 
         # Check that citation is included
         assert isinstance(context, Context)

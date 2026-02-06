@@ -4,7 +4,7 @@ import asyncio
 import base64
 
 import anyio
-from agent_framework import DataContent, HostedImageGenerationTool
+from agent_framework import Content, HostedImageGenerationTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """OpenAI Responses Client Streaming Image Generation Example
@@ -67,12 +67,12 @@ async def main():
     await output_dir.mkdir(exist_ok=True)
 
     print(" Streaming response:")
-    async for update in agent.run_stream(query):
+    async for update in agent.run(query, stream=True):
         for content in update.contents:
             # Handle partial images
             # The final partial image IS the complete, full-quality image. Each partial
             # represents a progressive refinement, with the last one being the finished result.
-            if isinstance(content, DataContent) and content.additional_properties.get("is_partial_image"):
+            if content.type == "data" and content.additional_properties.get("is_partial_image"):
                 print(f"     Image {image_count} received")
 
                 # Extract file extension from media_type (e.g., "image/png" -> "png")

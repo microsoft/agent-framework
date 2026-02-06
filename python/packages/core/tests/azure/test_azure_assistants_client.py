@@ -18,6 +18,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from agent_framework.exceptions import ServiceInitializationError
@@ -253,6 +254,7 @@ def test_azure_assistants_client_serialize(azure_openai_unit_test_env: dict[str,
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -324,7 +326,7 @@ async def test_azure_assistants_client_streaming() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
-        response = azure_assistants_client.get_streaming_response(messages=messages)
+        response = azure_assistants_client.get_response(messages=messages, stream=True)
 
         full_message: str = ""
         async for chunk in response:
@@ -348,9 +350,10 @@ async def test_azure_assistants_client_streaming_tools() -> None:
         messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
-        response = azure_assistants_client.get_streaming_response(
+        response = azure_assistants_client.get_response(
             messages=messages,
             options={"tools": [get_weather], "tool_choice": "auto"},
+            stream=True,
         )
         full_message: str = ""
         async for chunk in response:
@@ -417,7 +420,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
     ) as agent:
         # Run streaming query
         full_message: str = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert chunk is not None
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:

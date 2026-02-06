@@ -16,7 +16,6 @@ from agent_framework import (
     Executor,
     FileCheckpointStorage,
     RequestInfoEvent,
-    Role,
     Workflow,
     WorkflowBuilder,
     WorkflowCheckpoint,
@@ -82,9 +81,9 @@ class BriefPreparer(Executor):
         normalized = " ".join(brief.split()).strip()
         if not normalized.endswith("."):
             normalized += "."
-        # Persist the cleaned brief in shared state so downstream executors and
+        # Persist the cleaned brief in workflow state so downstream executors and
         # future checkpoints can recover the original intent.
-        await ctx.set_shared_state("brief", normalized)
+        ctx.set_state("brief", normalized)
         prompt = (
             "You are drafting product release notes. Summarise the brief below in two sentences. "
             "Keep it positive and end with a call to action.\n\n"
@@ -93,7 +92,7 @@ class BriefPreparer(Executor):
         # Hand the prompt to the writer agent. We always route through the
         # workflow context so the runtime can capture messages for checkpointing.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -155,7 +154,7 @@ class ReviewGateway(Executor):
             f"Human guidance: {reply}"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
 
@@ -252,10 +251,10 @@ async def run_interactive_session(
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")
-                event_stream = workflow.run_stream(message=initial_message)
+                event_stream = workflow.run(message=initial_message, stream=True)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)
+                event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 

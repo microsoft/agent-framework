@@ -63,7 +63,7 @@ async def main() -> None:
     workflow = (
         MagenticBuilder()
         .participants([researcher_agent, analyst_agent])
-        .with_standard_manager(
+        .with_manager(
             agent=manager_agent,
             max_round_count=10,
             max_stall_count=1,
@@ -87,7 +87,7 @@ async def main() -> None:
         if pending_responses is not None:
             stream = workflow.send_responses_streaming(pending_responses)
         else:
-            stream = workflow.run_stream(task)
+            stream = workflow.run(task, stream=True)
 
         last_message_id: str | None = None
         async for event in stream:

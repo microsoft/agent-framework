@@ -3,16 +3,19 @@
 import asyncio
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
 This sample demonstrates how to configure function invocation settings
-for an client and use a simple ai_function as a tool in an agent.
+for an client and use a simple tool as a tool in an agent.
 
 This behavior is the same for all chat client types.
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def add(
     x: Annotated[int, "First number"],
     y: Annotated[int, "Second number"],

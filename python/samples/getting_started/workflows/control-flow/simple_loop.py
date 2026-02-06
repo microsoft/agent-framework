@@ -10,7 +10,6 @@ from agent_framework import (
     ChatMessage,
     Executor,
     ExecutorCompletedEvent,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -96,7 +95,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
             target_id=self._judge_agent_id,
         )
 
@@ -143,7 +142,7 @@ async def main():
 
     # Step 2: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_stream(NumberSignal.INIT):
+    async for event in workflow.run(NumberSignal.INIT, stream=True):
         if isinstance(event, ExecutorCompletedEvent) and event.executor_id == "guess_number":
             iterations += 1
         print(f"Event: {event}")

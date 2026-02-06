@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, cast
 
 import yaml
 from agent_framework import (
-    AIFunction,
     ChatAgent,
     ChatClientProtocol,
     Content,
@@ -16,6 +16,9 @@ from agent_framework import (
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
+)
+from agent_framework import (
+    FunctionTool as AFFunctionTool,
 )
 from agent_framework._tools import _create_model_from_json_schema  # type: ignore
 from agent_framework.exceptions import AgentFrameworkException
@@ -39,6 +42,11 @@ from ._models import (
     _safe_mode_context,
     agent_schema_dispatch,
 )
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 class ProviderTypeMapping(TypedDict, total=True):
@@ -130,7 +138,7 @@ class AgentFactory:
             agent = factory.create_agent_from_yaml_path("agent.yaml")
 
             # Run the agent
-            async for event in agent.run_stream("Hello!"):
+            async for event in agent.run("Hello!", stream=True):
                 print(event)
 
         .. code-block:: python
@@ -292,7 +300,7 @@ class AgentFactory:
                 agent = factory.create_agent_from_yaml_path("agents/support_agent.yaml")
 
                 # Execute the agent
-                async for event in agent.run_stream("Help me with my order"):
+                async for event in agent.run("Help me with my order", stream=True):
                     print(event)
 
             .. code-block:: python
@@ -719,7 +727,7 @@ class AgentFactory:
                     for binding in tool_resource.bindings:
                         if binding.name and (func := self.bindings.get(binding.name)):
                             break
-                return AIFunction(  # type: ignore
+                return AFFunctionTool(  # type: ignore
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
                     input_model=tool_resource.parameters.to_json_schema() if tool_resource.parameters else None,

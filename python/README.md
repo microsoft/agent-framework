@@ -113,8 +113,8 @@ async def main():
     client = OpenAIChatClient()
 
     messages = [
-        ChatMessage(role="system", text="You are a helpful assistant."),
-        ChatMessage(role="user", text="Write a haiku about Agent Framework.")
+        ChatMessage("system", ["You are a helpful assistant."]),
+        ChatMessage("user", ["Write a haiku about Agent Framework."])
     ]
 
     response = await client.get_response(messages)
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-For more advanced orchestration patterns including Sequential, GroupChat, Concurrent, Magentic, and Handoff orchestrations, see the [orchestration samples](samples/getting_started/workflows/orchestration).
+For more advanced orchestration patterns including Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations, see the [orchestration samples](samples/getting_started/orchestrations).
 
 ## More Examples & Samples
 

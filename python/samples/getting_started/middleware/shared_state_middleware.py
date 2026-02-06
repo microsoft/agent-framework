@@ -7,13 +7,14 @@ from typing import Annotated
 
 from agent_framework import (
     FunctionInvocationContext,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Shared State Function-based Middleware Example
+Shared State Function-based MiddlewareTypes Example
 
 This sample demonstrates how to implement function-based middleware within a class to share state.
 The example includes:
@@ -26,6 +27,8 @@ This approach shows how middleware can work together by sharing state within the
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -34,6 +37,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
+@tool(approval_mode="never_require")
 def get_time(
     timezone: Annotated[str, Field(description="The timezone to get the time for.")] = "UTC",
 ) -> str:
@@ -84,7 +88,7 @@ class MiddlewareContainer:
 
 async def main() -> None:
     """Example demonstrating shared state function-based middleware."""
-    print("=== Shared State Function-based Middleware Example ===")
+    print("=== Shared State Function-based MiddlewareTypes Example ===")
 
     # Create middleware container with shared state
     middleware_container = MiddlewareContainer()

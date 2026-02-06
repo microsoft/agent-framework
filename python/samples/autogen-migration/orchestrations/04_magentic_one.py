@@ -6,6 +6,16 @@ managing specialized agents for complex tasks.
 """
 
 import asyncio
+import json
+from typing import cast
+
+from agent_framework import (
+    AgentResponseUpdate,
+    ChatMessage,
+    MagenticOrchestratorEvent,
+    MagenticProgressLedger,
+    WorkflowOutputEvent,
+)
 
 
 async def run_autogen() -> None:
@@ -57,13 +67,7 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's MagenticBuilder for orchestrated collaboration."""
-    from agent_framework import (
-        MagenticAgentDeltaEvent,
-        MagenticAgentMessageEvent,
-        MagenticBuilder,
-        MagenticFinalResultEvent,
-        MagenticOrchestratorMessageEvent,
-    )
+    from agent_framework import MagenticBuilder
     from agent_framework.openai import OpenAIChatClient
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
@@ -90,9 +94,13 @@ async def run_agent_framework() -> None:
     # Create Magentic workflow
     workflow = (
         MagenticBuilder()
-        .participants(researcher=researcher, coder=coder, reviewer=reviewer)
-        .with_standard_manager(
-            chat_client=client,
+        .participants([researcher, coder, reviewer])
+        .with_manager(
+            agent=client.as_agent(
+                name="magentic_manager",
+                instructions="You coordinate a team to complete complex tasks efficiently.",
+                description="Orchestrator for team coordination",
+            ),
             max_round_count=20,
             max_stall_count=3,
             max_reset_count=1,
@@ -101,41 +109,46 @@ async def run_agent_framework() -> None:
     )
 
     # Run complex task
+    last_message_id: str | None = None
+    output_event: WorkflowOutputEvent | None = None
     print("[Agent Framework] Magentic conversation:")
-    last_stream_agent_id: str | None = None
-    stream_line_open: bool = False
+    async for event in workflow.run("Research Python async patterns and write a simple example", stream=True):
+        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            message_id = event.data.message_id
+            if message_id != last_message_id:
+                if last_message_id is not None:
+                    print("\n")
+                print(f"- {event.executor_id}:", end=" ", flush=True)
+                last_message_id = message_id
+            print(event.data, end="", flush=True)
 
-    async for event in workflow.run_stream("Research Python async patterns and write a simple example"):
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            if stream_line_open:
-                print()
-                stream_line_open = False
-            print(f"---------- Orchestrator:{event.kind} ----------")
-            print(getattr(event.message, "text", ""))
-        elif isinstance(event, MagenticAgentDeltaEvent):
-            if last_stream_agent_id != event.agent_id or not stream_line_open:
-                if stream_line_open:
-                    print()
-                print(f"---------- {event.agent_id} ----------")
-                last_stream_agent_id = event.agent_id
-                stream_line_open = True
-            if event.text:
-                print(event.text, end="", flush=True)
-        elif isinstance(event, MagenticAgentMessageEvent):
-            if stream_line_open:
-                print()
-                stream_line_open = False
-        elif isinstance(event, MagenticFinalResultEvent):
-            if stream_line_open:
-                print()
-                stream_line_open = False
-            print("---------- Final Result ----------")
-            if event.message is not None:
-                print(event.message.text)
+        elif isinstance(event, MagenticOrchestratorEvent):
+            print(f"\n[Magentic Orchestrator Event] Type: {event.event_type.name}")
+            if isinstance(event.data, ChatMessage):
+                print(f"Please review the plan:\n{event.data.text}")
+            elif isinstance(event.data, MagenticProgressLedger):
+                print(f"Please review progress ledger:\n{json.dumps(event.data.to_dict(), indent=2)}")
+            else:
+                print(f"Unknown data type in MagenticOrchestratorEvent: {type(event.data)}")
 
-    if stream_line_open:
-        print()
-    print()  # Final newline after conversation
+            # Block to allow user to read the plan/progress before continuing
+            # Note: this is for demonstration only and is not the recommended way to handle human interaction.
+            # Please refer to `with_plan_review` for proper human interaction during planning phases.
+            await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
+
+        elif isinstance(event, WorkflowOutputEvent):
+            output_event = event
+
+    if not output_event:
+        raise RuntimeError("Workflow did not produce a final output event.")
+    print("\n\nWorkflow completed!")
+    print("Final Output:")
+    # The output of the Magentic workflow is a list of ChatMessages with only one final message
+    # generated by the orchestrator.
+    output_messages = cast(list[ChatMessage], output_event.data)
+    if output_messages:
+        output = output_messages[-1].text
+        print(output)
 
 
 async def main() -> None:

@@ -4,6 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -16,6 +17,8 @@ Shows function calling capabilities with custom business logic.
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -27,14 +30,14 @@ def get_weather(
 async def main() -> None:
     client = OpenAIResponsesClient()
     message = "What's the weather in Amsterdam and in Paris?"
-    stream = False
+    stream = True
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
-            if chunk.text:
-                print(chunk.text, end="")
-        print("")
+        response = client.get_response(message, stream=True, tools=get_weather)
+        # TODO: review names of the methods, could be related to things like HTTP clients?
+        response.with_update_hook(lambda chunk: print(chunk.text, end=""))
+        await response.get_final_response()
     else:
         response = await client.get_response(message, tools=get_weather)
         print(f"Assistant: {response}")

@@ -11,12 +11,15 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAM
 import logging
 from typing import Any
 
+from agent_framework import tool
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
 
@@ -31,6 +34,7 @@ def get_weather(location: str) -> dict[str, Any]:
     return result
 
 
+@tool(approval_mode="never_require")
 def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
     """Calculate tip amount and total bill."""
 

@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatResponse
+from agent_framework import ChatResponse, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
@@ -17,6 +17,8 @@ Shows function calling capabilities with custom business logic.
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -41,7 +43,7 @@ async def main() -> None:
     print(f"User: {message}")
     if stream:
         response = await ChatResponse.from_chat_response_generator(
-            client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
+            client.get_response(message, tools=get_weather, options={"response_format": OutputStruct}, stream=True),
             output_format_type=OutputStruct,
         )
         if result := response.try_parse_value(OutputStruct):

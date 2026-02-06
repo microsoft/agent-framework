@@ -55,7 +55,7 @@ async def streaming_reasoning_example() -> None:
     print(f"User: {query}")
     print(f"{agent.name}: ", end="", flush=True)
     usage = None
-    async for chunk in agent.run_stream(query):
+    async for chunk in agent.run(query, stream=True):
         if chunk.contents:
             for content in chunk.contents:
                 if content.type == "text_reasoning":

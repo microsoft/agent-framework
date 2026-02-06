@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from collections.abc import AsyncIterable
 from typing import Annotated
 
 from agent_framework import (
     ChatMessage,
     ConcurrentBuilder,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
+    Content,
     RequestInfoEvent,
+    WorkflowEvent,
     WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
 
@@ -45,7 +46,11 @@ Prerequisites:
 
 
 # 1. Define market data tools (no approval required)
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# See:
+# samples/getting_started/tools/function_tool_with_approval.py
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""
     # Mock data for demonstration
@@ -54,7 +59,7 @@ def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     return f"{symbol.upper()}: ${price:.2f}"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get market sentiment analysis for a stock."""
     # Mock sentiment data
@@ -68,7 +73,7 @@ def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> s
 
 
 # 2. Define trading tools (approval required)
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def execute_trade(
     symbol: Annotated[str, "The stock ticker symbol"],
     action: Annotated[str, "Either 'buy' or 'sell'"],
@@ -78,7 +83,7 @@ def execute_trade(
     return f"Trade executed: {action.upper()} {quantity} shares of {symbol.upper()}"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
     return "Portfolio: $50,000 invested, $10,000 cash available. Holdings: AAPL, GOOGL, MSFT."
@@ -97,7 +102,28 @@ def _print_output(event: WorkflowOutputEvent) -> None:
     print("Workflow completed. Aggregated results from both agents:")
     for msg in messages:
         if msg.text:
-            print(f"- {msg.author_name or msg.role.value}: {msg.text}")
+            print(f"- {msg.author_name or msg.role}: {msg.text}")
+
+
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, Content] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+    requests: dict[str, Content] = {}
+    async for event in stream:
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, Content):
+            # We are only expecting tool approval requests in this sample
+            requests[event.request_id] = event.data
+        elif isinstance(event, WorkflowOutputEvent):
+            _print_output(event)
+
+    responses: dict[str, Content] = {}
+    if requests:
+        for request_id, request in requests.items():
+            if request.type == "function_approval_request":
+                print(f"\nSimulating human approval for: {request.function_call.name}")  # type: ignore
+                # Create approval response
+                responses[request_id] = request.to_function_approval_response(approved=True)
+
+    return responses if responses else None
 
 
 async def main() -> None:
@@ -130,37 +156,20 @@ async def main() -> None:
     print("Starting concurrent workflow with tool approval...")
     print("-" * 60)
 
-    # Phase 1: Run workflow and collect request info events
-    request_info_events: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    stream = workflow.run(
         "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
-        "your best judgment based on market sentiment. No need to confirm trades with me."
-    ):
-        if isinstance(event, RequestInfoEvent):
-            request_info_events.append(event)
-            if isinstance(event.data, FunctionApprovalRequestContent):
-                print(f"\nApproval requested for tool: {event.data.function_call.name}")
-                print(f"  Arguments: {event.data.function_call.arguments}")
-        elif isinstance(event, WorkflowOutputEvent):
-            _print_output(event)
+        "your best judgment based on market sentiment. No need to confirm trades with me.",
+        stream=True,
+    )
 
-    # 6. Handle approval requests (if any)
-    if request_info_events:
-        responses: dict[str, FunctionApprovalResponseContent] = {}
-        for request_event in request_info_events:
-            if isinstance(request_event.data, FunctionApprovalRequestContent):
-                print(f"\nSimulating human approval for: {request_event.data.function_call.name}")
-                # Create approval response
-                responses[request_event.request_id] = request_event.data.create_response(approved=True)
-
-        if responses:
-            # Phase 2: Send all approvals and continue workflow
-            async for event in workflow.send_responses_streaming(responses):
-                if isinstance(event, WorkflowOutputEvent):
-                    _print_output(event)
-    else:
-        print("\nWorkflow completed without requiring approvals.")
-        print("(The agents may have only checked data without executing trades)")
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.send_responses_streaming(pending_responses)
+        pending_responses = await process_event_stream(stream)
 
     """
     Sample Output:

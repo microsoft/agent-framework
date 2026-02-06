@@ -10,7 +10,7 @@ import aiofiles
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
-    WorkflowContext,  # Per run context with shared state and messaging
+    WorkflowContext,  # Per run context with workflow state and messaging
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
@@ -26,7 +26,7 @@ It also demonstrates WorkflowViz for graph visualization.
 
 Purpose:
 Show how to:
-- Partition input once and coordinate parallel mappers with shared state.
+- Partition input once and coordinate parallel mappers with workflow state.
 - Implement map, shuffle, and reduce executors that pass file paths instead of large payloads.
 - Use fan out and fan in edges to express parallelism and joins.
 - Persist intermediate results to disk to bound memory usage for large inputs.
@@ -49,8 +49,8 @@ TEMP_DIR = os.path.join(DIR, "tmp")
 # Ensure the temporary directory exists
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Define a key for the shared state to store the data to be processed
-SHARED_STATE_DATA_KEY = "data_to_be_processed"
+# Define a key for the workflow state to store the data to be processed
+STATE_DATA_KEY = "data_to_be_processed"
 
 
 class SplitCompleted:
@@ -69,17 +69,17 @@ class Split(Executor):
 
     @handler
     async def split(self, data: str, ctx: WorkflowContext[SplitCompleted]) -> None:
-        """Tokenize input and assign contiguous index ranges to each mapper via shared state.
+        """Tokenize input and assign contiguous index ranges to each mapper via workflow state.
 
         Args:
             data: The raw text to process.
-            ctx: Workflow context to persist shared state and send messages.
+            ctx: Workflow context to persist state and send messages.
         """
         # Process data into a list of words and remove empty lines or words.
         word_list = self._preprocess(data)
 
         # Store tokenized words once so all mappers can read by index.
-        await ctx.set_shared_state(SHARED_STATE_DATA_KEY, word_list)
+        ctx.set_state(STATE_DATA_KEY, word_list)
 
         # Divide indices into contiguous slices for each mapper.
         map_executor_count = len(self._map_executor_ids)
@@ -90,8 +90,8 @@ class Split(Executor):
             start_index = i * chunk_size
             end_index = start_index + chunk_size if i < map_executor_count - 1 else len(word_list)
 
-            # The mapper reads its slice from shared state keyed by its own executor id.
-            await ctx.set_shared_state(self._map_executor_ids[i], (start_index, end_index))
+            # The mapper reads its slice from workflow state keyed by its own executor id.
+            ctx.set_state(self._map_executor_ids[i], (start_index, end_index))
             await ctx.send_message(SplitCompleted(), self._map_executor_ids[i])
 
         tasks = [asyncio.create_task(_process_chunk(i)) for i in range(map_executor_count)]
@@ -119,11 +119,11 @@ class Map(Executor):
 
         Args:
             _: SplitCompleted marker indicating maps can begin.
-            ctx: Workflow context for shared state access and messaging.
+            ctx: Workflow context for workflow state access and messaging.
         """
         # Retrieve tokens and our assigned slice.
-        data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
-        chunk_start, chunk_end = await ctx.get_shared_state(self.id)
+        data_to_be_processed: list[str] = ctx.get_state(STATE_DATA_KEY)
+        chunk_start, chunk_end = ctx.get_state(self.id)
 
         results = [(item, 1) for item in data_to_be_processed[chunk_start:chunk_end]]
 
@@ -286,7 +286,8 @@ async def main():
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        workflow_builder.set_start_executor("split_data_executor")
+        workflow_builder
+        .set_start_executor("split_data_executor")
         .add_fan_out_edges(
             "split_data_executor",
             ["map_executor_0", "map_executor_1", "map_executor_2"],
@@ -329,7 +330,7 @@ async def main():
         raw_text = await f.read()
 
     # Step 4: Run the workflow with the raw text as input.
-    async for event in workflow.run_stream(raw_text):
+    async for event in workflow.run(raw_text, stream=True):
         print(f"Event: {event}")
         if isinstance(event, WorkflowOutputEvent):
             print(f"Final Output: {event.data}")

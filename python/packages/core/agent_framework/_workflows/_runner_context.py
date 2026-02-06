@@ -2,18 +2,24 @@
 
 import asyncio
 import logging
+import sys
 import uuid
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import INTERNAL_SOURCE_ID
 from ._events import RequestInfoEvent, WorkflowEvent
-from ._shared_state import SharedState
+from ._state import State
 from ._typing_utils import is_instance_of
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +104,7 @@ class _WorkflowState(TypedDict):
     """
 
     messages: dict[str, list[dict[str, Any]]]
-    shared_state: dict[str, Any]
+    state: dict[str, Any]
     iteration_count: int
     pending_request_info_events: dict[str, dict[str, Any]]
 
@@ -197,7 +203,7 @@ class RunnerContext(Protocol):
         """Set whether agents should stream incremental updates.
 
         Args:
-            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+            streaming: True for streaming mode (stream=True), False for non-streaming (stream=False).
         """
         ...
 
@@ -211,16 +217,16 @@ class RunnerContext(Protocol):
 
     async def create_checkpoint(
         self,
-        shared_state: SharedState,
+        state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Create a checkpoint of the current workflow state.
 
         Args:
-            shared_state: The shared state to include in the checkpoint.
-                          This is needed to capture the full state of the workflow.
-                          The shared state is not managed by the context itself.
+            state: The state to include in the checkpoint.
+                   This is needed to capture the full state of the workflow.
+                   The state is not managed by the context itself.
             iteration_count: The current iteration count of the workflow.
             metadata: Optional metadata to associate with the checkpoint.
 
@@ -284,7 +290,7 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: dict[str, list[Message]] = {}
-        # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
+        # Event queue for immediate streaming of events
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
         # An additional storage for pending request info events
@@ -295,7 +301,7 @@ class InProcRunnerContext:
         self._runtime_checkpoint_storage: CheckpointStorage | None = None
         self._workflow_id: str | None = None
 
-        # Streaming flag - set by workflow's run_stream() vs run()
+        # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
 
     # region Messaging and Events
@@ -368,7 +374,7 @@ class InProcRunnerContext:
 
     async def create_checkpoint(
         self,
-        shared_state: SharedState,
+        state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
@@ -377,14 +383,14 @@ class InProcRunnerContext:
             raise ValueError("Checkpoint storage not configured")
 
         self._workflow_id = self._workflow_id or str(uuid.uuid4())
-        state = await self._get_serialized_workflow_state(shared_state, iteration_count)
+        workflow_state = self._get_serialized_workflow_state(state, iteration_count)
 
         checkpoint = WorkflowCheckpoint(
             workflow_id=self._workflow_id,
-            messages=state["messages"],
-            shared_state=state["shared_state"],
-            pending_request_info_events=state["pending_request_info_events"],
-            iteration_count=state["iteration_count"],
+            messages=workflow_state["messages"],
+            state=workflow_state["state"],
+            pending_request_info_events=workflow_state["pending_request_info_events"],
+            iteration_count=workflow_state["iteration_count"],
             metadata=metadata or {},
         )
         checkpoint_id = await storage.save_checkpoint(checkpoint)
@@ -436,7 +442,7 @@ class InProcRunnerContext:
         """Set whether agents should stream incremental updates.
 
         Args:
-            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+            streaming: True for streaming mode (run(stream=True)), False for non-streaming.
         """
         self._streaming = streaming
 
@@ -448,7 +454,7 @@ class InProcRunnerContext:
         """
         return self._streaming
 
-    async def _get_serialized_workflow_state(self, shared_state: SharedState, iteration_count: int) -> _WorkflowState:
+    def _get_serialized_workflow_state(self, state: State, iteration_count: int) -> _WorkflowState:
         serialized_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
             serialized_messages[source_id] = [msg.to_dict() for msg in message_list]
@@ -459,7 +465,7 @@ class InProcRunnerContext:
 
         return {
             "messages": serialized_messages,
-            "shared_state": encode_checkpoint_value(await shared_state.export_state()),
+            "state": encode_checkpoint_value(state.export_state()),
             "iteration_count": iteration_count,
             "pending_request_info_events": serialized_pending_request_info_events,
         }

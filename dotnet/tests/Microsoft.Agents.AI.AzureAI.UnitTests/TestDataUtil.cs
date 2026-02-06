@@ -53,6 +53,70 @@ internal static class TestDataUtil
     }
 
     /// <summary>
+    /// Gets the agent version response JSON with empty version and ID fields for testing hosted agents like MCP agents.
+    /// </summary>
+    public static string GetAgentVersionResponseJsonWithEmptyVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    {
+        var json = s_agentVersionResponseJson;
+        json = ApplyAgentName(json, agentName);
+        json = ApplyAgentDefinition(json, agentDefinition);
+        json = ApplyInstructions(json, instructions);
+        json = ApplyDescription(json, description);
+        // Remove the version and id fields to simulate hosted agents without version
+        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",");
+        json = json.Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
+        return json;
+    }
+
+    /// <summary>
+    /// Gets the agent response JSON with empty version and ID fields in the latest version for testing hosted agents like MCP agents.
+    /// </summary>
+    public static string GetAgentResponseJsonWithEmptyVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    {
+        var json = s_agentResponseJson;
+        json = ApplyAgentName(json, agentName);
+        json = ApplyAgentDefinition(json, agentDefinition);
+        json = ApplyInstructions(json, instructions);
+        json = ApplyDescription(json, description);
+        // Remove the version and id fields to simulate hosted agents without version
+        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",");
+        json = json.Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
+        return json;
+    }
+
+    /// <summary>
+    /// Gets the agent version response JSON with whitespace-only version and ID fields for testing hosted agents like MCP agents.
+    /// </summary>
+    public static string GetAgentVersionResponseJsonWithWhitespaceVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    {
+        var json = s_agentVersionResponseJson;
+        json = ApplyAgentName(json, agentName);
+        json = ApplyAgentDefinition(json, agentDefinition);
+        json = ApplyInstructions(json, instructions);
+        json = ApplyDescription(json, description);
+        // Use whitespace-only version and id fields to simulate hosted agents without version
+        return json
+            .Replace("\"version\": \"1\",", "\"version\": \"   \",")
+            .Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"   \",");
+    }
+
+    /// <summary>
+    /// Gets the agent response JSON with whitespace-only version and ID fields in the latest version for testing hosted agents like MCP agents.
+    /// </summary>
+    public static string GetAgentResponseJsonWithWhitespaceVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    {
+        var json = s_agentResponseJson;
+        json = ApplyAgentName(json, agentName);
+        json = ApplyAgentDefinition(json, agentDefinition);
+        json = ApplyInstructions(json, instructions);
+        json = ApplyDescription(json, description);
+        // Use whitespace-only version and id fields to simulate hosted agents without version
+        return json
+            .Replace("\"version\": \"1\",", "\"version\": \"   \",")
+            .Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"   \",");
+    }
+
+    /// <summary>
     /// Gets the OpenAI default response JSON with optional placeholder replacements applied.
     /// </summary>
     public static string GetOpenAIDefaultResponseJson(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)

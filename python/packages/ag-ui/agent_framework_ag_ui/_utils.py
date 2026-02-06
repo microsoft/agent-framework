@@ -10,19 +10,19 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, AIFunction, ChatResponseUpdate, Role, ToolProtocol
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool, ToolProtocol
 
 # Role mapping constants
-AGUI_TO_FRAMEWORK_ROLE: dict[str, Role] = {
-    "user": Role.USER,
-    "assistant": Role.ASSISTANT,
-    "system": Role.SYSTEM,
+AGUI_TO_FRAMEWORK_ROLE: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "system",
 }
 
-FRAMEWORK_TO_AGUI_ROLE: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "system",
+FRAMEWORK_TO_AGUI_ROLE: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "system",
 }
 
 ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool"}
@@ -160,12 +160,12 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
 
 def convert_agui_tools_to_agent_framework(
     agui_tools: list[dict[str, Any]] | None,
-) -> list[AIFunction[Any, Any]] | None:
-    """Convert AG-UI tool definitions to Agent Framework AIFunction declarations.
+) -> list[FunctionTool[Any, Any]] | None:
+    """Convert AG-UI tool definitions to Agent Framework FunctionTool declarations.
 
-    Creates declaration-only AIFunction instances (no executable implementation).
+    Creates declaration-only FunctionTool instances (no executable implementation).
     These are used to tell the LLM about available tools. The actual execution
-    happens on the client side via @use_function_invocation.
+    happens on the client side via function invocation mixin.
 
     CRITICAL: These tools MUST have func=None so that declaration_only returns True.
     This prevents the server from trying to execute client-side tools.
@@ -174,18 +174,18 @@ def convert_agui_tools_to_agent_framework(
         agui_tools: List of AG-UI tool definitions with name, description, parameters
 
     Returns:
-        List of AIFunction declarations, or None if no tools provided
+        List of FunctionTool declarations, or None if no tools provided
     """
     if not agui_tools:
         return None
 
-    result: list[AIFunction[Any, Any]] = []
+    result: list[FunctionTool[Any, Any]] = []
     for tool_def in agui_tools:
-        # Create declaration-only AIFunction (func=None means no implementation)
+        # Create declaration-only FunctionTool (func=None means no implementation)
         # When func=None, the declaration_only property returns True,
-        # which tells @use_function_invocation to return the function call
+        # which tells the function invocation mixin to return the function call
         # without executing it (so it can be sent back to the client)
-        func: AIFunction[Any, Any] = AIFunction(
+        func: FunctionTool[Any, Any] = FunctionTool(
             name=tool_def.get("name", ""),
             description=tool_def.get("description", ""),
             func=None,  # CRITICAL: Makes declaration_only=True
@@ -209,7 +209,7 @@ def convert_tools_to_agui_format(
 
     This sends only the metadata (name, description, JSON schema) to the server.
     The actual executable implementation stays on the client side.
-    The @use_function_invocation decorator handles client-side execution when
+    The function invocation mixin handles client-side execution when
     the server requests a function.
 
     Args:
@@ -229,24 +229,24 @@ def convert_tools_to_agui_format(
 
     results: list[dict[str, Any]] = []
 
-    for tool in tool_list:
-        if isinstance(tool, dict):
+    for tool_item in tool_list:
+        if isinstance(tool_item, dict):
             # Already in dict format, pass through
-            results.append(tool)  # type: ignore[arg-type]
-        elif isinstance(tool, AIFunction):
-            # Convert AIFunction to AG-UI tool format
+            results.append(tool_item)  # type: ignore[arg-type]
+        elif isinstance(tool_item, FunctionTool):
+            # Convert FunctionTool to AG-UI tool format
             results.append(
                 {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters(),
+                    "name": tool_item.name,
+                    "description": tool_item.description,
+                    "parameters": tool_item.parameters(),
                 }
             )
-        elif callable(tool):
-            # Convert callable to AIFunction first, then to AG-UI format
-            from agent_framework import ai_function
+        elif callable(tool_item):
+            # Convert callable to FunctionTool first, then to AG-UI format
+            from agent_framework import tool
 
-            ai_func = ai_function(tool)
+            ai_func = tool(tool_item)
             results.append(
                 {
                     "name": ai_func.name,
@@ -254,11 +254,11 @@ def convert_tools_to_agui_format(
                     "parameters": ai_func.parameters(),
                 }
             )
-        elif isinstance(tool, ToolProtocol):
+        elif isinstance(tool_item, ToolProtocol):
             # Handle other ToolProtocol implementations
-            # For now, we'll skip non-AIFunction tools as they may not have
+            # For now, we'll skip non-FunctionTool instances as they may not have
             # the parameters() method. This matches .NET behavior which only
-            # converts AIFunctionDeclaration instances.
+            # converts FunctionToolDeclaration instances.
             continue
 
     return results if results else None

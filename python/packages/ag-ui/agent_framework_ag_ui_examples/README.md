@@ -187,11 +187,11 @@ The package uses a clean, orchestrator-based architecture:
 You can create your own agent factories following the same pattern as the examples:
 
 ```python
-from agent_framework import ChatAgent, ai_function
+from agent_framework import ChatAgent, tool
 from agent_framework import ChatClientProtocol
 from agent_framework.ag_ui import AgentFrameworkAgent
 
-@ai_function
+@tool
 def my_tool(param: str) -> str:
     """My custom tool."""
     return f"Result: {param}"
@@ -294,9 +294,9 @@ wrapped_agent = AgentFrameworkAgent(
 Human-in-the-loop is automatically handled when tools are marked for approval:
 
 ```python
-from agent_framework import ai_function
+from agent_framework import tool
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def sensitive_action(param: str) -> str:
     """This action requires user approval."""
     return f"Executed with {param}"
