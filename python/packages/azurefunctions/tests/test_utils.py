@@ -19,11 +19,33 @@ from pydantic import BaseModel
 from agent_framework_azurefunctions._context import CapturingRunnerContext
 from agent_framework_azurefunctions._serialization import (
     deserialize_value,
-    reconstruct_agent_executor_request,
-    reconstruct_agent_executor_response,
-    reconstruct_message_for_handler,
-    serialize_message,
+    reconstruct_to_type,
+    serialize_value,
 )
+
+
+# Module-level test types (must be importable for checkpoint encoding roundtrip)
+@dataclass
+class SampleData:
+    """Sample dataclass for testing checkpoint encoding roundtrip."""
+
+    name: str
+    value: int
+
+
+class SampleModel(BaseModel):
+    """Sample Pydantic model for testing checkpoint encoding roundtrip."""
+
+    title: str
+    count: int
+
+
+@dataclass
+class DataclassWithPydanticField:
+    """Dataclass containing a Pydantic model field for testing nested serialization."""
+
+    label: str
+    model: SampleModel
 
 
 class TestCapturingRunnerContext:
@@ -177,287 +199,175 @@ class TestCapturingRunnerContext:
             await context.apply_checkpoint(Mock())
 
 
-class TestSerializeMessage:
-    """Test suite for serialize_message function."""
+class TestSerializationRoundtrip:
+    """Test that serialization roundtrips correctly for types used in Azure Functions workflows."""
 
-    def test_serialize_none(self) -> None:
-        """Test serializing None."""
-        assert serialize_message(None) is None
+    def test_roundtrip_chat_message(self) -> None:
+        """Test ChatMessage survives encode → decode roundtrip."""
+        original = ChatMessage(role="user", text="Hello")
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-    def test_serialize_primitive_types(self) -> None:
-        """Test serializing primitive types."""
-        assert serialize_message("hello") == "hello"
-        assert serialize_message(42) == 42
-        assert serialize_message(3.14) == 3.14
-        assert serialize_message(True) is True
+        assert isinstance(decoded, ChatMessage)
+        assert decoded.role == "user"
 
-    def test_serialize_list(self) -> None:
-        """Test serializing lists."""
-        result = serialize_message([1, 2, 3])
-        assert result == [1, 2, 3]
+    def test_roundtrip_agent_executor_request(self) -> None:
+        """Test AgentExecutorRequest with nested ChatMessages roundtrips."""
+        original = AgentExecutorRequest(
+            messages=[ChatMessage(role="user", text="Hi")],
+            should_respond=True,
+        )
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-    def test_serialize_dict(self) -> None:
-        """Test serializing dicts."""
-        result = serialize_message({"key": "value", "num": 42})
-        assert result == {"key": "value", "num": 42}
+        assert isinstance(decoded, AgentExecutorRequest)
+        assert len(decoded.messages) == 1
+        assert isinstance(decoded.messages[0], ChatMessage)
+        assert decoded.should_respond is True
 
-    def test_serialize_dataclass(self) -> None:
-        """Test serializing dataclasses with type metadata."""
+    def test_roundtrip_agent_executor_response(self) -> None:
+        """Test AgentExecutorResponse with nested AgentResponse roundtrips."""
+        original = AgentExecutorResponse(
+            executor_id="test_exec",
+            agent_response=AgentResponse(messages=[ChatMessage(role="assistant", text="Reply")]),
+        )
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-        @dataclass
-        class TestData:
-            name: str
-            value: int
+        assert isinstance(decoded, AgentExecutorResponse)
+        assert decoded.executor_id == "test_exec"
+        assert isinstance(decoded.agent_response, AgentResponse)
 
-        data = TestData(name="test", value=123)
-        result = serialize_message(data)
+    def test_roundtrip_dataclass(self) -> None:
+        """Test custom dataclass roundtrips."""
+        original = SampleData(name="test", value=42)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-        assert result["name"] == "test"
-        assert result["value"] == 123
-        assert result["__type__"] == "TestData"
-        assert "__module__" in result
+        assert isinstance(decoded, SampleData)
+        assert decoded.name == "test"
+        assert decoded.value == 42
 
-    def test_serialize_pydantic_model(self) -> None:
-        """Test serializing Pydantic models with type metadata."""
+    def test_roundtrip_pydantic_model(self) -> None:
+        """Test Pydantic model roundtrips."""
+        original = SampleModel(title="Hello", count=5)
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-        class TestModel(BaseModel):
-            title: str
-            count: int
+        assert isinstance(decoded, SampleModel)
+        assert decoded.title == "Hello"
+        assert decoded.count == 5
 
-        model = TestModel(title="Hello", count=5)
-        result = serialize_message(model)
+    def test_roundtrip_primitives(self) -> None:
+        """Test primitives pass through unchanged."""
+        assert serialize_value(None) is None
+        assert serialize_value("hello") == "hello"
+        assert serialize_value(42) == 42
+        assert serialize_value(3.14) == 3.14
+        assert serialize_value(True) is True
 
-        assert result["title"] == "Hello"
-        assert result["count"] == 5
-        assert result["__type__"] == "TestModel"
-        assert "__module__" in result
+    def test_roundtrip_list_of_objects(self) -> None:
+        """Test list of typed objects roundtrips."""
+        original = [
+            ChatMessage(role="user", text="Q"),
+            ChatMessage(role="assistant", text="A"),
+        ]
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-    def test_serialize_nested_structures(self) -> None:
-        """Test serializing nested structures."""
+        assert isinstance(decoded, list)
+        assert len(decoded) == 2
+        assert all(isinstance(m, ChatMessage) for m in decoded)
 
-        @dataclass
-        class Inner:
-            x: int
+    def test_roundtrip_dict_of_objects(self) -> None:
+        """Test dict with typed values roundtrips (used for shared state)."""
+        original = {"count": 42, "msg": ChatMessage(role="user", text="Hi")}
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-        @dataclass
-        class Outer:
-            inner: Inner
-            items: list[int]
+        assert decoded["count"] == 42
+        assert isinstance(decoded["msg"], ChatMessage)
 
-        outer = Outer(inner=Inner(x=10), items=[1, 2, 3])
-        result = serialize_message(outer)
+    def test_roundtrip_dataclass_with_nested_pydantic(self) -> None:
+        """Test dataclass containing a Pydantic model field roundtrips correctly.
 
-        assert result["__type__"] == "Outer"
-        # Nested dataclass is serialized via asdict, which doesn't add __type__ recursively
-        assert result["inner"]["x"] == 10
-        assert result["items"] == [1, 2, 3]
+        This covers the HITL pattern where AnalysisWithSubmission (dataclass)
+        contains a ContentAnalysisResult (Pydantic BaseModel) field.
+        """
+        original = DataclassWithPydanticField(label="test", model=SampleModel(title="Nested", count=99))
+        encoded = serialize_value(original)
+        decoded = deserialize_value(encoded)
 
-    def test_serialize_object_with_to_dict(self) -> None:
-        """Test serializing objects with to_dict method."""
-        message = ChatMessage(role="user", text="Hello")
-        result = serialize_message(message)
-
-        # ChatMessage has to_dict() method which returns a specific structure
-        assert isinstance(result, dict)
-        assert "contents" in result  # ChatMessage uses contents structure
+        assert isinstance(decoded, DataclassWithPydanticField)
+        assert decoded.label == "test"
+        assert isinstance(decoded.model, SampleModel)
+        assert decoded.model.title == "Nested"
+        assert decoded.model.count == 99
 
 
-class TestDeserializeValue:
-    """Test suite for deserialize_value function."""
+class TestReconstructToType:
+    """Test suite for reconstruct_to_type function (used for HITL responses)."""
 
-    def test_deserialize_non_dict_returns_original(self) -> None:
+    def test_none_returns_none(self) -> None:
+        """Test that None input returns None."""
+        assert reconstruct_to_type(None, str) is None
+
+    def test_already_correct_type(self) -> None:
+        """Test that values already of the correct type are returned as-is."""
+        assert reconstruct_to_type("hello", str) == "hello"
+        assert reconstruct_to_type(42, int) == 42
+
+    def test_non_dict_returns_original(self) -> None:
         """Test that non-dict values are returned as-is."""
-        assert deserialize_value("string") == "string"
-        assert deserialize_value(42) == 42
-        assert deserialize_value([1, 2, 3]) == [1, 2, 3]
+        assert reconstruct_to_type("hello", int) == "hello"
+        assert reconstruct_to_type([1, 2], dict) == [1, 2]
 
-    def test_deserialize_dict_without_type_returns_original(self) -> None:
-        """Test that dicts without type metadata are returned as-is."""
-        data = {"key": "value", "num": 42}
-        result = deserialize_value(data)
-        assert result == data
+    def test_reconstruct_pydantic_model(self) -> None:
+        """Test reconstruction of Pydantic model from plain dict."""
 
-    def test_deserialize_agent_executor_request(self) -> None:
-        """Test deserializing AgentExecutorRequest."""
-        data = {
-            "messages": [{"type": "chat_message", "role": "user", "contents": [{"type": "text", "text": "Hello"}]}],
-            "should_respond": True,
-        }
+        class ApprovalResponse(BaseModel):
+            approved: bool
+            reason: str
 
-        result = deserialize_value(data)
+        data = {"approved": True, "reason": "Looks good"}
+        result = reconstruct_to_type(data, ApprovalResponse)
 
-        assert isinstance(result, AgentExecutorRequest)
-        assert len(result.messages) == 1
-        assert result.should_respond is True
+        assert isinstance(result, ApprovalResponse)
+        assert result.approved is True
+        assert result.reason == "Looks good"
 
-    def test_deserialize_agent_executor_response(self) -> None:
-        """Test deserializing AgentExecutorResponse."""
-        data = {
-            "executor_id": "test_exec",
-            "agent_response": {
-                "type": "agent_response",
-                "messages": [
-                    {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Hi there"}]}
-                ],
-            },
-        }
-
-        result = deserialize_value(data)
-
-        assert isinstance(result, AgentExecutorResponse)
-        assert result.executor_id == "test_exec"
-
-    def test_deserialize_with_type_registry(self) -> None:
-        """Test deserializing with type registry."""
+    def test_reconstruct_dataclass(self) -> None:
+        """Test reconstruction of dataclass from plain dict."""
 
         @dataclass
-        class CustomType:
-            name: str
+        class Feedback:
+            score: int
+            comment: str
 
-        data = {"name": "test", "__type__": "CustomType"}
-        result = deserialize_value(data, type_registry={"CustomType": CustomType})
+        data = {"score": 5, "comment": "Great"}
+        result = reconstruct_to_type(data, Feedback)
 
-        assert isinstance(result, CustomType)
-        assert result.name == "test"
+        assert isinstance(result, Feedback)
+        assert result.score == 5
+        assert result.comment == "Great"
 
+    def test_reconstruct_from_checkpoint_markers(self) -> None:
+        """Test that data with checkpoint markers is decoded via deserialize_value."""
+        original = SampleData(value=99, name="marker-test")
+        encoded = serialize_value(original)
 
-class TestReconstructAgentExecutorRequest:
-    """Test suite for reconstruct_agent_executor_request function."""
+        result = reconstruct_to_type(encoded, SampleData)
+        assert isinstance(result, SampleData)
+        assert result.value == 99
 
-    def test_reconstruct_with_chat_messages(self) -> None:
-        """Test reconstructing request with ChatMessage dicts."""
-        data = {
-            "messages": [
-                {"type": "chat_message", "role": "user", "contents": [{"type": "text", "text": "Hello"}]},
-                {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Hi"}]},
-            ],
-            "should_respond": True,
-        }
-
-        result = reconstruct_agent_executor_request(data)
-
-        assert isinstance(result, AgentExecutorRequest)
-        assert len(result.messages) == 2
-        assert result.should_respond is True
-
-    def test_reconstruct_defaults_should_respond_to_true(self) -> None:
-        """Test that should_respond defaults to True."""
-        data = {"messages": []}
-
-        result = reconstruct_agent_executor_request(data)
-
-        assert result.should_respond is True
-
-
-class TestReconstructAgentExecutorResponse:
-    """Test suite for reconstruct_agent_executor_response function."""
-
-    def test_reconstruct_with_agent_response(self) -> None:
-        """Test reconstructing response with agent_response."""
-        data = {
-            "executor_id": "my_executor",
-            "agent_response": {
-                "type": "agent_response",
-                "messages": [
-                    {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "Response"}]}
-                ],
-            },
-            "full_conversation": [],
-        }
-
-        result = reconstruct_agent_executor_response(data)
-
-        assert isinstance(result, AgentExecutorResponse)
-        assert result.executor_id == "my_executor"
-        assert isinstance(result.agent_response, AgentResponse)
-
-    def test_reconstruct_with_full_conversation(self) -> None:
-        """Test reconstructing response with full_conversation."""
-        data = {
-            "executor_id": "exec",
-            "agent_response": {"type": "agent_response", "messages": []},
-            "full_conversation": [
-                {"type": "chat_message", "role": "user", "contents": [{"type": "text", "text": "Q"}]},
-                {"type": "chat_message", "role": "assistant", "contents": [{"type": "text", "text": "A"}]},
-            ],
-        }
-
-        result = reconstruct_agent_executor_response(data)
-
-        assert result.full_conversation is not None
-        assert len(result.full_conversation) == 2
-
-
-class TestReconstructMessageForHandler:
-    """Test suite for reconstruct_message_for_handler function."""
-
-    def test_reconstruct_non_dict_returns_original(self) -> None:
-        """Test that non-dict messages are returned as-is."""
-        assert reconstruct_message_for_handler("string", []) == "string"
-        assert reconstruct_message_for_handler(42, []) == 42
-
-    def test_reconstruct_agent_executor_response(self) -> None:
-        """Test reconstructing AgentExecutorResponse."""
-        data = {
-            "executor_id": "exec",
-            "agent_response": {"type": "agent_response", "messages": []},
-        }
-
-        result = reconstruct_message_for_handler(data, [AgentExecutorResponse])
-
-        assert isinstance(result, AgentExecutorResponse)
-
-    def test_reconstruct_agent_executor_request(self) -> None:
-        """Test reconstructing AgentExecutorRequest."""
-        data = {
-            "messages": [{"type": "chat_message", "role": "user", "contents": [{"type": "text", "text": "Hi"}]}],
-            "should_respond": True,
-        }
-
-        result = reconstruct_message_for_handler(data, [AgentExecutorRequest])
-
-        assert isinstance(result, AgentExecutorRequest)
-
-    def test_reconstruct_with_type_metadata(self) -> None:
-        """Test reconstructing using __type__ metadata."""
+    def test_unrecognized_dict_returns_original(self) -> None:
+        """Test that unrecognized dicts are returned as-is."""
 
         @dataclass
-        class CustomMsg:
-            content: str
-
-        # Serialize includes type metadata
-        serialized = serialize_message(CustomMsg(content="test"))
-
-        result = reconstruct_message_for_handler(serialized, [CustomMsg])
-
-        assert isinstance(result, CustomMsg)
-        assert result.content == "test"
-
-    def test_reconstruct_matches_dataclass_fields(self) -> None:
-        """Test reconstruction by matching dataclass field names."""
-
-        @dataclass
-        class MyData:
-            field_a: str
-            field_b: int
-
-        data = {"field_a": "hello", "field_b": 42}
-
-        result = reconstruct_message_for_handler(data, [MyData])
-
-        assert isinstance(result, MyData)
-        assert result.field_a == "hello"
-        assert result.field_b == 42
-
-    def test_reconstruct_returns_original_if_no_match(self) -> None:
-        """Test that original dict is returned if no type matches."""
-
-        @dataclass
-        class UnrelatedType:
-            completely_different_field: str
+        class Unrelated:
+            completely_different: str
 
         data = {"some_key": "some_value"}
-
-        result = reconstruct_message_for_handler(data, [UnrelatedType])
+        result = reconstruct_to_type(data, Unrelated)
 
         assert result == data

@@ -19,7 +19,6 @@ HITL (Human-in-the-Loop) Support:
 
 from __future__ import annotations
 
-import importlib
 import json
 import logging
 from collections import defaultdict
@@ -49,7 +48,7 @@ from azure.durable_functions import DurableOrchestrationContext
 
 from ._context import CapturingRunnerContext
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._serialization import _reconstruct_typed_value, deserialize_value, serialize_message
+from ._serialization import _resolve_type, deserialize_value, reconstruct_to_type, serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -315,7 +314,7 @@ def _prepare_activity_task(
     """
     activity_input = {
         "executor_id": executor_id,
-        "message": serialize_message(message),
+        "message": serialize_value(message),
         "shared_state_snapshot": shared_state_snapshot,
         "source_executor_ids": [source_executor_id],
     }
@@ -999,21 +998,13 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
 
     # Try to deserialize using the type hint
     if response_type_str:
-        try:
-            module_name, class_name = response_type_str.rsplit(":", 1)
-            module = importlib.import_module(module_name)
-            response_type = getattr(module, class_name, None)
-
-            if response_type:
-                logger.debug("Found response type %s, attempting reconstruction", response_type)
-                # Use the shared reconstruction logic which handles nested objects
-                result = _reconstruct_typed_value(response_data, response_type)
-                logger.debug("Reconstructed response type: %s", type(result).__name__)
-                return result
-            logger.warning("Could not find class %s in module %s", class_name, module_name)
-
-        except Exception as e:
-            logger.warning("Could not deserialize HITL response to %s: %s", response_type_str, e)
+        response_type = _resolve_type(response_type_str)
+        if response_type:
+            logger.debug("Found response type %s, attempting reconstruction", response_type)
+            result = reconstruct_to_type(response_data, response_type)
+            logger.debug("Reconstructed response type: %s", type(result).__name__)
+            return result
+        logger.warning("Could not resolve response type: %s", response_type_str)
 
     # Fall back to generic deserialization
     logger.debug("Falling back to generic deserialization")

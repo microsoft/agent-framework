@@ -13,6 +13,11 @@ from ._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
+from ._checkpoint_encoding import (
+    decode_checkpoint_value,
+    encode_checkpoint_value,
+)
+from ._checkpoint_summary import WorkflowCheckpointSummary, get_checkpoint_summary
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
@@ -81,9 +86,11 @@ __all__ = [
     "Case",
     "CheckpointStorage",
     "Default",
+    "decode_checkpoint_value",
     "Edge",
     "EdgeCondition",
     "EdgeDuplicationError",
+    "encode_checkpoint_value",
     "Executor",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
