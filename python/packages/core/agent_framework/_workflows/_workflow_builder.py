@@ -1243,6 +1243,10 @@ class WorkflowBuilder:
                         instance.close()  # type: ignore[reportGeneralTypeIssues]
                 finally:
                     raise ValueError("Async executor factories were detected. Use build_async() instead.")
+
+            if not isinstance(instance, Executor):
+                raise TypeError(f"Factory '{name}' returned {type(instance).__name__} instead of an Executor.")
+
             factory_name_to_instance[name] = instance
 
         return self._process_instantiated_executors(factory_name_to_instance)
@@ -1274,6 +1278,10 @@ class WorkflowBuilder:
             if inspect.isawaitable(instance):
                 # Handle maybe awaitable executor instances
                 instance = await instance
+
+            if not isinstance(instance, Executor):
+                raise TypeError(f"Factory '{name}' returned {type(instance).__name__} instead of an Executor.")
+
             factory_name_to_instance[name] = instance
 
         return self._process_instantiated_executors(factory_name_to_instance)

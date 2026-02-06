@@ -181,6 +181,40 @@ def test_build_raises_error_with_async_executor_factories():
         builder.build()
 
 
+def test_build_raises_error_when_factory_returns_non_executor():
+    """Test that build() raises TypeError when a factory returns a non-Executor type."""
+
+    def create_invalid_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return "not an executor"  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"InvalidExecutor": create_invalid_executor})
+        .set_start_executor("InvalidExecutor")
+    )
+
+    # Attempting to build with a factory that returns non-Executor should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'InvalidExecutor' returned str instead of an Executor\."):
+        builder.build()
+
+
+async def test_build_async_raises_error_when_factory_returns_non_executor():
+    """Test that build_async() raises TypeError when an async factory returns a non-Executor type."""
+
+    async def create_invalid_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return None  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"InvalidExecutor": create_invalid_executor})
+        .set_start_executor("InvalidExecutor")
+    )
+
+    # Attempting to build with an async factory that returns non-Executor should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'InvalidExecutor' returned NoneType instead of an Executor\."):
+        await builder.build_async()
+
+
 # Tests for new executor registration patterns
 
 
