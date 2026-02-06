@@ -56,7 +56,7 @@ async def main() -> None:
     )
 
     # 2) Build a concurrent workflow
-    # Participants are either Agents (type of AgentProtocol) or Executors
+    # Participants are either Agents (type of AgentLike) or Executors
     workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
 
     # 3) Run with a single prompt and pretty-print the final combined messages

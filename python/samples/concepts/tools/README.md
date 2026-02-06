@@ -131,7 +131,7 @@ sequenceDiagram
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `agent` | `AgentProtocol` | The agent being invoked |
+| `agent` | `AgentLike` | The agent being invoked |
 | `messages` | `list[ChatMessage]` | Input messages (mutable) |
 | `thread` | `AgentThread \| None` | Conversation thread |
 | `options` | `Mapping[str, Any]` | Chat options dict |

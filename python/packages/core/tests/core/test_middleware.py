@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     ChatMessage,
@@ -35,7 +35,7 @@ from agent_framework._tools import FunctionTool
 class TestAgentRunContext:
     """Test cases for AgentRunContext."""
 
-    def test_init_with_defaults(self, mock_agent: AgentProtocol) -> None:
+    def test_init_with_defaults(self, mock_agent: AgentLike) -> None:
         """Test AgentRunContext initialization with default values."""
         messages = [ChatMessage(role="user", text="test")]
         context = AgentRunContext(agent=mock_agent, messages=messages)
@@ -45,7 +45,7 @@ class TestAgentRunContext:
         assert context.stream is False
         assert context.metadata == {}
 
-    def test_init_with_custom_values(self, mock_agent: AgentProtocol) -> None:
+    def test_init_with_custom_values(self, mock_agent: AgentLike) -> None:
         """Test AgentRunContext initialization with custom values."""
         messages = [ChatMessage(role="user", text="test")]
         metadata = {"key": "value"}
@@ -56,7 +56,7 @@ class TestAgentRunContext:
         assert context.stream is True
         assert context.metadata == metadata
 
-    def test_init_with_thread(self, mock_agent: AgentProtocol) -> None:
+    def test_init_with_thread(self, mock_agent: AgentLike) -> None:
         """Test AgentRunContext initialization with thread parameter."""
         from agent_framework import AgentThread
 
@@ -163,7 +163,7 @@ class TestAgentMiddlewarePipeline:
         pipeline = AgentMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
 
-    async def test_execute_no_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_no_middleware(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = AgentMiddlewarePipeline()
         messages = [ChatMessage(role="user", text="test")]
@@ -177,7 +177,7 @@ class TestAgentMiddlewarePipeline:
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
 
-    async def test_execute_with_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_with_middleware(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution with middleware."""
         execution_order: list[str] = []
 
@@ -207,7 +207,7 @@ class TestAgentMiddlewarePipeline:
         assert result == expected_response
         assert execution_order == ["test_before", "handler", "test_after"]
 
-    async def test_execute_stream_no_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_stream_no_middleware(self, mock_agent: AgentLike) -> None:
         """Test pipeline streaming execution with no middleware."""
         pipeline = AgentMiddlewarePipeline()
         messages = [ChatMessage(role="user", text="test")]
@@ -230,7 +230,7 @@ class TestAgentMiddlewarePipeline:
         assert updates[0].text == "chunk1"
         assert updates[1].text == "chunk2"
 
-    async def test_execute_stream_with_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_stream_with_middleware(self, mock_agent: AgentLike) -> None:
         """Test pipeline streaming execution with middleware."""
         execution_order: list[str] = []
 
@@ -269,7 +269,7 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["test_before", "test_after", "handler_start", "handler_end"]
 
-    async def test_execute_with_pre_next_termination(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_with_pre_next_termination(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution with termination before next()."""
         middleware = self.PreNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -287,7 +287,7 @@ class TestAgentMiddlewarePipeline:
         # Handler should not be called when terminated before next()
         assert execution_order == []
 
-    async def test_execute_with_post_next_termination(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_with_post_next_termination(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution with termination after next()."""
         middleware = self.PostNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -305,7 +305,7 @@ class TestAgentMiddlewarePipeline:
         assert response.messages[0].text == "response"
         assert execution_order == ["handler"]
 
-    async def test_execute_stream_with_pre_next_termination(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_stream_with_pre_next_termination(self, mock_agent: AgentLike) -> None:
         """Test pipeline streaming execution with termination before next()."""
         middleware = self.PreNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -333,7 +333,7 @@ class TestAgentMiddlewarePipeline:
         assert execution_order == []
         assert not updates
 
-    async def test_execute_stream_with_post_next_termination(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_stream_with_post_next_termination(self, mock_agent: AgentLike) -> None:
         """Test pipeline streaming execution with termination after next()."""
         middleware = self.PostNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -360,7 +360,7 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["handler_start", "handler_end"]
 
-    async def test_execute_with_thread_in_context(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_with_thread_in_context(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution properly passes thread to middleware."""
         from agent_framework import AgentThread
 
@@ -389,7 +389,7 @@ class TestAgentMiddlewarePipeline:
         assert result == expected_response
         assert captured_thread is thread
 
-    async def test_execute_with_no_thread_in_context(self, mock_agent: AgentProtocol) -> None:
+    async def test_execute_with_no_thread_in_context(self, mock_agent: AgentLike) -> None:
         """Test pipeline execution when no thread is provided."""
         captured_thread = "not_none"  # Use string to distinguish from None
 
@@ -769,7 +769,7 @@ class TestChatMiddlewarePipeline:
 class TestClassBasedMiddleware:
     """Test cases for class-based middleware implementations."""
 
-    async def test_agent_middleware_execution(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_execution(self, mock_agent: AgentLike) -> None:
         """Test class-based agent middleware execution."""
         metadata_updates: list[str] = []
 
@@ -835,7 +835,7 @@ class TestClassBasedMiddleware:
 class TestFunctionBasedMiddleware:
     """Test cases for function-based middleware implementations."""
 
-    async def test_agent_function_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_function_middleware(self, mock_agent: AgentLike) -> None:
         """Test function-based agent middleware."""
         execution_order: list[str] = []
 
@@ -891,7 +891,7 @@ class TestFunctionBasedMiddleware:
 class TestMixedMiddleware:
     """Test cases for mixed class and function-based middleware."""
 
-    async def test_mixed_agent_middleware(self, mock_agent: AgentProtocol) -> None:
+    async def test_mixed_agent_middleware(self, mock_agent: AgentLike) -> None:
         """Test mixed class and function-based agent middleware."""
         execution_order: list[str] = []
 
@@ -992,7 +992,7 @@ class TestMixedMiddleware:
 class TestMultipleMiddlewareOrdering:
     """Test cases for multiple middleware execution order."""
 
-    async def test_agent_middleware_execution_order(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_execution_order(self, mock_agent: AgentLike) -> None:
         """Test that multiple agent middleware execute in registration order."""
         execution_order: list[str] = []
 
@@ -1132,7 +1132,7 @@ class TestMultipleMiddlewareOrdering:
 class TestContextContentValidation:
     """Test cases for validating middleware context content."""
 
-    async def test_agent_context_validation(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_context_validation(self, mock_agent: AgentLike) -> None:
         """Test that agent context contains expected data."""
 
         class ContextValidationMiddleware(AgentMiddleware):
@@ -1255,7 +1255,7 @@ class TestContextContentValidation:
 class TestStreamingScenarios:
     """Test cases for streaming and non-streaming scenarios."""
 
-    async def test_streaming_flag_validation(self, mock_agent: AgentProtocol) -> None:
+    async def test_streaming_flag_validation(self, mock_agent: AgentLike) -> None:
         """Test that stream flag is correctly set for streaming calls."""
         streaming_flags: list[bool] = []
 
@@ -1297,7 +1297,7 @@ class TestStreamingScenarios:
         # Verify flags: [non-streaming middleware, non-streaming handler, streaming middleware, streaming handler]
         assert streaming_flags == [False, False, True, True]
 
-    async def test_streaming_middleware_behavior(self, mock_agent: AgentProtocol) -> None:
+    async def test_streaming_middleware_behavior(self, mock_agent: AgentLike) -> None:
         """Test middleware behavior with streaming responses."""
         chunks_processed: list[str] = []
 
@@ -1465,7 +1465,7 @@ class MockFunctionArgs(BaseModel):
 class TestMiddlewareExecutionControl:
     """Test cases for middleware execution control (when next() is called vs not called)."""
 
-    async def test_agent_middleware_no_next_no_execution(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_no_next_no_execution(self, mock_agent: AgentLike) -> None:
         """Test that when agent middleware doesn't call next(), no execution happens."""
 
         class NoNextMiddleware(AgentMiddleware):
@@ -1494,7 +1494,7 @@ class TestMiddlewareExecutionControl:
         assert not handler_called
         assert context.result is None
 
-    async def test_agent_middleware_no_next_no_streaming_execution(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_no_next_no_streaming_execution(self, mock_agent: AgentLike) -> None:
         """Test that when agent middleware doesn't call next(), no streaming execution happens."""
 
         class NoNextStreamingMiddleware(AgentMiddleware):
@@ -1561,7 +1561,7 @@ class TestMiddlewareExecutionControl:
         assert not handler_called
         assert context.result is None
 
-    async def test_multiple_middlewares_early_stop(self, mock_agent: AgentProtocol) -> None:
+    async def test_multiple_middlewares_early_stop(self, mock_agent: AgentLike) -> None:
         """Test that when first middleware doesn't call next(), subsequent middleware are not called."""
         execution_order: list[str] = []
 
@@ -1700,9 +1700,9 @@ class TestMiddlewareExecutionControl:
 
 
 @pytest.fixture
-def mock_agent() -> AgentProtocol:
+def mock_agent() -> AgentLike:
     """Mock agent for testing."""
-    agent = MagicMock(spec=AgentProtocol)
+    agent = MagicMock(spec=AgentLike)
     agent.name = "test_agent"
     return agent
 

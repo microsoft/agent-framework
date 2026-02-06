@@ -1885,13 +1885,13 @@ class TestChatAgentChatMiddleware:
 
 
 # class TestMiddlewareWithProtocolOnlyAgent:
-#     """Test use_agent_middleware with agents implementing only AgentProtocol."""
+#     """Test use_agent_middleware with agents implementing only AgentLike."""
 
 # async def test_middleware_with_protocol_only_agent(self) -> None:
 #     """Verify middleware works without BaseAgent inheritance for both run."""
 #     from collections.abc import AsyncIterable
 
-#     from agent_framework import AgentProtocol, AgentResponse, AgentResponseUpdate
+#     from agent_framework import AgentLike, AgentResponse, AgentResponseUpdate
 
 #     execution_order: list[str] = []
 
@@ -1905,7 +1905,7 @@ class TestChatAgentChatMiddleware:
 
 #     @use_agent_middleware
 #     class ProtocolOnlyAgent:
-#         """Minimal agent implementing only AgentProtocol, not inheriting from BaseAgent."""
+#         """Minimal agent implementing only AgentLike, not inheriting from BaseAgent."""
 
 #         def __init__(self):
 #             self.id = "protocol-only-agent"
@@ -1928,7 +1928,7 @@ class TestChatAgentChatMiddleware:
 #             return None
 
 #     agent = ProtocolOnlyAgent()
-#     assert isinstance(agent, AgentProtocol)
+#     assert isinstance(agent, AgentLike)
 
 #     # Test run (non-streaming)
 #     response = await agent.run("test message")

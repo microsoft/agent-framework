@@ -12,7 +12,7 @@ from opentelemetry.trace import StatusCode
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     BaseChatClient,
     ChatMessage,
@@ -473,7 +473,7 @@ def mock_chat_agent():
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_instrumentation_enabled(
-    mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
+    mock_chat_agent: AgentLike, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
@@ -499,7 +499,7 @@ async def test_agent_instrumentation_enabled(
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_agent_streaming_response_with_diagnostics_enabled(
-    mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
+    mock_chat_agent: AgentLike, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
     """Test agent streaming telemetry through the agent telemetry mixin."""
     agent = mock_chat_agent()

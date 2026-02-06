@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from agent_framework import AgentProtocol, ChatMessage
+from agent_framework import AgentLike, ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -29,8 +29,8 @@ parallel workflow with:
 - a default aggregator that combines all agent conversations and completes the workflow
 
 Notes:
-- Participants can be provided as AgentProtocol or Executor instances via `.participants()`,
-  or as factories returning AgentProtocol or Executor via `.register_participants()`.
+- Participants can be provided as AgentLike or Executor instances via `.participants()`,
+  or as factories returning AgentLike or Executor via `.register_participants()`.
 - A custom aggregator can be provided as:
   - an Executor instance (it should handle list[AgentExecutorResponse],
     yield output), or
@@ -186,8 +186,8 @@ class _CallbackAggregator(Executor):
 class ConcurrentBuilder:
     r"""High-level builder for concurrent agent workflows.
 
-    - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor.
-    - `register_participants([...])` accepts a list of factories for AgentProtocol (recommended)
+    - `participants([...])` accepts a list of AgentLike (recommended) or Executor.
+    - `register_participants([...])` accepts a list of factories for AgentLike (recommended)
        or Executor factories
     - `build()` wires: dispatcher -> fan-out -> participants -> fan-in -> aggregator.
     - `with_aggregator(...)` overrides the default aggregator with an Executor or callback.
@@ -238,8 +238,8 @@ class ConcurrentBuilder:
     """
 
     def __init__(self) -> None:
-        self._participants: list[AgentProtocol | Executor] = []
-        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
+        self._participants: list[AgentLike | Executor] = []
+        self._participant_factories: list[Callable[[], AgentLike | Executor]] = []
         self._aggregator: Executor | None = None
         self._aggregator_factory: Callable[[], Executor] | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
@@ -249,16 +249,16 @@ class ConcurrentBuilder:
 
     def register_participants(
         self,
-        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
+        participant_factories: Sequence[Callable[[], AgentLike | Executor]],
     ) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
 
-        Accepts factories (callables) that return AgentProtocol instances (e.g., created
+        Accepts factories (callables) that return AgentLike instances (e.g., created
         by a chat client) or Executor instances. Each participant created by a factory
         is wired as a parallel branch using fan-out edges from an internal dispatcher.
 
         Args:
-            participant_factories: Sequence of callables returning AgentProtocol or Executor instances
+            participant_factories: Sequence of callables returning AgentLike or Executor instances
 
         Raises:
             ValueError: if `participant_factories` is empty or `.participants()`
@@ -300,20 +300,20 @@ class ConcurrentBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
+    def participants(self, participants: Sequence[AgentLike | Executor]) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
 
-        Accepts AgentProtocol instances (e.g., created by a chat client) or Executor
+        Accepts AgentLike instances (e.g., created by a chat client) or Executor
         instances. Each participant is wired as a parallel branch using fan-out edges
         from an internal dispatcher.
 
         Args:
-            participants: Sequence of AgentProtocol or Executor instances
+            participants: Sequence of AgentLike or Executor instances
 
         Raises:
             ValueError: if `participants` is empty, contains duplicates, or `.register_participants()`
                        or `.participants()` were already called
-            TypeError: if any entry is not AgentProtocol or Executor
+            TypeError: if any entry is not AgentLike or Executor
 
         Example:
 
@@ -341,13 +341,13 @@ class ConcurrentBuilder:
                 if p.id in seen_executor_ids:
                     raise ValueError(f"Duplicate executor participant detected: id '{p.id}'")
                 seen_executor_ids.add(p.id)
-            elif isinstance(p, AgentProtocol):
+            elif isinstance(p, AgentLike):
                 pid = id(p)
                 if pid in seen_agent_ids:
                     raise ValueError("Duplicate agent participant detected (same agent instance provided twice)")
                 seen_agent_ids.add(pid)
             else:
-                raise TypeError(f"participants must be AgentProtocol or Executor instances; got {type(p).__name__}")
+                raise TypeError(f"participants must be AgentLike or Executor instances; got {type(p).__name__}")
 
         self._participants = list(participants)
         return self
@@ -459,7 +459,7 @@ class ConcurrentBuilder:
     def with_request_info(
         self,
         *,
-        agents: Sequence[str | AgentProtocol] | None = None,
+        agents: Sequence[str | AgentLike] | None = None,
     ) -> "ConcurrentBuilder":
         """Enable request info after agent participant responses.
 
@@ -508,7 +508,7 @@ class ConcurrentBuilder:
             raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
-        participants: list[Executor | AgentProtocol] = []
+        participants: list[Executor | AgentLike] = []
         if self._participant_factories:
             # Resolve the participant factories now. This doesn't break the factory pattern
             # since the Sequential builder still creates new instances per workflow build.
@@ -522,7 +522,7 @@ class ConcurrentBuilder:
         for p in participants:
             if isinstance(p, Executor):
                 executors.append(p)
-            elif isinstance(p, AgentProtocol):
+            elif isinstance(p, AgentLike):
                 if self._request_info_enabled and (
                     not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
@@ -531,7 +531,7 @@ class ConcurrentBuilder:
                 else:
                     executors.append(AgentExecutor(p))
             else:
-                raise TypeError(f"Participants must be AgentProtocol or Executor instances. Got {type(p).__name__}.")
+                raise TypeError(f"Participants must be AgentLike or Executor instances. Got {type(p).__name__}.")
 
         return executors
 

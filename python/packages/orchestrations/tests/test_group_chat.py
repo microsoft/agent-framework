@@ -322,7 +322,7 @@ class TestGroupChatBuilder:
 
         builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="AgentProtocol participants must have a non-empty name"):
+        with pytest.raises(ValueError, match="AgentLike participants must have a non-empty name"):
             builder.participants([agent])
 
     def test_empty_participant_name_raises_error(self) -> None:
@@ -334,7 +334,7 @@ class TestGroupChatBuilder:
 
         builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
 
-        with pytest.raises(ValueError, match="AgentProtocol participants must have a non-empty name"):
+        with pytest.raises(ValueError, match="AgentLike participants must have a non-empty name"):
             builder.participants([agent])
 
 

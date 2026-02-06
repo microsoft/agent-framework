@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     ChatAgent,
@@ -38,7 +38,7 @@ class FunctionTestArgs(BaseModel):
 class TestResultOverrideMiddleware:
     """Test cases for middleware result override functionality."""
 
-    async def test_agent_middleware_response_override_non_streaming(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_response_override_non_streaming(self, mock_agent: AgentLike) -> None:
         """Test that agent middleware can override response for non-streaming execution."""
         override_response = AgentResponse(messages=[ChatMessage(role="assistant", text="overridden response")])
 
@@ -71,7 +71,7 @@ class TestResultOverrideMiddleware:
         # Verify original handler was called since middleware called next()
         assert handler_called
 
-    async def test_agent_middleware_response_override_streaming(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_response_override_streaming(self, mock_agent: AgentLike) -> None:
         """Test that agent middleware can override response for streaming execution."""
 
         async def override_stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -219,7 +219,7 @@ class TestResultOverrideMiddleware:
         assert normal_updates[0].text == "test streaming response "
         assert normal_updates[1].text == "another update"
 
-    async def test_agent_middleware_conditional_no_next(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_conditional_no_next(self, mock_agent: AgentLike) -> None:
         """Test that when agent middleware conditionally doesn't call next(), no execution happens."""
 
         class ConditionalNoNextMiddleware(AgentMiddleware):
@@ -313,7 +313,7 @@ class TestResultOverrideMiddleware:
 class TestResultObservability:
     """Test cases for middleware result observability functionality."""
 
-    async def test_agent_middleware_response_observability(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_response_observability(self, mock_agent: AgentLike) -> None:
         """Test that middleware can observe response after execution."""
         observed_responses: list[AgentResponse] = []
 
@@ -382,7 +382,7 @@ class TestResultObservability:
         assert observed_results[0] == "executed function result"
         assert result == observed_results[0]
 
-    async def test_agent_middleware_post_execution_override(self, mock_agent: AgentProtocol) -> None:
+    async def test_agent_middleware_post_execution_override(self, mock_agent: AgentLike) -> None:
         """Test that middleware can override response after observing execution."""
 
         class PostExecutionOverrideMiddleware(AgentMiddleware):
@@ -450,9 +450,9 @@ class TestResultObservability:
 
 
 @pytest.fixture
-def mock_agent() -> AgentProtocol:
+def mock_agent() -> AgentLike:
     """Mock agent for testing."""
-    agent = MagicMock(spec=AgentProtocol)
+    agent = MagicMock(spec=AgentLike)
     agent.name = "test_agent"
     return agent
 

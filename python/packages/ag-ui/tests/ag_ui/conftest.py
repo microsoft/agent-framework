@@ -9,7 +9,7 @@ from typing import Any, Generic, Literal, cast, overload
 
 import pytest
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -149,8 +149,8 @@ def stream_from_updates(updates: list[ChatResponseUpdate]) -> StreamFn:
     return _stream
 
 
-class StubAgent(AgentProtocol):
-    """Minimal AgentProtocol stub for orchestrator tests."""
+class StubAgent(AgentLike):
+    """Minimal AgentLike stub for orchestrator tests."""
 
     def __init__(
         self,
@@ -238,6 +238,6 @@ def stream_from_updates_fixture() -> Callable[[list[ChatResponseUpdate]], Stream
 
 
 @pytest.fixture
-def stub_agent() -> type[AgentProtocol]:
+def stub_agent() -> type[AgentLike]:
     """Return the StubAgent class for creating test instances."""
     return StubAgent  # type: ignore[return-value]

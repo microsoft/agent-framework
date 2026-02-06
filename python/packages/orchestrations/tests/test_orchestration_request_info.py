@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -44,10 +44,10 @@ class TestResolveRequestInfoFilter:
         assert result == {"agent1", "agent2"}
 
     def test_resolves_agent_display_names(self):
-        """Test resolving AgentProtocol instances by name attribute."""
-        agent1 = MagicMock(spec=AgentProtocol)
+        """Test resolving AgentLike instances by name attribute."""
+        agent1 = MagicMock(spec=AgentLike)
         agent1.name = "writer"
-        agent2 = MagicMock(spec=AgentProtocol)
+        agent2 = MagicMock(spec=AgentLike)
         agent2.name = "reviewer"
 
         result = resolve_request_info_filter([agent1, agent2])
@@ -55,7 +55,7 @@ class TestResolveRequestInfoFilter:
 
     def test_mixed_types(self):
         """Test resolving a mix of strings and agents."""
-        agent = MagicMock(spec=AgentProtocol)
+        agent = MagicMock(spec=AgentLike)
         agent.name = "writer"
 
         result = resolve_request_info_filter(["manual_name", agent])

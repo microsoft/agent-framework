@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -273,7 +273,7 @@ class MockAgentThread(AgentThread):
 
 
 # Mock Agent implementation for testing
-class MockAgent(AgentProtocol):
+class MockAgent(AgentLike):
     @property
     def id(self) -> str:
         return str(uuid4())
@@ -329,5 +329,5 @@ def agent_thread() -> AgentThread:
 
 
 @fixture
-def agent() -> AgentProtocol:
+def agent() -> AgentLike:
     return MockAgent()

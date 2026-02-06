@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from agent_framework import AgentProtocol, Content
+from agent_framework import AgentLike, Content
 from agent_framework._workflows._events import RequestInfoEvent
 
 from ._conversations import ConversationStore, InMemoryConversationStore
@@ -285,7 +285,7 @@ class AgentFrameworkExecutor:
             yield {"type": "error", "message": str(e), "entity_id": entity_id}
 
     async def _execute_agent(
-        self, agent: AgentProtocol, request: AgentFrameworkRequest, trace_collector: Any
+        self, agent: AgentLike, request: AgentFrameworkRequest, trace_collector: Any
     ) -> AsyncGenerator[Any, None]:
         """Execute Agent Framework agent with trace collection and optional thread support.
 

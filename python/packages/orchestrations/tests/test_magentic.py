@@ -7,7 +7,7 @@ from typing import Any, ClassVar, cast
 
 import pytest
 from agent_framework import (
-    AgentProtocol,
+    AgentLike,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -580,7 +580,7 @@ class StubAssistantsAgent(BaseAgent):
         )
 
 
-async def _collect_agent_responses_setup(participant: AgentProtocol) -> list[ChatMessage]:
+async def _collect_agent_responses_setup(participant: AgentLike) -> list[ChatMessage]:
     captured: list[ChatMessage] = []
 
     wf = (
@@ -1121,10 +1121,10 @@ async def test_magentic_with_agent_factory():
     """Test workflow creation using agent_factory for StandardMagenticManager."""
     factory_call_count = 0
 
-    def agent_factory() -> AgentProtocol:
+    def agent_factory() -> AgentLike:
         nonlocal factory_call_count
         factory_call_count += 1
-        return cast(AgentProtocol, StubManagerAgent())
+        return cast(AgentLike, StubManagerAgent())
 
     participant = StubAgent("agentA", "reply from agentA")
     workflow = (
@@ -1239,10 +1239,10 @@ def test_magentic_agent_factory_with_standard_manager_options():
     """Test that agent_factory properly passes through standard manager options."""
     factory_call_count = 0
 
-    def agent_factory() -> AgentProtocol:
+    def agent_factory() -> AgentLike:
         nonlocal factory_call_count
         factory_call_count += 1
-        return cast(AgentProtocol, StubManagerAgent())
+        return cast(AgentLike, StubManagerAgent())
 
     # Custom options to verify they are passed through
     custom_max_stall_count = 5
