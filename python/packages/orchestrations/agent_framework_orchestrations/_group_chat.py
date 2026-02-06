@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast, overload
 
-from agent_framework import AgentLike, ChatAgent
+from agent_framework import ChatAgent, SupportsAgentRun
 from agent_framework._threads import AgentThread
 from agent_framework._types import ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
@@ -523,8 +523,8 @@ class GroupChatBuilder:
 
     def __init__(self) -> None:
         """Initialize the GroupChatBuilder."""
-        self._participants: dict[str, AgentLike | Executor] = {}
-        self._participant_factories: list[Callable[[], AgentLike | Executor]] = []
+        self._participants: dict[str, SupportsAgentRun | Executor] = {}
+        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
@@ -683,13 +683,13 @@ class GroupChatBuilder:
 
     def register_participants(
         self,
-        participant_factories: Sequence[Callable[[], AgentLike | Executor]],
+        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
     ) -> "GroupChatBuilder":
         """Register participant factories for this group chat workflow.
 
         Args:
             participant_factories: Sequence of callables that produce participant definitions
-                when invoked. Each callable should return either an AgentLike instance
+                when invoked. Each callable should return either an SupportsAgentRun instance
                 (auto-wrapped as AgentExecutor) or an Executor instance.
 
         Returns:
@@ -711,10 +711,10 @@ class GroupChatBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def participants(self, participants: Sequence[AgentLike | Executor]) -> "GroupChatBuilder":
+    def participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> "GroupChatBuilder":
         """Define participants for this group chat workflow.
 
-        Accepts AgentLike instances (auto-wrapped as AgentExecutor) or Executor instances.
+        Accepts SupportsAgentRun instances (auto-wrapped as AgentExecutor) or Executor instances.
 
         Args:
             participants: Sequence of participant definitions
@@ -725,7 +725,7 @@ class GroupChatBuilder:
         Raises:
             ValueError: If participants are empty, names are duplicated, or participants
                 or participant factories are already set
-            TypeError: If any participant is not AgentLike or Executor instance
+            TypeError: If any participant is not SupportsAgentRun or Executor instance
 
         Example:
 
@@ -750,17 +750,17 @@ class GroupChatBuilder:
             raise ValueError("participants cannot be empty.")
 
         # Name of the executor mapped to participant instance
-        named: dict[str, AgentLike | Executor] = {}
+        named: dict[str, SupportsAgentRun | Executor] = {}
         for participant in participants:
             if isinstance(participant, Executor):
                 identifier = participant.id
-            elif isinstance(participant, AgentLike):
+            elif isinstance(participant, SupportsAgentRun):
                 if not participant.name:
-                    raise ValueError("AgentLike participants must have a non-empty name.")
+                    raise ValueError("SupportsAgentRun participants must have a non-empty name.")
                 identifier = participant.name
             else:
                 raise TypeError(
-                    f"Participants must be AgentLike or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
             if identifier in named:
@@ -861,7 +861,7 @@ class GroupChatBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(self, *, agents: Sequence[str | AgentLike] | None = None) -> "GroupChatBuilder":
+    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> "GroupChatBuilder":
         """Enable request info after agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
@@ -962,7 +962,7 @@ class GroupChatBuilder:
             raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
-        participants: list[Executor | AgentLike] = []
+        participants: list[Executor | SupportsAgentRun] = []
         if self._participant_factories:
             for factory in self._participant_factories:
                 participant = factory()
@@ -974,7 +974,7 @@ class GroupChatBuilder:
         for participant in participants:
             if isinstance(participant, Executor):
                 executors.append(participant)
-            elif isinstance(participant, AgentLike):
+            elif isinstance(participant, SupportsAgentRun):
                 if self._request_info_enabled and (
                     not self._request_info_filter or resolve_agent_id(participant) in self._request_info_filter
                 ):
@@ -984,7 +984,7 @@ class GroupChatBuilder:
                     executors.append(AgentExecutor(participant))
             else:
                 raise TypeError(
-                    f"Participants must be AgentLike or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
         return executors

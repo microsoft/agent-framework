@@ -38,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
     from pydantic import BaseModel
 
-    from ._agents import AgentLike
+    from ._agents import SupportsAgentRun
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
     from ._tools import FunctionTool
@@ -70,7 +70,7 @@ __all__ = [
 ]
 
 
-TAgent = TypeVar("TAgent", bound="AgentLike")
+TAgent = TypeVar("TAgent", bound="SupportsAgentRun")
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
 
 

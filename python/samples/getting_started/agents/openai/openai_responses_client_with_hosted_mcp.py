@@ -14,10 +14,10 @@ OpenAI Responses Client, including user approval workflows for function call sec
 """
 
 if TYPE_CHECKING:
-    from agent_framework import AgentLike, AgentThread
+    from agent_framework import SupportsAgentRun, AgentThread
 
 
-async def handle_approvals_without_thread(query: str, agent: "AgentLike"):
+async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
     from agent_framework import ChatMessage
 
@@ -39,7 +39,7 @@ async def handle_approvals_without_thread(query: str, agent: "AgentLike"):
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentLike", thread: "AgentThread"):
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 
@@ -62,7 +62,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentLike", thread: "
     return result
 
 
-async def handle_approvals_with_thread_streaming(query: str, agent: "AgentLike", thread: "AgentThread"):
+async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 
