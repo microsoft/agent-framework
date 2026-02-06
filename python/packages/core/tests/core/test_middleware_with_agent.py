@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponseUpdate,
-    AgentRunContext,
     ChatAgent,
     ChatClientProtocol,
     ChatContext,
@@ -44,9 +44,7 @@ class TestChatAgentClassBasedMiddleware:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
                 await next(context)
                 execution_order.append(f"{self.name}_after")
@@ -122,9 +120,7 @@ class TestChatAgentFunctionBasedMiddleware:
         execution_order: list[str] = []
 
         class PreTerminationMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append("middleware_before")
                 raise MiddlewareTermination
                 # Code after raise is unreachable
@@ -153,9 +149,7 @@ class TestChatAgentFunctionBasedMiddleware:
         execution_order: list[str] = []
 
         class PostTerminationMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append("middleware_before")
                 await next(context)
                 execution_order.append("middleware_after")
@@ -225,7 +219,7 @@ class TestChatAgentFunctionBasedMiddleware:
         execution_order: list[str] = []
 
         async def tracking_agent_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]
         ) -> None:
             execution_order.append("agent_function_before")
             await next(context)
@@ -290,9 +284,7 @@ class TestChatAgentStreamingMiddleware:
         streaming_flags: list[bool] = []
 
         class StreamingTrackingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append("middleware_before")
                 streaming_flags.append(context.stream)
                 await next(context)
@@ -334,9 +326,7 @@ class TestChatAgentStreamingMiddleware:
         streaming_flags: list[bool] = []
 
         class FlagTrackingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 streaming_flags.append(context.stream)
                 await next(context)
 
@@ -368,9 +358,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
                 await next(context)
                 execution_order.append(f"{self.name}_after")
@@ -400,15 +388,13 @@ class TestChatAgentMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class ClassAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append("class_agent_before")
                 await next(context)
                 execution_order.append("class_agent_after")
 
         async def function_agent_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]
         ) -> None:
             execution_order.append("function_agent_before")
             await next(context)
@@ -447,15 +433,13 @@ class TestChatAgentMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class ClassAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_order.append("class_agent_before")
                 await next(context)
                 execution_order.append("class_agent_after")
 
         async def function_agent_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]
         ) -> None:
             execution_order.append("function_agent_before")
             await next(context)
@@ -646,8 +630,8 @@ class TestChatAgentFunctionMiddlewareWithTools:
         class TrackingAgentMiddleware(AgentMiddleware):
             async def process(
                 self,
-                context: AgentRunContext,
-                next: Callable[[AgentRunContext], Awaitable[None]],
+                context: AgentContext,
+                next: Callable[[AgentContext], Awaitable[None]],
             ) -> None:
                 execution_order.append("agent_middleware_before")
                 await next(context)
@@ -801,7 +785,7 @@ class TestMiddlewareDynamicRebuild:
             self.name = name
             self.execution_log = execution_log
 
-        async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+        async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
             self.execution_log.append(f"{self.name}_start")
             await next(context)
             self.execution_log.append(f"{self.name}_end")
@@ -924,7 +908,7 @@ class TestRunLevelMiddleware:
             self.name = name
             self.execution_log = execution_log
 
-        async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+        async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
             self.execution_log.append(f"{self.name}_start")
             await next(context)
             self.execution_log.append(f"{self.name}_end")
@@ -976,9 +960,7 @@ class TestRunLevelMiddleware:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_log.append(f"{self.name}_start")
                 # Set metadata to pass information to run middleware
                 context.metadata[f"{self.name}_key"] = f"{self.name}_value"
@@ -989,9 +971,7 @@ class TestRunLevelMiddleware:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_log.append(f"{self.name}_start")
                 # Read metadata set by agent middleware
                 for key, value in context.metadata.items():
@@ -1049,9 +1029,7 @@ class TestRunLevelMiddleware:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_log.append(f"{self.name}_start")
                 streaming_flags.append(context.stream)
                 await next(context)
@@ -1093,9 +1071,7 @@ class TestRunLevelMiddleware:
 
         # Agent-level middleware
         class AgentLevelAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_log.append("agent_level_agent_start")
                 context.metadata["agent_level_agent"] = "processed"
                 await next(context)
@@ -1114,9 +1090,7 @@ class TestRunLevelMiddleware:
 
         # Run-level middleware
         class RunLevelAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 execution_log.append("run_level_agent_start")
                 # Verify agent-level middleware metadata is available
                 assert "agent_level_agent" in context.metadata
@@ -1218,7 +1192,7 @@ class TestMiddlewareDecoratorLogic:
 
         @agent_middleware
         async def matching_agent_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]
         ) -> None:
             execution_order.append("decorator_type_match_agent")
             await next(context)
@@ -1346,7 +1320,7 @@ class TestMiddlewareDecoratorLogic:
         execution_order: list[str] = []
 
         # No decorator
-        async def type_only_agent(context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+        async def type_only_agent(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
             execution_order.append("type_only_agent")
             await next(context)
 
@@ -1440,16 +1414,14 @@ class TestMiddlewareDecoratorLogic:
 
 
 class TestChatAgentThreadBehavior:
-    """Test cases for thread behavior in AgentRunContext across multiple runs."""
+    """Test cases for thread behavior in AgentContext across multiple runs."""
 
-    async def test_agent_run_context_thread_behavior_across_multiple_runs(self, chat_client: "MockChatClient") -> None:
-        """Test that AgentRunContext.thread property behaves correctly across multiple agent runs."""
+    async def test_agent_context_thread_behavior_across_multiple_runs(self, chat_client: "MockChatClient") -> None:
+        """Test that AgentContext.thread property behaves correctly across multiple agent runs."""
         thread_states: list[dict[str, Any]] = []
 
         class ThreadTrackingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Capture state before next() call
                 thread_messages = []
                 if context.thread and context.thread.message_store:
@@ -1804,9 +1776,7 @@ class TestChatAgentChatMiddleware:
         """Test ChatAgent with combined middleware types."""
         execution_order: list[str] = []
 
-        async def agent_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-        ) -> None:
+        async def agent_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
             execution_order.append("agent_middleware_before")
             await next(context)
             execution_order.append("agent_middleware_after")
@@ -1844,9 +1814,7 @@ class TestChatAgentChatMiddleware:
         modified_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def kwargs_middleware(
-            context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-        ) -> None:
+        async def kwargs_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
             # Capture the original kwargs
             captured_kwargs.update(context.kwargs)
 
@@ -1897,7 +1865,7 @@ class TestChatAgentChatMiddleware:
 
 #     class TrackingMiddleware(AgentMiddleware):
 #         async def process(
-#             self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+#             self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]
 #         ) -> None:
 #             execution_order.append("before")
 #             await next(context)

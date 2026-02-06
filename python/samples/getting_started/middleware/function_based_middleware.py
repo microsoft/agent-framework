@@ -7,7 +7,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
-    AgentRunContext,
+    AgentContext,
     FunctionInvocationContext,
     tool,
 )
@@ -42,8 +42,8 @@ def get_weather(
 
 
 async def security_agent_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query

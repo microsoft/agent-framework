@@ -7,9 +7,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
     FunctionInvocationContext,
     tool,
 )
@@ -49,7 +49,7 @@ def get_weather(
 class SecurityAgentMiddleware(AgentMiddleware):
     """Agent-level security middleware that validates all requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[SecurityMiddleware] Checking security for all requests...")
 
         # Check for security violations in the last user message
@@ -66,8 +66,8 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
 
 async def performance_monitor_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent-level performance monitoring for all runs."""
     print("[PerformanceMonitor] Starting performance monitoring...")
@@ -85,7 +85,7 @@ async def performance_monitor_middleware(
 class HighPriorityMiddleware(AgentMiddleware):
     """Run-level middleware for high priority requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[HighPriority] Processing high priority request with expedited handling...")
 
         # Read metadata set by agent-level middleware
@@ -101,8 +101,8 @@ class HighPriorityMiddleware(AgentMiddleware):
 
 
 async def debugging_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Run-level debugging middleware for troubleshooting specific runs."""
     print("[Debug] Debug mode enabled for this run")
@@ -126,7 +126,7 @@ class CachingMiddleware(AgentMiddleware):
     def __init__(self) -> None:
         self.cache: dict[str, AgentResponse] = {}
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         # Create a simple cache key from the last message
         last_message = context.messages[-1] if context.messages else None
         cache_key: str = last_message.text if last_message and last_message.text else "no_message"

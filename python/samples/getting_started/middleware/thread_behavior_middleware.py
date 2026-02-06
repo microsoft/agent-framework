@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
-    AgentRunContext,
+    AgentContext,
     ChatMessageStore,
     tool,
 )
@@ -19,7 +19,7 @@ Thread Behavior MiddlewareTypes Example
 This sample demonstrates how middleware can access and track thread state across multiple agent runs.
 The example shows:
 
-- How AgentRunContext.thread property behaves across multiple runs
+- How AgentContext.thread property behaves across multiple runs
 - How middleware can access conversation history through the thread
 - The timing of when thread messages are populated (before vs after next() call)
 - How to track thread state changes across runs
@@ -45,8 +45,8 @@ def get_weather(
 
 
 async def thread_tracking_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """MiddlewareTypes that tracks and logs thread behavior across runs."""
     thread_messages = []

@@ -17,9 +17,9 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework._middleware import (
+    AgentContext,
     AgentMiddleware,
     AgentMiddlewarePipeline,
-    AgentRunContext,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
@@ -43,9 +43,7 @@ class TestResultOverrideMiddleware:
         override_response = AgentResponse(messages=[ChatMessage(role="assistant", text="overridden response")])
 
         class ResponseOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Execute the pipeline first, then override the response
                 await next(context)
                 context.result = override_response
@@ -53,11 +51,11 @@ class TestResultOverrideMiddleware:
         middleware = ResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [ChatMessage(role="user", text="test")]
-        context = AgentRunContext(agent=mock_agent, messages=messages)
+        context = AgentContext(agent=mock_agent, messages=messages)
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+        async def final_handler(ctx: AgentContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
             return AgentResponse(messages=[ChatMessage(role="assistant", text="original response")])
@@ -79,9 +77,7 @@ class TestResultOverrideMiddleware:
             yield AgentResponseUpdate(contents=[Content.from_text(text=" stream")])
 
         class StreamResponseOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Execute the pipeline first, then override the response stream
                 await next(context)
                 context.result = ResponseStream(override_stream())
@@ -89,9 +85,9 @@ class TestResultOverrideMiddleware:
         middleware = StreamResponseOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [ChatMessage(role="user", text="test")]
-        context = AgentRunContext(agent=mock_agent, messages=messages, stream=True)
+        context = AgentContext(agent=mock_agent, messages=messages, stream=True)
 
-        async def final_handler(ctx: AgentRunContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def final_handler(ctx: AgentContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(contents=[Content.from_text(text="original")])
 
@@ -145,9 +141,7 @@ class TestResultOverrideMiddleware:
         mock_chat_client = MockChatClient()
 
         class ChatAgentResponseOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Always call next() first to allow execution
                 await next(context)
                 # Then conditionally override based on content
@@ -184,9 +178,7 @@ class TestResultOverrideMiddleware:
             yield AgentResponseUpdate(contents=[Content.from_text(text=" response!")])
 
         class ChatAgentStreamOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Check if we want to override BEFORE calling next to avoid creating unused streams
                 if any("custom stream" in msg.text for msg in context.messages if msg.text):
                     context.result = ResponseStream(custom_stream())
@@ -223,9 +215,7 @@ class TestResultOverrideMiddleware:
         """Test that when agent middleware conditionally doesn't call next(), no execution happens."""
 
         class ConditionalNoNextMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Only call next() if message contains "execute"
                 if any("execute" in msg.text for msg in context.messages if msg.text):
                     await next(context)
@@ -236,14 +226,14 @@ class TestResultOverrideMiddleware:
 
         handler_called = False
 
-        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+        async def final_handler(ctx: AgentContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
             return AgentResponse(messages=[ChatMessage(role="assistant", text="executed response")])
 
         # Test case where next() is NOT called
         no_execute_messages = [ChatMessage(role="user", text="Don't run this")]
-        no_execute_context = AgentRunContext(agent=mock_agent, messages=no_execute_messages, stream=False)
+        no_execute_context = AgentContext(agent=mock_agent, messages=no_execute_messages, stream=False)
         no_execute_result = await pipeline.execute(no_execute_context, final_handler)
 
         # When middleware doesn't call next(), result should be empty AgentResponse
@@ -255,7 +245,7 @@ class TestResultOverrideMiddleware:
 
         # Test case where next() IS called
         execute_messages = [ChatMessage(role="user", text="Please execute this")]
-        execute_context = AgentRunContext(agent=mock_agent, messages=execute_messages, stream=False)
+        execute_context = AgentContext(agent=mock_agent, messages=execute_messages, stream=False)
         execute_result = await pipeline.execute(execute_context, final_handler)
 
         assert execute_result is not None
@@ -318,9 +308,7 @@ class TestResultObservability:
         observed_responses: list[AgentResponse] = []
 
         class ObservabilityMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Context should be empty before next()
                 assert context.result is None
 
@@ -335,9 +323,9 @@ class TestResultObservability:
         middleware = ObservabilityMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [ChatMessage(role="user", text="test")]
-        context = AgentRunContext(agent=mock_agent, messages=messages, stream=False)
+        context = AgentContext(agent=mock_agent, messages=messages, stream=False)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+        async def final_handler(ctx: AgentContext) -> AgentResponse:
             return AgentResponse(messages=[ChatMessage(role="assistant", text="executed response")])
 
         result = await pipeline.execute(context, final_handler)
@@ -386,9 +374,7 @@ class TestResultObservability:
         """Test that middleware can override response after observing execution."""
 
         class PostExecutionOverrideMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
                 # Call next to execute first
                 await next(context)
 
@@ -405,9 +391,9 @@ class TestResultObservability:
         middleware = PostExecutionOverrideMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [ChatMessage(role="user", text="test")]
-        context = AgentRunContext(agent=mock_agent, messages=messages, stream=False)
+        context = AgentContext(agent=mock_agent, messages=messages, stream=False)
 
-        async def final_handler(ctx: AgentRunContext) -> AgentResponse:
+        async def final_handler(ctx: AgentContext) -> AgentResponse:
             return AgentResponse(messages=[ChatMessage(role="assistant", text="response to modify")])
 
         result = await pipeline.execute(context, final_handler)

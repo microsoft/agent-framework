@@ -7,9 +7,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
     ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -49,8 +49,8 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
@@ -61,9 +61,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
                 context.result = AgentResponse(
-                    messages=[
-                        ChatMessage("assistant", ["Detected sensitive information, the request is blocked."])
-                    ]
+                    messages=[ChatMessage("assistant", ["Detected sensitive information, the request is blocked."])]
                 )
                 # Simply don't call next() to prevent execution
                 return

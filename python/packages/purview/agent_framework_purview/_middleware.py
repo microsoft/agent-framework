@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 
-from agent_framework import AgentMiddleware, AgentRunContext, ChatContext, ChatMiddleware, MiddlewareTermination
+from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
 from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -47,8 +47,8 @@ class PurviewPolicyMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
         try:

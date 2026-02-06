@@ -43,10 +43,10 @@ if TYPE_CHECKING:
     TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 __all__ = [
+    "AgentContext",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
-    "AgentRunContext",
     "ChatAndFunctionMiddlewareTypes",
     "ChatContext",
     "ChatMiddleware",
@@ -109,7 +109,7 @@ class MiddlewareType(str, Enum):
     CHAT = "chat"
 
 
-class AgentRunContext:
+class AgentContext:
     """Context object for agent middleware invocations.
 
     This context is passed through the agent middleware pipeline and contains all information
@@ -131,11 +131,11 @@ class AgentRunContext:
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentRunContext
+            from agent_framework import AgentMiddleware, AgentContext
 
 
             class LoggingMiddleware(AgentMiddleware):
-                async def process(self, context: AgentRunContext, next):
+                async def process(self, context: AgentContext, next):
                     print(f"Agent: {context.agent.name}")
                     print(f"Messages: {len(context.messages)}")
                     print(f"Thread: {context.thread}")
@@ -170,7 +170,7 @@ class AgentRunContext:
         | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
-        """Initialize the AgentRunContext.
+        """Initialize the AgentContext.
 
         Args:
             agent: The agent being invoked.
@@ -356,14 +356,14 @@ class AgentMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentRunContext, ChatAgent
+            from agent_framework import AgentMiddleware, AgentContext, ChatAgent
 
 
             class RetryMiddleware(AgentMiddleware):
                 def __init__(self, max_retries: int = 3):
                     self.max_retries = max_retries
 
-                async def process(self, context: AgentRunContext, next):
+                async def process(self, context: AgentContext, next):
                     for attempt in range(self.max_retries):
                         await next(context)
                         if context.result and not context.result.is_error:
@@ -378,8 +378,8 @@ class AgentMiddleware(ABC):
     @abstractmethod
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         """Process an agent invocation.
 
@@ -531,7 +531,7 @@ class ChatMiddleware(ABC):
 
 
 # Pure function type definitions for convenience
-AgentMiddlewareCallable = Callable[[AgentRunContext, Callable[[AgentRunContext], Awaitable[None]]], Awaitable[None]]
+AgentMiddlewareCallable = Callable[[AgentContext, Callable[[AgentContext], Awaitable[None]]], Awaitable[None]]
 AgentMiddlewareTypes: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
 
 FunctionMiddlewareCallable = Callable[
@@ -561,7 +561,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware.
 
     This decorator explicitly identifies a function as agent middleware,
-    which processes AgentRunContext objects.
+    which processes AgentContext objects.
 
     Args:
         func: The middleware function to mark as agent middleware.
@@ -572,11 +572,11 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     Examples:
         .. code-block:: python
 
-            from agent_framework import agent_middleware, AgentRunContext, ChatAgent
+            from agent_framework import agent_middleware, AgentContext, ChatAgent
 
 
             @agent_middleware
-            async def logging_middleware(context: AgentRunContext, next):
+            async def logging_middleware(context: AgentContext, next):
                 print(f"Before: {context.agent.name}")
                 await next(context)
                 print(f"After: {context.result}")
@@ -752,9 +752,9 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
 
     async def execute(
         self,
-        context: AgentRunContext,
+        context: AgentContext,
         final_handler: Callable[
-            [AgentRunContext], Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]
+            [AgentContext], Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]
         ],
     ) -> AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None:
         """Execute the agent middleware pipeline for streaming or non-streaming.
@@ -772,17 +772,17 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
                 context.result = await context.result
             return context.result
 
-        def create_next_handler(index: int) -> Callable[[AgentRunContext], Awaitable[None]]:
+        def create_next_handler(index: int) -> Callable[[AgentContext], Awaitable[None]]:
             if index >= len(self._middleware):
 
-                async def final_wrapper(c: AgentRunContext) -> None:
+                async def final_wrapper(c: AgentContext) -> None:
                     c.result = final_handler(c)  # type: ignore[assignment]
                     if inspect.isawaitable(c.result):
                         c.result = await c.result
 
                 return final_wrapper
 
-            async def current_handler(c: AgentRunContext) -> None:
+            async def current_handler(c: AgentContext) -> None:
                 # MiddlewareTermination bubbles up to execute() to skip post-processing
                 await self._middleware[index].process(c, create_next_handler(index + 1))
 
@@ -1161,7 +1161,7 @@ class AgentMiddlewareLayer:
         if not pipeline.has_middlewares:
             return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
 
-        context = AgentRunContext(
+        context = AgentContext(
             agent=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),  # type: ignore[arg-type]
             thread=thread,
@@ -1194,7 +1194,7 @@ class AgentMiddlewareLayer:
         return _execute()  # type: ignore[return-value]
 
     def _middleware_handler(
-        self, context: AgentRunContext
+        self, context: AgentContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
@@ -1231,7 +1231,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
             first_param = params[0]
             if hasattr(first_param.annotation, "__name__"):
                 annotation_name = first_param.annotation.__name__
-                if annotation_name == "AgentRunContext":
+                if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":
                     param_type = MiddlewareType.FUNCTION
@@ -1270,7 +1270,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
     raise MiddlewareException(
         f"Cannot determine middleware type for function {middleware.__name__}. "
         f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
-        f"or specify parameter types (AgentRunContext, FunctionInvocationContext, or ChatContext)."
+        f"or specify parameter types (AgentContext, FunctionInvocationContext, or ChatContext)."
     )
 
 
