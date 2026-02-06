@@ -1748,6 +1748,9 @@ def _update_conversation_id(
 ) -> None:
     """Update kwargs and options with conversation id.
 
+    Also updates the ambient agent run context's thread if available,
+    enabling sub-agents (invoked as tools) to inherit the conversation_id.
+
     Args:
         kwargs: The keyword arguments dictionary to update.
         conversation_id: The conversation ID to set, or None to skip.
@@ -1763,6 +1766,13 @@ def _update_conversation_id(
     # Also update options since some clients (e.g., AssistantsClient) read conversation_id from options
     if options is not None:
         options["conversation_id"] = conversation_id
+
+    # Update the ambient context's thread so sub-agents can inherit the conversation_id
+    from ._agent_context import get_current_agent_run_context
+
+    parent_context = get_current_agent_run_context()
+    if parent_context and parent_context.thread:
+        parent_context.thread.service_thread_id = conversation_id
 
 
 async def _ensure_response_stream(

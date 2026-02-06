@@ -10,6 +10,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, overload
 
+from ._agent_context import agent_run_scope
 from ._clients import ChatClientProtocol
 from ._types import (
     AgentResponse,
@@ -1077,6 +1078,38 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         )
 
 
+def _wrap_stream_with_context(
+    inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse],
+    context: AgentContext,
+) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+    """Wrap a ResponseStream to maintain agent run context during iteration.
+
+    This ensures that `get_current_agent_run_context()` returns the correct context
+    when tools are invoked during streaming, including sub-agents wrapped as tools.
+
+    Args:
+        inner_stream: The inner ResponseStream to wrap.
+        context: The AgentContext to maintain during iteration.
+
+    Returns:
+        A new ResponseStream that maintains the context during iteration.
+    """
+
+    async def _iterate_with_context() -> AsyncIterable[AgentResponseUpdate]:
+        with agent_run_scope(context):
+            async for update in inner_stream:
+                yield update
+
+    async def _finalize_with_context(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+        with agent_run_scope(context):
+            return await inner_stream.get_final_response()
+
+    return ResponseStream(
+        _iterate_with_context(),
+        finalizer=_finalize_with_context,
+    )
+
+
 class AgentMiddlewareLayer:
     """Layer for agents to apply agent middleware around run execution."""
 
@@ -1157,10 +1190,7 @@ class AgentMiddlewareLayer:
         combined_kwargs = dict(kwargs)
         combined_kwargs["middleware"] = combined_function_chat_middleware if combined_function_chat_middleware else None
 
-        # Execute with middleware if available
-        if not pipeline.has_middlewares:
-            return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
-
+        # Always create AgentContext for ambient access (enables sub-agents to access parent context)
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),  # type: ignore[arg-type]
@@ -1170,11 +1200,29 @@ class AgentMiddlewareLayer:
             kwargs=combined_kwargs,
         )
 
+        # Execute without middleware pipeline if none configured
+        if not pipeline.has_middlewares:
+            if stream:
+                # For streaming, wrap to maintain context during iteration
+                inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse] = super().run(  # type: ignore[misc, assignment]
+                    messages, stream=True, thread=thread, options=options, **combined_kwargs
+                )
+                return _wrap_stream_with_context(inner_stream, context)
+
+            async def _no_middleware_run() -> AgentResponse:
+                with agent_run_scope(context):
+                    return await super(AgentMiddlewareLayer, self).run(  # type: ignore[misc]
+                        messages, stream=False, thread=thread, options=options, **combined_kwargs
+                    )
+
+            return _no_middleware_run()
+
         async def _execute() -> AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None:
-            return await pipeline.execute(
-                context=context,
-                final_handler=self._middleware_handler,
-            )
+            with agent_run_scope(context):
+                return await pipeline.execute(
+                    context=context,
+                    final_handler=self._middleware_handler,
+                )
 
         if stream:
             # For streaming, wrap execution in ResponseStream.from_awaitable
