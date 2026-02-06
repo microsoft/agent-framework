@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -26,7 +25,6 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Storing chat messages with proper ordering and metadata preservation</description></item>
 /// <item><description>Retrieving messages in chronological order for agent context</description></item>
 /// <item><description>Managing storage limits through truncation, summarization, or other strategies</description></item>
-/// <item><description>Supporting serialization for thread persistence and migration</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -93,13 +91,6 @@ public abstract class ChatHistoryProvider
     /// </para>
     /// </remarks>
     public abstract ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public abstract JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>Asks the <see cref="ChatHistoryProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

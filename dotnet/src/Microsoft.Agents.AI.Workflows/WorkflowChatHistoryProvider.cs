@@ -2,52 +2,48 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
 internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
-    private int _bookmark;
-    private readonly List<ChatMessage> _chatMessages = [];
+    private const string DefaultStateBagKey = "WorkflowChatHistoryProvider.State";
 
     public WorkflowChatHistoryProvider()
     {
     }
 
-    public WorkflowChatHistoryProvider(StoreState state)
-    {
-        this.ImportStoreState(Throw.IfNull(state));
-    }
-
-    private void ImportStoreState(StoreState state, bool clearMessages = false)
-    {
-        if (clearMessages)
-        {
-            this._chatMessages.Clear();
-        }
-
-        if (state?.Messages is not null)
-        {
-            this._chatMessages.AddRange(state.Messages);
-        }
-        this._bookmark = state?.Bookmark ?? 0;
-    }
-
     internal sealed class StoreState
     {
         public int Bookmark { get; set; }
-        public IList<ChatMessage> Messages { get; set; } = [];
+        public List<ChatMessage> Messages { get; set; } = [];
     }
 
-    internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
+    private StoreState GetOrInitializeState(AgentSession? session)
+    {
+        var state = session?.StateBag.GetValue<StoreState>(DefaultStateBagKey, AgentAbstractionsJsonUtilities.DefaultOptions);
+        if (state is not null)
+        {
+            return state;
+        }
+
+        state = new();
+        if (session is not null)
+        {
+            session.StateBag.SetValue(DefaultStateBagKey, state, AgentAbstractionsJsonUtilities.DefaultOptions);
+        }
+
+        return state;
+    }
+
+    internal void AddMessages(AgentSession session, params IEnumerable<ChatMessage> messages)
+        => this.GetOrInitializeState(session).Messages.AddRange(messages);
 
     public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this._chatMessages.AsReadOnly());
+        => new(this.GetOrInitializeState(context.Session).Messages.AsReadOnly());
 
     public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
@@ -57,28 +53,24 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         }
 
         var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
-        this._chatMessages.AddRange(allNewMessages);
+        this.GetOrInitializeState(context.Session).Messages.AddRange(allNewMessages);
 
         return default;
     }
 
-    public IEnumerable<ChatMessage> GetFromBookmark()
+    public IEnumerable<ChatMessage> GetFromBookmark(AgentSession session)
     {
-        for (int i = this._bookmark; i < this._chatMessages.Count; i++)
+        var state = this.GetOrInitializeState(session);
+
+        for (int i = state.Bookmark; i < state.Messages.Count; i++)
         {
-            yield return this._chatMessages[i];
+            yield return state.Messages[i];
         }
     }
 
-    public void UpdateBookmark() => this._bookmark = this._chatMessages.Count;
-
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public void UpdateBookmark(AgentSession session)
     {
-        StoreState state = this.ExportStoreState();
-
-        return JsonSerializer.SerializeToElement(state,
-            WorkflowsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
+        var state = this.GetOrInitializeState(session);
+        state.Bookmark = state.Messages.Count;
     }
-
-    internal StoreState ExportStoreState() => new() { Bookmark = this._bookmark, Messages = this._chatMessages };
 }

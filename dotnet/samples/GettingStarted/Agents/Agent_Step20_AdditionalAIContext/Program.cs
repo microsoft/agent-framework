@@ -7,7 +7,6 @@
 
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
-using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using Azure.AI.OpenAI;
@@ -45,16 +44,16 @@ AIAgent agent = new AzureOpenAIClient(
         You manage a TODO list for the user. When the user has completed one of the tasks it can be removed from the TODO list. Only provide the list of TODO items if asked.
         You remind users of upcoming calendar events when the user interacts with you.
         """ },
-        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider()
+        ChatHistoryProvider = new InMemoryChatHistoryProvider()
             // Use WithAIContextProviderMessageRemoval, so that we don't store the messages from the AI context provider in the chat history.
             // You may want to store these messages, depending on their content and your requirements.
-            .WithAIContextProviderMessageRemoval()),
+            .WithAIContextProviderMessageRemoval(),
         // Add an AI context provider that maintains a todo list for the agent and one that provides upcoming calendar entries.
         // Wrap these in an AI context provider that aggregates the other two.
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new AggregatingAIContextProvider([
-            AggregatingAIContextProvider.CreateFactory((jsonElement, jsonSerializerOptions) => new TodoListAIContextProvider(jsonElement, jsonSerializerOptions)),
-            AggregatingAIContextProvider.CreateFactory((_, _) => new CalendarSearchAIContextProvider(loadNextThreeCalendarEvents))
-        ], ctx.SerializedState, ctx.JsonSerializerOptions)),
+        AIContextProvider = new AggregatingAIContextProvider([
+            new TodoListAIContextProvider(),
+            new CalendarSearchAIContextProvider(loadNextThreeCalendarEvents)
+        ]),
     });
 
 // Invoke the agent and output the text result.
@@ -80,51 +79,62 @@ namespace SampleApp
     /// </summary>
     internal sealed class TodoListAIContextProvider : AIContextProvider
     {
-        private readonly List<string> _todoItems = new();
+        private const string StateKey = nameof(TodoListAIContextProvider);
 
-        public TodoListAIContextProvider(JsonElement jsonElement, JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            // Only try and restore the state if we got an array, since any other json would be invalid or undefined/null meaning
-            // it's the first time we are running.
-            if (jsonElement.ValueKind == JsonValueKind.Array)
-            {
-                this._todoItems = JsonSerializer.Deserialize<List<string>>(jsonElement.GetRawText(), jsonSerializerOptions) ?? new List<string>();
-            }
-        }
+        private static List<string> GetTodoItems(AgentSession? session)
+            => session?.StateBag.GetValue<List<string>>(StateKey) ?? new List<string>();
+
+        private static void SetTodoItems(AgentSession? session, List<string> items)
+            => session?.StateBag.SetValue(StateKey, items);
 
         public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
+            var todoItems = GetTodoItems(context.Session);
+
             StringBuilder outputMessageBuilder = new();
             outputMessageBuilder.AppendLine("Your todo list contains the following items:");
 
-            if (this._todoItems.Count == 0)
+            if (todoItems.Count == 0)
             {
                 outputMessageBuilder.AppendLine("  (no items)");
             }
             else
             {
-                for (int i = 0; i < this._todoItems.Count; i++)
+                for (int i = 0; i < todoItems.Count; i++)
                 {
-                    outputMessageBuilder.AppendLine($"{i}. {this._todoItems[i]}");
+                    outputMessageBuilder.AppendLine($"{i}. {todoItems[i]}");
                 }
             }
 
             return new ValueTask<AIContext>(new AIContext
             {
-                Tools = [AIFunctionFactory.Create(this.AddTodoItem), AIFunctionFactory.Create(this.RemoveTodoItem)],
+                Tools =
+                [
+                    AIFunctionFactory.Create((string item) => AddTodoItem(context.Session, item), "AddTodoItem", "Adds an item to the todo list."),
+                    AIFunctionFactory.Create((int index) => RemoveTodoItem(context.Session, index), "RemoveTodoItem", "Removes an item from the todo list. Index is zero based.")
+                ],
                 Messages = [new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())]
             });
         }
 
-        [Description("Adds an item to the todo list. Index is zero based.")]
-        private void RemoveTodoItem(int index) =>
-            this._todoItems.RemoveAt(index);
+        private static void RemoveTodoItem(AgentSession? session, int index)
+        {
+            var items = GetTodoItems(session);
+            items.RemoveAt(index);
+            SetTodoItems(session, items);
+        }
 
-        private void AddTodoItem(string item) =>
-            this._todoItems.Add(string.IsNullOrWhiteSpace(item) ? throw new ArgumentException("Item must have a value") : item);
+        private static void AddTodoItem(AgentSession? session, string item)
+        {
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                throw new ArgumentException("Item must have a value");
+            }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>
-            JsonSerializer.SerializeToElement(this._todoItems, jsonSerializerOptions);
+            var items = GetTodoItems(session);
+            items.Add(item);
+            SetTodoItems(session, items);
+        }
     }
 
     /// <summary>
@@ -155,28 +165,15 @@ namespace SampleApp
 
     /// <summary>
     /// An <see cref="AIContextProvider"/> which aggregates multiple AI context providers into one.
-    /// Serialized state for the different providers are stored under their type name.
     /// Tools and messages from all providers are combined, and instructions are concatenated.
     /// </summary>
     internal sealed class AggregatingAIContextProvider : AIContextProvider
     {
-        private readonly List<AIContextProvider> _providers = new();
+        private readonly List<AIContextProvider> _providers;
 
-        public AggregatingAIContextProvider(ProviderFactory[] providerFactories, JsonElement jsonElement, JsonSerializerOptions? jsonSerializerOptions)
+        public AggregatingAIContextProvider(List<AIContextProvider> providers)
         {
-            // We received a json object, so let's check if it has some previously serialized state that we can use.
-            if (jsonElement.ValueKind == JsonValueKind.Object)
-            {
-                this._providers = providerFactories
-                    .Select(factory => factory.FactoryMethod(jsonElement.TryGetProperty(factory.ProviderType.Name, out var prop) ? prop : default, jsonSerializerOptions))
-                    .ToList();
-                return;
-            }
-
-            // We didn't receive any valid json, so we can just construct fresh providers.
-            this._providers = providerFactories
-                .Select(factory => factory.FactoryMethod(default, jsonSerializerOptions))
-                .ToList();
+            this._providers = providers;
         }
 
         public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -192,37 +189,6 @@ namespace SampleApp
                 Messages = results.SelectMany(r => r.Messages ?? []).ToList(),
                 Instructions = string.Join("\n", results.Select(r => r.Instructions).Where(s => !string.IsNullOrEmpty(s)))
             };
-        }
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            Dictionary<string, JsonElement> elements = new();
-            foreach (var provider in this._providers)
-            {
-                JsonElement element = provider.Serialize(jsonSerializerOptions);
-
-                // Don't try to store state for any providers that aren't producing any.
-                if (element.ValueKind != JsonValueKind.Undefined && element.ValueKind != JsonValueKind.Null)
-                {
-                    elements[provider.GetType().Name] = element;
-                }
-            }
-
-            return JsonSerializer.SerializeToElement(elements, jsonSerializerOptions);
-        }
-
-        public static ProviderFactory CreateFactory<TProviderType>(Func<JsonElement, JsonSerializerOptions?, TProviderType> factoryMethod)
-            where TProviderType : AIContextProvider => new()
-            {
-                FactoryMethod = (jsonElement, jsonSerializerOptions) => factoryMethod(jsonElement, jsonSerializerOptions),
-                ProviderType = typeof(TProviderType)
-            };
-
-        public readonly struct ProviderFactory
-        {
-            public Func<JsonElement, JsonSerializerOptions?, AIContextProvider> FactoryMethod { get; init; }
-
-            public Type ProviderType { get; init; }
         }
     }
 }

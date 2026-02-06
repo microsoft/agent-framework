@@ -36,7 +36,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     private static ChatMessage UpdateSession(ChatMessage message, InMemoryAgentSession? session = null)
     {
-        session?.ChatHistoryProvider.Add(message);
+        session?.ChatHistoryProvider.GetMessages(session).Add(message);
 
         return message;
     }

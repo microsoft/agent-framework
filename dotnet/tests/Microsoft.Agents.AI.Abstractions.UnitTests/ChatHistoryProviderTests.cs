@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -318,9 +317,6 @@ public class ChatHistoryProviderTests
             => new(Array.Empty<ChatMessage>());
 
         public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
-            => default;
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
             => default;
     }
 }

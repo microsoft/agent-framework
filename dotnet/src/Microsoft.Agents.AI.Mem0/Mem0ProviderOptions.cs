@@ -18,4 +18,10 @@ public sealed class Mem0ProviderOptions
     /// </summary>
     /// <value>Defaults to <see langword="false"/>.</value>
     public bool EnableSensitiveTelemetryData { get; set; }
+
+    /// <summary>
+    /// Gets or sets the key used to store the provider state in the session's <see cref="AgentSessionStateBag"/>.
+    /// </summary>
+    /// <value>Defaults to "Mem0Provider.State".</value>
+    public string? StateKey { get; set; }
 }

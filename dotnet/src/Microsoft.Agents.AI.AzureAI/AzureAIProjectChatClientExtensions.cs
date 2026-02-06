@@ -589,8 +589,8 @@ public static partial class AzureAIProjectChatClientExtensions
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options?.ChatOptions, requireInvocableTools);
         if (options is not null)
         {
-            agentOptions.AIContextProviderFactory = options.AIContextProviderFactory;
-            agentOptions.ChatHistoryProviderFactory = options.ChatHistoryProviderFactory;
+            agentOptions.AIContextProvider = options.AIContextProvider;
+            agentOptions.ChatHistoryProvider = options.ChatHistoryProvider;
             agentOptions.UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs;
         }
 

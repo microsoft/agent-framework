@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -64,11 +63,5 @@ public sealed class ChatHistoryProviderMessageFilter : ChatHistoryProvider
         }
 
         return this._innerProvider.InvokedAsync(context, cancellationToken);
-    }
-
-    /// <inheritdoc />
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return this._innerProvider.Serialize(jsonSerializerOptions);
     }
 }

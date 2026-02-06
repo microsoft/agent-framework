@@ -18,7 +18,6 @@ namespace Microsoft.Agents.AI.UnitTests.Data;
 public sealed class TextSearchProviderTests
 {
     private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
-    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
 
     private readonly Mock<ILogger<TextSearchProvider>> _loggerMock;
     private readonly Mock<ILoggerFactory> _loggerFactoryMock;
@@ -64,11 +63,11 @@ public sealed class TextSearchProviderTests
             ContextPrompt = overrideContextPrompt,
             CitationsPrompt = overrideCitationsPrompt
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options, withLogging ? this._loggerFactoryMock.Object : null);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options, withLogging ? this._loggerFactoryMock.Object : null);
 
         var invokingContext = new AIContextProvider.InvokingContext(
             s_mockAgent,
-            s_mockSession,
+            new TestAgentSession(),
             [
                 new ChatMessage(ChatRole.User, "Sample user question?"),
                 new ChatMessage(ChatRole.User, "Additional part")
@@ -143,8 +142,8 @@ public sealed class TextSearchProviderTests
             FunctionToolName = overrideName,
             FunctionToolDescription = overrideDescription
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -162,8 +161,8 @@ public sealed class TextSearchProviderTests
     public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
     {
         // Arrange
-        var provider = new TextSearchProvider(this.FailingSearchAsync, default, null, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var provider = new TextSearchProvider(this.FailingSearchAsync, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -203,7 +202,7 @@ public sealed class TextSearchProviderTests
             ContextPrompt = overrideContextPrompt,
             CitationsPrompt = overrideCitationsPrompt
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
 
         // Act
         var formatted = await provider.SearchAsync("Sample user question?", CancellationToken.None);
@@ -255,8 +254,8 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextFormatter = r => $"Custom formatted context with {r.Count} results."
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -289,8 +288,8 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextFormatter = r => string.Join(",", r.Select(x => ((RawPayload)x.RawRepresentation!).Id))
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -306,8 +305,8 @@ public sealed class TextSearchProviderTests
     {
         // Arrange
         var options = new TextSearchProviderOptions { SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -335,7 +334,7 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
 
         // Populate memory with more messages than the limit (A,B,C,D) -> should retain B,C,D
         var initialMessages = new[]
@@ -345,11 +344,13 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(s_mockAgent, s_mockSession, initialMessages, aiContextProviderMessages: null) { InvokeException = new InvalidOperationException("Request Failed") });
+
+        var session = new TestAgentSession();
+        await provider.InvokedAsync(new(s_mockAgent, session, initialMessages, aiContextProviderMessages: null) { InvokeException = new InvalidOperationException("Request Failed") });
 
         var invokingContext = new AIContextProvider.InvokingContext(
             s_mockAgent,
-            s_mockSession,
+            session,
             [
                 new ChatMessage(ChatRole.User, "E")
             ]);
@@ -377,7 +378,8 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var session = new TestAgentSession();
 
         // Populate memory with more messages than the limit (A,B,C,D) -> should retain B,C,D
         var initialMessages = new[]
@@ -387,11 +389,11 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(s_mockAgent, s_mockSession, initialMessages, aiContextProviderMessages: null));
+        await provider.InvokedAsync(new(s_mockAgent, session, initialMessages, aiContextProviderMessages: null));
 
         var invokingContext = new AIContextProvider.InvokingContext(
             s_mockAgent,
-            s_mockSession,
+            session,
             [
                 new ChatMessage(ChatRole.User, "E")
             ]);
@@ -419,12 +421,13 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var session = new TestAgentSession();
 
         // First memory update (A,B)
         await provider.InvokedAsync(new(
             s_mockAgent,
-            s_mockSession,
+            session,
             [
                 new ChatMessage(ChatRole.User, "A"),
                 new ChatMessage(ChatRole.Assistant, "B"),
@@ -433,14 +436,14 @@ public sealed class TextSearchProviderTests
         // Second memory update (C,D,E)
         await provider.InvokedAsync(new(
             s_mockAgent,
-            s_mockSession,
+            session,
             [
                 new ChatMessage(ChatRole.User, "C"),
                 new ChatMessage(ChatRole.Assistant, "D"),
                 new ChatMessage(ChatRole.User, "E"),
             ], aiContextProviderMessages: null));
 
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "F")]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "F")]);
 
         // Act
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -465,7 +468,8 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed for this test.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var session = new TestAgentSession();
 
         // Populate memory with mixed roles; only Assistant messages (A1,A2) should be retained.
         var initialMessages = new[]
@@ -475,11 +479,11 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "U2"),
             new ChatMessage(ChatRole.Assistant, "A2"),
         };
-        await provider.InvokedAsync(new(s_mockAgent, s_mockSession, initialMessages, null));
+        await provider.InvokedAsync(new(s_mockAgent, session, initialMessages, null));
 
         var invokingContext = new AIContextProvider.InvokingContext(
             s_mockAgent,
-            s_mockSession,
+            session,
             [
                 new ChatMessage(ChatRole.User, "Question?") // Current request message always appended.
             ]);
@@ -496,26 +500,7 @@ public sealed class TextSearchProviderTests
     #region Serialization Tests
 
     [Fact]
-    public void Serialize_WithNoRecentMessages_ShouldReturnEmptyState()
-    {
-        // Arrange
-        var options = new TextSearchProviderOptions
-        {
-            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
-            RecentMessageMemoryLimit = 3
-        };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
-
-        // Act
-        var state = provider.Serialize();
-
-        // Assert
-        Assert.Equal(JsonValueKind.Object, state.ValueKind);
-        Assert.False(state.TryGetProperty("recentMessagesText", out _));
-    }
-
-    [Fact]
-    public async Task Serialize_WithRecentMessages_ShouldPersistMessagesUpToLimitAsync()
+    public async Task InvokedAsync_ShouldPersistMessagesToSessionStateBagAsync()
     {
         // Arrange
         var options = new TextSearchProviderOptions
@@ -524,7 +509,8 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 3,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.Assistant]
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var session = new TestAgentSession();
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "M1"),
@@ -533,11 +519,12 @@ public sealed class TextSearchProviderTests
         };
 
         // Act
-        await provider.InvokedAsync(new(s_mockAgent, s_mockSession, messages, aiContextProviderMessages: null)); // Populate recent memory.
-        var state = provider.Serialize();
+        await provider.InvokedAsync(new(s_mockAgent, session, messages, aiContextProviderMessages: null)); // Populate recent memory.
 
-        // Assert
-        Assert.True(state.TryGetProperty("recentMessagesText", out var recentProperty));
+        // Assert - State should be in the session's StateBag
+        var stateBagSerialized = session.StateBag.Serialize();
+        Assert.True(stateBagSerialized.TryGetProperty("TextSearchProvider.RecentMessagesText", out var stateProperty));
+        Assert.True(stateProperty.TryGetProperty("recentMessagesText", out var recentProperty));
         Assert.Equal(JsonValueKind.Array, recentProperty.ValueKind);
         var list = recentProperty.EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(3, list.Count);
@@ -545,7 +532,7 @@ public sealed class TextSearchProviderTests
     }
 
     [Fact]
-    public async Task SerializeAndDeserialize_RoundtripRestoresMessagesAsync()
+    public async Task StateBag_RoundtripRestoresMessagesAsync()
     {
         // Arrange
         var options = new TextSearchProviderOptions
@@ -554,7 +541,8 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 4,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.Assistant]
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var session = new TestAgentSession();
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "A"),
@@ -562,23 +550,25 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(s_mockAgent, s_mockSession, messages, aiContextProviderMessages: null));
+        await provider.InvokedAsync(new(s_mockAgent, session, messages, aiContextProviderMessages: null));
 
-        // Act
-        var state = provider.Serialize();
+        // Act - Serialize and deserialize the StateBag
+        var serializedStateBag = session.StateBag.Serialize();
+        var restoredSession = new TestAgentSession(AgentSessionStateBag.Deserialize(serializedStateBag));
+
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
         {
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
-        var roundTrippedProvider = new TextSearchProvider(SearchDelegate2Async, state, options: new TextSearchProviderOptions
+        var newProvider = new TextSearchProvider(SearchDelegate2Async, new TextSearchProviderOptions
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 4
         });
         var emptyMessages = Array.Empty<ChatMessage>();
-        await roundTrippedProvider.InvokingAsync(new(s_mockAgent, s_mockSession, emptyMessages), CancellationToken.None); // Trigger search to read memory.
+        await newProvider.InvokingAsync(new(s_mockAgent, restoredSession, emptyMessages), CancellationToken.None); // Trigger search to read memory.
 
         // Assert
         Assert.NotNull(capturedInput);
@@ -586,25 +576,10 @@ public sealed class TextSearchProviderTests
     }
 
     [Fact]
-    public async Task Deserialize_WithChangedLowerLimit_ShouldTruncateToNewLimitAsync()
+    public async Task InvokingAsync_WithEmptyStateBag_ShouldHaveNoMessagesAsync()
     {
         // Arrange
-        var initialProvider = new TextSearchProvider(this.NoResultSearchAsync, default, null, new TextSearchProviderOptions
-        {
-            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
-            RecentMessageMemoryLimit = 5,
-            RecentMessageRolesIncluded = [ChatRole.User, ChatRole.Assistant]
-        });
-        var messages = new[]
-        {
-            new ChatMessage(ChatRole.User, "L1"),
-            new ChatMessage(ChatRole.Assistant, "L2"),
-            new ChatMessage(ChatRole.User, "L3"),
-            new ChatMessage(ChatRole.Assistant, "L4"),
-            new ChatMessage(ChatRole.User, "L5"),
-        };
-        await initialProvider.InvokedAsync(new(s_mockAgent, s_mockSession, messages, aiContextProviderMessages: null));
-        var state = initialProvider.Serialize();
+        var session = new TestAgentSession(); // Fresh session with empty StateBag
 
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
@@ -614,43 +589,17 @@ public sealed class TextSearchProviderTests
         }
 
         // Act
-        var restoredProvider = new TextSearchProvider(SearchDelegate2Async, state, options: new TextSearchProviderOptions
-        {
-            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
-            RecentMessageMemoryLimit = 3 // Lower limit
-        });
-        await restoredProvider.InvokingAsync(new(s_mockAgent, s_mockSession, Array.Empty<ChatMessage>()), CancellationToken.None);
-
-        // Assert
-        Assert.NotNull(capturedInput);
-        Assert.Equal("L1\nL2\nL3", capturedInput);
-    }
-
-    [Fact]
-    public async Task Deserialize_WithEmptyState_ShouldHaveNoMessagesAsync()
-    {
-        // Arrange
-        var emptyState = JsonSerializer.Deserialize("{}", TestJsonSerializerContext.Default.JsonElement);
-
-        string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
-        {
-            capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
-        }
-
-        // Act
-        var provider = new TextSearchProvider(SearchDelegate2Async, emptyState, options: new TextSearchProviderOptions
+        var provider = new TextSearchProvider(SearchDelegate2Async, new TextSearchProviderOptions
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 3
         });
         var emptyMessages = Array.Empty<ChatMessage>();
-        await provider.InvokingAsync(new(s_mockAgent, s_mockSession, emptyMessages), CancellationToken.None);
+        await provider.InvokingAsync(new(s_mockAgent, session, emptyMessages), CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedInput);
-        Assert.Equal(string.Empty, capturedInput); // No recent messages serialized => empty input.
+        Assert.Equal(string.Empty, capturedInput); // No recent messages in StateBag => empty input.
     }
 
     #endregion
@@ -668,5 +617,17 @@ public sealed class TextSearchProviderTests
     private sealed class RawPayload
     {
         public string Id { get; set; } = string.Empty;
+    }
+
+    private sealed class TestAgentSession : AgentSession
+    {
+        public TestAgentSession()
+        {
+        }
+
+        public TestAgentSession(AgentSessionStateBag stateBag)
+        {
+            this.StateBag = stateBag;
+        }
     }
 }

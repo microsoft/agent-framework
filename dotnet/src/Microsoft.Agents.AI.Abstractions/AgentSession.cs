@@ -2,6 +2,7 @@
 
 using System;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -52,6 +53,20 @@ public abstract class AgentSession
     protected AgentSession()
     {
     }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSession"/> class.
+    /// </summary>
+    protected AgentSession(AgentSessionStateBag stateBag)
+    {
+        this.StateBag = Throw.IfNull(stateBag);
+    }
+
+    /// <summary>
+    /// Gets any arbitrary state associated with this session.
+    /// </summary>
+    [JsonPropertyName("stateBag")]
+    public AgentSessionStateBag StateBag { get; protected set; } = new();
 
     /// <summary>Asks the <see cref="AgentSession"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

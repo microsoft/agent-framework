@@ -33,6 +33,8 @@ public sealed class A2AAgentSession : AgentSession
         {
             this.TaskId = taskId;
         }
+
+        this.StateBag = AgentSessionStateBag.Deserialize(state?.StateBag ?? default);
     }
 
     /// <summary>
@@ -51,7 +53,8 @@ public sealed class A2AAgentSession : AgentSession
         var state = new A2AAgentSessionState
         {
             ContextId = this.ContextId,
-            TaskId = this.TaskId
+            TaskId = this.TaskId,
+            StateBag = this.StateBag.Serialize(),
         };
 
         return JsonSerializer.SerializeToElement(state, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(A2AAgentSessionState)));
@@ -62,5 +65,7 @@ public sealed class A2AAgentSession : AgentSession
         public string? ContextId { get; set; }
 
         public string? TaskId { get; set; }
+
+        public JsonElement? StateBag { get; set; }
     }
 }

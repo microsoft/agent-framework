@@ -66,6 +66,8 @@ public abstract class ServiceIdAgentSession : AgentSession
         {
             this.ServiceSessionId = serviceSessionId;
         }
+
+        this.StateBag = AgentSessionStateBag.Deserialize(state?.StateBag ?? default);
     }
 
     /// <summary>
@@ -92,6 +94,7 @@ public abstract class ServiceIdAgentSession : AgentSession
         var state = new ServiceIdAgentSessionState
         {
             ServiceSessionId = this.ServiceSessionId,
+            StateBag = this.StateBag.Serialize(),
         };
 
         return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ServiceIdAgentSessionState)));
@@ -100,5 +103,7 @@ public abstract class ServiceIdAgentSession : AgentSession
     internal sealed class ServiceIdAgentSessionState
     {
         public string? ServiceSessionId { get; set; }
+
+        public JsonElement? StateBag { get; set; }
     }
 }

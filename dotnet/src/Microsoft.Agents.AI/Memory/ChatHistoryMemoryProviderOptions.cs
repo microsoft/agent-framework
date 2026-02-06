@@ -45,6 +45,15 @@ public sealed class ChatHistoryMemoryProviderOptions
     public bool EnableSensitiveTelemetryData { get; set; }
 
     /// <summary>
+    /// Gets or sets the key used to store provider state in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    /// <value>
+    /// Defaults to "ChatHistoryMemoryProvider.State". Override this if you need multiple
+    /// <see cref="ChatHistoryMemoryProvider"/> instances with separate state in the same session.
+    /// </value>
+    public string? StateKey { get; set; }
+
+    /// <summary>
     /// Behavior choices for the provider.
     /// </summary>
     public enum SearchBehavior

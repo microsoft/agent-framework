@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -183,26 +182,5 @@ public sealed class ChatHistoryProviderMessageFilterTests
         Assert.Single(capturedContext.RequestMessages);
         Assert.Equal("[FILTERED] Hello", capturedContext.RequestMessages.First().Text);
         innerProviderMock.Verify(s => s.InvokedAsync(It.IsAny<ChatHistoryProvider.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public void Serialize_DelegatesToInnerProvider()
-    {
-        // Arrange
-        var innerProviderMock = new Mock<ChatHistoryProvider>();
-        var expectedJson = JsonSerializer.SerializeToElement("data", TestJsonSerializerContext.Default.String);
-
-        innerProviderMock
-            .Setup(s => s.Serialize(It.IsAny<JsonSerializerOptions>()))
-            .Returns(expectedJson);
-
-        var filter = new ChatHistoryProviderMessageFilter(innerProviderMock.Object, x => x, x => x);
-
-        // Act
-        var result = filter.Serialize();
-
-        // Assert
-        Assert.Equal(expectedJson.GetRawText(), result.GetRawText());
-        innerProviderMock.Verify(s => s.Serialize(null), Times.Once);
     }
 }

@@ -103,6 +103,23 @@ public class ServiceIdAgentSessionTests
         Assert.False(json.TryGetProperty("serviceSessionId", out _));
     }
 
+    [Fact]
+    public void Serialize_RoundTrip_PreservesStateBag()
+    {
+        // Arrange
+        var session = new TestServiceIdAgentSession("service-id-roundtrip");
+        session.StateBag.SetValue("myKey", "myValue");
+
+        // Act
+        var json = session.Serialize();
+        var restored = new TestServiceIdAgentSession(json);
+
+        // Assert
+        Assert.Equal("service-id-roundtrip", restored.GetServiceSessionId());
+        Assert.True(restored.StateBag.TryGetValue<string>("myKey", out var value));
+        Assert.Equal("myValue", value);
+    }
+
     #endregion
 
     // Sealed test subclass to expose protected members for testing

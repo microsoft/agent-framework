@@ -25,14 +25,6 @@ public class AIContextProviderTests
     }
 
     [Fact]
-    public void Serialize_ReturnsEmptyElement()
-    {
-        var provider = new TestAIContextProvider();
-        var actual = provider.Serialize();
-        Assert.Equal(default, actual);
-    }
-
-    [Fact]
     public void InvokingContext_Constructor_ThrowsForNullMessages()
     {
         Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, null!));

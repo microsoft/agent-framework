@@ -60,6 +60,15 @@ public sealed class TextSearchProviderOptions
     public int RecentMessageMemoryLimit { get; set; }
 
     /// <summary>
+    /// Gets or sets the key used to store provider state in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    /// <value>
+    /// Defaults to "TextSearchProvider.RecentMessagesText". Override this if you need multiple
+    /// <see cref="TextSearchProvider"/> instances with separate state in the same session.
+    /// </value>
+    public string? StateKey { get; set; }
+
+    /// <summary>
     /// Gets or sets the list of <see cref="ChatRole"/> types to filter recent messages to
     /// when deciding which recent messages to include when constructing the search input.
     /// </summary>

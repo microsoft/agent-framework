@@ -12,8 +12,13 @@ namespace Microsoft.Agents.AI.DurableTask;
 [DebuggerDisplay("{SessionId}")]
 public sealed class DurableAgentSession : AgentSession
 {
-    [JsonConstructor]
     internal DurableAgentSession(AgentSessionId sessionId)
+    {
+        this.SessionId = sessionId;
+    }
+
+    [JsonConstructor]
+    internal DurableAgentSession(AgentSessionId sessionId, AgentSessionStateBag stateBag) : base(stateBag)
     {
         this.SessionId = sessionId;
     }
@@ -49,7 +54,11 @@ public sealed class DurableAgentSession : AgentSession
 
         string sessionIdString = sessionIdElement.GetString() ?? throw new JsonException("sessionId property is null.");
         AgentSessionId sessionId = AgentSessionId.Parse(sessionIdString);
-        return new DurableAgentSession(sessionId);
+        AgentSessionStateBag stateBag = serializedSession.TryGetProperty("stateBag", out JsonElement stateBagElement)
+            ? AgentSessionStateBag.Deserialize(stateBagElement)
+            : new AgentSessionStateBag();
+
+        return new DurableAgentSession(sessionId, stateBag);
     }
 
     /// <inheritdoc/>

@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -72,18 +71,6 @@ public abstract class AIContextProvider
     /// </para>
     /// </remarks>
     public virtual ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
-        => default;
-
-    /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use for the serialization process.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state, or a default <see cref="JsonElement"/> if the provider has no serializable state.</returns>
-    /// <remarks>
-    /// The default implementation returns a default <see cref="JsonElement"/>. Override this method if the provider
-    /// maintains state that should be preserved across sessions or distributed scenarios.
-    /// </remarks>
-    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         => default;
 
     /// <summary>Asks the <see cref="AIContextProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
