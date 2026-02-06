@@ -1295,6 +1295,9 @@ def tool(
             docstring will be used.
         schema: An explicit input schema for the function. This can be a Pydantic
             ``BaseModel`` subclass or a JSON schema dictionary (``Mapping[str, Any]``).
+            When a dictionary is provided, it must be a flat object schema with a
+            ``properties`` key (complex JSON Schema features such as ``oneOf``,
+            ``$ref``, or nested compositions are not supported).
             When provided, the schema is used instead of inferring one from the
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.

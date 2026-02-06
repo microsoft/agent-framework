@@ -36,7 +36,7 @@ class WeatherInput(BaseModel):
     schema=WeatherInput,
     approval_mode="never_require",
 )
-def get_weather(location: str, unit: str) -> str:
+def get_weather(location: str, unit: str = "celsius") -> str:
     """Get the current weather for a location."""
     return f"The weather in {location} is 22 degrees {unit}."
 
@@ -56,7 +56,7 @@ get_current_time_schema = {
     schema=get_current_time_schema,
     approval_mode="never_require",
 )
-def get_current_time(timezone: str) -> str:
+def get_current_time(timezone: str = "UTC") -> str:
     """Get the current time."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
