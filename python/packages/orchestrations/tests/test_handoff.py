@@ -322,7 +322,7 @@ async def test_context_provider_preserved_during_handoff():
 
     # Create a mock chat client
     mock_client = MockChatClient(name="test_agent")
-    
+
     # Create agent with context provider using proper constructor
     agent = ChatAgent(
         chat_client=mock_client,
@@ -339,7 +339,7 @@ async def test_context_provider_preserved_during_handoff():
 
     # Run workflow with a simple message to trigger context provider
     await _drain(workflow.run("Test message", stream=True))
-    
+
     # Verify context provider was invoked during the workflow execution
     assert len(provider_calls) > 0, (
         "Context provider should be called during workflow execution, "
