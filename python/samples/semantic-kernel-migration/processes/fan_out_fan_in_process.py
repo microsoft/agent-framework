@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 ######################################################################
 # region Agent Framework imports
 ######################################################################
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext,  handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel, Field
 
 ######################################################################

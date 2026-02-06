@@ -23,7 +23,6 @@ from agent_framework import (
     FunctionInvocationLayer,
     FunctionTool,
     ResponseStream,
-    ToolProtocol,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
@@ -562,7 +561,7 @@ class BedrockChatClient(
                 return {"text": str(value)}
         return {"text": str(value)}
 
-    def _prepare_tools(self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
+    def _prepare_tools(self, tools: list[FunctionTool | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
         converted: list[dict[str, Any]] = []
         if not tools:
             return None

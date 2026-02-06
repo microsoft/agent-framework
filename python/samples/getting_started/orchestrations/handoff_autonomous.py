@@ -48,6 +48,11 @@ def create_agents(
         name="coordinator",
     )
 
+    # Create web search tool using static method
+    # Note: AzureOpenAIChatClient uses the gpt-4o-search-preview model for web search
+    # For other Azure clients, use AzureAIAgentClient.get_web_search_tool() with Bing connection
+    web_search_tool = {"type": "web_search"}
+
     research_agent = chat_client.as_agent(
         instructions=(
             "You are a research specialist that explores topics thoroughly using web search. "

@@ -34,7 +34,6 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    HostedCodeInterpreterTool,
     WorkflowEvent,
     WorkflowRunState,
 )
@@ -109,13 +108,16 @@ async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tupl
             ),
         )
 
+        # Create code interpreter tool using static method
+        code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
+
         code_specialist = client.as_agent(
             name="code_specialist",
             instructions=(
                 "You are a Python code specialist. Use the code interpreter to execute Python code "
                 "and create files when requested. Always save files to /mnt/data/ directory."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         yield triage, code_specialist  # type: ignore
@@ -139,6 +141,9 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
             instructions="You are a triage agent. Your ONLY job is to route requests to the appropriate specialist.",
         )
 
+        # Create code interpreter tool using static method
+        code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
+
         code_specialist = code_client.as_agent(
             name="CodeSpecialist",
             instructions=(
@@ -147,7 +152,7 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
                 "Always save files to /mnt/data/ directory. "
                 "Do NOT discuss handoffs or routing - just complete the coding task directly."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         yield triage, code_specialist

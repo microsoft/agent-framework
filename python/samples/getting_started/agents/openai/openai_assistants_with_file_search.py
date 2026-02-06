@@ -3,14 +3,14 @@
 import asyncio
 import os
 
-from agent_framework import Content, HostedFileSearchTool
+from agent_framework import Content
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 
 """
 OpenAI Assistants with File Search Example
 
-This sample demonstrates using HostedFileSearchTool with OpenAI Assistants
+This sample demonstrates using get_file_search_tool() with OpenAI Assistants
 for document-based question answering and information retrieval.
 """
 
@@ -47,12 +47,12 @@ async def main() -> None:
         name="SearchAssistant",
         model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that searches files in a knowledge base.",
-        tools=[HostedFileSearchTool()],
+        tools=[OpenAIAssistantsClient.get_file_search_tool()],
     )
 
     try:
         query = "What is the weather today? Do a file search to find the answer."
-        file_id, vector_store = await create_vector_store(client)
+        file_id, vector_store_id = await create_vector_store(client)
 
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
@@ -64,7 +64,7 @@ async def main() -> None:
             if chunk.text:
                 print(chunk.text, end="", flush=True)
 
-        await delete_vector_store(client, file_id, vector_store.vector_store_id)
+        await delete_vector_store(client, file_id, vector_store_id)
     finally:
         await client.beta.assistants.delete(agent.id)
 

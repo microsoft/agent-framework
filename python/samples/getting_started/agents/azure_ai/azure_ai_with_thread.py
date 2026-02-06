@@ -79,22 +79,22 @@ async def example_with_thread_persistence_in_memory() -> None:
         thread = agent.get_new_thread()
 
         # First conversation
-        query1 = "What's the weather like in Tokyo?"
-        print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread, options={"store": False})
-        print(f"Agent: {result1.text}")
+        first_query = "What's the weather like in Tokyo?"
+        print(f"User: {first_query}")
+        first_result = await agent.run(first_query, thread=thread, options={"store": False})
+        print(f"Agent: {first_result.text}")
 
         # Second conversation using the same thread - maintains context
-        query2 = "How about London?"
-        print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread, options={"store": False})
-        print(f"Agent: {result2.text}")
+        second_query = "How about London?"
+        print(f"\nUser: {second_query}")
+        second_result = await agent.run(second_query, thread=thread, options={"store": False})
+        print(f"Agent: {second_result.text}")
 
         # Third conversation - agent should remember both previous cities
-        query3 = "Which of the cities I asked about has better weather?"
-        print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread, options={"store": False})
-        print(f"Agent: {result3.text}")
+        third_query = "Which of the cities I asked about has better weather?"
+        print(f"\nUser: {third_query}")
+        third_result = await agent.run(third_query, thread=thread, options={"store": False})
+        print(f"Agent: {third_result.text}")
         print("Note: The agent remembers context from previous messages in the same thread.\n")
 
 
@@ -121,10 +121,10 @@ async def example_with_existing_thread_id() -> None:
         # Start a conversation and get the thread ID
         thread = agent.get_new_thread()
 
-        query1 = "What's the weather in Paris?"
-        print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
-        print(f"Agent: {result1.text}")
+        first_query = "What's the weather in Paris?"
+        print(f"User: {first_query}")
+        first_result = await agent.run(first_query, thread=thread)
+        print(f"Agent: {first_result.text}")
 
         # The thread ID is set after the first response
         existing_thread_id = thread.service_thread_id
@@ -134,19 +134,19 @@ async def example_with_existing_thread_id() -> None:
             print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
             # Create a new agent instance from the same provider
-            agent2 = await provider.create_agent(
+            second_agent = await provider.create_agent(
                 name="BasicWeatherAgent",
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             )
 
             # Create a thread with the existing ID
-            thread = agent2.get_new_thread(service_thread_id=existing_thread_id)
+            thread = second_agent.get_new_thread(service_thread_id=existing_thread_id)
 
-            query2 = "What was the last city I asked about?"
-            print(f"User: {query2}")
-            result2 = await agent2.run(query2, thread=thread)
-            print(f"Agent: {result2.text}")
+            second_query = "What was the last city I asked about?"
+            print(f"User: {second_query}")
+            second_result = await second_agent.run(second_query, thread=thread)
+            print(f"Agent: {second_result.text}")
             print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
 
 

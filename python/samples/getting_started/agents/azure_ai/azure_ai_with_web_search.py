@@ -2,15 +2,14 @@
 
 import asyncio
 
-from agent_framework import HostedWebSearchTool
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent With Web Search
 
 This sample demonstrates basic usage of AzureAIProjectAgentProvider to create an agent
-that can perform web searches using the HostedWebSearchTool.
+that can perform web searches using get_web_search_tool().
 
 Pre-requisites:
 - Make sure to set up the AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME
@@ -19,6 +18,9 @@ Pre-requisites:
 
 
 async def main() -> None:
+    # Create web search tool using static method
+    web_search_tool = AzureAIClient.get_web_search_tool()
+
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
@@ -28,7 +30,7 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="WebsearchAgent",
             instructions="You are a helpful assistant that can search the web",
-            tools=[HostedWebSearchTool()],
+            tools=[web_search_tool],
         )
 
         query = "What's the weather today in Seattle?"

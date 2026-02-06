@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import ChatAgent, ChatMessage, GroupChatBuilderWorkflowEvent
+from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration

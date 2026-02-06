@@ -3,10 +3,6 @@
 import asyncio
 import os
 
-from agent_framework import (
-    HostedCodeInterpreterTool,
-    HostedFileContent,
-)
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
@@ -14,7 +10,7 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent Code Interpreter File Generation Example
 
-This sample demonstrates using HostedCodeInterpreterTool with AzureAIAgentsProvider
+This sample demonstrates using get_code_interpreter_tool() with AzureAIAgentsProvider
 to generate a text file and then retrieve it.
 
 The test flow:
@@ -28,6 +24,9 @@ The test flow:
 async def main() -> None:
     """Test file generation and retrieval with code interpreter."""
 
+    # Create code interpreter tool using static method
+    code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
+
     async with (
         AzureCliCredential() as credential,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
@@ -40,7 +39,7 @@ async def main() -> None:
                 "ALWAYS use the code interpreter tool to execute Python code when asked to create files. "
                 "Write actual Python code to create files, do not just describe what you would do."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         # Be very explicit about wanting code execution and a download link
@@ -63,7 +62,7 @@ async def main() -> None:
             for content in chunk.contents:
                 if content.type == "text":
                     print(content.text, end="", flush=True)
-                elif content.type == "hosted_file" and isinstance(content, HostedFileContent):
+                elif content.type == "hosted_file":
                     file_ids.append(content.file_id)
                     print(f"\n[File generated: {content.file_id}]")
 

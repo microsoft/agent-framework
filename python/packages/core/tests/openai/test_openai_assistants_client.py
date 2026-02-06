@@ -20,8 +20,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -738,11 +736,11 @@ def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
 
 
 def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> None:
-    """Test _prepare_options with HostedCodeInterpreterTool."""
+    """Test _prepare_options with code interpreter tool."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    # Create a real HostedCodeInterpreterTool
-    code_tool = HostedCodeInterpreterTool()
+    # Create a code interpreter tool dict
+    code_tool = OpenAIAssistantsClient.get_code_interpreter_tool()
 
     options = {
         "tools": [code_tool],
@@ -833,12 +831,12 @@ def test_prepare_options_required_function(mock_async_openai: MagicMock) -> None
 
 
 def test_prepare_options_with_file_search_tool(mock_async_openai: MagicMock) -> None:
-    """Test _prepare_options with HostedFileSearchTool."""
+    """Test _prepare_options with file_search tool."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    # Create a HostedFileSearchTool with max_results
-    file_search_tool = HostedFileSearchTool(max_results=10)
+    # Create a file_search tool with max_results
+    file_search_tool = OpenAIAssistantsClient.get_file_search_tool(max_num_results=10)
 
     options = {
         "tools": [file_search_tool],
@@ -853,7 +851,7 @@ def test_prepare_options_with_file_search_tool(mock_async_openai: MagicMock) -> 
     # Check file search tool was set correctly
     assert "tools" in run_options
     assert len(run_options["tools"]) == 1
-    expected_tool = {"type": "file_search", "max_num_results": 10}
+    expected_tool = {"type": "file_search", "file_search": {"max_num_results": 10}}
     assert run_options["tools"][0] == expected_tool
     assert run_options["tool_choice"] == "auto"
 
@@ -1184,7 +1182,7 @@ async def test_file_search() -> None:
         response = await openai_assistants_client.get_response(
             messages=messages,
             options={
-                "tools": [HostedFileSearchTool()],
+                "tools": [OpenAIAssistantsClient.get_file_search_tool()],
                 "tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
             },
         )
@@ -1211,7 +1209,7 @@ async def test_file_search_streaming() -> None:
             stream=True,
             messages=messages,
             options={
-                "tools": [HostedFileSearchTool()],
+                "tools": [OpenAIAssistantsClient.get_file_search_tool()],
                 "tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}},
             },
         )
@@ -1348,7 +1346,7 @@ async def test_openai_assistants_agent_code_interpreter():
     async with ChatAgent(
         chat_client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful assistant that can write and execute Python code.",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[OpenAIAssistantsClient.get_code_interpreter_tool()],
     ) as agent:
         # Request code execution
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")

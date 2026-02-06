@@ -3,7 +3,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import ChatAgent, HostedMCPTool
+from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -15,7 +15,7 @@ Azure OpenAI Responses Client, including user approval workflows for function ca
 """
 
 if TYPE_CHECKING:
-    from agent_framework import SupportsAgentRun, AgentThread
+    from agent_framework import AgentThread, SupportsAgentRun
 
 
 async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
@@ -82,7 +82,8 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAge
                     user_approval = input("Approve function call? (y/n): ")
                     new_input.append(
                         ChatMessage(
-                            role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")]
+                            role="user",
+                            contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                         )
                     )
                     new_input_added = True
@@ -94,21 +95,23 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a thread."""
     print("=== Mcp with approvals and without thread ===")
     credential = AzureCliCredential()
+
+    # Create MCP tool with specific approval settings
+    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we don't require approval for microsoft_docs_search tool calls
+        # but we do for any other tool
+        approval_mode={"never_require_approval": ["microsoft_docs_search"]},
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+        chat_client=AzureOpenAIResponsesClient(credential=credential),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we don't require approval for microsoft_docs_search tool calls
-            # but we do for any other tool
-            approval_mode={"never_require_approval": ["microsoft_docs_search"]},
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -127,22 +130,24 @@ async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
     credential = AzureCliCredential()
+
+    # Create MCP tool without approval requirements
+    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we don't require approval for any function calls
+        # this means we will not see the approval messages,
+        # it is fully handled by the service and a final response is returned.
+        approval_mode="never_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+        chat_client=AzureOpenAIResponsesClient(credential=credential),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we don't require approval for any function calls
-            # this means we will not see the approval messages,
-            # it is fully handled by the service and a final response is returned.
-            approval_mode="never_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -161,20 +166,22 @@ async def run_hosted_mcp_with_thread() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+
+    # Create MCP tool with always require approval
+    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we require approval for all function calls
+        approval_mode="always_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+        chat_client=AzureOpenAIResponsesClient(credential=credential),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
-            approval_mode="always_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         thread = agent.get_new_thread()
@@ -194,20 +201,22 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+
+    # Create MCP tool with always require approval
+    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we require approval for all function calls
+        approval_mode="always_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+        chat_client=AzureOpenAIResponsesClient(credential=credential),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
-            approval_mode="always_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         thread = agent.get_new_thread()

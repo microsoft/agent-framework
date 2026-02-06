@@ -6,7 +6,6 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    
     handler,
 )
 from agent_framework.observability import configure_otel_providers, get_tracer

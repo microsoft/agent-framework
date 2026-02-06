@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Final
 from ._types import ChatMessage
 
 if TYPE_CHECKING:
-    from ._tools import ToolProtocol
+    from ._tools import FunctionTool
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -50,7 +50,7 @@ class Context:
         self,
         instructions: str | None = None,
         messages: Sequence[ChatMessage] | None = None,
-        tools: Sequence["ToolProtocol"] | None = None,
+        tools: Sequence["FunctionTool"] | None = None,
     ):
         """Create a new Context object.
 
@@ -61,7 +61,7 @@ class Context:
         """
         self.instructions = instructions
         self.messages: Sequence[ChatMessage] = messages or []
-        self.tools: Sequence["ToolProtocol"] = tools or []
+        self.tools: Sequence["FunctionTool"] = tools or []
 
 
 # region ContextProvider

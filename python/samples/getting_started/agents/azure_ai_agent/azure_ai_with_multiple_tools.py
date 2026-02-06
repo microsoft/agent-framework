@@ -5,13 +5,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework import (
-    SupportsAgentRun,
     AgentThread,
-    HostedMCPTool,
-    HostedWebSearchTool,
+    SupportsAgentRun,
     tool,
 )
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -35,7 +33,9 @@ To set up Bing Grounding:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
@@ -67,7 +67,15 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
 
 
 async def main() -> None:
-    """Example showing Hosted MCP tools for a Azure AI Agent."""
+    """Example showing multiple tools for an Azure AI Agent."""
+
+    # Create tools using static methods
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    )
+    web_search_tool = AzureAIAgentClient.get_web_search_tool()
+
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -76,11 +84,8 @@ async def main() -> None:
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=[
-                HostedMCPTool(
-                    name="Microsoft Learn MCP",
-                    url="https://learn.microsoft.com/api/mcp",
-                ),
-                HostedWebSearchTool(count=5),
+                mcp_tool,
+                web_search_tool,
                 get_time,
             ],
         )

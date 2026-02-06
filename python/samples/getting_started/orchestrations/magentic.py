@@ -9,7 +9,6 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    HostedCodeInterpreterTool,
     WorkflowEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
@@ -54,12 +53,15 @@ async def main() -> None:
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
+    # Create code interpreter tool using static method
+    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+
     coder_agent = ChatAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
         chat_client=OpenAIResponsesClient(),
-        tools=HostedCodeInterpreterTool(),
+        tools=code_interpreter_tool,
     )
 
     # Create a manager agent for orchestration

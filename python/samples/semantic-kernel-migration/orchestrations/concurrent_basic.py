@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilderWorkflowEvent
+from agent_framework import ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration

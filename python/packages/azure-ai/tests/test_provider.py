@@ -440,19 +440,17 @@ def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: Mag
     # Call _merge_tools with user-provided function implementation
     merged = provider._merge_tools(definition_tools, [mock_ai_function])  # type: ignore
 
-    # Should have 2 items: the converted HostedMCPTool and the user-provided FunctionTool
+    # Should have 2 items: the converted MCP dict and the user-provided FunctionTool
     assert len(merged) == 2
 
     # Check that the function tool dict was NOT included (it was skipped)
     function_dicts = [t for t in merged if isinstance(t, dict) and t.get("type") == "function"]
     assert len(function_dicts) == 0
 
-    # Check that the MCP tool was converted to HostedMCPTool
-    from agent_framework import HostedMCPTool
-
-    mcp_tools = [t for t in merged if isinstance(t, HostedMCPTool)]
+    # Check that the MCP tool was converted to dict
+    mcp_tools = [t for t in merged if isinstance(t, dict) and t.get("type") == "mcp"]
     assert len(mcp_tools) == 1
-    assert mcp_tools[0].name == "my mcp"  # server_label with _ replaced by space
+    assert mcp_tools[0]["server_label"] == "my_mcp"
 
     # Check that the user-provided FunctionTool was included
     ai_functions = [t for t in merged if isinstance(t, FunctionTool)]
