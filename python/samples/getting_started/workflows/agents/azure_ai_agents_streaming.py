@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentResponseUpdate, WorkflowBuilder
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
@@ -38,17 +38,19 @@ async def main() -> None:
         )
 
         # Build the workflow by adding agents directly as edges.
-        # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
+        # Agents adapt to workflow mode: run(stream=True) for complete responses, run() for incremental updates.
         workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
         # Track the last author to format streaming output.
         last_author: str | None = None
 
-        events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        events = workflow.run(
+            "Create a slogan for a new electric SUV that is affordable and fun to drive.", stream=True
+        )
         async for event in events:
             # The outputs of the workflow are whatever the agents produce. So the events are expected to
             # contain `AgentResponseUpdate` from the agents in the workflow.
-            if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 update = event.data
                 author = update.author_name
                 if author != last_author:

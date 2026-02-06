@@ -6,9 +6,8 @@ from dataclasses import dataclass
 
 from agent_framework import (AgentExecutorRequest, AgentExecutorResponse,
                              AgentResponseUpdate, ChatMessage, Executor,
-                             RequestInfoEvent, WorkflowBuilder,
-                             WorkflowContext, WorkflowEvent,
-                             WorkflowOutputEvent, handler, response_handler)
+                             WorkflowBuilder, WorkflowContext, WorkflowEvent,
+                             handler, response_handler)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
@@ -27,7 +26,7 @@ Show how to integrate a human step in the middle of an LLM workflow by using
 Demonstrate:
 - Alternating turns between an AgentExecutor and a human, driven by events.
 - Using Pydantic response_format to enforce structured JSON output from the agent instead of regex parsing.
-- Driving the loop in application code with run_stream and responses parameter.
+- Driving the loop in application code with run and responses parameter.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -37,7 +36,7 @@ Prerequisites:
 
 # How human-in-the-loop is achieved via `request_info` and `send_responses_streaming`:
 # - An executor (TurnManager) calls `ctx.request_info` with a payload (HumanFeedbackRequest).
-# - The workflow run pauses and emits a RequestInfoEvent with the payload and the request_id.
+# - The workflow run pauses and emits a  with the payload and the request_id.
 # - The application captures the event, prompts the user, and collects replies.
 # - The application calls `send_responses_streaming` with a map of request_ids to replies.
 # - The workflow resumes, and the response is delivered to the executor method decorated with @response_handler.
@@ -123,11 +122,13 @@ class TurnManager(Executor):
             return
 
         # Provide feedback to the agent to try again.
-        # We keep the agent's output strictly JSON to ensure stable parsing on the next turn.
-        user_msg = ChatMessage(
-            "user",
-            text=(f'Feedback: {reply}. Return ONLY a JSON object matching the schema {{"guess": <int 1..10>}}.'),
+        # response_format=GuessOutput on the agent ensures JSON output, so we just need to guide the logic.
+        last_guess = original_request.prompt.split(": ")[1].split(".")[0]
+        feedback_text = (
+            f"Feedback: {reply}. Your last guess was {last_guess}. "
+            f"Use this feedback to adjust and make your next guess (1-10)."
         )
+        user_msg = ChatMessage("user", text=feedback_text)
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -138,9 +139,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: list[tuple[str, HumanFeedbackRequest]] = []
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, HumanFeedbackRequest):
+        if event.type == "request_info" and isinstance(event.data, HumanFeedbackRequest):
             requests.append((event.request_id, event.data))
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             if isinstance(event.data, AgentResponseUpdate):
                 update = event.data
                 response_id = update.response_id
@@ -197,7 +198,7 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream("start")
+    stream = workflow.run("start", stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

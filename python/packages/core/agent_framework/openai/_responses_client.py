@@ -7,12 +7,11 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -36,8 +35,10 @@ from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._middleware import use_chat_middleware
+from .._middleware import ChatMiddlewareLayer
 from .._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
@@ -45,7 +46,6 @@ from .._tools import (
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
-    use_function_invocation,
 )
 from .._types import (
     Annotation,
@@ -54,6 +54,8 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ResponseStream,
+    Role,
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
@@ -66,7 +68,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
+from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -83,10 +85,18 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
+if TYPE_CHECKING:
+    from .._middleware import (
+        ChatMiddleware,
+        ChatMiddlewareCallable,
+        FunctionMiddleware,
+        FunctionMiddlewareCallable,
+    )
+
 logger = get_logger("agent_framework.openai")
 
 
-__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
+__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
 
 
 # region OpenAI Responses Options TypedDict
@@ -193,95 +203,105 @@ TOpenAIResponsesOptions = TypeVar(
 # region ResponsesClient
 
 
-class OpenAIBaseResponsesClient(
+class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
     BaseChatClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
-    """Base class for all OpenAI Responses based API's."""
+    """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+
+        Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
+    """
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
     # region Inner Methods
 
-    @override
-    async def _inner_get_response(
+    async def _prepare_request(
         self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
+        """Validate options and prepare the request.
+
+        Returns:
+            Tuple of (client, run_options, validated_options).
+        """
         client = await self._ensure_client()
-        # prepare
-        run_options = await self._prepare_options(messages, options, **kwargs)
-        try:
-            # execute and process
-            if "text_format" in run_options:
-                response = await client.responses.parse(stream=False, **run_options)
-            else:
-                response = await client.responses.create(stream=False, **run_options)
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
+        validated_options = await self._validate_options(options)
+        run_options = await self._prepare_options(messages, validated_options, **kwargs)
+        return client, run_options, validated_options
+
+    def _handle_request_error(self, ex: Exception) -> NoReturn:
+        """Convert exceptions to appropriate service exceptions. Always raises."""
+        if isinstance(ex, BadRequestError) and ex.code == "content_filter":
+            raise OpenAIContentFilterException(
+                f"{type(self)} service encountered a content error: {ex}",
                 inner_exception=ex,
             ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        return self._parse_response_from_openai(response, options=options)
+        raise ServiceResponseException(
+            f"{type(self)} service failed to complete the prompt: {ex}",
+            inner_exception=ex,
+        ) from ex
 
     @override
-    async def _inner_get_streaming_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        run_options = await self._prepare_options(messages, options, **kwargs)
-        function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
-        try:
-            # execute and process
-            if "text_format" not in run_options:
-                async for chunk in await client.responses.create(stream=True, **run_options):
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-                return
-            async with client.responses.stream(**run_options) as response:
-                async for chunk in response:
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            function_call_ids: dict[int, tuple[str, str]] = {}
+            validated_options: dict[str, Any] | None = None
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                nonlocal validated_options
+                client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+                try:
+                    if "text_format" in run_options:
+                        async with client.responses.stream(**run_options) as response:
+                            async for chunk in response:
+                                yield self._parse_chunk_from_openai(
+                                    chunk, options=validated_options, function_call_ids=function_call_ids
+                                )
+                    else:
+                        async for chunk in await client.responses.create(stream=True, **run_options):
+                            yield self._parse_chunk_from_openai(
+                                chunk, options=validated_options, function_call_ids=function_call_ids
+                            )
+                except Exception as ex:
+                    self._handle_request_error(ex)
+
+            response_format = validated_options.get("response_format") if validated_options else None
+            return self._build_response_stream(_stream(), response_format=response_format)
+
+        # Non-streaming
+        async def _get_response() -> ChatResponse:
+            client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+            try:
+                if "text_format" in run_options:
+                    response = await client.responses.parse(stream=False, **run_options)
+                else:
+                    response = await client.responses.create(stream=False, **run_options)
+            except Exception as ex:
+                self._handle_request_error(ex)
+            return self._parse_response_from_openai(response, options=validated_options)
+
+        return _get_response()
 
     def _prepare_response_and_text_format(
         self,
@@ -499,8 +519,8 @@ class OpenAIBaseResponsesClient(
 
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
@@ -596,7 +616,7 @@ class OpenAIBaseResponsesClient(
                 raise ValueError("model_id must be a non-empty string")
             options["model"] = self.model_id
 
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID, preferring kwargs over options.
 
         This ensures runtime-updated conversation IDs (for example, from tool execution
@@ -651,10 +671,10 @@ class OpenAIBaseResponsesClient(
                     continue
                 case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))
+                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
                     all_messages.append(new_args)
                 case "function_call":
-                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
+                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
                     all_messages.append(function_call)  # type: ignore
                 case "function_approval_response" | "function_approval_request":
                     all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
@@ -668,7 +688,7 @@ class OpenAIBaseResponsesClient(
 
     def _prepare_content_for_openai(
         self,
-        role: str,
+        role: Role,
         content: Content,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
@@ -1026,7 +1046,7 @@ class OpenAIBaseResponsesClient(
                     )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        response_message = ChatMessage("assistant", contents)
+        response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
@@ -1413,15 +1433,15 @@ class OpenAIBaseResponsesClient(
         return {}
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIResponsesClient(
+class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[TOpenAIResponsesOptions],
+    FunctionInvocationLayer[TOpenAIResponsesOptions],
+    ChatTelemetryLayer[TOpenAIResponsesOptions],
+    RawOpenAIResponsesClient[TOpenAIResponsesOptions],
     Generic[TOpenAIResponsesOptions],
 ):
-    """OpenAI Responses client class."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -1435,6 +1455,10 @@ class OpenAIResponsesClient(
         instruction_role: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        middleware: (
+            Sequence["ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable"] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Responses client.
@@ -1456,6 +1480,8 @@ class OpenAIResponsesClient(
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Other keyword parameters.
 
         Examples:
@@ -1516,4 +1542,7 @@ class OpenAIResponsesClient(
             client=async_client,
             instruction_role=instruction_role,
             base_url=openai_settings.base_url,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
         )

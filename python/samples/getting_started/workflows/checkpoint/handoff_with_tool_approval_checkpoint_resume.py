@@ -12,15 +12,12 @@ from agent_framework import (
     ChatMessage,
     Content,
     FileCheckpointStorage,
-    HandoffAgentUserRequest,
-    HandoffBuilder,
-    RequestInfoEvent,
     Workflow,
-    WorkflowOutputEvent,
-    WorkflowStatusEvent,
+    WorkflowEvent,
     tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 
 """
@@ -39,7 +36,7 @@ Scenario:
 6. Workflow continues from the saved state.
 
 Pattern:
-- Step 1: workflow.run_stream(checkpoint_id=...) to restore checkpoint and pending requests.
+- Step 1: workflow.run(checkpoint_id=..., stream=True) to restore checkpoint and pending requests.
 - Step 2: workflow.send_responses_streaming(responses) to supply human replies and approvals.
 - Two-step approach is required because send_responses_streaming does not accept checkpoint_id.
 
@@ -153,7 +150,7 @@ def _print_function_approval_request(request: Content, request_id: str) -> None:
 
 
 def _build_responses_for_requests(
-    pending_requests: list[RequestInfoEvent],
+    pending_requests: list[WorkflowEvent],
     *,
     user_response: str | None,
     approve_tools: bool | None,
@@ -161,11 +158,15 @@ def _build_responses_for_requests(
     """Create response payloads for each pending request."""
     responses: dict[str, object] = {}
     for request in pending_requests:
-        if isinstance(request.data, HandoffAgentUserRequest):
+        if isinstance(request.data, HandoffAgentUserRequest) and request.request_id:
             if user_response is None:
                 raise ValueError("User response is required for HandoffAgentUserRequest")
             responses[request.request_id] = user_response
-        elif isinstance(request.data, Content) and request.data.type == "function_approval_request":
+        elif (
+            isinstance(request.data, Content)
+            and request.data.type == "function_approval_request"
+            and request.request_id
+        ):
             if approve_tools is None:
                 raise ValueError("Approval decision is required for function approval request")
             responses[request.request_id] = request.data.to_function_approval_response(approved=approve_tools)
@@ -178,37 +179,37 @@ async def run_until_user_input_needed(
     workflow: Workflow,
     initial_message: str | None = None,
     checkpoint_id: str | None = None,
-) -> tuple[list[RequestInfoEvent], str | None]:
+) -> tuple[list[WorkflowEvent], str | None]:
     """
     Run the workflow until it needs user input or approval, or completes.
 
     Returns:
         Tuple of (pending_requests, checkpoint_id_to_use_for_resume)
     """
-    pending_requests: list[RequestInfoEvent] = []
+    pending_requests: list[WorkflowEvent] = []
     latest_checkpoint_id: str | None = checkpoint_id
 
     if initial_message:
         print(f"\nStarting workflow with: {initial_message}\n")
-        event_stream = workflow.run_stream(message=initial_message)  # type: ignore[attr-defined]
+        event_stream = workflow.run(message=initial_message, stream=True)  # type: ignore[attr-defined]
     elif checkpoint_id:
         print(f"\nResuming workflow from checkpoint: {checkpoint_id}\n")
-        event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)  # type: ignore[attr-defined]
+        event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)  # type: ignore[attr-defined]
     else:
         raise ValueError("Must provide either initial_message or checkpoint_id")
 
     async for event in event_stream:
-        if isinstance(event, WorkflowStatusEvent):
+        if event.type == "status":
             print(f"[Status] {event.state}")
 
-        elif isinstance(event, RequestInfoEvent):
+        elif event.type == "request_info":
             pending_requests.append(event)
             if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
             elif isinstance(event.data, Content) and event.data.type == "function_approval_request":
                 _print_function_approval_request(event.data, event.request_id)
 
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             print("\n[Workflow Completed]")
             if event.data:
                 print(f"Final conversation length: {len(event.data)} messages")
@@ -225,7 +226,7 @@ async def resume_with_responses(
     checkpoint_storage: FileCheckpointStorage,
     user_response: str | None = None,
     approve_tools: bool | None = None,
-) -> tuple[list[RequestInfoEvent], str | None]:
+) -> tuple[list[WorkflowEvent], str | None]:
     """
     Two-step resume pattern (answers customer questions and tool approvals):
 
@@ -255,10 +256,10 @@ async def resume_with_responses(
     print(f"Step 1: Restoring checkpoint {latest_checkpoint.checkpoint_id}")
 
     # Step 1: Restore the checkpoint to load pending requests into memory
-    # The checkpoint restoration re-emits pending RequestInfoEvents
-    restored_requests: list[RequestInfoEvent] = []
-    async for event in workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id):  # type: ignore[attr-defined]
-        if isinstance(event, RequestInfoEvent):
+    # The checkpoint restoration re-emits pending request_info events
+    restored_requests: list[WorkflowEvent] = []
+    async for event in workflow.run(checkpoint_id=latest_checkpoint.checkpoint_id, stream=True):  # type: ignore[attr-defined]
+        if event.type == "request_info":
             restored_requests.append(event)
             if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)
@@ -275,13 +276,13 @@ async def resume_with_responses(
     )
     print(f"Step 2: Sending responses for {len(responses)} request(s)")
 
-    new_pending_requests: list[RequestInfoEvent] = []
+    new_pending_requests: list[WorkflowEvent] = []
 
     async for event in workflow.send_responses_streaming(responses):
-        if isinstance(event, WorkflowStatusEvent):
+        if event.type == "status":
             print(f"[Status] {event.state}")
 
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             print("\n[Workflow Output Event - Conversation Update]")
             if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
                 # Now safe to cast event.data to list[ChatMessage]
@@ -291,7 +292,7 @@ async def resume_with_responses(
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text
                     print(f"  {author}: {text}")
 
-        elif isinstance(event, RequestInfoEvent):
+        elif event.type == "request_info":
             new_pending_requests.append(event)
             if isinstance(event.data, HandoffAgentUserRequest):
                 _print_handoff_request(event.data, event.request_id)

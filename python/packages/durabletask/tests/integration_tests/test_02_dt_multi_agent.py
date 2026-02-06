@@ -10,10 +10,7 @@ Tests operations with multiple specialized agents:
 - Agent isolation and tool routing
 """
 
-from typing import Any
-
 import pytest
-from dt_testutils import create_agent_client
 
 # Agent names from the 02_multi_agent sample
 WEATHER_AGENT_NAME: str = "WeatherAgent"
@@ -32,13 +29,10 @@ class TestMultiAgent:
     """Test suite for multi-agent functionality."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, worker_process: dict[str, Any], dts_endpoint: str) -> None:
+    def setup(self, agent_client_factory: type) -> None:
         """Setup test fixtures."""
-        self.endpoint: str = dts_endpoint
-        self.taskhub: str = str(worker_process["taskhub"])
-
-        # Create agent client
-        _, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
+        # Create agent client using the factory fixture
+        _, self.agent_client = agent_client_factory.create()
 
     def test_multiple_agents_registered(self) -> None:
         """Test that both agents are registered and accessible."""

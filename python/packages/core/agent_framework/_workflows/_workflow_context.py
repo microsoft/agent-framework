@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import copy
 import inspect
 import logging
@@ -13,15 +15,8 @@ from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
 from ._events import (
-    RequestInfoEvent,
     WorkflowEvent,
     WorkflowEventSource,
-    WorkflowFailedEvent,
-    WorkflowLifecycleEvent,
-    WorkflowOutputEvent,
-    WorkflowStartedEvent,
-    WorkflowStatusEvent,
-    WorkflowWarningEvent,
     _framework_event_origin,  # type: ignore
 )
 from ._runner_context import Message, RunnerContext
@@ -204,15 +199,8 @@ def validate_workflow_context_annotation(
     return infer_output_types_from_ctx_annotation(annotation)
 
 
-_FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
-    tuple[type[WorkflowEvent], ...],
-    tuple(get_args(WorkflowLifecycleEvent))
-    or (
-        WorkflowStartedEvent,
-        WorkflowStatusEvent,
-        WorkflowFailedEvent,
-    ),
-)
+# Event types reserved for framework lifecycle (not allowed from user code)
+_FRAMEWORK_LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"started", "status", "failed"})
 
 
 class WorkflowContext(Generic[OutT, W_OutT]):
@@ -264,7 +252,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
 
     def __init__(
         self,
-        executor: "Executor",
+        executor: Executor,
         source_executor_ids: list[str],
         state: State,
         runner_context: RunnerContext,
@@ -291,10 +279,10 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         self._runner_context = runner_context
         self._state = state
 
-        # Track messages sent via send_message() for ExecutorCompletedEvent
+        # Track messages sent via send_message() for executor_completed event (type='executor_completed')
         self._sent_messages: list[Any] = []
 
-        # Track outputs yielded via yield_output() for ExecutorCompletedEvent
+        # Track outputs yielded via yield_output() for executor_completed event (type='executor_completed')
         self._yielded_outputs: list[Any] = []
 
         # Store trace contexts and source span IDs for linking (supporting multiple sources)
@@ -335,7 +323,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             # Create Message wrapper
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
 
-            # Track sent message for ExecutorCompletedEvent
+            # Track sent message for executor_completed event (type='executor_completed')
             self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
@@ -355,31 +343,31 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             output: The output to yield. This must conform to the workflow output type(s)
                     declared on this context.
         """
-        # Track yielded output for ExecutorCompletedEvent (deepcopy to capture state at yield time)
+        # Track yielded output for executor_completed event (type='executor_completed')
+        # (deepcopy to capture state at yield time)
         self._yielded_outputs.append(copy.deepcopy(output))
 
         with _framework_event_origin():
-            event = WorkflowOutputEvent(data=output, executor_id=self._executor_id)
+            event = WorkflowEvent.output(self._executor_id, output)
         await self._runner_context.add_event(event)
 
-    async def add_event(self, event: WorkflowEvent) -> None:
+    async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add an event to the workflow context."""
-        if event.origin == WorkflowEventSource.EXECUTOR and isinstance(event, _FRAMEWORK_LIFECYCLE_EVENT_TYPES):
-            event_name = event.__class__.__name__
+        if event.origin == WorkflowEventSource.EXECUTOR and event.type in _FRAMEWORK_LIFECYCLE_EVENT_TYPES:
             warning_msg = (
-                f"Executor '{self._executor_id}' attempted to emit {event_name}, "
+                f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event, "
                 "which is reserved for framework lifecycle notifications. The "
                 "event was ignored."
             )
             logger.warning(warning_msg)
-            await self._runner_context.add_event(WorkflowWarningEvent(warning_msg))
+            await self._runner_context.add_event(WorkflowEvent.warning(warning_msg))
             return
         await self._runner_context.add_event(event)
 
     async def request_info(self, request_data: object, response_type: type, *, request_id: str | None = None) -> None:
         """Request information from outside of the workflow.
 
-        Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
+        Calling this method will cause the workflow to emit a request_info event (type='request_info'), carrying the
         provided request_data and request_type. External systems listening for such events
         can then process the request and respond accordingly.
 
@@ -401,7 +389,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
                 "not be processed. Please define a response handler using the @response_handler decorator."
             )
 
-        request_info_event = RequestInfoEvent(
+        request_info_event = WorkflowEvent.request_info(
             request_id=request_id or str(uuid.uuid4()),
             source_executor_id=self._executor_id,
             request_data=request_data,
@@ -460,6 +448,6 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         """Check if the workflow is running in streaming mode.
 
         Returns:
-            True if the workflow was started with run_stream(), False if started with run().
+            True if the workflow was started with stream=True, False otherwise.
         """
         return self._runner_context.is_streaming()

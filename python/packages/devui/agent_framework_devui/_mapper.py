@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage, Content, WorkflowOutputEvent
+from agent_framework import ChatMessage, Content
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -180,16 +180,18 @@ class MessageMapper:
         try:
             from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
 
-            # Handle AgentRunUpdateEvent - workflow event wrapping AgentResponseUpdate
+            # Handle WorkflowEvent with type='output' or 'data' wrapping AgentResponseUpdate
             # This must be checked BEFORE generic WorkflowEvent check
-            if isinstance(raw_event, WorkflowOutputEvent):
-                # Extract the AgentResponseUpdate from the event's data attribute
-                if raw_event.data and isinstance(raw_event.data, AgentResponseUpdate):
-                    # Preserve executor_id in context for proper output routing
-                    context["current_executor_id"] = raw_event.executor_id
-                    return await self._convert_agent_update(raw_event.data, context)
-                # If no data, treat as generic workflow event
-                return await self._convert_workflow_event(raw_event, context)
+            # Note: AgentExecutor uses type='output' for streaming updates
+            if (
+                isinstance(raw_event, WorkflowEvent)
+                and raw_event.type in ("output", "data")
+                and raw_event.data
+                and isinstance(raw_event.data, AgentResponseUpdate)
+            ):
+                # Preserve executor_id in context for proper output routing
+                context["current_executor_id"] = raw_event.executor_id
+                return await self._convert_agent_update(raw_event.data, context)
 
             # Handle complete agent response (AgentResponse) - for non-streaming agent execution
             if isinstance(raw_event, AgentResponse):
@@ -824,10 +826,12 @@ class MessageMapper:
             List of OpenAI response stream events
         """
         try:
-            event_class = event.__class__.__name__
+            # Use event.type for discriminated union pattern (similar to Content class)
+            event_type = getattr(event, "type", None)
+            event_class = event.__class__.__name__  # Fallback for non-workflow events
 
             # Response-level events - construct proper OpenAI objects
-            if event_class == "WorkflowStartedEvent":
+            if event_type == "started":
                 workflow_id = getattr(event, "workflow_id", str(uuid4()))
                 context["workflow_id"] = workflow_id
 
@@ -871,8 +875,8 @@ class MessageMapper:
 
                 return events
 
-            # Handle WorkflowOutputEvent separately to preserve output data
-            if event_class == "WorkflowOutputEvent":
+            # Handle output events separately to preserve output data
+            if event_type == "output":
                 output_data = getattr(event, "data", None)
                 executor_id = getattr(event, "executor_id", "unknown")
 
@@ -934,7 +938,7 @@ class MessageMapper:
 
                     # Emit output_item.added for each yield_output
                     logger.debug(
-                        f"WorkflowOutputEvent converted to output_item.added "
+                        f"output event (type='output') converted to output_item.added "
                         f"(executor: {executor_id}, length: {len(text)})"
                     )
                     return [
@@ -946,15 +950,15 @@ class MessageMapper:
                         )
                     ]
 
-            # Handle WorkflowCompletedEvent - Don't emit response.completed here
+            # Handle completed event - Don't emit response.completed here
             # The server will emit a proper one with usage data after aggregating all events
-            if event_class == "WorkflowCompletedEvent":
+            if event_type == "completed":
                 return []
 
-            if event_class == "WorkflowFailedEvent":
+            if event_type == "failed":
                 workflow_id = context.get("workflow_id", str(uuid4()))
-                # WorkflowFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
-                # This matches ExecutorFailedEvent which also uses 'details'
+                # failed event (type='failed') uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches executor_failed event which also uses 'details'
                 details = getattr(event, "details", None)
 
                 # Import Response and ResponseError types
@@ -1000,7 +1004,8 @@ class MessageMapper:
                 ]
 
             # Executor-level events (output items)
-            if event_class == "ExecutorInvokedEvent":
+            # Check for executor lifecycle events via event.type
+            if event_type == "executor_invoked":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = f"exec_{executor_id}_{uuid4().hex[:8]}"
                 context[f"exec_item_{executor_id}"] = item_id
@@ -1029,7 +1034,7 @@ class MessageMapper:
                     )
                 ]
 
-            if event_class == "ExecutorCompletedEvent":
+            if event_type == "executor_completed":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
 
@@ -1038,7 +1043,7 @@ class MessageMapper:
                     context.pop("current_executor_id", None)
 
                 # Create ExecutorActionItem with completed status
-                # ExecutorCompletedEvent uses 'data' field, not 'result'
+                # executor_completed event (type='executor_completed') uses 'data' field, not 'result'
                 # Serialize the result data to ensure it's JSON-serializable
                 # (AgentExecutorResponse contains AgentResponse/ChatMessage which are SerializationMixin)
                 raw_result = getattr(event, "data", None)
@@ -1061,10 +1066,11 @@ class MessageMapper:
                     )
                 ]
 
-            if event_class == "ExecutorFailedEvent":
+            if event_type == "executor_failed":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
-                # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                # executor_failed event (type='executor_failed') uses 'details' property (WorkflowErrorDetails)
+                # not 'error'. This matches WorkflowEvent.details which returns self.data for executor_failed type
                 details = getattr(event, "details", None)
                 if details:
                     err_msg = getattr(details, "message", None) or str(details)
@@ -1093,8 +1099,8 @@ class MessageMapper:
                     )
                 ]
 
-            # Handle RequestInfoEvent specially - emit as HIL event with schema
-            if event_class == "RequestInfoEvent":
+            # Handle request_info events specially - emit as HIL event with schema
+            if event_type == "request_info":
                 from .models._openai_custom import ResponseRequestInfoEvent
 
                 request_id = getattr(event, "request_id", "")
@@ -1102,7 +1108,7 @@ class MessageMapper:
                 request_type_class = getattr(event, "request_type", None)
                 request_data = getattr(event, "data", None)
 
-                logger.info("📨 [MAPPER] Processing RequestInfoEvent")
+                logger.info("📨 [MAPPER] Processing request_info event (type='request_info')")
                 logger.info(f"   request_id: {request_id}")
                 logger.info(f"   source_executor_id: {source_executor_id}")
                 logger.info(f"   request_type_class: {request_type_class}")
@@ -1163,26 +1169,23 @@ class MessageMapper:
                 return [hil_event]
 
             # Handle other informational workflow events (status, warnings, errors)
-            if event_class in ["WorkflowStatusEvent", "WorkflowWarningEvent", "WorkflowErrorEvent"]:
+            if event_type in ["status", "warning", "error"]:
                 # These are informational events that don't map to OpenAI lifecycle events
                 # Convert them to trace events for debugging visibility
                 event_data: dict[str, Any] = {}
 
                 # Extract relevant data based on event type
-                if event_class == "WorkflowStatusEvent":
+                if event_type == "status":
                     event_data["state"] = str(getattr(event, "state", "unknown"))
-                elif event_class == "WorkflowWarningEvent":
-                    event_data["message"] = str(getattr(event, "message", ""))
-                elif event_class == "WorkflowErrorEvent":
-                    event_data["message"] = str(getattr(event, "message", ""))
-                    event_data["error"] = str(getattr(event, "error", ""))
+                elif event_type == "warning" or event_type == "error":
+                    event_data["message"] = str(getattr(event, "data", ""))
 
                 # Create a trace event for debugging
                 trace_event = ResponseTraceEventComplete(
                     type="response.trace.completed",
                     data={
                         "trace_type": "workflow_info",
-                        "event_type": event_class,
+                        "event_type": event_type,
                         "data": event_data,
                         "timestamp": datetime.now().isoformat(),
                     },

@@ -18,7 +18,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Chat Middleware Example
+Chat MiddlewareTypes Example
 
 This sample demonstrates how to use chat middleware to observe and override
 inputs sent to AI models. Chat middleware intercepts chat requests before they reach
@@ -31,8 +31,8 @@ the underlying AI service, allowing you to:
 The example covers:
 - Class-based chat middleware inheriting from ChatMiddleware
 - Function-based chat middleware with @chat_middleware decorator
-- Middleware registration at agent level (applies to all runs)
-- Middleware registration at run level (applies to specific run only)
+- MiddlewareTypes registration at agent level (applies to all runs)
+- MiddlewareTypes registration at run level (applies to specific run only)
 """
 
 
@@ -137,7 +137,7 @@ async def security_and_override_middleware(
 async def class_based_chat_middleware() -> None:
     """Demonstrate class-based middleware at agent level."""
     print("\n" + "=" * 60)
-    print("Class-based Chat Middleware (Agent Level)")
+    print("Class-based Chat MiddlewareTypes (Agent Level)")
     print("=" * 60)
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -161,7 +161,7 @@ async def class_based_chat_middleware() -> None:
 async def function_based_chat_middleware() -> None:
     """Demonstrate function-based middleware at agent level."""
     print("\n" + "=" * 60)
-    print("Function-based Chat Middleware (Agent Level)")
+    print("Function-based Chat MiddlewareTypes (Agent Level)")
     print("=" * 60)
 
     async with (
@@ -191,7 +191,7 @@ async def function_based_chat_middleware() -> None:
 async def run_level_middleware() -> None:
     """Demonstrate middleware registration at run level."""
     print("\n" + "=" * 60)
-    print("Run-level Chat Middleware")
+    print("Run-level Chat MiddlewareTypes")
     print("=" * 60)
 
     async with (
@@ -204,14 +204,14 @@ async def run_level_middleware() -> None:
         ) as agent,
     ):
         # Scenario 1: Run without any middleware
-        print("\n--- Scenario 1: No Middleware ---")
+        print("\n--- Scenario 1: No MiddlewareTypes ---")
         query = "What's the weather in Tokyo?"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Response: {result.text if result.text else 'No response'}")
 
         # Scenario 2: Run with specific middleware for this call only (both enhancement and security)
-        print("\n--- Scenario 2: With Run-level Middleware ---")
+        print("\n--- Scenario 2: With Run-level MiddlewareTypes ---")
         print(f"User: {query}")
         result = await agent.run(
             query,
@@ -223,7 +223,7 @@ async def run_level_middleware() -> None:
         print(f"Response: {result.text if result.text else 'No response'}")
 
         # Scenario 3: Security test with run-level middleware
-        print("\n--- Scenario 3: Security Test with Run-level Middleware ---")
+        print("\n--- Scenario 3: Security Test with Run-level MiddlewareTypes ---")
         query = "Can you help me with my secret API key?"
         print(f"User: {query}")
         result = await agent.run(
@@ -235,7 +235,7 @@ async def run_level_middleware() -> None:
 
 async def main() -> None:
     """Run all chat middleware examples."""
-    print("Chat Middleware Examples")
+    print("Chat MiddlewareTypes Examples")
     print("========================")
 
     await class_based_chat_middleware()

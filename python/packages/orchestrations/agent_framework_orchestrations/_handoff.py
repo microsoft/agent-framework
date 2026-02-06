@@ -43,15 +43,16 @@ from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, AgentResponseUpdate, ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
-from agent_framework._workflows._base_group_chat_orchestrator import TerminationCondition
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import WorkflowEvent
-from agent_framework._workflows._orchestrator_helpers import clean_conversation_for_handoff
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never
+
+from ._base_group_chat_orchestrator import TerminationCondition
+from ._orchestrator_helpers import clean_conversation_for_handoff
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -63,20 +64,14 @@ logger = logging.getLogger(__name__)
 
 
 # region Handoff events
-class HandoffSentEvent(WorkflowEvent):
-    """Base class for handoff workflow events."""
 
-    def __init__(self, source: str, target: str, data: Any | None = None) -> None:
-        """Initialize handoff sent event.
 
-        Args:
-            source: Identifier of the source agent initiating the handoff
-            target: Identifier of the target agent receiving the handoff
-            data: Optional event-specific data
-        """
-        super().__init__(data)
-        self.source = source
-        self.target = target
+@dataclass
+class HandoffSentEvent:
+    """Data payload for handoff_sent events."""
+
+    source: str
+    target: str
 
 
 # endregion
@@ -141,9 +136,11 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await next(context)
             return
 
+        from agent_framework._middleware import MiddlewareTermination
+
         # Short-circuit execution and provide deterministic response payload for the tool call.
         context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
-        context.terminate = True
+        raise MiddlewareTermination(result=context.result)
 
 
 @dataclass
@@ -161,7 +158,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[ChatMessage] = []
         if isinstance(response, str):
-            messages.append(ChatMessage("user", [response]))
+            messages.append(ChatMessage(role="user", text=response))
         elif isinstance(response, ChatMessage):
             messages.append(response)
         elif isinstance(response, list):
@@ -169,7 +166,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, ChatMessage):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(ChatMessage("user", [item]))
+                    messages.append(ChatMessage(role="user", text=item))
                 else:
                     raise TypeError("List items must be either str or ChatMessage instances")
         else:
@@ -418,7 +415,9 @@ class HandoffAgentExecutor(AgentExecutor):
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
                 AgentExecutorRequest(messages=[], should_respond=True), target_id=handoff_target
             )
-            await ctx.add_event(HandoffSentEvent(source=self.id, target=handoff_target))
+            await ctx.add_event(
+                WorkflowEvent("handoff_sent", data=HandoffSentEvent(source=self.id, target=handoff_target))
+            )
             self._autonomous_mode_turns = 0  # Reset autonomous mode turn counter on handoff
             return
 
@@ -428,7 +427,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([ChatMessage("user", [self._autonomous_mode_prompt])])
+            self._cache.extend([ChatMessage(role="user", text=self._autonomous_mode_prompt)])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:
@@ -975,12 +974,12 @@ class HandoffBuilder:
             workflow = HandoffBuilder(participants=[triage, refund, billing]).with_checkpointing(storage).build()
 
             # Run workflow with a session ID for resumption
-            async for event in workflow.run_stream("Help me", session_id="user_123"):
+            async for event in workflow.run("Help me", session_id="user_123", stream=True):
                 # Process events...
                 pass
 
             # Later, resume the same conversation
-            async for event in workflow.run_stream("I need a refund", session_id="user_123"):
+            async for event in workflow.run("I need a refund", session_id="user_123", stream=True):
                 # Conversation continues from where it left off
                 pass
 
@@ -1039,7 +1038,7 @@ class HandoffBuilder:
         - Request/response handling
 
         Returns:
-            A fully configured Workflow ready to execute via `.run()` or `.run_stream()`.
+            A fully configured Workflow ready to execute via `.run()` with optional `stream=True` parameter.
 
         Raises:
             ValueError: If participants or coordinator were not configured, or if

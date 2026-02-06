@@ -13,7 +13,7 @@ using the standard request_info pattern for consistency.
 
 Demonstrate:
 - Configuring request info with `.with_request_info()`
-- Handling RequestInfoEvent with AgentInputRequest data
+- Handling  with AgentInputRequest data
 - Injecting responses back into the workflow via send_responses_streaming
 
 Prerequisites:
@@ -27,14 +27,11 @@ from typing import cast
 
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRequestInfoResponse,
     ChatMessage,
-    RequestInfoEvent,
-    SequentialBuilder,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import AgentRequestInfoResponse, SequentialBuilder
 from azure.identity import AzureCliCredential
 
 
@@ -43,10 +40,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
     requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentExecutorResponse):
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
             requests[event.request_id] = event.data
 
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             # The output of the sequential workflow is a list of ChatMessages
             print("\n" + "=" * 60)
             print("WORKFLOW COMPLETE")
@@ -126,7 +123,7 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream("Write a brief introduction to artificial intelligence.")
+    stream = workflow.run("Write a brief introduction to artificial intelligence.", stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

@@ -57,9 +57,9 @@ from agent_framework.orchestrations import (
 **Sequential orchestration note**: Sequential orchestration uses a few small adapter nodes for plumbing:
 - `input-conversation` normalizes input to `list[ChatMessage]`
 - `to-conversation:<participant>` converts agent responses into the shared conversation
-- `complete` publishes the final `WorkflowOutputEvent`
+- `complete` publishes the final output event (type='output')
 
-These may appear in event streams (ExecutorInvoke/Completed). They're analogous to concurrent's dispatcher and aggregator and can be ignored if you only care about agent activity.
+These may appear in event streams (executor_invoked/executor_completed). They're analogous to concurrent's dispatcher and aggregator and can be ignored if you only care about agent activity.
 
 ## Environment Variables
 

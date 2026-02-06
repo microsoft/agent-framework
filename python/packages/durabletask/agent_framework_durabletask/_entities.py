@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterable
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from agent_framework import (
@@ -14,6 +14,7 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatMessage,
     Content,
+    ResponseStream,
     get_logger,
 )
 from durabletask.entities import DurableEntity
@@ -177,7 +178,10 @@ class AgentEntity:
             error_message = ChatMessage(
                 role="assistant", contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
             )
-            error_response = AgentResponse(messages=[error_message])
+            error_response = AgentResponse(
+                messages=[error_message],
+                created_at=datetime.now(tz=timezone.utc).isoformat(),
+            )
 
             error_state_response = DurableAgentStateResponse.from_run_response(correlation_id, error_response)
             error_state_response.is_error = True
@@ -202,40 +206,47 @@ class AgentEntity:
                 request_message=request_message,
             )
 
-        run_stream_callable = getattr(self.agent, "run_stream", None)
-        if callable(run_stream_callable):
-            try:
-                stream_candidate = run_stream_callable(**run_kwargs)
-                if inspect.isawaitable(stream_candidate):
-                    stream_candidate = await stream_candidate
+        run_callable = getattr(self.agent, "run", None)
+        if run_callable is None or not callable(run_callable):
+            raise AttributeError("Agent does not implement run() method")
 
-                return await self._consume_stream(
-                    stream=cast(AsyncIterable[AgentResponseUpdate], stream_candidate),
-                    callback_context=callback_context,
-                )
-            except TypeError as type_error:
-                if "__aiter__" not in str(type_error):
-                    raise
-                logger.debug(
-                    "run_stream returned a non-async result; falling back to run(): %s",
-                    type_error,
-                )
-            except Exception as stream_error:
-                logger.warning(
-                    "run_stream failed; falling back to run(): %s",
-                    stream_error,
-                    exc_info=True,
-                )
-        else:
-            logger.debug("Agent does not expose run_stream; falling back to run().")
+        # Try streaming first with run(stream=True)
+        try:
+            stream_candidate = run_callable(stream=True, **run_kwargs)
+            if inspect.isawaitable(stream_candidate):
+                stream_candidate = await stream_candidate
 
-        agent_run_response = await self._invoke_non_stream(run_kwargs)
+            return await self._consume_stream(
+                stream=stream_candidate,  # type: ignore[arg-type]
+                callback_context=callback_context,
+            )
+        except TypeError as type_error:
+            if "__aiter__" not in str(type_error) and "stream" not in str(type_error):
+                raise
+            logger.debug(
+                "run(stream=True) returned a non-async result; falling back to run(): %s",
+                type_error,
+            )
+        except Exception as stream_error:
+            logger.warning(
+                "run(stream=True) failed; falling back to run(): %s",
+                stream_error,
+                exc_info=True,
+            )
+        agent_run_response = run_callable(**run_kwargs)
+        if inspect.isawaitable(agent_run_response):
+            agent_run_response = await agent_run_response
+
+        if not isinstance(agent_run_response, AgentResponse):
+            raise TypeError(
+                f"Agent run() must return an AgentResponse instance; received {type(agent_run_response).__name__}"
+            )
         await self._notify_final_response(agent_run_response, callback_context)
         return agent_run_response
 
     async def _consume_stream(
         self,
-        stream: AsyncIterable[AgentResponseUpdate],
+        stream: ResponseStream[AgentResponseUpdate, AgentResponse],
         callback_context: AgentCallbackContext | None = None,
     ) -> AgentResponse:
         """Consume streaming responses and build the final AgentResponse."""
@@ -245,29 +256,10 @@ class AgentEntity:
             updates.append(update)
             await self._notify_stream_update(update, callback_context)
 
-        if updates:
-            response = AgentResponse.from_updates(updates)
-        else:
-            logger.debug("[AgentEntity] No streaming updates received; creating empty response")
-            response = AgentResponse(messages=[])
+        response = await stream.get_final_response()
 
         await self._notify_final_response(response, callback_context)
         return response
-
-    async def _invoke_non_stream(self, run_kwargs: dict[str, Any]) -> AgentResponse:
-        """Invoke the agent without streaming support."""
-        run_callable = getattr(self.agent, "run", None)
-        if run_callable is None or not callable(run_callable):
-            raise AttributeError("Agent does not implement run() method")
-
-        result = run_callable(**run_kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-
-        if not isinstance(result, AgentResponse):
-            raise TypeError(f"Agent run() must return an AgentResponse instance; received {type(result).__name__}")
-
-        return result
 
     async def _notify_stream_update(
         self,

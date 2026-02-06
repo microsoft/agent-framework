@@ -6,11 +6,11 @@ This demonstrates the HYBRID pattern matching .NET AGUIClient implementation:
 
 1. AgentThread Pattern (like .NET):
    - Create thread with agent.get_new_thread()
-   - Pass thread to agent.run_stream() on each turn
+   - Pass thread to agent.run(stream=True) on each turn
    - Thread automatically maintains conversation history via message_store
 
 2. Hybrid Tool Execution:
-   - AGUIChatClient has @use_function_invocation decorator
+   - AGUIChatClient uses function invocation mixin
    - Client-side tools (get_weather) can execute locally when server requests them
    - Server may also have its own tools that execute server-side
    - Both work together: server LLM decides which tool to call, decorator handles client execution
@@ -63,7 +63,7 @@ async def main():
     Python equivalent:
     - agent = ChatAgent(chat_client=AGUIChatClient(...), tools=[...])
     - thread = agent.get_new_thread()  # Creates thread with message_store
-    - agent.run_stream(message, thread=thread)  # Thread accumulates history
+    - agent.run(message, stream=True, thread=thread)  # Thread accumulates history
     """
     server_url = os.environ.get("AGUI_SERVER_URL", "http://127.0.0.1:5100/")
 
@@ -73,7 +73,7 @@ async def main():
     print(f"\nServer: {server_url}")
     print("\nThis example demonstrates:")
     print("  1. AgentThread maintains conversation state (like .NET)")
-    print("  2. Client-side tools execute locally via @use_function_invocation")
+    print("  2. Client-side tools execute locally via function invocation mixin")
     print("  3. Server may have additional tools that execute server-side")
     print("  4. HYBRID: Client and server tools work together simultaneously\n")
 
@@ -97,35 +97,39 @@ async def main():
 
             # Turn 1: Introduce
             print("\nUser: My name is Alice and I live in Seattle\n")
-            async for chunk in agent.run_stream("My name is Alice and I live in Seattle", thread=thread):
+            async for chunk in agent.run("My name is Alice and I live in Seattle", stream=True, thread=thread):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
             print("\n")
 
             # Turn 2: Ask about name (tests history)
             print("User: What's my name?\n")
-            async for chunk in agent.run_stream("What's my name?", thread=thread):
+            async for chunk in agent.run("What's my name?", stream=True, thread=thread):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
             print("\n")
 
             # Turn 3: Ask about location (tests history)
             print("User: Where do I live?\n")
-            async for chunk in agent.run_stream("Where do I live?", thread=thread):
+            async for chunk in agent.run("Where do I live?", stream=True, thread=thread):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
             print("\n")
 
             # Turn 4: Test client-side tool (get_weather is client-side)
             print("User: What's the weather forecast for today in Seattle?\n")
-            async for chunk in agent.run_stream("What's the weather forecast for today in Seattle?", thread=thread):
+            async for chunk in agent.run(
+                "What's the weather forecast for today in Seattle?",
+                stream=True,
+                thread=thread,
+            ):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
             print("\n")
 
             # Turn 5: Test server-side tool (get_time_zone is server-side only)
             print("User: What time zone is Seattle in?\n")
-            async for chunk in agent.run_stream("What time zone is Seattle in?", thread=thread):
+            async for chunk in agent.run("What time zone is Seattle in?", stream=True, thread=thread):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
             print("\n")

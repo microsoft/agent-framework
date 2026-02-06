@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -59,7 +61,7 @@ class WorkflowCheckpoint:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "WorkflowCheckpoint":
+    def from_dict(cls, data: Mapping[str, Any]) -> WorkflowCheckpoint:
         return cls(**data)
 
 

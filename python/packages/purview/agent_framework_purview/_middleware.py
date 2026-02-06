@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 
-from agent_framework import AgentMiddleware, AgentRunContext, ChatContext, ChatMiddleware
+from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
 from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -47,8 +47,8 @@ class PurviewPolicyMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
         try:
@@ -60,10 +60,11 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 from agent_framework import AgentResponse, ChatMessage
 
                 context.result = AgentResponse(
-                    messages=[ChatMessage("system", [self._settings.blocked_prompt_message])]
+                    messages=[ChatMessage(role="system", text=self._settings.blocked_prompt_message)]
                 )
-                context.terminate = True
-                return
+                raise MiddlewareTermination
+        except MiddlewareTermination:
+            raise
         except PurviewPaymentRequiredError as ex:
             logger.error(f"Purview payment required error in policy pre-check: {ex}")
             if not self._settings.ignore_payment_required:
@@ -78,7 +79,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         try:
             # Post (response) check only if we have a normal AgentResponse
             # Use the same user_id from the request for the response evaluation
-            if context.result and not context.is_streaming:
+            if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
                     Activity.UPLOAD_TEXT,
@@ -88,7 +89,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                     from agent_framework import AgentResponse, ChatMessage
 
                     context.result = AgentResponse(
-                        messages=[ChatMessage("system", [self._settings.blocked_response_message])]
+                        messages=[ChatMessage(role="system", text=self._settings.blocked_response_message)]
                     )
             else:
                 # Streaming responses are not supported for post-checks
@@ -149,10 +150,11 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
             if should_block_prompt:
                 from agent_framework import ChatMessage, ChatResponse
 
-                blocked_message = ChatMessage("system", [self._settings.blocked_prompt_message])
+                blocked_message = ChatMessage(role="system", text=self._settings.blocked_prompt_message)
                 context.result = ChatResponse(messages=[blocked_message])
-                context.terminate = True
-                return
+                raise MiddlewareTermination
+        except MiddlewareTermination:
+            raise
         except PurviewPaymentRequiredError as ex:
             logger.error(f"Purview payment required error in policy pre-check: {ex}")
             if not self._settings.ignore_payment_required:
@@ -167,7 +169,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         try:
             # Post (response) evaluation only if non-streaming and we have messages result shape
             # Use the same user_id from the request for the response evaluation
-            if context.result and not context.is_streaming:
+            if context.result and not context.stream:
                 result_obj = context.result
                 messages = getattr(result_obj, "messages", None)
                 if messages:
@@ -177,7 +179,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                     if should_block_response:
                         from agent_framework import ChatMessage, ChatResponse
 
-                        blocked_message = ChatMessage("system", [self._settings.blocked_response_message])
+                        blocked_message = ChatMessage(role="system", text=self._settings.blocked_response_message)
                         context.result = ChatResponse(messages=[blocked_message])
             else:
                 logger.debug("Streaming responses are not supported for Purview policy post-checks")

@@ -19,7 +19,7 @@ TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = ChatMessage("assistant", [text]) if text is not None else ChatMessage("assistant", [])
+    message = ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", text="")
     return AgentResponse(messages=[message])
 
 

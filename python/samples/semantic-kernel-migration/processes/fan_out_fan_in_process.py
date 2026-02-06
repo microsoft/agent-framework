@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 ######################################################################
 # region Agent Framework imports
 ######################################################################
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext,  handler
 from pydantic import BaseModel, Field
 
 ######################################################################
@@ -231,8 +231,8 @@ async def run_agent_framework_workflow_example() -> str | None:
     )
 
     final_text: str | None = None
-    async for event in workflow.run_stream(CommonEvents.START_PROCESS):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(CommonEvents.START_PROCESS, stream=True):
+        if event.type == "output":
             final_text = cast(str, event.data)
 
     return final_text

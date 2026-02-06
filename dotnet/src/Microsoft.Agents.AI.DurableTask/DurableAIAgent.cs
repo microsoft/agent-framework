@@ -34,7 +34,7 @@ public sealed class DurableAIAgent : AIAgent
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A value task that represents the asynchronous operation. The task result contains a new agent session.</returns>
-    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
     {
         AgentSessionId sessionId = this._context.NewAgentSessionId(this._agentName);
         return ValueTask.FromResult<AgentSession>(new DurableAgentSession(sessionId));
@@ -46,7 +46,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="session">The session to serialize.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
     /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         if (session is null)
         {
@@ -68,7 +68,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A value task that represents the asynchronous operation. The task result contains the deserialized agent session.</returns>
-    public override ValueTask<AgentSession> DeserializeSessionAsync(
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
         JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {

@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, tool
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -281,7 +281,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 ChatMessage(
-                    role="user",
+                    role=Role.USER,
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -366,7 +366,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.info(f"Running agent with {len(agent_messages)} message(s)")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:
@@ -458,12 +458,12 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage("user", [f"What's the weather in {city_label}?"])]
+            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
             # Run the Agent Framework agent with streaming
-            agent_stream = self.weather_agent.run_stream(agent_messages)
+            agent_stream = self.weather_agent.run(agent_messages, stream=True)
 
             # Create an intercepting stream that extracts function results while passing through updates
             async def intercept_stream() -> AsyncIterator[AgentResponseUpdate]:

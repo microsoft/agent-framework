@@ -48,12 +48,10 @@ from _tools import (
 from agent_framework import (
     AgentExecutorResponse,
     AgentResponseUpdate,
-    AgentRunUpdateEvent,
     ChatMessage,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     executor,
     handler,
 )
@@ -189,7 +187,7 @@ async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> d
     workflow, agent_map = await _create_workflow(chat_client.project_client, chat_client.credential)
 
     # Process workflow events
-    events = workflow.run_stream(query)
+    events = workflow.run(query, stream=True)
     workflow_output = await _process_workflow_events(events, conversation_ids, response_ids)
 
     return {
@@ -355,7 +353,7 @@ async def _process_workflow_events(events, conversation_ids, response_ids):
     workflow_output = None
 
     async for event in events:
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             workflow_output = event.data
             # Handle Unicode characters that may not be displayable in Windows console
             try:
@@ -364,7 +362,7 @@ async def _process_workflow_events(events, conversation_ids, response_ids):
                 output_str = str(event.data).encode("ascii", "replace").decode("ascii")
                 print(f"\nWorkflow Output: {output_str}\n")
 
-        elif isinstance(event, AgentRunUpdateEvent):
+        elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             _track_agent_ids(event, event.executor_id, response_ids, conversation_ids)
 
     return workflow_output

@@ -4,10 +4,12 @@
 
 In a real application, these would call actual weather and events APIs.
 """
-
 from typing import Annotated
 
+from agent_framework import tool
 
+
+@tool
 def get_weather_forecast(
     destination: Annotated[str, "The destination city or location"],
     date: Annotated[str, 'The date for the forecast (e.g., "2025-01-15" or "next Monday")'],
@@ -64,6 +66,7 @@ Low: {low_f}°F ({low_c}°C)
 Recommendation: {recommendation}"""
 
 
+@tool
 def get_local_events(
     destination: Annotated[str, "The destination city or location"],
     date: Annotated[str, 'The date to search for events (e.g., "2025-01-15" or "next week")'],

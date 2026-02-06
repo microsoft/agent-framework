@@ -214,21 +214,21 @@ async def test_integration_options(
     check that the feature actually works correctly.
     """
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
-    # to ensure toolmode required does not endlessly loop
-    client.function_invocation_configuration.max_iterations = 1
+    # Need at least 2 iterations for tool_choice tests: one to get function call, one to get final response
+    client.function_invocation_configuration["max_iterations"] = 2
 
     for streaming in [False, True]:
         # Prepare test message
         if option_name == "tools" or option_name == "tool_choice":
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage("user", ["What is the weather in Seattle?"])]
+            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [ChatMessage("user", ["The weather in Seattle is sunny"])]
-            messages.append(ChatMessage("user", ["What is the weather in Seattle?"]))
+            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
+            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage("user", ["Say 'Hello World' briefly."])]
+            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -239,13 +239,13 @@ async def test_integration_options(
 
         if streaming:
             # Test streaming mode
-            response_gen = client.get_streaming_response(
+            response_stream = client.get_response(
                 messages=messages,
+                stream=True,
                 options=options,
             )
 
-            output_format = option_value if option_name == "response_format" else None
-            response = await ChatResponse.from_update_generator(response_gen, output_format_type=output_format)
+            response = await response_stream.get_final_response()
         else:
             # Test non-streaming mode
             response = await client.get_response(
@@ -291,9 +291,10 @@ async def test_integration_web_search() -> None:
                 "tool_choice": "auto",
                 "tools": [HostedWebSearchTool()],
             },
+            "stream": streaming,
         }
         if streaming:
-            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
+            response = await client.get_response(**content).get_final_response()
         else:
             response = await client.get_response(**content)
 
@@ -316,9 +317,10 @@ async def test_integration_web_search() -> None:
                 "tool_choice": "auto",
                 "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
             },
+            "stream": streaming,
         }
         if streaming:
-            response = await ChatResponse.from_update_generator(client.get_streaming_response(**content))
+            response = await client.get_response(**content).get_final_response()
         else:
             response = await client.get_response(**content)
         assert response.text is not None
@@ -356,18 +358,18 @@ async def test_integration_client_file_search_streaming() -> None:
     file_id, vector_store = await create_vector_store(azure_responses_client)
     # Test that the client will use the file search tool
     try:
-        response = azure_responses_client.get_streaming_response(
+        response_stream = azure_responses_client.get_response(
             messages=[
                 ChatMessage(
                     role="user",
                     text="What is the weather today? Do a file search to find the answer.",
                 )
             ],
+            stream=True,
             options={"tools": [HostedFileSearchTool(inputs=vector_store)], "tool_choice": "auto"},
         )
 
-        assert response is not None
-        full_response = await ChatResponse.from_update_generator(response)
+        full_response = await response_stream.get_final_response()
         assert "sunny" in full_response.text.lower()
         assert "75" in full_response.text
     finally:

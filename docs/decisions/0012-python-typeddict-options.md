@@ -126,4 +126,4 @@ response = await client.get_response(
 
 Chosen option: **"Option 2: TypedDict with Generic Type Parameters"**, because it provides full type safety, excellent IDE support with autocompletion, and allows users to extend provider-specific options for their use cases. Extended this Generic to ChatAgents in order to also properly type the options used in agent construction and run methods.
 
-See [typed_options.py](../../python/samples/getting_started/chat_client/typed_options.py) for a complete example demonstrating the usage of typed options with custom extensions.
+See [typed_options.py](../../python/samples/concepts/typed_options.py) for a complete example demonstrating the usage of typed options with custom extensions.

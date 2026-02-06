@@ -7,13 +7,11 @@ from typing import Annotated, cast
 from agent_framework import (
     ChatMessage,
     Content,
-    RequestInfoEvent,
-    SequentialBuilder,
     WorkflowEvent,
-    WorkflowOutputEvent,
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 """
 Sample: Sequential Workflow with Tool Approval Requests
@@ -26,7 +24,7 @@ This sample works as follows:
 1. A SequentialBuilder workflow is created with a single agent that has tools requiring approval.
 2. The agent receives a user task and determines it needs to call a sensitive tool.
 3. The tool call triggers a function_approval_request Content, pausing the workflow.
-4. The sample simulates human approval by responding to the RequestInfoEvent.
+4. The sample simulates human approval by responding to the .
 5. Once approved, the tool executes and the agent completes its response.
 6. The workflow outputs the final conversation with all messages.
 
@@ -36,7 +34,7 @@ requiring any additional builder configuration.
 
 Demonstrate:
 - Using @tool(approval_mode="always_require") for sensitive operations.
-- Handling RequestInfoEvent with function_approval_request Content in sequential workflows.
+- Handling  with function_approval_request Content in sequential workflows.
 - Resuming workflow execution after approval via send_responses_streaming.
 
 Prerequisites:
@@ -55,7 +53,9 @@ def execute_database_query(
     return f"Query executed successfully. Results: 3 rows affected by '{query}'"
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py and
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_database_schema() -> str:
     """Get the current database schema. Does not require approval."""
@@ -71,10 +71,10 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
     """Process events from the workflow stream to capture human feedback requests."""
     requests: dict[str, Content] = {}
     async for event in stream:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, Content):
+        if event.type == "request_info" and isinstance(event.data, Content):
             # We are only expecting tool approval requests in this sample
             requests[event.request_id] = event.data
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             # The output of the workflow comes from the orchestrator and it's a list of messages
             print("\n" + "=" * 60)
             print("Workflow summary:")
@@ -119,7 +119,9 @@ async def main() -> None:
 
     # Initiate the first run of the workflow.
     # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
-    stream = workflow.run_stream("Check the schema and then update all orders with status 'pending' to 'processing'")
+    stream = workflow.run(
+        "Check the schema and then update all orders with status 'pending' to 'processing'", stream=True
+    )
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:

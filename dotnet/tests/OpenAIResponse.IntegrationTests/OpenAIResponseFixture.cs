@@ -25,7 +25,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var typedSession = (ChatClientAgentSession)session;
 
@@ -55,7 +55,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await typedSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)

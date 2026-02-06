@@ -46,7 +46,7 @@ def test_build_request_includes_tool_config() -> None:
         "tools": [tool],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
     }
-    messages = [ChatMessage("user", [Content.from_text(text="hi")])]
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="hi")])]
 
     request = client._prepare_options(messages, options)
 
@@ -58,7 +58,7 @@ def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
     options: ChatOptions = {}
     messages = [
-        ChatMessage("user", [Content.from_text(text="how's weather?")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="how's weather?")]),
         ChatMessage(
             role="assistant",
             contents=[

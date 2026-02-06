@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, MagenticBuilder, WorkflowOutputEvent
+from agent_framework import ChatAgent, HostedCodeInterpreterTool, MagenticBuilderWorkflowEvent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from semantic_kernel.agents import (
     Agent,
@@ -147,8 +147,8 @@ async def run_agent_framework_example(prompt: str) -> str | None:
     workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
 
     final_text: str | None = None
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
             final_text = cast(str, event.data)
 
     return final_text

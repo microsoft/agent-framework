@@ -5,9 +5,9 @@ import asyncio
 from agent_framework import (
     ChatAgent,
     HostedCodeInterpreterTool,
-    MagenticBuilder,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
 
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
@@ -62,7 +62,7 @@ async def main() -> None:
             max_reset_count=2,
         )
         # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        # Intermediate outputs will be emitted as WorkflowEvent with type "output" events
         .with_intermediate_outputs()
         .build()
     )
@@ -85,7 +85,7 @@ async def main() -> None:
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
 
         last_response_id: str | None = None
-        async for update in workflow_agent.run_stream(task):
+        async for update in workflow_agent.run(task, stream=True):
             # Fallback for any other events with text
             if last_response_id != update.response_id:
                 if last_response_id is not None:

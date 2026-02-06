@@ -57,7 +57,6 @@ async def main():
     # of `AgentResponse` from the agents in the workflow.
     outputs = cast(list[AgentResponse], outputs)
     for output in outputs:
-        # TODO: author_name should be available in AgentResponse
         print(f"{output.messages[0].author_name}: {output.text}\n")
 
     # Summarize the final run state (e.g., COMPLETED)
@@ -66,7 +65,7 @@ async def main():
     """
     writer: "Charge Ahead: Affordable Adventure Awaits!"
 
-    reviewer: - Consider emphasizing both affordability and fun in a more dynamic way. 
+    reviewer: - Consider emphasizing both affordability and fun in a more dynamic way.
     - Try using a catchy phrase that includes a play on words, like “Electrify Your Drive: Fun Meets Affordability!”
     - Ensure the slogan is succinct while capturing the essence of the car's unique selling proposition.
 

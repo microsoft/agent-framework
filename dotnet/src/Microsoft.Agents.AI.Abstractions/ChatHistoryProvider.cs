@@ -143,12 +143,29 @@ public abstract class ChatHistoryProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
         /// </summary>
+        /// <param name="agent">The agent being invoked.</param>
+        /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The new messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokingContext(IEnumerable<ChatMessage> requestMessages)
+        public InvokingContext(
+            AIAgent agent,
+            AgentSession? session,
+            IEnumerable<ChatMessage> requestMessages)
         {
-            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.Agent = Throw.IfNull(agent);
+            this.Session = session;
+            this.RequestMessages = Throw.IfNull(requestMessages);
         }
+
+        /// <summary>
+        /// Gets the agent that is being invoked.
+        /// </summary>
+        public AIAgent Agent { get; }
+
+        /// <summary>
+        /// Gets the agent session associated with the agent invocation.
+        /// </summary>
+        public AgentSession? Session { get; }
 
         /// <summary>
         /// Gets the caller provided messages that will be used by the agent for this invocation.
@@ -172,14 +189,32 @@ public abstract class ChatHistoryProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
         /// </summary>
+        /// <param name="agent">The agent being invoked.</param>
+        /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
         /// <param name="chatHistoryProviderMessages">The messages retrieved from the <see cref="ChatHistoryProvider"/> for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? chatHistoryProviderMessages)
+        public InvokedContext(
+            AIAgent agent,
+            AgentSession? session,
+            IEnumerable<ChatMessage> requestMessages,
+            IEnumerable<ChatMessage>? chatHistoryProviderMessages)
         {
+            this.Agent = Throw.IfNull(agent);
+            this.Session = session;
             this.RequestMessages = Throw.IfNull(requestMessages);
             this.ChatHistoryProviderMessages = chatHistoryProviderMessages;
         }
+
+        /// <summary>
+        /// Gets the agent that is being invoked.
+        /// </summary>
+        public AIAgent Agent { get; }
+
+        /// <summary>
+        /// Gets the agent session associated with the agent invocation.
+        /// </summary>
+        public AgentSession? Session { get; }
 
         /// <summary>
         /// Gets the caller provided messages that were used by the agent for this invocation.

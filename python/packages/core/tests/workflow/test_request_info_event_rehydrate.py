@@ -9,7 +9,7 @@ import pytest
 from agent_framework import InMemoryCheckpointStorage, InProcRunnerContext
 from agent_framework._workflows._checkpoint_encoding import DATACLASS_MARKER, encode_checkpoint_value
 from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
-from agent_framework._workflows._events import RequestInfoEvent
+from agent_framework._workflows._events import WorkflowEvent
 from agent_framework._workflows._state import State
 
 
@@ -36,7 +36,7 @@ class TimedApproval:
 
 async def test_rehydrate_request_info_event() -> None:
     """Rehydration should succeed for valid request info events."""
-    request_info_event = RequestInfoEvent(
+    request_info_event = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="review_gateway",
         request_data=MockRequest(),
@@ -69,7 +69,7 @@ async def test_rehydrate_request_info_event() -> None:
 
 async def test_rehydrate_fails_when_request_type_missing() -> None:
     """Rehydration should fail is the request type is missing or fails to import."""
-    request_info_event = RequestInfoEvent(
+    request_info_event = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="review_gateway",
         request_data=MockRequest(),
@@ -97,7 +97,7 @@ async def test_rehydrate_fails_when_request_type_missing() -> None:
 
 async def test_rehydrate_fails_when_request_type_mismatch() -> None:
     """Rehydration should fail if the request type is mismatched."""
-    request_info_event = RequestInfoEvent(
+    request_info_event = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="review_gateway",
         request_data=MockRequest(),
@@ -127,7 +127,7 @@ async def test_rehydrate_fails_when_request_type_mismatch() -> None:
 
 async def test_pending_requests_in_summary() -> None:
     """Test that pending requests are correctly summarized in the checkpoint summary."""
-    request_info_event = RequestInfoEvent(
+    request_info_event = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="review_gateway",
         request_data=MockRequest(),
@@ -148,7 +148,8 @@ async def test_pending_requests_in_summary() -> None:
 
     assert len(summary.pending_request_info_events) == 1
     pending_event = summary.pending_request_info_events[0]
-    assert isinstance(pending_event, RequestInfoEvent)
+    assert isinstance(pending_event, WorkflowEvent)
+    assert pending_event.type == "request_info"
     assert pending_event.request_id == "request-123"
 
     assert pending_event.source_executor_id == "review_gateway"
@@ -158,13 +159,13 @@ async def test_pending_requests_in_summary() -> None:
 
 
 async def test_request_info_event_serializes_non_json_payloads() -> None:
-    req_1 = RequestInfoEvent(
+    req_1 = WorkflowEvent.request_info(
         request_id="req-1",
         source_executor_id="source",
         request_data=TimedApproval(issued_at=datetime(2024, 5, 4, 12, 30, 45)),
         response_type=bool,
     )
-    req_2 = RequestInfoEvent(
+    req_2 = WorkflowEvent.request_info(
         request_id="req-2",
         source_executor_id="source",
         request_data=SlottedApproval(note="slot-based"),

@@ -10,9 +10,7 @@ from agent_framework import (
     ChatMessage,
     Executor,
     WorkflowContext,
-    WorkflowOutputEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -34,7 +32,7 @@ class _FakeAgentExec(Executor):
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        response = AgentResponse(messages=ChatMessage("assistant", text=self._reply_text))
+        response = AgentResponse(messages=ChatMessage(role="assistant", text=self._reply_text))
         full_conversation = list(request.messages) + list(response.messages)
         await ctx.send_message(AgentExecutorResponse(self.id, response, full_conversation=full_conversation))
 
@@ -110,10 +108,10 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("prompt: hello world"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: hello world", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(list[ChatMessage], ev.data)
         if completed and output is not None:
             break
@@ -148,10 +146,10 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: custom"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: custom", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(str, ev.data)
         if completed and output is not None:
             break
@@ -179,10 +177,10 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: custom sync"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: custom sync", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(str, ev.data)
         if completed and output is not None:
             break
@@ -227,10 +225,10 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: instance test"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: instance test", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(str, ev.data)
         if completed and output is not None:
             break
@@ -265,10 +263,10 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: factory test"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: factory test", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(str, ev.data)
         if completed and output is not None:
             break
@@ -301,10 +299,10 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
 
     completed = False
     output: str | None = None
-    async for ev in wf.run_stream("prompt: factory test"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("prompt: factory test", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(str, ev.data)
         if completed and output is not None:
             break
@@ -351,10 +349,10 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     wf = ConcurrentBuilder().participants(list(participants)).with_checkpointing(storage).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("checkpoint concurrent"):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf.run("checkpoint concurrent", stream=True):
+        if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     assert baseline_output is not None
@@ -375,10 +373,10 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     wf_resume = ConcurrentBuilder().participants(list(resumed_participants)).with_checkpointing(storage).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
+        if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -397,10 +395,10 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     wf = ConcurrentBuilder().participants(agents).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
+        if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     assert baseline_output is not None
@@ -418,10 +416,12 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     wf_resume = ConcurrentBuilder().participants(resumed_agents).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf_resume.run(
+        checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
+    ):
+        if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -445,10 +445,10 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
         wf = ConcurrentBuilder().participants(agents).with_checkpointing(buildtime_storage).build()
 
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
-            if isinstance(ev, WorkflowOutputEvent):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
+            if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]
-            if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
                 break
 
         assert baseline_output is not None
@@ -527,10 +527,10 @@ async def test_concurrent_with_register_participants() -> None:
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("test prompt"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("test prompt", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = cast(list[ChatMessage], ev.data)
         if completed and output is not None:
             break

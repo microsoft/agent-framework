@@ -171,13 +171,13 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = 'packages/**/tests'
+testpaths = ['packages/**/tests', 'packages/**/ag_ui_tests']
 norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
-timeout = 120
+timeout = 60
 markers = [
     "azure: marks tests as Azure provider specific",
     "azure-ai: marks tests as Azure AI provider specific",
@@ -227,6 +227,7 @@ format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
+typing = ["pyright", "mypy"]
 # cleaning
 clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"
@@ -261,7 +262,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
 """
 
 [tool.poe.tasks.all-tests]
@@ -271,7 +272,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
 """
 
 [tool.poe.tasks.venv]

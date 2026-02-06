@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from ._checkpoint import WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
-from ._events import RequestInfoEvent
+from ._events import WorkflowEvent
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +20,14 @@ class WorkflowCheckpointSummary:
     targets: list[str]
     executor_ids: list[str]
     status: str
-    pending_request_info_events: list[RequestInfoEvent]
+    pending_request_info_events: list[WorkflowEvent]
 
 
 def get_checkpoint_summary(checkpoint: WorkflowCheckpoint) -> WorkflowCheckpointSummary:
     targets = sorted(checkpoint.messages.keys())
     executor_ids = sorted(checkpoint.state.get(EXECUTOR_STATE_KEY, {}).keys())
     pending_request_info_events = [
-        RequestInfoEvent.from_dict(request) for request in checkpoint.pending_request_info_events.values()
+        WorkflowEvent.from_dict(request) for request in checkpoint.pending_request_info_events.values()
     ]
 
     status = "idle"

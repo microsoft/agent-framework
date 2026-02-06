@@ -2,9 +2,9 @@
 
 import contextlib
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -175,7 +175,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         .. code-block:: python
 
             async with ClaudeAgent() as agent:
-                async for update in agent.run_stream("Write a poem"):
+                async for update in agent.run("Write a poem"):
                     print(update.text, end="", flush=True)
 
         With session management:
@@ -552,7 +552,59 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
+    @overload
     async def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            thread: The conversation thread. If thread has service_thread_id set,
+                the agent will resume that session.
+            options: Runtime options (model, permission_mode can be changed per-request).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=True: An AsyncIterable[AgentResponseUpdate] for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        if stream:
+            return self._run_streaming(messages, thread=thread, options=options, **kwargs)
+        return self._run_non_streaming(messages, thread=thread, options=options, **kwargs)
+
+    async def _run_non_streaming(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -560,26 +612,13 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            thread: The conversation thread. If thread has service_thread_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            AgentResponse with the agent's response.
-        """
+        """Internal non-streaming implementation."""
         thread = thread or self.get_new_thread()
-        return await AgentResponse.from_agent_response_generator(
-            self.run_stream(messages, thread=thread, options=options, **kwargs)
+        return await AgentResponse.from_update_generator(
+            self._run_streaming(messages, thread=thread, options=options, **kwargs)
         )
 
-    async def run_stream(
+    async def _run_streaming(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -587,20 +626,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Stream the agent's response.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            thread: The conversation thread. If thread has service_thread_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            AgentResponseUpdate objects containing chunks of the response.
-        """
+        """Internal streaming implementation."""
         thread = thread or self.get_new_thread()
 
         # Ensure we're connected to the right session
