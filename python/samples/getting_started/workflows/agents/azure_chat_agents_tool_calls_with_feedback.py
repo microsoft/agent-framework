@@ -243,14 +243,13 @@ async def main() -> None:
         WorkflowBuilder()
         .register_agent(create_writer_agent, name="writer_agent")
         .register_agent(create_final_editor_agent, name="final_editor_agent")
-        .register_executor(
-            lambda: Coordinator(
+        .register_executors({
+            "coordinator": lambda: Coordinator(
                 id="coordinator",
                 writer_id="writer_agent",
                 final_editor_id="final_editor_agent",
             ),
-            name="coordinator",
-        )
+        })
         .set_start_executor("writer_agent")
         .add_edge("writer_agent", "coordinator")
         .add_edge("coordinator", "writer_agent")
