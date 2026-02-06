@@ -383,7 +383,7 @@ class AgentFunctionApp(DFAppBase):
                 }
 
             result = asyncio.run(run())
-            return json_module.dumps(result)
+            return json.dumps(result)
 
         # Ensure the function is registered (prevents garbage collection)
         _ = executor_activity
