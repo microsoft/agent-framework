@@ -320,11 +320,16 @@ async def test_context_provider_preserved_during_handoff():
     # Create context provider
     context_provider = TestContextProvider()
 
-    # Create agent with context provider using the MockHandoffAgent pattern
-    agent = MockHandoffAgent(name="test_agent")
+    # Create a mock chat client
+    mock_client = MockChatClient(name="test_agent")
     
-    # Manually set the context_provider on the agent
-    agent.context_provider = context_provider
+    # Create agent with context provider using proper constructor
+    agent = ChatAgent(
+        chat_client=mock_client,
+        name="test_agent",
+        id="test_agent",
+        context_provider=context_provider,
+    )
 
     # Verify the original agent has the context provider
     assert agent.context_provider is context_provider, "Original agent should have context provider"
@@ -332,16 +337,13 @@ async def test_context_provider_preserved_during_handoff():
     # Build handoff workflow - this should clone the agent and preserve context_provider
     workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
 
-    # Get the cloned agent from the workflow executor
-    cloned_executor = workflow.executors.get("test_agent")
-    assert cloned_executor is not None, "Agent executor should exist in workflow"
+    # Run workflow with a simple message to trigger context provider
+    events = await _drain(workflow.run("Test message", stream=True))
     
-    # Verify the context_provider is preserved in the cloned agent
-    # The executor wraps the agent in the _agent property
-    assert hasattr(cloned_executor, '_agent'), "Executor should have _agent property"
-    cloned_agent = cloned_executor._agent
-    assert cloned_agent.context_provider is context_provider, (
-        "Context provider should be preserved when cloning agent for handoff workflow"
+    # Verify context provider was invoked during the workflow execution
+    assert len(provider_calls) > 0, (
+        "Context provider should be called during workflow execution, "
+        "indicating it was properly preserved during agent cloning"
     )
 
 
