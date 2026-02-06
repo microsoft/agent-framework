@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from ._middleware import AgentContext
 
 __all__ = [
-    "agent_run_scope",
     "get_current_agent_run_context",
 ]
 

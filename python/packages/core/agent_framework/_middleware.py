@@ -1211,7 +1211,7 @@ class AgentMiddlewareLayer:
 
             async def _no_middleware_run() -> AgentResponse:
                 with agent_run_scope(context):
-                    return await super(AgentMiddlewareLayer, self).run(  # type: ignore[misc]
+                    return await super(AgentMiddlewareLayer, self).run(  # type: ignore[misc, no-any-return]
                         messages, stream=False, thread=thread, options=options, **combined_kwargs
                     )
 

@@ -129,3 +129,30 @@ class TestAgentContext:
 
         assert captured_context is not None
         assert captured_context.agent is agent
+
+    async def test_context_available_in_streaming_middleware(self, chat_client: MockChatClient) -> None:
+        """Test that agent run context is available in middleware during streaming."""
+        captured_context: AgentContext | None = None
+
+        @agent_middleware
+        async def capture_middleware(
+            context: AgentContext, next_handler: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
+            nonlocal captured_context
+            captured_context = get_current_agent_run_context()
+            await next_handler(context)
+
+        chat_client.responses = [
+            ChatResponse(messages=[ChatMessage("assistant", ["Streaming response"])]),
+        ]
+
+        agent = ChatAgent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
+
+        # Run with streaming and consume the response
+        async for _update in agent.run("Test message", stream=True):
+            pass
+
+        # Context should have been available in middleware
+        assert captured_context is not None
+        assert captured_context.agent is agent
+        assert captured_context.stream is True
