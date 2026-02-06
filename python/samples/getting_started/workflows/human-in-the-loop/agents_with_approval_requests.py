@@ -5,9 +5,16 @@ import json
 from dataclasses import dataclass
 from typing import Annotated
 
-from agent_framework import (AgentExecutorResponse, Content, Executor,
-                             WorkflowBuilder, WorkflowContext, executor,
-                             handler, tool)
+from agent_framework import (
+    AgentExecutorResponse,
+    Content,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+    handler,
+    tool,
+)
 from agent_framework.openai import OpenAIChatClient
 from typing_extensions import Never
 

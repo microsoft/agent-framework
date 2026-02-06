@@ -4,10 +4,18 @@ import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 
-from agent_framework import (AgentExecutorRequest, AgentExecutorResponse,
-                             AgentResponseUpdate, ChatMessage, Executor,
-                             WorkflowBuilder, WorkflowContext, WorkflowEvent,
-                             handler, response_handler)
+from agent_framework import (
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+    AgentResponseUpdate,
+    ChatMessage,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    WorkflowEvent,
+    handler,
+    response_handler,
+)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel

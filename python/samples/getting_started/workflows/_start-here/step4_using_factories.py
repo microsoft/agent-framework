@@ -2,9 +2,15 @@
 
 import asyncio
 
-from agent_framework import (AgentResponseUpdate, ChatAgent, Executor,
-                             WorkflowBuilder, WorkflowContext, executor,
-                             handler)
+from agent_framework import (
+    AgentResponseUpdate,
+    ChatAgent,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+    handler,
+)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -68,12 +74,10 @@ async def main():
     # 5) build() finalizes and returns an immutable Workflow object
     workflow = (
         WorkflowBuilder()
-        .register_executors(
-            {
-                "UpperCase": lambda: UpperCase(id="upper_case_executor"),
-                "ReverseText": lambda: reverse_text,
-            }
-        )
+        .register_executors({
+            "UpperCase": lambda: UpperCase(id="upper_case_executor"),
+            "ReverseText": lambda: reverse_text,
+        })
         .register_agent(create_agent, name="DecoderAgent")
         .add_chain(["UpperCase", "ReverseText", "DecoderAgent"])
         .set_start_executor("UpperCase")

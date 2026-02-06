@@ -2,8 +2,14 @@
 
 import asyncio
 
-from agent_framework import (ChatAgent, ChatMessage, Executor, WorkflowBuilder,
-                             WorkflowContext, handler)
+from agent_framework import (
+    ChatAgent,
+    ChatMessage,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+)
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -18,7 +24,7 @@ Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow ex
 pattern with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder,
 and finish by yielding outputs from the terminal node.
 
-Note: When an agent is passed to a workflow, the workflow essenatially wrap the agent in a more sophisticated executor.
+Note: When an agent is passed to a workflow, the workflow essentially wraps the agent in a more sophisticated executor.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
