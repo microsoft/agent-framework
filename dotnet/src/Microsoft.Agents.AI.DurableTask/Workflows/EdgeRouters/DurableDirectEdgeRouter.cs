@@ -1,5 +1,34 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// Routing decision flow for a single edge.
+// Example: the B→D edge from a workflow like below:
+//
+//     [A] ──► [B] ──► [C] ──► [E]          (B→D has condition: x => x.NeedsReview)
+//              │               ▲
+//              └──► [D] ──────┘
+//
+//   (condition: x => x.NeedsReview, _sourceOutputType: typeof(Order))
+//
+//  RouteMessage(envelope)          envelope.Message = "{\"NeedsReview\":true, ...}"
+//       │
+//       ▼
+//  Has condition? ──── No ────► Enqueue to sink's queue
+//       │
+//      Yes  (B→D has one)
+//       │
+//       ▼
+//  Deserialize message             JSON string → Order object using _sourceOutputType
+//       │
+//       ▼
+//  Evaluate _condition(order)      order => order.NeedsReview
+//       │
+//    ┌──┴──┐
+//  true   false
+//    │      │
+//    ▼      └──► Skip (log and return, D will not run)
+//  Enqueue to
+//  D's queue
+
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -9,6 +38,20 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
 /// <summary>
 /// Routes messages from a source executor to a single target executor with optional condition evaluation.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Created by <see cref="DurableEdgeMap"/> during construction — one instance per (source, sink) edge.
+/// When an edge has a condition (e.g., <c>order =&gt; order.Total &gt; 1000</c>), the router deserialises
+/// the serialised JSON message back to the source executor's output type so the condition delegate
+/// can evaluate it against strongly-typed properties. If the condition returns <c>false</c>, the
+/// message is not forwarded and the target executor will not run for this edge.
+/// </para>
+/// <para>
+/// For sources with multiple successors, individual <see cref="DurableDirectEdgeRouter"/> instances
+/// are wrapped in a <see cref="DurableFanOutEdgeRouter"/> so a single <c>RouteMessage</c> call
+/// fans the same message out to all targets, each evaluating its own condition independently.
+/// </para>
+/// </remarks>
 internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
 {
     private readonly string _sourceId;

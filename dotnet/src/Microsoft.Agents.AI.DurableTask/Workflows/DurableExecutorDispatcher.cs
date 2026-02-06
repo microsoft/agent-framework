@@ -16,6 +16,13 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// <summary>
 /// Dispatches workflow executors to either activities or AI agents.
 /// </summary>
+/// <remarks>
+/// Called during the dispatch phase of each superstep by
+/// <c>DurableWorkflowRunner.DispatchExecutorsInParallelAsync</c>. For each executor that has
+/// pending input, this dispatcher determines whether the executor is an AI agent (stateful,
+/// backed by Durable Entities) or a regular activity, and invokes the appropriate Durable Task API.
+/// The serialised string result is returned to the runner for the routing phase.
+/// </remarks>
 internal static class DurableExecutorDispatcher
 {
     /// <summary>

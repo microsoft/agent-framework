@@ -32,8 +32,18 @@ internal static class WorkflowAnalyzer
     /// Builds the workflow graph information needed for message-driven execution.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Extracts routing information including successors, predecessors, edge conditions,
     /// and output types. Supports cyclic workflows through message-driven superstep execution.
+    /// </para>
+    /// <para>
+    /// The returned <see cref="WorkflowGraphInfo"/> is consumed by <c>DurableEdgeMap</c>
+    /// to build the runtime routing layer:
+    /// <c>Successors</c> become <c>IDurableEdgeRouter</c> instances,
+    /// <c>Predecessors</c> become fan-in counts, and
+    /// <c>EdgeConditions</c> / <c>ExecutorOutputTypes</c> are passed into
+    /// <c>DurableDirectEdgeRouter</c> for conditional routing with typed deserialization.
+    /// </para>
     /// </remarks>
     /// <param name="workflow">The workflow instance to analyze.</param>
     /// <returns>A graph info object containing routing information.</returns>

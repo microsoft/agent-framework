@@ -7,6 +7,43 @@
 // orchestration's synchronization context, which is essential for replay correctness.
 // Using ConfigureAwait(false) here could cause non-deterministic behavior during replay.
 
+// Superstep execution walkthrough for a workflow like below:
+//
+//     [A] ──► [B] ──► [C] ──► [E]          (B→D has condition: x => x.NeedsReview)
+//              │               ▲
+//              └──► [D] ──────┘
+//
+//  Superstep 1 — A runs
+//    Queues before:  A:[input]                   Results: {}
+//    Dispatch:       A executes, returns resultA
+//    Route:          EdgeMap routes A's output → B's queue
+//    Queues after:   B:[resultA]                 Results: {A: resultA}
+//
+//  Superstep 2 — B runs
+//    Queues before:  B:[resultA]                 Results: {A: resultA}
+//    Dispatch:       B executes, returns resultB (type: Order)
+//    Route:          FanOutRouter sends resultB to:
+//                      C's queue (unconditional)
+//                      D's queue (only if resultB.NeedsReview == true)
+//    Queues after:   C:[resultB], D:[resultB]    Results: {A: .., B: resultB}
+//                    (D may be empty if condition was false)
+//
+//  Superstep 3 — C and D run in parallel
+//    Queues before:  C:[resultB], D:[resultB]
+//    Dispatch:       C and D execute concurrently via Task.WhenAll
+//    Route:          Both route output → E's queue
+//    Queues after:   E:[resultC, resultD]        Results: {.., C: resultC, D: resultD}
+//
+//  Superstep 4 — E runs (fan-in)
+//    Queues before:  E:[resultC, resultD]        ◄── IsFanInExecutor("E") = true
+//    Collect:        AggregateQueueMessages merges into JSON array ["resultC","resultD"]
+//    Dispatch:       E executes with aggregated input
+//    Route:          E has no successors → nothing enqueued
+//    Queues after:   (all empty)                 Results: {.., E: resultE}
+//
+//  Superstep 5 — loop exits (no pending messages)
+//    GetFinalResult returns resultE
+
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
@@ -15,6 +52,17 @@ using Microsoft.DurableTask;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
+
+// Superstep loop:
+//
+//  ┌───────────────┐    ┌───────────────┐    ┌───────────────────┐
+//  │ Collect       │───►│ Dispatch      │───►│ Process Results   │
+//  │ Executor      │    │ Executors     │    │ & Route Messages  │
+//  │ Inputs        │    │ in Parallel   │    │                   │
+//  └───────────────┘    └───────────────┘    └───────────────────┘
+//         ▲                                           │
+//         └───────────────────────────────────────────┘
+//                    (repeat until no pending messages)
 
 /// <summary>
 /// Runs workflow orchestrations using message-driven superstep execution with Durable Task.
@@ -159,6 +207,18 @@ internal sealed class DurableWorkflowRunner
     /// <summary>
     /// Holds state that accumulates and changes across superstep iterations during workflow execution.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>MessageQueues</c> starts with one entry (the start executor's queue, seeded by
+    /// <see cref="DurableEdgeMap.EnqueueInitialInput"/>). After each superstep, <c>RouteOutputToSuccessors</c>
+    /// adds entries for successor executors that receive routed messages. Queues are drained during
+    /// <c>CollectExecutorInputs</c>; empty queues are skipped.
+    /// </para>
+    /// <para>
+    /// <c>LastResults</c> is updated after every superstep with the result of each executor that ran.
+    /// At workflow completion, the last non-empty value is returned as the workflow's final result.
+    /// </para>
+    /// </remarks>
     private sealed class SuperstepState
     {
         public SuperstepState(Workflow workflow, DurableEdgeMap edgeMap)

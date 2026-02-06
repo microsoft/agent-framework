@@ -1,5 +1,53 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// Example: Given this workflow graph with a fan-out from B and a fan-in at E,
+// plus a conditional edge from B to D:
+//
+//     [A] ──► [B] ──► [C] ──► [E]
+//              │               ▲
+//              └──► [D] ──────┘
+//                (condition:
+//                 x => x.NeedsReview)
+//
+// WorkflowAnalyzer.BuildGraphInfo() produces:
+//
+//  StartExecutorId = "A"
+//
+//  Successors (who does each executor send output to?):
+//  ┌──────────┬──────────────┐
+//  │ "A"      │ ["B"]        │
+//  │ "B"      │ ["C", "D"]   │  ◄── fan-out: B sends to both C and D
+//  │ "C"      │ ["E"]        │
+//  │ "D"      │ ["E"]        │
+//  │ "E"      │ []           │  ◄── terminal: no successors
+//  └──────────┴──────────────┘
+//
+//  Predecessors (who feeds into each executor?):
+//  ┌──────────┬──────────────┐
+//  │ "A"      │ []           │  ◄── start: no predecessors
+//  │ "B"      │ ["A"]        │
+//  │ "C"      │ ["B"]        │
+//  │ "D"      │ ["B"]        │
+//  │ "E"      │ ["C", "D"]   │  ◄── fan-in: count=2, messages will be aggregated
+//  └──────────┴──────────────┘
+//
+//  EdgeConditions (which edges have routing conditions?):
+//  ┌──────────────────┬──────────────────────────┐
+//  │ ("B", "D")       │ x => x.NeedsReview       │  ◄── D only receives if condition is true
+//  └──────────────────┴──────────────────────────┘
+//  (The B→C edge has no condition, so C always receives B's output.)
+//
+//  ExecutorOutputTypes (what type does each executor return?):
+//  ┌──────────┬──────────────────┐
+//  │ "A"      │ typeof(string)   │  ◄── used by DurableDirectEdgeRouter to deserialize
+//  │ "B"      │ typeof(Order)    │      the JSON message for condition evaluation
+//  │ "C"      │ typeof(Report)   │
+//  │ "D"      │ typeof(Report)   │
+//  │ "E"      │ typeof(string)   │
+//  └──────────┴──────────────────┘
+//
+// DurableEdgeMap then consumes this to build the runtime routing layer.
+
 using System.Diagnostics;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
