@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from opentelemetry import trace
+
 from .._agents import AgentProtocol
 from .._threads import AgentThread
 from ..observability import OtelAttr, capture_exception, create_workflow_span
@@ -1271,7 +1273,7 @@ class WorkflowBuilder:
 
     def _create_workflow_from_resolved_registry(
         self,
-        span: Any,
+        span: trace.Span,
         start_executor: Executor,
         deferred_executors: dict[str, Executor],
         deferred_edge_groups: list[EdgeGroup],
