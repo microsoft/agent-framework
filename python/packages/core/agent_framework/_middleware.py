@@ -1240,7 +1240,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         else:
             # Not enough parameters - can't be valid middleware
             raise MiddlewareException(
-                f"MiddlewareTypes function must have at least 2 parameters (context, call_next), "
+                f"Middleware function must have at least 2 parameters (context, call_next), "
                 f"but {middleware.__name__} has {len(params)}"
             )
     except Exception as e:
