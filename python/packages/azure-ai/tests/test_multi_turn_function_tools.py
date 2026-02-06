@@ -3,7 +3,7 @@
 """Test multi-turn conversations with function tools in Azure AI."""
 
 from typing import Annotated
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import ChatMessage, Content, tool
@@ -30,7 +30,7 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
     mock_project_client = AsyncMock()
     mock_agents = AsyncMock()
     mock_project_client.agents = mock_agents
-    
+
     # Mock agent creation
     mock_agent_version = MagicMock()
     mock_agent_version.id = "agent_id_123"
@@ -43,14 +43,14 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
         tools=[],
     )
     mock_agents.create_version = AsyncMock(return_value=mock_agent_version)
-    
+
     # Mock OpenAI client that tracks requests
     requests_made = []
-    
+
     def mock_create_response(**kwargs):
         """Mock response creation that tracks inputs."""
         requests_made.append(kwargs)
-        
+
         # Simulate a response with function call on turn 1
         if len(requests_made) == 1:
             mock_response = MagicMock()
@@ -59,7 +59,7 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
             mock_response.model = "gpt-4"
             mock_response.usage = None
             mock_response.metadata = {}
-            
+
             # Return a function call
             mock_function_call = MagicMock()
             mock_function_call.type = "function_call"
@@ -67,33 +67,32 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
             mock_function_call.call_id = "call_123"
             mock_function_call.name = "calculate_tip"
             mock_function_call.arguments = '{"bill_amount": 85, "tip_percent": 15}'
-            
+
             mock_response.output = [mock_function_call]
             return mock_response
-        else:
-            # Turn 2: Return a text response
-            mock_response = MagicMock()
-            mock_response.id = "resp_turn2"
-            mock_response.created_at = 1234567891
-            mock_response.model = "gpt-4"
-            mock_response.usage = None
-            mock_response.metadata = {}
-            
-            mock_message = MagicMock()
-            mock_message.type = "message"
-            mock_text = MagicMock()
-            mock_text.type = "output_text"
-            mock_text.text = "The 20% tip is calculated."
-            mock_message.content = [mock_text]
-            
-            mock_response.output = [mock_message]
-            return mock_response
-    
+        # Turn 2: Return a text response
+        mock_response = MagicMock()
+        mock_response.id = "resp_turn2"
+        mock_response.created_at = 1234567891
+        mock_response.model = "gpt-4"
+        mock_response.usage = None
+        mock_response.metadata = {}
+
+        mock_message = MagicMock()
+        mock_message.type = "message"
+        mock_text = MagicMock()
+        mock_text.type = "output_text"
+        mock_text.text = "The 20% tip is calculated."
+        mock_message.content = [mock_text]
+
+        mock_response.output = [mock_message]
+        return mock_response
+
     mock_openai_client = MagicMock()
     mock_openai_client.responses = MagicMock()
     mock_openai_client.responses.create = AsyncMock(side_effect=mock_create_response)
     mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
-    
+
     # Create provider and agent
     provider = AzureAIProjectAgentProvider(project_client=mock_project_client, model="gpt-4")
     agent = await provider.create_agent(
@@ -101,45 +100,45 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
         instructions="Use the calculate_tip tool to help with calculations.",
         tools=[calculate_tip],
     )
-    
+
     # Single thread for multi-turn (BUG TRIGGER)
     thread = agent.get_new_thread()
-    
+
     # Turn 1: Should work fine
     result1 = await agent.run("Calculate 15% tip on an $85 bill", thread=thread)
     assert result1 is not None
-    
+
     # Check Turn 1 request - should have the user message
     turn1_request = requests_made[0]
     turn1_input = turn1_request["input"]
     assert any(item.get("role") == "user" for item in turn1_input if isinstance(item, dict))
-    
+
     # Turn 2: Should NOT re-submit function call results from Turn 1
     result2 = await agent.run("Now calculate 20% tip on the same $85 bill", thread=thread)
     assert result2 is not None
-    
+
     # Check Turn 2 request - should NOT have function_call_output from Turn 1
     turn2_request = requests_made[-1]  # Last request made (after function execution)
     turn2_input = turn2_request["input"]
-    
+
     # Count function_call_output items in turn 2
-    function_outputs_count = sum(
-        1 for item in turn2_input 
+    sum(
+        1 for item in turn2_input
         if isinstance(item, dict) and item.get("type") == "function_call_output"
     )
-    
+
     # The key assertion: Turn 2 should only have NEW function outputs (from turn 2's function calls)
     # If it has function outputs from turn 1, that's the bug we're fixing
     # Since turn 2 likely also has a function call, we need to check that old outputs aren't there
-    
+
     # A more robust check: verify that turn 2's input doesn't contain the call_id from turn 1
     turn1_call_id = "call_123"
     has_old_function_output = any(
         item.get("type") == "function_call_output" and item.get("call_id") == turn1_call_id
-        for item in turn2_input 
+        for item in turn2_input
         if isinstance(item, dict)
     )
-    
+
     assert not has_old_function_output, (
         "Turn 2 should not re-submit function_call_output from Turn 1. "
         "Found old function output with call_id from Turn 1."
@@ -153,7 +152,7 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
     mock_project_client = AsyncMock()
     mock_agents = AsyncMock()
     mock_project_client.agents = mock_agents
-    
+
     # Mock agent creation
     mock_agent_version = MagicMock()
     mock_agent_version.id = "agent_id_123"
@@ -166,10 +165,10 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
         tools=[],
     )
     mock_agents.create_version = AsyncMock(return_value=mock_agent_version)
-    
+
     # Mock OpenAI client
     requests_made = []
-    
+
     def mock_create_response(**kwargs):
         """Mock response creation."""
         requests_made.append(kwargs)
@@ -187,12 +186,12 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
         mock_message.content = [mock_text]
         mock_response.output = [mock_message]
         return mock_response
-    
+
     mock_openai_client = MagicMock()
     mock_openai_client.responses = MagicMock()
     mock_openai_client.responses.create = AsyncMock(side_effect=mock_create_response)
     mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
-    
+
     # Create provider and agent
     provider = AzureAIProjectAgentProvider(project_client=mock_project_client, model="gpt-4")
     agent = await provider.create_agent(
@@ -200,17 +199,17 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
         instructions="You are a helpful assistant.",
         tools=[calculate_tip],
     )
-    
+
     # Manually create a thread with a stored function result from a previous turn
     thread = agent.get_new_thread()
-    
+
     # Simulate turn 1 already completed - add messages to thread manually
     turn1_user_msg = ChatMessage(
         role="user",
         contents=[Content.from_text("Calculate 15% tip on $85")]
     )
     turn1_function_call = ChatMessage(
-        role="assistant", 
+        role="assistant",
         contents=[Content.from_function_call(
             call_id="call_old_123",
             name="calculate_tip",
@@ -228,26 +227,26 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
         role="assistant",
         contents=[Content.from_text("The tip is $12.75")]
     )
-    
+
     await thread.on_new_messages([
         turn1_user_msg,
         turn1_function_call,
         turn1_function_result,
         turn1_assistant_msg
     ])
-    
+
     # Set the service_thread_id to simulate having a previous response
     thread._service_thread_id = "resp_turn1"
-    
+
     # Turn 2: New user message
     result2 = await agent.run("Now calculate 20% tip", thread=thread)
     assert result2 is not None
-    
+
     # Check that turn 2 request has previous_response_id set
     turn2_request = requests_made[0]
     assert "previous_response_id" in turn2_request
     assert turn2_request["previous_response_id"] == "resp_turn1"
-    
+
     # Check that turn 2 input doesn't contain the OLD function result
     turn2_input = turn2_request["input"]
     has_old_function_output = any(
@@ -255,11 +254,11 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
         for item in turn2_input
         if isinstance(item, dict)
     )
-    
+
     assert not has_old_function_output, (
         "When using previous_response_id, old function results should not be re-submitted"
     )
-    
+
     # Turn 2 should only have the NEW user message
     user_messages = [
         item for item in turn2_input

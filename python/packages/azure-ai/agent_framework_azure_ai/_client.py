@@ -491,7 +491,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         self, messages: Sequence[ChatMessage], options: Mapping[str, Any], **kwargs: Any
     ) -> tuple[list[ChatMessage], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions.
-        
+
         When using previous_response_id (response chaining), filters out old function results
         and assistant messages since they're already in the server-side conversation history.
         Only NEW user messages should be sent.
@@ -499,7 +499,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         # Check if we're using previous_response_id (response chaining pattern)
         conversation_id = self._get_current_conversation_id(options, **kwargs)
         use_response_chaining = conversation_id is not None and conversation_id.startswith("resp_")
-        
+
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
         instructions: str | None = None
@@ -513,11 +513,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 # When using response chaining, filter messages to avoid re-submitting old content:
                 # - Keep NEW user messages (messages that were just added this turn)
                 # - Skip old function results and assistant messages (already in server history)
-                
+
                 # A message is "new" if it only contains user input text/files, not function results
                 # Function results are paired with function calls from the assistant
                 is_new_user_message = (
-                    message.role == "user" 
+                    message.role == "user"
                     and any(
                         content.type in ["text", "image", "hosted_file", "input_audio"]
                         for content in message.contents
@@ -527,7 +527,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                         for content in message.contents
                     )
                 )
-                
+
                 if is_new_user_message:
                     result.append(message)
                 # Skip assistant messages and function result messages when using response chaining
