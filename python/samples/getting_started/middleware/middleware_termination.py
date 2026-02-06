@@ -22,7 +22,7 @@ MiddlewareTypes Termination Example
 This sample demonstrates how middleware can terminate execution using the `context.terminate` flag.
 The example includes:
 
-- PreTerminationMiddleware: Terminates execution before calling next() to prevent agent processing
+- PreTerminationMiddleware: Terminates execution before calling call_next() to prevent agent processing
 - PostTerminationMiddleware: Allows processing to complete but terminates further execution
 
 This is useful for implementing security checks, rate limiting, or early exit conditions.
@@ -48,7 +48,7 @@ class PreTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         # Check if the user message contains any blocked words
         last_message = context.messages[-1] if context.messages else None
@@ -75,7 +75,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     context.terminate = True
                     break
 
-        await next(context)
+        await call_next(context)
 
 
 class PostTerminationMiddleware(AgentMiddleware):
@@ -88,7 +88,7 @@ class PostTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         print(f"[PostTerminationMiddleware] Processing request (response count: {self.response_count})")
 
@@ -101,7 +101,7 @@ class PostTerminationMiddleware(AgentMiddleware):
             context.terminate = True
 
         # Allow the agent to process normally
-        await next(context)
+        await call_next(context)
 
         # Increment response count after processing
         self.response_count += 1
