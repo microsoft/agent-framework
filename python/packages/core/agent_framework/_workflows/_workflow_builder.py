@@ -298,7 +298,7 @@ class WorkflowBuilder:
 
         for name, factory_function in executor_factories.items():
             if not name or not name.strip():
-                raise ValueError("Executor factory name cannot be empty.")
+                raise ValueError("Executor factory name cannot be empty or whitespace-only")
             if not callable(factory_function):
                 raise TypeError(f"Executor factory for '{name}' must be callable.")
             if name in self._executor_registry:
