@@ -39,6 +39,8 @@ from ._handoff import (
     HandoffBuilder,
     HandoffConfiguration,
     HandoffSentEvent,
+    create_handoff_tools,
+    get_handoff_tool_name,
 )
 from ._magentic import (
     MAGENTIC_MANAGER_NAME,
@@ -107,4 +109,6 @@ __all__ = [
     "__version__",
     "clean_conversation_for_handoff",
     "create_completion_message",
+    "create_handoff_tools",
+    "get_handoff_tool_name",
 ]

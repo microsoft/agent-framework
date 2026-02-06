@@ -116,6 +116,75 @@ def get_handoff_tool_name(target_id: str) -> str:
     return f"handoff_to_{target_id}"
 
 
+def create_handoff_tools(
+    target_agent_ids: Sequence[str],
+    descriptions: Mapping[str, str] | None = None,
+) -> list[FunctionTool[Any, Any]]:
+    """Create handoff tools for pre-registration with agents.
+
+    This function is particularly useful when using Azure AI Agent Service or other
+    providers that require tools to be registered at agent creation time rather than
+    at request time. By pre-creating handoff tools, you can include them in the agent's
+    tool list when creating the agent.
+
+    The HandoffBuilder will automatically detect pre-existing handoff tools and skip
+    creating duplicates, ensuring seamless integration.
+
+    Args:
+        target_agent_ids: Sequence of target agent identifiers that can be handed off to.
+        descriptions: Optional mapping of agent IDs to custom tool descriptions.
+                     If not provided, a default description will be used.
+
+    Returns:
+        List of FunctionTool instances ready for use with ChatAgent.
+
+    Example:
+        .. code-block:: python
+
+            from agent_framework.orchestrations import create_handoff_tools
+
+            # Pre-create handoff tools for Azure AI Agent Service compatibility
+            handoff_tools = create_handoff_tools(
+                ["specialist", "escalation"],
+                descriptions={
+                    "specialist": "Route to specialist for technical issues",
+                    "escalation": "Escalate to supervisor for complex cases",
+                },
+            )
+
+            # Include tools when creating the agent
+            agent = ChatAgent(
+                chat_client=azure_client,
+                name="triage",
+                default_options={"tools": handoff_tools + other_tools},
+            )
+
+    See Also:
+        - `get_handoff_tool_name`: Get the standardized tool name for a target agent.
+        - `HandoffBuilder`: Builder for creating handoff workflows.
+    """
+    descriptions = descriptions or {}
+    tools: list[FunctionTool[Any, Any]] = []
+
+    for target_id in target_agent_ids:
+        tool_name = get_handoff_tool_name(target_id)
+        doc = descriptions.get(target_id) or f"Handoff to the {target_id} agent."
+
+        # Note: approval_mode is set to "never_require" for handoff tools because
+        # they are framework-internal signals that trigger routing logic, not
+        # actual function executions. They are automatically intercepted by
+        # _AutoHandoffMiddleware which short-circuits execution and provides synthetic
+        # results, so the function body never actually runs in practice.
+        @tool(name=tool_name, description=doc, approval_mode="never_require")
+        def _handoff_tool(context: str | None = None, *, _target: str = target_id) -> str:
+            """Return a deterministic acknowledgement that encodes the target alias."""
+            return f"Handoff to {_target}"
+
+        tools.append(_handoff_tool)
+
+    return tools
+
+
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"
 
 
@@ -331,11 +400,15 @@ class HandoffAgentExecutor(AgentExecutor):
         for target in targets:
             handoff_tool = self._create_handoff_tool(target.target_id, target.description)
             if handoff_tool.name in existing_names:
-                raise ValueError(
-                    f"Agent '{resolve_agent_id(agent)}' already has a tool named '{handoff_tool.name}'. "
-                    f"Handoff tool name '{handoff_tool.name}' conflicts with existing tool."
-                    "Please rename the existing tool or modify the target agent ID to avoid conflicts."
+                # Skip adding duplicate tools - this supports Azure AI Agent Service
+                # where users pre-create handoff tools using create_handoff_tools()
+                # and register them at agent creation time.
+                logger.debug(
+                    "Handoff tool '%s' already exists for agent '%s', skipping duplicate creation.",
+                    handoff_tool.name,
+                    resolve_agent_id(agent),
                 )
+                continue
             new_tools.append(handoff_tool)
 
         if new_tools:
