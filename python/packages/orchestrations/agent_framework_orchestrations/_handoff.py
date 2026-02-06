@@ -309,7 +309,7 @@ class HandoffAgentExecutor(AgentExecutor):
             name=agent.name,
             description=agent.description,
             chat_message_store_factory=agent.chat_message_store_factory,
-            context_providers=agent.context_provider,
+            context_provider=agent.context_provider,
             middleware=middleware,
             default_options=cloned_options,  # type: ignore[arg-type]
         )

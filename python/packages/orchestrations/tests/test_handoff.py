@@ -11,6 +11,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Context,
+    ContextProvider,
     ResponseStream,
     WorkflowEvent,
     resolve_agent_id,
@@ -301,6 +303,53 @@ async def test_tool_choice_preserved_from_agent_config():
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
     assert last_tool_choice == {"mode": "required"}, f"Expected 'required', got {last_tool_choice}"
+
+
+async def test_context_provider_preserved_during_handoff():
+    """Verify that context_provider is preserved when cloning agents in handoff workflows."""
+    from agent_framework import Context, ContextProvider
+
+    # Track whether context provider methods were called
+    provider_calls: list[str] = []
+
+    class TestContextProvider(ContextProvider):
+        """A test context provider that tracks its invocations."""
+
+        async def invoking(self, messages: Sequence[ChatMessage], **kwargs: Any) -> Context:
+            provider_calls.append("invoking")
+            return Context(instructions="Test context from provider.")
+
+    # Create a mock chat client that validates context_provider is present
+    async def mock_get_response_with_context_check(
+        messages: Sequence[ChatMessage], options: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ChatResponse:
+        return ChatResponse(
+            messages=[ChatMessage(role="assistant", text="Response with context")],
+            response_id="test_response",
+        )
+
+    mock_client = MagicMock()
+    mock_client.get_response = AsyncMock(side_effect=mock_get_response_with_context_check)
+
+    # Create context provider
+    context_provider = TestContextProvider()
+
+    # Create agent with context provider
+    agent = ChatAgent(
+        chat_client=mock_client,
+        name="test_agent",
+        context_provider=context_provider,
+    )
+
+    # Build handoff workflow
+    workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
+
+    # Run the workflow
+    await agent.run("Test message")
+
+    # Verify context provider was invoked
+    assert len(provider_calls) > 0, "Context provider should be called during agent execution"
+    assert provider_calls[0] == "invoking", "Context provider invoking method should be called"
 
 
 # region Participant Factory Tests
