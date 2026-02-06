@@ -55,6 +55,25 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# Source Marker Constants
+# ============================================================================
+# These markers identify the origin of messages in the workflow orchestration.
+# They are used to track message provenance and handle special cases like HITL.
+
+# Marker indicating the message originated from the workflow start (initial user input)
+SOURCE_WORKFLOW_START = "__workflow_start__"
+
+# Marker indicating the message originated from the orchestrator itself
+# (used as default when executor is called directly by orchestrator, not via another executor)
+SOURCE_ORCHESTRATOR = "__orchestrator__"
+
+# Marker indicating the message is a human-in-the-loop response.
+# Used as a source ID prefix. To detect HITL responses, check if any source_executor_id
+# starts with this prefix.
+SOURCE_HITL_RESPONSE = "__hitl_response__"
+
+
+# ============================================================================
 # Task Types and Data Structures
 # ============================================================================
 
@@ -549,8 +568,8 @@ def _route_hitl_response(
     """
     # Create a message structure that the executor can recognize
     # This mimics what the InProcRunnerContext does for request_info responses
+    # Note: HITL origin is identified via source_executor_ids (starting with SOURCE_HITL_RESPONSE)
     response_message = {
-        "__hitl_response__": True,
         "request_id": hitl_request.request_id,
         "original_request": hitl_request.request_data,
         "response": raw_response,
@@ -562,7 +581,7 @@ def _route_hitl_response(
         pending_messages[target_id] = []
 
     # Use a special source ID to indicate this is a HITL response
-    source_id = f"__hitl_response__{hitl_request.request_id}"
+    source_id = f"{SOURCE_HITL_RESPONSE}_{hitl_request.request_id}"
     pending_messages[target_id].append((response_message, source_id))
 
     logger.debug(
@@ -614,7 +633,7 @@ def run_workflow_orchestrator(
         List of workflow outputs collected from executor activities
     """
     pending_messages: dict[str, list[tuple[Any, str]]] = {
-        workflow.start_executor_id: [(initial_message, "__workflow_start__")]
+        workflow.start_executor_id: [(initial_message, SOURCE_WORKFLOW_START)]
     }
     workflow_outputs: list[Any] = []
     iteration = 0
@@ -943,7 +962,7 @@ async def execute_hitl_response_handler(
     # Use a special source ID to indicate this is a HITL response
     ctx = WorkflowContext(
         executor=executor,
-        source_executor_ids=["__hitl_response__"],
+        source_executor_ids=[SOURCE_HITL_RESPONSE],
         runner_context=runner_context,
         shared_state=shared_state,
     )
