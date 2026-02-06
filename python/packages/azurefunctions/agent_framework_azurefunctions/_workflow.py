@@ -871,41 +871,38 @@ def _extract_message_content(message: Any) -> str:
 
 
 def _extract_message_content_from_dict(message: dict[str, Any]) -> str:
-    """Extract text content from serialized message dictionaries."""
-    message_content = ""
+    """Extract text content from serialized message dictionaries.
 
-    if message.get("messages"):
-        # AgentExecutorRequest dict - messages is a list of ChatMessage dicts
-        last_msg = message["messages"][-1]
-        if isinstance(last_msg, dict):
-            # ChatMessage serialized via to_dict() has structure:
-            # {"type": "chat_message", "contents": [{"type": "text", "text": "..."}], ...}
-            if last_msg.get("contents"):
-                first_content = last_msg["contents"][0]
-                if isinstance(first_content, dict):
-                    message_content = first_content.get("text") or ""
-            # Fallback to direct text field if not in contents structure
-            if not message_content:
-                message_content = last_msg.get("text") or last_msg.get("_text") or ""
-        elif hasattr(last_msg, "text"):
-            message_content = last_msg.text or ""
-    elif "agent_response" in message:
-        # AgentExecutorResponse dict
-        arr = message.get("agent_response", {})
-        if isinstance(arr, dict):
-            message_content = arr.get("text") or ""
-            if not message_content and arr.get("messages"):
-                last_msg = arr["messages"][-1]
-                if isinstance(last_msg, dict):
-                    # Check for contents structure first
-                    if last_msg.get("contents"):
-                        first_content = last_msg["contents"][0]
-                        if isinstance(first_content, dict):
-                            message_content = first_content.get("text") or ""
-                    if not message_content:
-                        message_content = last_msg.get("text") or last_msg.get("_text") or ""
+    Uses MAF's from_dict() methods to reconstruct objects before extracting text.
+    Returns empty string if the message format is not recognized.
+    """
+    # Try to reconstruct as AgentExecutorResponse
+    if "executor_id" in message and "agent_response" in message:
+        try:
+            reconstructed = AgentExecutorResponse.from_dict(message)
+            return _extract_message_content(reconstructed)
+        except Exception:
+            logger.debug("Could not reconstruct AgentExecutorResponse")
 
-    return message_content
+    # Try to reconstruct as AgentExecutorRequest
+    if "messages" in message and "should_respond" in message:
+        try:
+            reconstructed = AgentExecutorRequest.from_dict(message)
+            return _extract_message_content(reconstructed)
+        except Exception:
+            logger.debug("Could not reconstruct AgentExecutorRequest")
+
+    # Try to reconstruct as ChatMessage
+    if message.get("type") == "chat_message" or "contents" in message:
+        try:
+            reconstructed = ChatMessage.from_dict(message)
+            return reconstructed.text or ""
+        except Exception:
+            logger.debug("Could not reconstruct ChatMessage")
+
+    # Unrecognized format - return empty string
+    logger.debug("Unrecognized message format, returning empty string. Keys: %s", list(message.keys()))
+    return ""
 
 
 # ============================================================================
