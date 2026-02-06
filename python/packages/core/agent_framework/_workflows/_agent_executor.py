@@ -9,7 +9,7 @@ from typing_extensions import Never
 
 from agent_framework import Content
 
-from .._agents import AgentProtocol
+from .._agents import SupportsAgentRun
 from .._threads import AgentThread
 from .._types import AgentResponse, AgentResponseUpdate, ChatMessage
 from ._agent_utils import resolve_agent_id
@@ -80,7 +80,7 @@ class AgentExecutor(Executor):
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         *,
         agent_thread: AgentThread | None = None,
         id: str | None = None,

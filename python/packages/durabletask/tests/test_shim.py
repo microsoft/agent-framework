@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentProtocol, ChatMessage
+from agent_framework import ChatMessage, SupportsAgentRun
 from pydantic import BaseModel
 
 from agent_framework_durabletask import DurableAgentThread
@@ -142,15 +142,15 @@ class TestDurableAIAgentParameterFlow:
         assert kwargs["run_request"].response_format == ResponseFormatModel
 
 
-class TestDurableAIAgentProtocolCompliance:
-    """Test that DurableAIAgent implements AgentProtocol correctly."""
+class TestDurableAISupportsAgentRunCompliance:
+    """Test that DurableAIAgent implements SupportsAgentRun correctly."""
 
     def test_agent_implements_protocol(self, test_agent: DurableAIAgent[Any]) -> None:
-        """Verify DurableAIAgent implements AgentProtocol."""
-        assert isinstance(test_agent, AgentProtocol)
+        """Verify DurableAIAgent implements SupportsAgentRun."""
+        assert isinstance(test_agent, SupportsAgentRun)
 
     def test_agent_has_required_properties(self, test_agent: DurableAIAgent[Any]) -> None:
-        """Verify DurableAIAgent has all required AgentProtocol properties."""
+        """Verify DurableAIAgent has all required SupportsAgentRun properties."""
         assert hasattr(test_agent, "id")
         assert hasattr(test_agent, "name")
         assert hasattr(test_agent, "display_name")

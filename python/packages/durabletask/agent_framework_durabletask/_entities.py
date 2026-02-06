@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from agent_framework import (
-    AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     ChatMessage,
     Content,
     ResponseStream,
+    SupportsAgentRun,
     get_logger,
 )
 from durabletask.entities import DurableEntity
@@ -86,12 +86,12 @@ class AgentEntity:
     This class encapsulates the core logic for executing an agent within a durable entity context.
     """
 
-    agent: AgentProtocol
+    agent: SupportsAgentRun
     callback: AgentResponseCallbackProtocol | None
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
         *,
         state_provider: AgentEntityStateProviderMixin,

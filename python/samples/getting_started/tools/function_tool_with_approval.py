@@ -8,7 +8,7 @@ from agent_framework import AgentResponse, ChatAgent, ChatMessage, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:
-    from agent_framework import AgentProtocol
+    from agent_framework import SupportsAgentRun
 
 """
 Demonstration of a tool with approvals.
@@ -40,7 +40,7 @@ def get_weather_detail(location: Annotated[str, "The city and state, e.g. San Fr
     )
 
 
-async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentResponse:
+async def handle_approvals(query: str, agent: "SupportsAgentRun") -> AgentResponse:
     """Handle function call approvals.
 
     When we don't have a thread, we need to ensure we include the original query,
@@ -75,7 +75,7 @@ async def handle_approvals(query: str, agent: "AgentProtocol") -> AgentResponse:
     return result
 
 
-async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None:
+async def handle_approvals_streaming(query: str, agent: "SupportsAgentRun") -> None:
     """Handle function call approvals with streaming responses.
 
     When we don't have a thread, we need to ensure we include the original query,

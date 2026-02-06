@@ -163,14 +163,14 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["AgentProtocol", "BareAgent", "BaseAgent", "ChatAgent", "RawChatAgent"]
+__all__ = ["BareAgent", "BaseAgent", "ChatAgent", "RawChatAgent", "SupportsAgentRun"]
 
 
 # region Agent Protocol
 
 
 @runtime_checkable
-class AgentProtocol(Protocol):
+class SupportsAgentRun(Protocol):
     """A protocol for an agent that can be invoked.
 
     This protocol defines the interface that all agents must implement,
@@ -185,11 +185,11 @@ class AgentProtocol(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentProtocol
+            from agent_framework import SupportsAgentRun
 
 
             # Any class implementing the required methods is compatible
-            # No need to inherit from AgentProtocol or use any framework classes
+            # No need to inherit from SupportsAgentRun or use any framework classes
             class CustomAgent:
                 def __init__(self):
                     self.id = "custom-agent-001"
@@ -218,7 +218,7 @@ class AgentProtocol(Protocol):
 
             # Verify the instance satisfies the protocol
             instance = CustomAgent()
-            assert isinstance(instance, AgentProtocol)
+            assert isinstance(instance, SupportsAgentRun)
     """
 
     id: str
@@ -297,7 +297,7 @@ class BaseAgent(SerializationMixin):
 
     Note:
         BaseAgent cannot be instantiated directly as it doesn't implement the
-        ``run()`` and other methods required by AgentProtocol.
+        ``run()`` and other methods required by SupportsAgentRun.
         Use a concrete implementation like ChatAgent or create a subclass.
 
     Examples:
@@ -451,7 +451,7 @@ class BaseAgent(SerializationMixin):
             A FunctionTool that can be used as a tool by other agents.
 
         Raises:
-            TypeError: If the agent does not implement AgentProtocol.
+            TypeError: If the agent does not implement SupportsAgentRun.
             ValueError: If the agent tool name cannot be determined.
 
         Examples:
@@ -468,9 +468,9 @@ class BaseAgent(SerializationMixin):
                 # Use the tool with another agent
                 coordinator = ChatAgent(chat_client=client, name="coordinator", tools=research_tool)
         """
-        # Verify that self implements AgentProtocol
-        if not isinstance(self, AgentProtocol):
-            raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
+        # Verify that self implements SupportsAgentRun
+        if not isinstance(self, SupportsAgentRun):
+            raise TypeError(f"Agent {self.__class__.__name__} must implement SupportsAgentRun to be used as a tool")
 
         tool_name = name or _sanitize_agent_name(self.name)
         if tool_name is None:

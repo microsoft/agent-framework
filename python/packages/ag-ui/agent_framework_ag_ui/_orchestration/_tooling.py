@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agent_framework import BaseChatClient
 
 if TYPE_CHECKING:
-    from agent_framework import AgentProtocol
+    from agent_framework import SupportsAgentRun
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def _collect_mcp_tool_functions(mcp_tools: list[Any]) -> list[Any]:
     return functions
 
 
-def collect_server_tools(agent: "AgentProtocol") -> list[Any]:
+def collect_server_tools(agent: "SupportsAgentRun") -> list[Any]:
     """Collect server tools from an agent.
 
     This includes both regular tools from default_options and MCP tools.
@@ -64,7 +64,7 @@ def collect_server_tools(agent: "AgentProtocol") -> list[Any]:
     return server_tools
 
 
-def register_additional_client_tools(agent: "AgentProtocol", client_tools: list[Any] | None) -> None:
+def register_additional_client_tools(agent: "SupportsAgentRun", client_tools: list[Any] | None) -> None:
     """Register client tools as additional declaration-only tools to avoid server execution.
 
     Args:

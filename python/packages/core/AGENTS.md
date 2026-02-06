@@ -25,7 +25,7 @@ agent_framework/
 
 ### Agents (`_agents.py`)
 
-- **`AgentProtocol`** - Protocol defining the agent interface
+- **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
 - **`ChatAgent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
 

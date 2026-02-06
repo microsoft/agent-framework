@@ -34,7 +34,7 @@ else:
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from ._agents import AgentProtocol
+    from ._agents import SupportsAgentRun
     from ._clients import ChatClientProtocol
     from ._threads import AgentThread
     from ._tools import FunctionTool
@@ -64,7 +64,7 @@ __all__ = [
     "function_middleware",
 ]
 
-TAgent = TypeVar("TAgent", bound="AgentProtocol")
+AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 TContext = TypeVar("TContext")
 TUpdate = TypeVar("TUpdate")
 
@@ -154,7 +154,7 @@ class AgentContext:
     def __init__(
         self,
         *,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         messages: list[ChatMessage],
         thread: AgentThread | None = None,
         options: Mapping[str, Any] | None = None,

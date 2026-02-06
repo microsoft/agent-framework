@@ -26,7 +26,7 @@ def build_chat_client(streaming_chat_client_stub, stream_from_updates_fixture):
 
 
 async def test_add_endpoint_with_agent_protocol(build_chat_client):
-    """Test adding endpoint with raw AgentProtocol."""
+    """Test adding endpoint with raw SupportsAgentRun."""
     app = FastAPI()
     agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
 

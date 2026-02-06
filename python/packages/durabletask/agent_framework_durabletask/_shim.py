@@ -2,7 +2,7 @@
 
 """Durable Agent Shim for Durable Task Framework.
 
-This module provides the DurableAIAgent shim that implements AgentProtocol
+This module provides the DurableAIAgent shim that implements SupportsAgentRun
 and provides a consistent interface for both Client and Orchestration contexts.
 The actual execution is delegated to the context-specific providers.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentProtocol, AgentThread, ChatMessage
+from agent_framework import AgentThread, ChatMessage, SupportsAgentRun
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread
@@ -47,11 +47,11 @@ class DurableAgentProvider(ABC, Generic[TaskT]):
         raise NotImplementedError("Subclasses must implement get_agent()")
 
 
-class DurableAIAgent(AgentProtocol, Generic[TaskT]):
+class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
     """A durable agent proxy that delegates execution to the provider.
 
-    This class implements AgentProtocol but with one critical difference:
-    - AgentProtocol.run() returns a Coroutine (async, must await)
+    This class implements SupportsAgentRun but with one critical difference:
+    - SupportsAgentRun.run() returns a Coroutine (async, must await)
     - DurableAIAgent.run() returns TaskT (sync Task object - must yield
         or the AgentResponse directly in the case of TaskHubGrpcClient)
 
@@ -104,8 +104,8 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
                 Additional keys are forwarded to the agent execution.
 
         Note:
-            This method overrides AgentProtocol.run() with a different return type:
-            - AgentProtocol.run() returns Coroutine[Any, Any, AgentResponse] (async)
+            This method overrides SupportsAgentRun.run() with a different return type:
+            - SupportsAgentRun.run() returns Coroutine[Any, Any, AgentResponse] (async)
             - DurableAIAgent.run() returns TaskT (Task object for yielding)
 
             This is intentional to support orchestration contexts that use yield patterns
