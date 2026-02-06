@@ -552,7 +552,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 #pragma warning restore CA1513
 
         // Efficient count query
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
             .WithParameter("@conversationId", this.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
@@ -582,7 +582,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 #pragma warning restore CA1513
 
         // Batch delete for efficiency
-        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
             .WithParameter("@conversationId", this.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
