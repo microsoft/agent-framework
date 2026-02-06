@@ -214,18 +214,15 @@ class Workflow(DictConvertible):
             self.executors,
             self._state,
             runner_context,
+            # Capture a canonical fingerprint of the workflow graph so checkpoints
+            # can assert they are resumed with an equivalent topology.
+            self._hash_graph_signature(self._compute_graph_signature()),
             max_iterations=max_iterations,
             workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
         self._is_running = False
-
-        # Capture a canonical fingerprint of the workflow graph so checkpoints
-        # can assert they are resumed with an equivalent topology.
-        self._graph_signature = self._compute_graph_signature()
-        self._graph_signature_hash = self._hash_graph_signature(self._graph_signature)
-        self._runner.graph_signature_hash = self._graph_signature_hash
 
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
@@ -785,10 +782,6 @@ class Workflow(DictConvertible):
     def _hash_graph_signature(signature: dict[str, Any]) -> str:
         canonical = json.dumps(signature, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    @property
-    def graph_signature_hash(self) -> str:
-        return self._graph_signature_hash
 
     @property
     def input_types(self) -> list[type[Any] | types.UnionType]:

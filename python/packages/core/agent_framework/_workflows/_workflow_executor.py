@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._checkpoint_encoding import decode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
@@ -454,8 +454,7 @@ class WorkflowExecutor(Executor):
         """Get the current state of the WorkflowExecutor for checkpointing purposes."""
         return {
             "execution_contexts": {
-                execution_id: encode_checkpoint_value(execution_context)
-                for execution_id, execution_context in self._execution_contexts.items()
+                execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
         }

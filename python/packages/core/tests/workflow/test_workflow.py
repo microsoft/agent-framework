@@ -444,7 +444,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
                     source_executor_id=simple_executor.id,
                     request_data="Mock",
                     response_type=str,
-                ).to_dict(),
+                ),
             },
             iteration_count=0,
         )

@@ -11,9 +11,13 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ._events import WorkflowEvent
+    from ._runner_context import Message
 
 
 @dataclass(slots=True)
@@ -29,9 +33,12 @@ class WorkflowCheckpoint:
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
         state: Committed workflow state including user data and executor states.
-               This contains only committed state; pending state changes are not
-               included in checkpoints. Executor states are stored under the
-               reserved key '_executor_state'.
+            This contains only committed state; pending state changes are not
+            included in checkpoints. Executor states are stored under the
+            reserved key '_executor_state'.
+        pending_request_info_events: Any pending request info events that have not
+            yet been processed at the time of checkpointing. This allows the workflow
+            to resume with the correct pending events after a restore.
         iteration_count: Current iteration number when checkpoint was created
         metadata: Additional metadata (e.g., superstep info, graph signature)
         version: Checkpoint format version
@@ -46,9 +53,9 @@ class WorkflowCheckpoint:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Core workflow state
-    messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
+    messages: dict[str, list[Message]] = field(default_factory=dict)  # type: ignore[misc]
     state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
-    pending_request_info_events: dict[str, dict[str, Any]] = field(default_factory=dict)  # type: ignore[misc]
+    pending_request_info_events: dict[str, WorkflowEvent[Any]] = field(default_factory=dict)  # type: ignore[misc]
 
     # Runtime state
     iteration_count: int = 0
@@ -131,7 +138,16 @@ class InMemoryCheckpointStorage:
 
 
 class FileCheckpointStorage:
-    """File-based checkpoint storage for persistence."""
+    """File-based checkpoint storage for persistence.
+
+    This storage implements a hybrid approach where the checkpoint metadata and structure are
+    stored in JSON format, while the actual state data (which may contain complex Python objects)
+    is serialized using pickle and embedded as base64-encoded strings within the JSON. This allows
+    for human-readable checkpoint files while preserving the ability to store complex Python objects.
+
+    SECURITY WARNING: Checkpoints use pickle for data serialization. Only load checkpoints
+    from trusted sources. Loading a malicious checkpoint file can execute arbitrary code.
+    """
 
     def __init__(self, storage_path: str | Path):
         """Initialize the file storage."""
@@ -141,13 +157,16 @@ class FileCheckpointStorage:
 
     async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
         """Save a checkpoint and return its ID."""
+        from ._checkpoint_encoding import encode_checkpoint_value
+
         file_path = self.storage_path / f"{checkpoint.checkpoint_id}.json"
         checkpoint_dict = asdict(checkpoint)
+        encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
         def _write_atomic() -> None:
             tmp_path = file_path.with_suffix(".json.tmp")
             with open(tmp_path, "w") as f:
-                json.dump(checkpoint_dict, f, indent=2, ensure_ascii=False)
+                json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, file_path)
 
         await asyncio.to_thread(_write_atomic)
@@ -166,9 +185,12 @@ class FileCheckpointStorage:
             with open(file_path) as f:
                 return json.load(f)  # type: ignore[no-any-return]
 
-        checkpoint_dict = await asyncio.to_thread(_read)
+        encoded_checkpoint = await asyncio.to_thread(_read)
 
-        checkpoint = WorkflowCheckpoint(**checkpoint_dict)
+        from ._checkpoint_encoding import decode_checkpoint_value
+
+        decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
+        checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
 
@@ -197,9 +219,13 @@ class FileCheckpointStorage:
             for file_path in self.storage_path.glob("*.json"):
                 try:
                     with open(file_path) as f:
-                        data = json.load(f)
-                    if workflow_id is None or data.get("workflow_id") == workflow_id:
-                        checkpoints.append(WorkflowCheckpoint.from_dict(data))
+                        encoded_checkpoint = json.load(f)
+                        from ._checkpoint_encoding import decode_checkpoint_value
+
+                        decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
+                        checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
+                    if workflow_id is None or checkpoint.workflow_id == workflow_id:
+                        checkpoints.append(checkpoint)
                 except Exception as e:
                     logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
             return checkpoints
