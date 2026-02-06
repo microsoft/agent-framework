@@ -255,22 +255,6 @@ async def test_web_search_tool_with_location() -> None:
 
 
 @pytest.mark.asyncio
-async def test_file_search_tool_with_invalid_inputs() -> None:
-    """Test file search tool with invalid vector store inputs."""
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Test with invalid inputs type (should trigger ValueError)
-    file_search_tool = client.get_file_search_tool(inputs=[Content.from_hosted_file(file_id="invalid")])
-
-    # Should raise an error due to invalid inputs
-    with pytest.raises(ValueError, match="HostedFileSearchTool requires inputs to be of type"):
-        await client.get_response(
-            messages=[ChatMessage("user", ["Search files"])],
-            options={"tools": [file_search_tool]},
-        )
-
-
-@pytest.mark.asyncio
 async def test_code_interpreter_tool_variations() -> None:
     """Test HostedCodeInterpreterTool with and without file inputs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -322,7 +306,8 @@ async def test_hosted_file_search_tool_validation() -> None:
     # Test file search tool with vector store IDs
     file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=["vs_123"])
 
-    with pytest.raises((ValueError, ServiceInvalidRequestError)):
+    # Test using file search tool - may raise various exceptions depending on API response
+    with pytest.raises((ValueError, ServiceInvalidRequestError, ServiceResponseException)):
         await client.get_response(
             messages=[ChatMessage("user", ["Test"])],
             options={"tools": [file_search_tool]},

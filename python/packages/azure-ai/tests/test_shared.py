@@ -75,7 +75,6 @@ def test_to_azure_ai_agent_tools_code_interpreter() -> None:
 
 def test_to_azure_ai_agent_tools_web_search_missing_connection() -> None:
     """Test web search tool raises without connection info."""
-    tool = AzureAIAgentClient.get_web_search_tool()
     # Clear any environment variables that could provide connection info
     with patch.dict(
         os.environ,
@@ -87,8 +86,9 @@ def test_to_azure_ai_agent_tools_web_search_missing_connection() -> None:
         for key in ["BING_CONNECTION_ID", "BING_CUSTOM_CONNECTION_ID", "BING_CUSTOM_INSTANCE_NAME"]:
             env_backup[key] = os.environ.pop(key, None)
         try:
-            with pytest.raises(ServiceInitializationError, match="Bing search tool requires"):
-                to_azure_ai_agent_tools([tool])
+            # get_web_search_tool now raises ValueError when no connection info is available
+            with pytest.raises(ValueError, match="Azure AI Agents requires a Bing connection"):
+                AzureAIAgentClient.get_web_search_tool()
         finally:
             # Restore environment
             for key, value in env_backup.items():

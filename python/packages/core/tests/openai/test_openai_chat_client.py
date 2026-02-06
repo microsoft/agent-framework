@@ -170,19 +170,20 @@ async def test_content_filter_exception_handling(openai_unit_test_env: dict[str,
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that unsupported tool types are handled correctly."""
+    """Test that unsupported tool types are passed through unchanged."""
     client = OpenAIChatClient()
 
     # Create a random object that's not a FunctionTool, dict, or callable
-    # This simulates an unsupported tool type that should be ignored
+    # This simulates an unsupported tool type that gets passed through
     class UnsupportedTool:
         pass
 
     unsupported_tool = UnsupportedTool()
 
-    # This should ignore the unsupported tool and return empty dict
+    # Unsupported tools are passed through for the API to handle/reject
     result = client._prepare_tools_for_openai([unsupported_tool])  # type: ignore
-    assert result == {}
+    assert "tools" in result
+    assert len(result["tools"]) == 1
 
     # Also test with a dict-based tool that should be passed through
     dict_tool = {"type": "function", "name": "test"}
