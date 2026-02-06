@@ -31,7 +31,16 @@ from agent_framework._threads import AgentThread
 from agent_framework._types import ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
-from agent_framework._workflows._base_group_chat_orchestrator import (
+from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
+from agent_framework._workflows._executor import Executor
+from agent_framework._workflows._workflow import Workflow
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+from agent_framework._workflows._workflow_context import WorkflowContext
+from pydantic import BaseModel, Field
+from typing_extensions import Never
+
+from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
     GroupChatParticipantMessage,
     GroupChatRequestMessage,
@@ -40,16 +49,8 @@ from agent_framework._workflows._base_group_chat_orchestrator import (
     ParticipantRegistry,
     TerminationCondition,
 )
-from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
-from agent_framework._workflows._executor import Executor
-from agent_framework._workflows._orchestration_request_info import AgentApprovalExecutor
-from agent_framework._workflows._orchestrator_helpers import clean_conversation_for_handoff
-from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
-from agent_framework._workflows._workflow_context import WorkflowContext
-from pydantic import BaseModel, Field
-from typing_extensions import Never
+from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestrator_helpers import clean_conversation_for_handoff
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -882,7 +883,7 @@ class GroupChatBuilder:
         Returns:
             Self for fluent chaining
         """
-        from agent_framework._workflows._orchestration_request_info import resolve_request_info_filter
+        from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)

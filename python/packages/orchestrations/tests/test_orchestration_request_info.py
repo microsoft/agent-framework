@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from agent_framework import (
     AgentProtocol,
     AgentResponse,
@@ -16,13 +15,14 @@ from agent_framework import (
     ChatMessage,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorRequest, AgentExecutorResponse
-from agent_framework._workflows._orchestration_request_info import (
+from agent_framework._workflows._workflow_context import WorkflowContext
+
+from agent_framework_orchestrations._orchestration_request_info import (
     AgentApprovalExecutor,
     AgentRequestInfoExecutor,
     AgentRequestInfoResponse,
     resolve_request_info_filter,
 )
-from agent_framework._workflows._workflow_context import WorkflowContext
 
 
 class TestResolveRequestInfoFilter:

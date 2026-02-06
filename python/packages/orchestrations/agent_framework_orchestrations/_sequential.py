@@ -53,10 +53,11 @@ from agent_framework._workflows._executor import (
     handler,
 )
 from agent_framework._workflows._message_utils import normalize_messages_input
-from agent_framework._workflows._orchestration_request_info import AgentApprovalExecutor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
+
+from ._orchestration_request_info import AgentApprovalExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ class SequentialBuilder:
         Returns:
             Self for fluent chaining
         """
-        from agent_framework._workflows._orchestration_request_info import resolve_request_info_filter
+        from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)

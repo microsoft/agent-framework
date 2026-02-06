@@ -8,7 +8,7 @@ No inheritance required - just import and call.
 
 import logging
 
-from .._types import ChatMessage
+from agent_framework._types import ChatMessage
 
 logger = logging.getLogger(__name__)
 

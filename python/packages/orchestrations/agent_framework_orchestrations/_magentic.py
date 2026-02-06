@@ -18,14 +18,6 @@ from agent_framework import (
     ChatMessage,
 )
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
-from agent_framework._workflows._base_group_chat_orchestrator import (
-    BaseGroupChatOrchestrator,
-    GroupChatParticipantMessage,
-    GroupChatRequestMessage,
-    GroupChatResponseMessage,
-    GroupChatWorkflowContextOutT,
-    ParticipantRegistry,
-)
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import ExecutorEvent
 from agent_framework._workflows._executor import Executor, handler
@@ -35,6 +27,15 @@ from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never
+
+from ._base_group_chat_orchestrator import (
+    BaseGroupChatOrchestrator,
+    GroupChatParticipantMessage,
+    GroupChatRequestMessage,
+    GroupChatResponseMessage,
+    GroupChatWorkflowContextOutT,
+    ParticipantRegistry,
+)
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover

@@ -6,12 +6,10 @@ from typing import Any, cast
 import pytest
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRequestInfoResponse,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    BaseGroupChatOrchestrator,
     ChatAgent,
     ChatMessage,
     ChatResponse,
@@ -24,6 +22,8 @@ from agent_framework import (
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
+    AgentRequestInfoResponse,
+    BaseGroupChatOrchestrator,
     GroupChatBuilder,
     GroupChatState,
     MagenticContext,
@@ -1143,8 +1143,9 @@ def test_group_chat_with_orchestrator_factory_returning_base_orchestrator():
     def orchestrator_factory() -> BaseGroupChatOrchestrator:
         nonlocal factory_call_count
         factory_call_count += 1
-        from agent_framework._workflows._base_group_chat_orchestrator import ParticipantRegistry
         from agent_framework.orchestrations import GroupChatOrchestrator
+
+        from agent_framework_orchestrations._base_group_chat_orchestrator import ParticipantRegistry
 
         # Create a custom orchestrator; when returning BaseGroupChatOrchestrator,
         # the builder uses it as-is without modifying its participant registry
