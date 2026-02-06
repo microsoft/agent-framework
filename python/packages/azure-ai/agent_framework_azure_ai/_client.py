@@ -399,7 +399,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
-        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
+        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages, options, **kwargs)
         run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
 
         # WORKAROUND: Azure AI Projects 'create responses' API has schema divergence from OpenAI's
@@ -487,8 +487,19 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
-        """Prepare input from messages and convert system/developer messages to instructions."""
+    def _prepare_messages_for_azure_ai(
+        self, messages: Sequence[ChatMessage], options: Mapping[str, Any], **kwargs: Any
+    ) -> tuple[list[ChatMessage], str | None]:
+        """Prepare input from messages and convert system/developer messages to instructions.
+        
+        When using previous_response_id (response chaining), filters out old function results
+        and assistant messages since they're already in the server-side conversation history.
+        Only NEW user messages should be sent.
+        """
+        # Check if we're using previous_response_id (response chaining pattern)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        use_response_chaining = conversation_id is not None and conversation_id.startswith("resp_")
+        
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
         instructions: str | None = None
@@ -498,6 +509,28 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             if message.role in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]
+            elif use_response_chaining:
+                # When using response chaining, filter messages to avoid re-submitting old content:
+                # - Keep NEW user messages (messages that were just added this turn)
+                # - Skip old function results and assistant messages (already in server history)
+                
+                # A message is "new" if it only contains user input text/files, not function results
+                # Function results are paired with function calls from the assistant
+                is_new_user_message = (
+                    message.role == "user" 
+                    and any(
+                        content.type in ["text", "image", "hosted_file", "input_audio"]
+                        for content in message.contents
+                    )
+                    and not any(
+                        content.type in ["function_result", "function_call"]
+                        for content in message.contents
+                    )
+                )
+                
+                if is_new_user_message:
+                    result.append(message)
+                # Skip assistant messages and function result messages when using response chaining
             else:
                 result.append(message)
 
