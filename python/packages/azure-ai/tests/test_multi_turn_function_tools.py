@@ -6,7 +6,7 @@ from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework import ChatMessage, Content, tool
+from agent_framework import tool
 from azure.ai.projects.models import PromptAgentDefinition
 from pydantic import Field
 
@@ -202,8 +202,7 @@ async def test_multi_turn_with_previous_response_id_filters_old_messages():
     thread = agent.get_new_thread()
     # Simulate that turn 1 has already completed and returned resp_turn1
     # We manually set the internal state to simulate this
-    from agent_framework import AgentThread
-    
+
     # Use the internal property to bypass the setter validation
     thread._service_thread_id = "resp_turn1"
 
