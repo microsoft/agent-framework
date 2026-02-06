@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentProtocol, AgentResponse, AgentThread, ChatMessage, HostedMCPTool
+from agent_framework import SupportsAgentRun, AgentResponse, AgentThread, ChatMessage, HostedMCPTool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -14,7 +14,7 @@ This sample demonstrates integrating hosted Model Context Protocol (MCP) tools w
 """
 
 
-async def handle_approvals_without_thread(query: str, agent: "AgentProtocol") -> AgentResponse:
+async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun") -> AgentResponse:
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
 
     result = await agent.run(query, store=False)
@@ -35,7 +35,7 @@ async def handle_approvals_without_thread(query: str, agent: "AgentProtocol") ->
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread") -> AgentResponse:
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread") -> AgentResponse:
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
 
     result = await agent.run(query, thread=thread)

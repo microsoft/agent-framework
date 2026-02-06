@@ -122,7 +122,7 @@ async def run_workflow(workflow: Workflow, query: str) -> None:
 async def main() -> None:
     # Create a concurrent builder with participant factories and a custom aggregator
     # - register_participants([...]) accepts factory functions that return
-    #   AgentProtocol (agents) or Executor instances.
+    #   SupportsAgentRun (agents) or Executor instances.
     # - register_aggregator(...) takes a factory function that returns an Executor instance.
     concurrent_builder = (
         ConcurrentBuilder()

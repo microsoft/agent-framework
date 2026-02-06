@@ -9,7 +9,6 @@ from typing import Any, Generic, Literal, cast, overload
 
 import pytest
 from agent_framework import (
-    AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -20,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    SupportsAgentRun,
 )
 from agent_framework._clients import TOptions_co
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -149,8 +149,8 @@ def stream_from_updates(updates: list[ChatResponseUpdate]) -> StreamFn:
     return _stream
 
 
-class StubAgent(AgentProtocol):
-    """Minimal AgentProtocol stub for orchestrator tests."""
+class StubAgent(SupportsAgentRun):
+    """Minimal SupportsAgentRun stub for orchestrator tests."""
 
     def __init__(
         self,
@@ -238,6 +238,6 @@ def stream_from_updates_fixture() -> Callable[[list[ChatResponseUpdate]], Stream
 
 
 @pytest.fixture
-def stub_agent() -> type[AgentProtocol]:
+def stub_agent() -> type[SupportsAgentRun]:
     """Return the StubAgent class for creating test instances."""
     return StubAgent  # type: ignore[return-value]

@@ -757,11 +757,11 @@ class EntityDiscovery:
             True if object appears to be a valid agent
         """
         try:
-            # Try to import AgentProtocol for proper type checking
+            # Try to import SupportsAgentRun for proper type checking
             try:
-                from agent_framework import AgentProtocol
+                from agent_framework import SupportsAgentRun
 
-                if isinstance(obj, AgentProtocol):
+                if isinstance(obj, SupportsAgentRun):
                     return True
             except ImportError:
                 pass

@@ -13,9 +13,9 @@ from enum import Enum
 from typing import Any, ClassVar, TypeVar, cast, overload
 
 from agent_framework import (
-    AgentProtocol,
     AgentResponse,
     ChatMessage,
+    SupportsAgentRun,
 )
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -521,7 +521,7 @@ class StandardMagenticManager(MagenticManagerBase):
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         task_ledger: _MagenticTaskLedger | None = None,
         *,
         task_ledger_facts_prompt: str | None = None,
@@ -562,7 +562,7 @@ class StandardMagenticManager(MagenticManagerBase):
             max_round_count=max_round_count,
         )
 
-        self._agent: AgentProtocol = agent
+        self._agent: SupportsAgentRun = agent
         self.task_ledger: _MagenticTaskLedger | None = task_ledger
 
         # Prompts may be overridden if needed
@@ -1311,10 +1311,10 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 class MagenticAgentExecutor(AgentExecutor):
     """Specialized AgentExecutor for Magentic agent participants."""
 
-    def __init__(self, agent: AgentProtocol) -> None:
+    def __init__(self, agent: SupportsAgentRun) -> None:
         """Initialize a Magentic Agent Executor.
 
-        This executor wraps an AgentProtocol instance to be used as a participant
+        This executor wraps an SupportsAgentRun instance to be used as a participant
         in a Magentic One workflow.
 
         Args:
@@ -1377,13 +1377,13 @@ class MagenticBuilder:
 
     def __init__(self) -> None:
         """Initialize the Magentic workflow builder."""
-        self._participants: dict[str, AgentProtocol | Executor] = {}
-        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
+        self._participants: dict[str, SupportsAgentRun | Executor] = {}
+        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
         # Manager related members
         self._manager: MagenticManagerBase | None = None
         self._manager_factory: Callable[[], MagenticManagerBase] | None = None
-        self._manager_agent_factory: Callable[[], AgentProtocol] | None = None
+        self._manager_agent_factory: Callable[[], SupportsAgentRun] | None = None
         self._standard_manager_options: dict[str, Any] = {}
         self._enable_plan_review: bool = False
 
@@ -1394,12 +1394,12 @@ class MagenticBuilder:
 
     def register_participants(
         self,
-        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
+        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
     ) -> "MagenticBuilder":
         """Register participant factories for this Magentic workflow.
 
         Args:
-            participant_factories: Sequence of callables that return AgentProtocol or Executor instances.
+            participant_factories: Sequence of callables that return SupportsAgentRun or Executor instances.
 
         Returns:
             Self for method chaining
@@ -1420,10 +1420,10 @@ class MagenticBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def participants(self, participants: Sequence[AgentProtocol | Executor]) -> Self:
+    def participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> Self:
         """Define participants for this Magentic workflow.
 
-        Accepts AgentProtocol instances (auto-wrapped as AgentExecutor) or Executor instances.
+        Accepts SupportsAgentRun instances (auto-wrapped as AgentExecutor) or Executor instances.
 
         Args:
             participants: Sequence of participant definitions
@@ -1434,7 +1434,7 @@ class MagenticBuilder:
         Raises:
             ValueError: If participants are empty, names are duplicated, or participants
                 or participant factories are already set
-            TypeError: If any participant is not AgentProtocol or Executor instance
+            TypeError: If any participant is not SupportsAgentRun or Executor instance
 
         Example:
 
@@ -1462,17 +1462,17 @@ class MagenticBuilder:
             raise ValueError("participants cannot be empty.")
 
         # Name of the executor mapped to participant instance
-        named: dict[str, AgentProtocol | Executor] = {}
+        named: dict[str, SupportsAgentRun | Executor] = {}
         for participant in participants:
             if isinstance(participant, Executor):
                 identifier = participant.id
-            elif isinstance(participant, AgentProtocol):
+            elif isinstance(participant, SupportsAgentRun):
                 if not participant.name:
-                    raise ValueError("AgentProtocol participants must have a non-empty name.")
+                    raise ValueError("SupportsAgentRun participants must have a non-empty name.")
                 identifier = participant.name
             else:
                 raise TypeError(
-                    f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
             if identifier in named:
@@ -1608,7 +1608,7 @@ class MagenticBuilder:
     def with_manager(
         self,
         *,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         task_ledger: _MagenticTaskLedger | None = None,
         # Prompt overrides
         task_ledger_facts_prompt: str | None = None,
@@ -1628,7 +1628,7 @@ class MagenticBuilder:
         This will create a StandardMagenticManager using the provided agent.
 
         Args:
-            agent: AgentProtocol instance for the standard magentic manager
+            agent: SupportsAgentRun instance for the standard magentic manager
                    (`StandardMagenticManager`)
             task_ledger: Optional custom task ledger implementation for specialized
                 prompting or structured output requirements
@@ -1661,7 +1661,7 @@ class MagenticBuilder:
     def with_manager(
         self,
         *,
-        agent_factory: Callable[[], AgentProtocol],
+        agent_factory: Callable[[], SupportsAgentRun],
         task_ledger: _MagenticTaskLedger | None = None,
         # Prompt overrides
         task_ledger_facts_prompt: str | None = None,
@@ -1681,7 +1681,7 @@ class MagenticBuilder:
         This will create a StandardMagenticManager using the provided agent factory.
 
         Args:
-            agent_factory: Callable that returns a new AgentProtocol instance for the standard
+            agent_factory: Callable that returns a new SupportsAgentRun instance for the standard
                            magentic manager (`StandardMagenticManager`)
             task_ledger: Optional custom task ledger implementation for specialized
                 prompting or structured output requirements
@@ -1715,9 +1715,9 @@ class MagenticBuilder:
         *,
         manager: MagenticManagerBase | None = None,
         manager_factory: Callable[[], MagenticManagerBase] | None = None,
-        agent_factory: Callable[[], AgentProtocol] | None = None,
+        agent_factory: Callable[[], SupportsAgentRun] | None = None,
         # Constructor args for StandardMagenticManager when manager is not provided
-        agent: AgentProtocol | None = None,
+        agent: SupportsAgentRun | None = None,
         task_ledger: _MagenticTaskLedger | None = None,
         # Prompt overrides
         task_ledger_facts_prompt: str | None = None,
@@ -1956,7 +1956,7 @@ class MagenticBuilder:
             raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
-        participants: list[Executor | AgentProtocol] = []
+        participants: list[Executor | SupportsAgentRun] = []
         if self._participant_factories:
             for factory in self._participant_factories:
                 participant = factory()
@@ -1968,11 +1968,11 @@ class MagenticBuilder:
         for participant in participants:
             if isinstance(participant, Executor):
                 executors.append(participant)
-            elif isinstance(participant, AgentProtocol):
+            elif isinstance(participant, SupportsAgentRun):
                 executors.append(MagenticAgentExecutor(participant))
             else:
                 raise TypeError(
-                    f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
         return executors

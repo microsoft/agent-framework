@@ -422,7 +422,7 @@ def test_mixing_eager_and_lazy_initialization_error():
         ValueError,
         match=(
             r"Both source and target must be either registered factory names \(str\) "
-            r"or Executor/AgentProtocol instances\."
+            r"or Executor/SupportsAgentRun instances\."
         ),
     ):
         builder.add_edge(eager_executor, "Lazy")

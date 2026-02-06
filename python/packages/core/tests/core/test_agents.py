@@ -10,7 +10,6 @@ import pytest
 from pytest import raises
 
 from agent_framework import (
-    AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -24,6 +23,7 @@ from agent_framework import (
     Context,
     ContextProvider,
     HostedCodeInterpreterTool,
+    SupportsAgentRun,
     ToolProtocol,
     tool,
 )
@@ -36,17 +36,17 @@ def test_agent_thread_type(agent_thread: AgentThread) -> None:
     assert isinstance(agent_thread, AgentThread)
 
 
-def test_agent_type(agent: AgentProtocol) -> None:
-    assert isinstance(agent, AgentProtocol)
+def test_agent_type(agent: SupportsAgentRun) -> None:
+    assert isinstance(agent, SupportsAgentRun)
 
 
-async def test_agent_run(agent: AgentProtocol) -> None:
+async def test_agent_run(agent: SupportsAgentRun) -> None:
     response = await agent.run("test")
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Response"
 
 
-async def test_agent_run_streaming(agent: AgentProtocol) -> None:
+async def test_agent_run_streaming(agent: SupportsAgentRun) -> None:
     async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
 
@@ -57,7 +57,7 @@ async def test_agent_run_streaming(agent: AgentProtocol) -> None:
 
 def test_chat_client_agent_type(chat_client: ChatClientProtocol) -> None:
     chat_client_agent = ChatAgent(chat_client=chat_client)
-    assert isinstance(chat_client_agent, AgentProtocol)
+    assert isinstance(chat_client_agent, SupportsAgentRun)
 
 
 async def test_chat_client_agent_init(chat_client: ChatClientProtocol) -> None:
@@ -804,7 +804,7 @@ def test_sanitize_agent_name_replaces_invalid_chars():
 # endregion
 
 
-# region Test AgentProtocol.get_new_thread and deserialize_thread
+# region Test SupportsAgentRun.get_new_thread and deserialize_thread
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,6 @@ from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutorRequest,
-    AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
@@ -18,6 +17,7 @@ from agent_framework import (
     Content,
     Executor,
     ResponseStream,
+    SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
@@ -615,7 +615,7 @@ class TestWorkflowAgent:
     async def test_agent_executor_output_response_false_filters_streaming_events(self):
         """Test that AgentExecutor with output_response=False does not surface streaming events."""
 
-        class MockAgent(AgentProtocol):
+        class MockAgent(SupportsAgentRun):
             """Mock agent for testing."""
 
             def __init__(self, name: str, response_text: str) -> None:
@@ -705,7 +705,7 @@ class TestWorkflowAgent:
     async def test_agent_executor_output_response_no_duplicate_from_workflow_output_event(self):
         """Test that AgentExecutor with output_response=True does not duplicate content."""
 
-        class MockAgent(AgentProtocol):
+        class MockAgent(SupportsAgentRun):
             """Mock agent for testing."""
 
             def __init__(self, name: str, response_text: str) -> None:

@@ -25,10 +25,10 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentProtocol,
     AgentThread,
     ChatMessage,
     Content,
+    SupportsAgentRun,
     prepare_function_call_results,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline
@@ -579,7 +579,7 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
 async def _resolve_approval_responses(
     messages: list[Any],
     tools: list[Any],
-    agent: AgentProtocol,
+    agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
 ) -> None:
     """Execute approved function calls and replace approval content with results.
@@ -741,7 +741,7 @@ def _build_messages_snapshot(
 
 async def run_agent_stream(
     input_data: dict[str, Any],
-    agent: AgentProtocol,
+    agent: SupportsAgentRun,
     config: "AgentConfig",
 ) -> "AsyncGenerator[BaseEvent, None]":
     """Run agent and yield AG-UI events.

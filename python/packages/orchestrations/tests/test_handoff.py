@@ -420,7 +420,7 @@ def test_handoff_builder_rejects_mixed_types_in_add_handoff_source():
     triage = MockHandoffAgent(name="triage")
     specialist = MockHandoffAgent(name="specialist")
 
-    with pytest.raises(TypeError, match="Cannot mix factory names \\(str\\) and AgentProtocol.*instances"):
+    with pytest.raises(TypeError, match="Cannot mix factory names \\(str\\) and SupportsAgentRun.*instances"):
         (
             HandoffBuilder(participants=[triage, specialist])
             .with_start_agent(triage)

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from agent_framework._agents import AgentProtocol
+from agent_framework._agents import SupportsAgentRun
 from agent_framework._types import ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
@@ -14,11 +14,11 @@ from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework._workflows._workflow_executor import WorkflowExecutor
 
 
-def resolve_request_info_filter(agents: list[str | AgentProtocol] | None) -> set[str]:
+def resolve_request_info_filter(agents: list[str | SupportsAgentRun] | None) -> set[str]:
     """Resolve a list of agent/executor references to a set of IDs for filtering.
 
     Args:
-        agents: List of agent names (str), AgentProtocol instances, or Executor instances.
+        agents: List of agent names (str), SupportsAgentRun instances, or Executor instances.
                 If None, returns None (meaning no filtering - pause for all).
 
     Returns:
@@ -31,7 +31,7 @@ def resolve_request_info_filter(agents: list[str | AgentProtocol] | None) -> set
     for agent in agents:
         if isinstance(agent, str):
             result.add(agent)
-        elif isinstance(agent, AgentProtocol):
+        elif isinstance(agent, SupportsAgentRun):
             result.add(resolve_agent_id(agent))
         else:
             raise TypeError(f"Unsupported type for request_info filter: {type(agent).__name__}")
@@ -117,7 +117,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
     agent's output or send the final response to down stream executors in the orchestration.
     """
 
-    def __init__(self, agent: AgentProtocol) -> None:
+    def __init__(self, agent: SupportsAgentRun) -> None:
         """Initialize the AgentApprovalExecutor.
 
         Args:
@@ -126,7 +126,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
         super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
         self._description = agent.description
 
-    def _build_workflow(self, agent: AgentProtocol) -> Workflow:
+    def _build_workflow(self, agent: SupportsAgentRun) -> Workflow:
         """Build the internal workflow for the AgentApprovalExecutor."""
         agent_executor = AgentExecutor(agent)
         request_info_executor = AgentRequestInfoExecutor(id="agent_request_info_executor")
