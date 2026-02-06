@@ -541,7 +541,7 @@ class RedisProvider(ContextProvider):
         )
 
         return Context(
-            messages=[ChatMessage("user", [f"{self.context_prompt}\n{line_separated_memories}"])]
+            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )

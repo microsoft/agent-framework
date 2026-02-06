@@ -9,11 +9,10 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    GroupChatRequestSentEvent,
-    WorkflowOutputEvent,
+    WorkflowEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
-from agent_framework.orchestrations import MagenticBuilder, MagenticOrchestratorEvent, MagenticProgressLedger
+from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -51,8 +50,6 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        # Feel free to explore with other agents that support web search, for example,
-        # the `OpenAIResponseAgent` or `AzureAgentProtocol` with bing grounding.
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
@@ -87,7 +84,7 @@ async def main() -> None:
             max_reset_count=2,
         )
         # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowOutputEvent events
+        # Intermediate outputs will be emitted as WorkflowEvent events
         .with_intermediate_outputs()
         .build()
     )
@@ -106,41 +103,44 @@ async def main() -> None:
 
     # Keep track of the last executor to format output nicely in streaming mode
     last_response_id: str | None = None
-    async for event in workflow.run_stream(task):
-        if isinstance(event, MagenticOrchestratorEvent):
-            print(f"\n[Magentic Orchestrator Event] Type: {event.event_type.name}")
-            if isinstance(event.data, ChatMessage):
-                print(f"Please review the plan:\n{event.data.text}")
-            elif isinstance(event.data, MagenticProgressLedger):
-                print(f"Please review progress ledger:\n{json.dumps(event.data.to_dict(), indent=2)}")
+    output_event: WorkflowEvent | None = None
+    async for event in workflow.run(task, stream=True):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            response_id = event.data.response_id
+            if response_id != last_response_id:
+                if last_response_id is not None:
+                    print("\n")
+                print(f"- {event.executor_id}:", end=" ", flush=True)
+                last_response_id = response_id
+            print(event.data, end="", flush=True)
+
+        elif event.type == "magentic_orchestrator":
+            print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
+            if isinstance(event.data.content, ChatMessage):
+                print(f"Please review the plan:\n{event.data.content.text}")
+            elif isinstance(event.data.content, MagenticProgressLedger):
+                print(f"Please review progress ledger:\n{json.dumps(event.data.content.to_dict(), indent=2)}")
             else:
-                print(f"Unknown data type in MagenticOrchestratorEvent: {type(event.data)}")
+                print(f"Unknown data type in MagenticOrchestratorEvent: {type(event.data.content)}")
 
             # Block to allow user to read the plan/progress before continuing
             # Note: this is for demonstration only and is not the recommended way to handle human interaction.
             # Please refer to `with_plan_review` for proper human interaction during planning phases.
             await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
 
-        elif isinstance(event, GroupChatRequestSentEvent):
-            print(f"\n[REQUEST SENT ({event.round_index})] to agent: {event.participant_name}")
+        elif event.type == "group_chat" and isinstance(event.data, GroupChatRequestSentEvent):
+            print(f"\n[REQUEST SENT ({event.data.round_index})] to agent: {event.data.participant_name}")
 
-        elif isinstance(event, WorkflowOutputEvent):
-            data = event.data
-            if isinstance(data, AgentResponseUpdate):
-                response_id = data.response_id
-                if response_id != last_response_id:
-                    if last_response_id is not None:
-                        print("\n")
-                    print(f"- {event.executor_id}:", end=" ", flush=True)
-                    last_response_id = response_id
-                print(event.data, end="", flush=True)
-            else:
-                # The output of the magentic workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
-                print("\n" + "=" * 80)
-                print("\nFinal Conversation Transcript:\n")
-                for message in outputs:
-                    print(f"{message.author_name or message.role}: {message.text}\n")
+        elif event.type == "output":
+            output_event = event
+
+    if output_event:
+        # The output of the magentic workflow is a collection of chat messages from all participants
+        outputs = cast(list[ChatMessage], output_event.data)
+        print("\n" + "=" * 80)
+        print("\nFinal Conversation Transcript:\n")
+        for message in outputs:
+            print(f"{message.author_name or message.role}: {message.text}\n")
 
 
 if __name__ == "__main__":

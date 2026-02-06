@@ -2,8 +2,9 @@
 
 import asyncio
 
-from agent_framework import AgentThread, ChatAgent, ChatMessageStore, SequentialBuilder
+from agent_framework import AgentThread, ChatAgent, ChatMessageStore
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 """
 Sample: Workflow as Agent with Thread Conversation History and Checkpointing

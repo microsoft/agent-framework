@@ -348,32 +348,6 @@ public class AgentResponseTests
     }
 
     [Fact]
-    public void UserInputRequests_ReturnsEmptyWhenNoMessages()
-    {
-        // Arrange
-        AgentResponse response = new();
-
-        // Act
-        IEnumerable<UserInputRequestContent> requests = response.UserInputRequests;
-
-        // Assert
-        Assert.Empty(requests);
-    }
-
-    [Fact]
-    public void UserInputRequests_ReturnsEmptyWhenNoUserInputRequestContent()
-    {
-        // Arrange
-        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "Hello"));
-
-        // Act
-        IEnumerable<UserInputRequestContent> requests = response.UserInputRequests;
-
-        // Assert
-        Assert.Empty(requests);
-    }
-
-    [Fact]
     public void ToAgentResponseUpdatesWithNoMessagesProducesEmptyArray()
     {
         // Arrange

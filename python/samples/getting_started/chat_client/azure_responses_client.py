@@ -42,21 +42,19 @@ async def main() -> None:
     stream = True
     print(f"User: {message}")
     if stream:
-        response = await ChatResponse.from_update_generator(
-            client.get_streaming_response(message, tools=get_weather, options={"response_format": OutputStruct}),
+        response = await ChatResponse.from_chat_response_generator(
+            client.get_response(message, tools=get_weather, options={"response_format": OutputStruct}, stream=True),
             output_format_type=OutputStruct,
         )
-        try:
-            result = response.value
+        if result := response.try_parse_value(OutputStruct):
             print(f"Assistant: {result}")
-        except Exception:
+        else:
             print(f"Assistant: {response.text}")
     else:
         response = await client.get_response(message, tools=get_weather, options={"response_format": OutputStruct})
-        try:
-            result = response.value
+        if result := response.try_parse_value(OutputStruct):
             print(f"Assistant: {result}")
-        except Exception:
+        else:
             print(f"Assistant: {response.text}")
 
 

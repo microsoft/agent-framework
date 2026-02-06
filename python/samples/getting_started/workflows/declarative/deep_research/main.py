@@ -24,7 +24,6 @@ Usage:
 import asyncio
 from pathlib import Path
 
-from agent_framework import WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
@@ -192,8 +191,8 @@ async def main() -> None:
     # Example input
     task = "What is the weather like in Seattle and how does it compare to the average for this time of year?"
 
-    async for event in workflow.run_stream(task):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(task, stream=True):
+        if event.type == "output":
             print(f"{event.data}", end="", flush=True)
 
     print("\n" + "=" * 60)

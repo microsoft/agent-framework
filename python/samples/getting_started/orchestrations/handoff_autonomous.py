@@ -8,8 +8,6 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatAgent,
     ChatMessage,
-    HandoffSentEvent,
-    WorkflowOutputEvent,
     resolve_agent_id,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -116,10 +114,10 @@ async def main() -> None:
     print("Request:", request)
 
     last_response_id: str | None = None
-    async for event in workflow.run_stream(request):
-        if isinstance(event, HandoffSentEvent):
-            print(f"\nHandoff Event: from {event.source} to {event.target}\n")
-        elif isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(request, stream=True):
+        if event.type == "handoff_sent":
+            print(f"\nHandoff Event: from {event.data.source} to {event.data.target}\n")
+        elif event.type == "output":
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 if not data.text:
@@ -133,8 +131,8 @@ async def main() -> None:
                     print(f"{data.author_name}:", end=" ", flush=True)
                     last_response_id = rid
                 print(data.text, end="", flush=True)
-            else:
-                # The output of the group chat workflow is a collection of chat messages from all participants
+            elif event.type == "output":
+                # The output of the handoff workflow is a collection of chat messages from all participants
                 outputs = cast(list[ChatMessage], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")

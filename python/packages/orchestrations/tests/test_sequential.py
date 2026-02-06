@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable
 from typing import Any
 
 import pytest
@@ -15,9 +15,7 @@ from agent_framework import (
     Executor,
     TypeCompatibilityError,
     WorkflowContext,
-    WorkflowOutputEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -27,22 +25,23 @@ from agent_framework.orchestrations import SequentialBuilder
 class _EchoAgent(BaseAgent):
     """Simple agent that appends a single assistant message with its name."""
 
-    async def run(  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} reply"])])
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream()
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} reply"])])
+
+        return _run()
+
+    async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
         # Minimal async generator with one assistant update
         yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} reply")])
 
@@ -104,10 +103,10 @@ async def test_sequential_agents_append_to_context() -> None:
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("hello sequential"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("hello sequential", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = ev.data  # type: ignore[assignment]
         if completed and output is not None:
             break
@@ -137,10 +136,10 @@ async def test_sequential_register_participants_with_agent_factories() -> None:
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("hello factories"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("hello factories", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = ev.data
         if completed and output is not None:
             break
@@ -163,10 +162,10 @@ async def test_sequential_with_custom_executor_summary() -> None:
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("topic X"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("topic X", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = ev.data
         if completed and output is not None:
             break
@@ -194,10 +193,10 @@ async def test_sequential_register_participants_mixed_agents_and_executors() -> 
 
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("topic Y"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("topic Y", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = ev.data
         if completed and output is not None:
             break
@@ -219,10 +218,10 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     wf = SequentialBuilder().participants(list(initial_agents)).with_checkpointing(storage).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("checkpoint sequential"):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf.run("checkpoint sequential", stream=True):
+        if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     assert baseline_output is not None
@@ -240,10 +239,10 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     wf_resume = SequentialBuilder().participants(list(resumed_agents)).with_checkpointing(storage).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
+        if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -262,10 +261,10 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     wf = SequentialBuilder().participants(list(agents)).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
+        if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     assert baseline_output is not None
@@ -283,10 +282,12 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     wf_resume = SequentialBuilder().participants(list(resumed_agents)).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf_resume.run(
+        checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
+    ):
+        if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -311,10 +312,10 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
         wf = SequentialBuilder().participants(list(agents)).with_checkpointing(buildtime_storage).build()
 
         baseline_output: list[ChatMessage] | None = None
-        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
-            if isinstance(ev, WorkflowOutputEvent):
+        async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
+            if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]
-            if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
                 break
 
         assert baseline_output is not None
@@ -339,10 +340,10 @@ async def test_sequential_register_participants_with_checkpointing() -> None:
     wf = SequentialBuilder().register_participants([create_agent1, create_agent2]).with_checkpointing(storage).build()
 
     baseline_output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("checkpoint with factories"):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf.run("checkpoint with factories", stream=True):
+        if ev.type == "output":
             baseline_output = ev.data
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     assert baseline_output is not None
@@ -361,10 +362,10 @@ async def test_sequential_register_participants_with_checkpointing() -> None:
     )
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
-        if isinstance(ev, WorkflowOutputEvent):
+    async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
+        if ev.type == "output":
             resumed_output = ev.data
-        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+        if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
@@ -397,10 +398,10 @@ async def test_sequential_register_participants_factories_called_on_build() -> N
     # Run the workflow to ensure it works
     completed = False
     output: list[ChatMessage] | None = None
-    async for ev in wf.run_stream("test factories timing"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("test factories timing", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
+        elif ev.type == "output":
             output = ev.data  # type: ignore[assignment]
         if completed and output is not None:
             break

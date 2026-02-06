@@ -26,12 +26,21 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast, overload
 
-from agent_framework import AgentProtocol, ChatAgent
+from agent_framework import ChatAgent, SupportsAgentRun
 from agent_framework._threads import AgentThread
 from agent_framework._types import ChatMessage
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
-from agent_framework._workflows._base_group_chat_orchestrator import (
+from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
+from agent_framework._workflows._executor import Executor
+from agent_framework._workflows._workflow import Workflow
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+from agent_framework._workflows._workflow_context import WorkflowContext
+from pydantic import BaseModel, Field
+from typing_extensions import Never
+
+from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
     GroupChatParticipantMessage,
     GroupChatRequestMessage,
@@ -40,15 +49,8 @@ from agent_framework._workflows._base_group_chat_orchestrator import (
     ParticipantRegistry,
     TerminationCondition,
 )
-from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
-from agent_framework._workflows._executor import Executor
-from agent_framework._workflows._orchestration_request_info import AgentApprovalExecutor
-from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
-from agent_framework._workflows._workflow_context import WorkflowContext
-from pydantic import BaseModel, Field
-from typing_extensions import Never
+from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestrator_helpers import clean_conversation_for_handoff
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -192,6 +194,8 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        # Remove tool-related content to prevent API errors from empty messages
+        messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
 
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
@@ -359,6 +363,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
+        # Remove tool-related content to prevent API errors from empty messages
+        messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
             return
@@ -423,7 +429,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(ChatMessage("user", [instruction]))
+        current_conversation.append(ChatMessage(role="user", text=instruction))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -517,8 +523,8 @@ class GroupChatBuilder:
 
     def __init__(self) -> None:
         """Initialize the GroupChatBuilder."""
-        self._participants: dict[str, AgentProtocol | Executor] = {}
-        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
+        self._participants: dict[str, SupportsAgentRun | Executor] = {}
+        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
@@ -677,13 +683,13 @@ class GroupChatBuilder:
 
     def register_participants(
         self,
-        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
+        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
     ) -> "GroupChatBuilder":
         """Register participant factories for this group chat workflow.
 
         Args:
             participant_factories: Sequence of callables that produce participant definitions
-                when invoked. Each callable should return either an AgentProtocol instance
+                when invoked. Each callable should return either an SupportsAgentRun instance
                 (auto-wrapped as AgentExecutor) or an Executor instance.
 
         Returns:
@@ -705,10 +711,10 @@ class GroupChatBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "GroupChatBuilder":
+    def participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> "GroupChatBuilder":
         """Define participants for this group chat workflow.
 
-        Accepts AgentProtocol instances (auto-wrapped as AgentExecutor) or Executor instances.
+        Accepts SupportsAgentRun instances (auto-wrapped as AgentExecutor) or Executor instances.
 
         Args:
             participants: Sequence of participant definitions
@@ -719,7 +725,7 @@ class GroupChatBuilder:
         Raises:
             ValueError: If participants are empty, names are duplicated, or participants
                 or participant factories are already set
-            TypeError: If any participant is not AgentProtocol or Executor instance
+            TypeError: If any participant is not SupportsAgentRun or Executor instance
 
         Example:
 
@@ -744,17 +750,17 @@ class GroupChatBuilder:
             raise ValueError("participants cannot be empty.")
 
         # Name of the executor mapped to participant instance
-        named: dict[str, AgentProtocol | Executor] = {}
+        named: dict[str, SupportsAgentRun | Executor] = {}
         for participant in participants:
             if isinstance(participant, Executor):
                 identifier = participant.id
-            elif isinstance(participant, AgentProtocol):
+            elif isinstance(participant, SupportsAgentRun):
                 if not participant.name:
-                    raise ValueError("AgentProtocol participants must have a non-empty name.")
+                    raise ValueError("SupportsAgentRun participants must have a non-empty name.")
                 identifier = participant.name
             else:
                 raise TypeError(
-                    f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
             if identifier in named:
@@ -855,12 +861,12 @@ class GroupChatBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(self, *, agents: Sequence[str | AgentProtocol] | None = None) -> "GroupChatBuilder":
+    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> "GroupChatBuilder":
         """Enable request info after agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
         When enabled, the workflow pauses after each agent participant runs, emitting
-        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        a request_info event (type='request_info') that allows the caller to review the conversation and optionally
         inject guidance for the agent participant to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 
@@ -877,7 +883,7 @@ class GroupChatBuilder:
         Returns:
             Self for fluent chaining
         """
-        from agent_framework._workflows._orchestration_request_info import resolve_request_info_filter
+        from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
@@ -956,7 +962,7 @@ class GroupChatBuilder:
             raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
-        participants: list[Executor | AgentProtocol] = []
+        participants: list[Executor | SupportsAgentRun] = []
         if self._participant_factories:
             for factory in self._participant_factories:
                 participant = factory()
@@ -968,7 +974,7 @@ class GroupChatBuilder:
         for participant in participants:
             if isinstance(participant, Executor):
                 executors.append(participant)
-            elif isinstance(participant, AgentProtocol):
+            elif isinstance(participant, SupportsAgentRun):
                 if self._request_info_enabled and (
                     not self._request_info_filter or resolve_agent_id(participant) in self._request_info_filter
                 ):
@@ -978,7 +984,7 @@ class GroupChatBuilder:
                     executors.append(AgentExecutor(participant))
             else:
                 raise TypeError(
-                    f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
+                    f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
         return executors

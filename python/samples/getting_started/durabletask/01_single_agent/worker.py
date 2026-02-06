@@ -3,8 +3,8 @@
 This worker registers agents as durable entities and continuously listens for requests.
 The worker should run as a background service, processing incoming agent requests.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def create_joker_agent() -> ChatAgent:
     """Create the Joker agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Joker agent
     """
@@ -41,12 +41,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -69,10 +69,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents registered
     """

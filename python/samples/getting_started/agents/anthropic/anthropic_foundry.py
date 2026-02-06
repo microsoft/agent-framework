@@ -51,7 +51,7 @@ async def main() -> None:
     query = "Can you compare Python decorators with C# attributes?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
-    async for chunk in agent.run_stream(query):
+    async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
             if content.type == "text_reasoning":
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)

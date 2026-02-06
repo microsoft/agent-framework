@@ -64,11 +64,25 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentVersion agentVersion, ChatOptions? chatOptions)
         : this(
               aiProjectClient,
-              new AgentReference(Throw.IfNull(agentVersion).Name, agentVersion.Version),
+              CreateAgentReference(Throw.IfNull(agentVersion)),
               (agentVersion.Definition as PromptAgentDefinition)?.Model,
               chatOptions)
     {
         this._agentVersion = agentVersion;
+    }
+
+    /// <summary>
+    /// Creates an <see cref="AgentReference"/> from an <see cref="AgentVersion"/>.
+    /// Uses the agent version's version if available, otherwise defaults to "latest".
+    /// </summary>
+    /// <param name="agentVersion">The agent version to create a reference from.</param>
+    /// <returns>An <see cref="AgentReference"/> for the specified agent version.</returns>
+    private static AgentReference CreateAgentReference(AgentVersion agentVersion)
+    {
+        // If the version is null, empty, or whitespace, use "latest" as the default.
+        // This handles cases where hosted agents (like MCP agents) may not have a version assigned.
+        var version = string.IsNullOrWhiteSpace(agentVersion.Version) ? "latest" : agentVersion.Version;
+        return new AgentReference(agentVersion.Name, version);
     }
 
     /// <inheritdoc/>

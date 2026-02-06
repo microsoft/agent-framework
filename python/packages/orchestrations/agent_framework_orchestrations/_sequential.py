@@ -4,8 +4,8 @@
 
 This module provides a high-level, agent-focused API to assemble a sequential
 workflow where:
-- Participants can be provided as AgentProtocol or Executor instances via `.participants()`,
-  or as factories returning AgentProtocol or Executor via `.register_participants()`
+- Participants can be provided as SupportsAgentRun or Executor instances via `.participants()`,
+  or as factories returning SupportsAgentRun or Executor via `.register_participants()`
 - A shared conversation context (list[ChatMessage]) is passed along the chain
 - Agents append their assistant messages to the context
 - Custom executors can transform or summarize and return a refined context
@@ -15,7 +15,7 @@ Typical wiring:
     input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) -> ... -> participantN -> _EndWithConversation
 
 Notes:
-- Participants can mix AgentProtocol and Executor objects
+- Participants can mix SupportsAgentRun and Executor objects
 - Agents are auto-wrapped by WorkflowBuilder as AgentExecutor (unless already wrapped)
 - AgentExecutor produces AgentExecutorResponse; _ResponseToConversation converts this to list[ChatMessage]
 - Non-agent executors must define a handler that consumes `list[ChatMessage]` and sends back
@@ -41,7 +41,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from agent_framework import AgentProtocol, ChatMessage
+from agent_framework import ChatMessage, SupportsAgentRun
 from agent_framework._workflows._agent_executor import (
     AgentExecutor,
     AgentExecutorResponse,
@@ -53,10 +53,11 @@ from agent_framework._workflows._executor import (
     handler,
 )
 from agent_framework._workflows._message_utils import normalize_messages_input
-from agent_framework._workflows._orchestration_request_info import AgentApprovalExecutor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
+
+from ._orchestration_request_info import AgentApprovalExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,8 @@ class _EndWithConversation(Executor):
 class SequentialBuilder:
     r"""High-level builder for sequential agent/executor workflows with shared context.
 
-    - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor instances
-    - `register_participants([...])` accepts a list of factories for AgentProtocol (recommended)
+    - `participants([...])` accepts a list of SupportsAgentRun (recommended) or Executor instances
+    - `register_participants([...])` accepts a list of factories for SupportsAgentRun (recommended)
        or Executor factories
     - Executors must define a handler that consumes list[ChatMessage] and sends out a list[ChatMessage]
     - The workflow wires participants in order, passing a list[ChatMessage] down the chain
@@ -147,8 +148,8 @@ class SequentialBuilder:
     """
 
     def __init__(self) -> None:
-        self._participants: list[AgentProtocol | Executor] = []
-        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
+        self._participants: list[SupportsAgentRun | Executor] = []
+        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
@@ -156,7 +157,7 @@ class SequentialBuilder:
 
     def register_participants(
         self,
-        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
+        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
     ) -> "SequentialBuilder":
         """Register participant factories for this sequential workflow."""
         if self._participants:
@@ -171,10 +172,10 @@ class SequentialBuilder:
         self._participant_factories = list(participant_factories)
         return self
 
-    def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
+    def participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> "SequentialBuilder":
         """Define the ordered participants for this sequential workflow.
 
-        Accepts AgentProtocol instances (auto-wrapped as AgentExecutor) or Executor instances.
+        Accepts SupportsAgentRun instances (auto-wrapped as AgentExecutor) or Executor instances.
         Raises if empty or duplicates are provided for clarity.
         """
         if self._participant_factories:
@@ -195,7 +196,7 @@ class SequentialBuilder:
                     raise ValueError(f"Duplicate executor participant detected: id '{p.id}'")
                 seen_executor_ids.add(p.id)
             else:
-                # Treat non-Executor as agent-like (AgentProtocol). Structural checks can be brittle at runtime.
+                # Treat non-Executor as agent-like (SupportsAgentRun). Structural checks can be brittle at runtime.
                 pid = id(p)
                 if pid in seen_agent_ids:
                     raise ValueError("Duplicate agent participant detected (same agent instance provided twice)")
@@ -212,13 +213,13 @@ class SequentialBuilder:
     def with_request_info(
         self,
         *,
-        agents: Sequence[str | AgentProtocol] | None = None,
+        agents: Sequence[str | SupportsAgentRun] | None = None,
     ) -> "SequentialBuilder":
         """Enable request info after agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the sequential orchestration.
         When enabled, the workflow pauses after each agent participant runs, emitting
-        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        a request_info event (type='request_info') that allows the caller to review the conversation and optionally
         inject guidance for the agent participant to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 
@@ -235,7 +236,7 @@ class SequentialBuilder:
         Returns:
             Self for fluent chaining
         """
-        from agent_framework._workflows._orchestration_request_info import resolve_request_info_filter
+        from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
@@ -261,7 +262,7 @@ class SequentialBuilder:
             raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
         # We don't need to check if both are set since that is handled in the respective methods
 
-        participants: list[Executor | AgentProtocol] = []
+        participants: list[Executor | SupportsAgentRun] = []
         if self._participant_factories:
             # Resolve the participant factories now. This doesn't break the factory pattern
             # since the Sequential builder still creates new instances per workflow build.
@@ -275,7 +276,7 @@ class SequentialBuilder:
         for p in participants:
             if isinstance(p, Executor):
                 executors.append(p)
-            elif isinstance(p, AgentProtocol):
+            elif isinstance(p, SupportsAgentRun):
                 if self._request_info_enabled and (
                     not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
@@ -284,7 +285,7 @@ class SequentialBuilder:
                 else:
                     executors.append(AgentExecutor(p))
             else:
-                raise TypeError(f"Participants must be AgentProtocol or Executor instances. Got {type(p).__name__}.")
+                raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 
         return executors
 
@@ -311,7 +312,7 @@ class SequentialBuilder:
         builder.set_start_executor(input_conv)
 
         # Start of the chain is the input normalizer
-        prior: Executor | AgentProtocol = input_conv
+        prior: Executor | SupportsAgentRun = input_conv
         for p in participants:
             builder.add_edge(prior, p)
             prior = p

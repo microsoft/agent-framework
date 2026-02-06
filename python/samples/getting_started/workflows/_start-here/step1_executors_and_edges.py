@@ -140,7 +140,7 @@ class ExclamationAdder(Executor):
         super().__init__(id=id)
 
     @handler(input=str, output=str)
-    async def add_exclamation(self, message: str, ctx: WorkflowContext) -> None:
+    async def add_exclamation(self, message, ctx) -> None:  # type: ignore
         """Add exclamation marks to the input.
 
         Note: The input=str and output=str are explicitly specified on @handler,
@@ -149,7 +149,7 @@ class ExclamationAdder(Executor):
         on @handler take precedence.
         """
         result = f"{message}!!!"
-        await ctx.send_message(result)
+        await ctx.send_message(result)  # type: ignore
 
 
 async def main():

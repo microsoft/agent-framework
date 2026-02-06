@@ -2,10 +2,11 @@
 
 import asyncio
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
-from agent_framework import ChatMessage, SequentialBuilder, WorkflowOutputEvent, tool
+from agent_framework import ChatMessage, tool
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from pydantic import Field
 
 """
@@ -15,7 +16,7 @@ This sample demonstrates how to flow custom context (skill data, user tokens, et
 through any workflow pattern to @tool functions using the **kwargs pattern.
 
 Key Concepts:
-- Pass custom context as kwargs when invoking workflow.run_stream() or workflow.run()
+- Pass custom context as kwargs when invoking workflow.run()
 - kwargs are stored in State and passed to all agent invocations
 - @tool functions receive kwargs via **kwargs parameter
 - Works with Sequential, Concurrent, GroupChat, Handoff, and Magentic patterns
@@ -26,7 +27,9 @@ Prerequisites:
 
 
 # Define tools that accept custom context via **kwargs
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_user_data(
     query: Annotated[str, Field(description="What user data to retrieve")],
@@ -112,13 +115,13 @@ async def main() -> None:
     print("-" * 70)
 
     # Run workflow with kwargs - these will flow through to tools
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "Please get my user data and then call the users API endpoint.",
-        custom_data=custom_data,
-        user_token=user_token,
+        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        stream=True,
     ):
-        if isinstance(event, WorkflowOutputEvent):
-            output_data = event.data
+        if event.type == "output":
+            output_data = cast(list[ChatMessage], event.data)
             if isinstance(output_data, list):
                 for item in output_data:
                     if isinstance(item, ChatMessage) and item.text:

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Annotated, Any
 
 import pytest
@@ -12,8 +12,8 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
+    ResponseStream,
     WorkflowRunState,
-    WorkflowStatusEvent,
     tool,
 )
 from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
@@ -42,7 +42,7 @@ def tool_with_kwargs(
 
 
 class _KwargsCapturingAgent(BaseAgent):
-    """Test agent that captures kwargs passed to run/run_stream."""
+    """Test agent that captures kwargs passed to run."""
 
     captured_kwargs: list[dict[str, Any]]
 
@@ -50,25 +50,26 @@ class _KwargsCapturingAgent(BaseAgent):
         super().__init__(name=name, description="Test agent for kwargs capture")
         self.captured_kwargs = []
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.captured_kwargs.append(dict(kwargs))
-        return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} response"])])
+        if stream:
 
-    async def run_stream(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        self.captured_kwargs.append(dict(kwargs))
-        yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} response")])
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} response")])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} response"])])
+
+        return _run()
 
 
 # region Sequential Builder Tests
@@ -82,12 +83,13 @@ async def test_sequential_kwargs_flow_to_agent() -> None:
     custom_data = {"endpoint": "https://api.example.com", "version": "v1"}
     user_token = {"user_name": "alice", "access_level": "admin"}
 
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "test message",
+        stream=True,
         custom_data=custom_data,
         user_token=user_token,
     ):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Verify agent received kwargs
@@ -107,8 +109,8 @@ async def test_sequential_kwargs_flow_to_multiple_agents() -> None:
 
     custom_data = {"key": "value"}
 
-    async for event in workflow.run_stream("test", custom_data=custom_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("test", custom_data=custom_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Both agents should have received kwargs
@@ -144,12 +146,13 @@ async def test_concurrent_kwargs_flow_to_agents() -> None:
     custom_data = {"batch_id": "123"}
     user_token = {"user_name": "bob"}
 
-    async for event in workflow.run_stream(
+    async for event in workflow.run(
         "concurrent test",
+        stream=True,
         custom_data=custom_data,
         user_token=user_token,
     ):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Both agents should have received kwargs
@@ -195,8 +198,8 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
 
     custom_data = {"session_id": "group123"}
 
-    async for event in workflow.run_stream("group chat test", custom_data=custom_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("group chat test", custom_data=custom_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # At least one agent should have received kwargs
@@ -229,8 +232,8 @@ async def test_kwargs_stored_in_state() -> None:
     inspector = _StateInspector(id="inspector")
     workflow = SequentialBuilder().participants([inspector]).build()
 
-    async for event in workflow.run_stream("test", my_kwarg="my_value", another=123):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("test", my_kwarg="my_value", another=123, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     assert stored_kwargs is not None, "kwargs should be stored in State"
@@ -255,8 +258,8 @@ async def test_empty_kwargs_stored_as_empty_dict() -> None:
     workflow = SequentialBuilder().participants([checker]).build()
 
     # Run without any kwargs
-    async for event in workflow.run_stream("test"):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("test", stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # State should have empty dict when no kwargs provided
@@ -274,8 +277,8 @@ async def test_kwargs_with_none_values() -> None:
     agent = _KwargsCapturingAgent(name="none_test")
     workflow = SequentialBuilder().participants([agent]).build()
 
-    async for event in workflow.run_stream("test", optional_param=None, other_param="value"):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("test", optional_param=None, other_param="value", stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     assert len(agent.captured_kwargs) >= 1
@@ -301,8 +304,8 @@ async def test_kwargs_with_complex_nested_data() -> None:
         "tuple_like": [1, 2, 3],
     }
 
-    async for event in workflow.run_stream("test", complex_data=complex_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("test", complex_data=complex_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     assert len(agent.captured_kwargs) >= 1
@@ -319,13 +322,13 @@ async def test_kwargs_preserved_across_workflow_reruns() -> None:
     workflow2 = SequentialBuilder().participants([agent]).build()
 
     # First run
-    async for event in workflow1.run_stream("run1", run_id="first"):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow1.run("run1", run_id="first", stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Second run with different kwargs (using fresh workflow)
-    async for event in workflow2.run_stream("run2", run_id="second"):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow2.run("run2", run_id="second", stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     assert len(agent.captured_kwargs) >= 2
@@ -356,8 +359,8 @@ async def test_handoff_kwargs_flow_to_agents() -> None:
 
     custom_data = {"session_id": "handoff123"}
 
-    async for event in workflow.run_stream("handoff test", custom_data=custom_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("handoff test", custom_data=custom_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Coordinator agent should have received kwargs
@@ -389,10 +392,10 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Plan: Test task"], author_name="manager")
+            return ChatMessage(role="assistant", text="Plan: Test task", author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Replan: Test task"], author_name="manager")
+            return ChatMessage(role="assistant", text="Replan: Test task", author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             # Return completed on first call
@@ -405,7 +408,7 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Final answer"], author_name="manager")
+            return ChatMessage(role="assistant", text="Final answer", author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -414,8 +417,8 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
 
     custom_data = {"session_id": "magentic123"}
 
-    async for event in workflow.run_stream("magentic test", custom_data=custom_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in workflow.run("magentic test", custom_data=custom_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # The workflow completes immediately via prepare_final_answer without invoking agents
@@ -424,7 +427,7 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
 
 
 async def test_magentic_kwargs_stored_in_state() -> None:
-    """Test that kwargs are stored in State when using MagenticWorkflow.run_stream()."""
+    """Test that kwargs are stored in State when using MagenticWorkflow.run()."""
     from agent_framework_orchestrations._magentic import (
         MagenticContext,
         MagenticManagerBase,
@@ -440,10 +443,10 @@ async def test_magentic_kwargs_stored_in_state() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Plan"], author_name="manager")
+            return ChatMessage(role="assistant", text="Plan", author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Replan"], author_name="manager")
+            return ChatMessage(role="assistant", text="Replan", author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             return MagenticProgressLedger(
@@ -455,22 +458,22 @@ async def test_magentic_kwargs_stored_in_state() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage("assistant", ["Final"], author_name="manager")
+            return ChatMessage(role="assistant", text="Final", author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
 
     magentic_workflow = MagenticBuilder().participants([agent]).with_manager(manager=manager).build()
 
-    # Use MagenticWorkflow.run_stream() which goes through the kwargs attachment path
+    # Use MagenticWorkflow.run() which goes through the kwargs attachment path
     custom_data = {"magentic_key": "magentic_value"}
 
-    async for event in magentic_workflow.run_stream("test task", custom_data=custom_data):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+    async for event in magentic_workflow.run("test task", custom_data=custom_data, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Verify the workflow completed (kwargs were stored, even if agent wasn't invoked)
-    # The test validates the code path through MagenticWorkflow.run_stream -> _MagenticStartMessage
+    # The test validates the code path through MagenticWorkflow.run(stream=True, ) -> _MagenticStartMessage
 
 
 # endregion
@@ -504,7 +507,7 @@ async def test_workflow_as_agent_run_propagates_kwargs_to_underlying_agent() -> 
 
 
 async def test_workflow_as_agent_run_stream_propagates_kwargs_to_underlying_agent() -> None:
-    """Test that kwargs passed to workflow_agent.run_stream() flow through to the underlying agents."""
+    """Test that kwargs passed to workflow_agent.run() flow through to the underlying agents."""
     agent = _KwargsCapturingAgent(name="inner_agent")
     workflow = SequentialBuilder().participants([agent]).build()
     workflow_agent = workflow.as_agent(name="TestWorkflowAgent")
@@ -512,8 +515,9 @@ async def test_workflow_as_agent_run_stream_propagates_kwargs_to_underlying_agen
     custom_data = {"session_id": "xyz123"}
     api_token = "secret-token"
 
-    async for _ in workflow_agent.run_stream(
+    async for _ in workflow_agent.run(
         "test message",
+        stream=True,
         custom_data=custom_data,
         api_token=api_token,
     ):
@@ -593,7 +597,7 @@ async def test_workflow_as_agent_kwargs_with_complex_nested_data() -> None:
 async def test_subworkflow_kwargs_propagation() -> None:
     """Test that kwargs are propagated to subworkflows.
 
-    Verifies kwargs passed to parent workflow.run_stream() flow through to agents
+    Verifies kwargs passed to parent workflow.run() flow through to agents
     in subworkflows wrapped by WorkflowExecutor.
     """
     from agent_framework._workflows._workflow_executor import WorkflowExecutor
@@ -615,12 +619,13 @@ async def test_subworkflow_kwargs_propagation() -> None:
     user_token = {"user_name": "alice", "access_level": "admin"}
 
     # Run the outer workflow with kwargs
-    async for event in outer_workflow.run_stream(
+    async for event in outer_workflow.run(
         "test message for subworkflow",
+        stream=True,
         custom_data=custom_data,
         user_token=user_token,
     ):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Verify that the inner agent was called
@@ -674,12 +679,13 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
     outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
 
     # Run with kwargs
-    async for event in outer_workflow.run_stream(
+    async for event in outer_workflow.run(
         "test",
+        stream=True,
         my_custom_kwarg="should_be_propagated",
         another_kwarg=42,
     ):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Verify the state reader was invoked
@@ -720,11 +726,12 @@ async def test_nested_subworkflow_kwargs_propagation() -> None:
     outer_workflow = SequentialBuilder().participants([middle_executor]).build()
 
     # Run with kwargs
-    async for event in outer_workflow.run_stream(
+    async for event in outer_workflow.run(
         "deeply nested test",
+        stream=True,
         deep_kwarg="should_reach_inner",
     ):
-        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
     # Verify inner agent was called

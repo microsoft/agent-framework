@@ -5,11 +5,8 @@ from typing import Any, cast
 
 from agent_framework import (
     Executor,
-    ExecutorCompletedEvent,
-    ExecutorInvokedEvent,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
 from typing_extensions import Never
@@ -21,8 +18,8 @@ This sample demonstrates how to observe executor input and output data without m
 executor code. This is useful for debugging, logging, or building monitoring tools.
 
 What this example shows:
-- ExecutorInvokedEvent.data contains the input message received by the executor
-- ExecutorCompletedEvent.data contains the messages sent via ctx.send_message()
+- executor_invoked events (type='executor_invoked') contain the input message in event.data
+- executor_completed events (type='executor_completed') contain the messages sent via ctx.send_message() in event.data
 - How to generically observe all executor I/O through workflow streaming events
 
 This approach allows you to enable_instrumentation any workflow for observability without
@@ -91,19 +88,19 @@ async def main() -> None:
 
     print("Running workflow with executor I/O observation...\n")
 
-    async for event in workflow.run_stream("hello world"):
-        if isinstance(event, ExecutorInvokedEvent):
+    async for event in workflow.run("hello world", stream=True):
+        if event.type == "executor_invoked":
             # The input message received by the executor is in event.data
             print(f"[INVOKED] {event.executor_id}")
             print(f"    Input: {format_io_data(event.data)}")
 
-        elif isinstance(event, ExecutorCompletedEvent):
+        elif event.type == "executor_completed":
             # Messages sent via ctx.send_message() are in event.data
             print(f"[COMPLETED] {event.executor_id}")
             if event.data:
                 print(f"    Output: {format_io_data(event.data)}")
 
-        elif isinstance(event, WorkflowOutputEvent):
+        elif event.type == "output":
             print(f"[WORKFLOW OUTPUT] {format_io_data(event.data)}")
 
     """

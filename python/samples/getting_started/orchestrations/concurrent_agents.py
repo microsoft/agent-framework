@@ -23,7 +23,7 @@ Demonstrates:
 
 Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
-- Familiarity with Workflow events (WorkflowOutputEvent)
+- Familiarity with Workflow events (WorkflowEvent)
 """
 
 
@@ -56,7 +56,7 @@ async def main() -> None:
     )
 
     # 2) Build a concurrent workflow
-    # Participants are either Agents (type of AgentProtocol) or Executors
+    # Participants are either Agents (type of SupportsAgentRun) or Executors
     workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
 
     # 3) Run with a single prompt and pretty-print the final combined messages

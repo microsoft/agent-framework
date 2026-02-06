@@ -3,7 +3,6 @@
 import asyncio
 import os
 
-from agent_framework import AgentResponseUpdate
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
@@ -59,10 +58,7 @@ async def main() -> None:
         # Collect file_ids from the response
         file_ids: list[str] = []
 
-        async for chunk in agent.run_stream(query):
-            if not isinstance(chunk, AgentResponseUpdate):
-                continue
-
+        async for chunk in agent.run(query, stream=True):
             for content in chunk.contents:
                 if content.type == "text":
                     print(content.text, end="", flush=True)

@@ -13,7 +13,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     executor,
     handler,
 )
@@ -62,15 +61,15 @@ async def test_executor_cannot_emit_framework_lifecycle_event(caplog: "LogCaptur
     async with make_context() as (ctx, runner_ctx):
         caplog.clear()
         with caplog.at_level("WARNING"):
-            await ctx.add_event(WorkflowStatusEvent(state=WorkflowRunState.IN_PROGRESS))
+            await ctx.add_event(WorkflowEvent.status(state=WorkflowRunState.IN_PROGRESS))
 
         events: list[WorkflowEvent] = await runner_ctx.drain_events()
         assert len(events) == 1
-        assert type(events[0]).__name__ == "WorkflowWarningEvent"
-        data = getattr(events[0], "data", None)
+        assert events[0].type == "warning"
+        data = events[0].data
         assert isinstance(data, str)
         assert "reserved for framework lifecycle notifications" in data
-        assert any("attempted to emit WorkflowStatusEvent" in message for message in list(caplog.messages))
+        assert any("attempted to emit" in message and "'status'" in message for message in list(caplog.messages))
 
 
 async def test_executor_emits_normal_event() -> None:
@@ -84,7 +83,8 @@ async def test_executor_emits_normal_event() -> None:
 
 
 class _TestEvent(WorkflowEvent):
-    pass
+    def __init__(self, data: Any = None) -> None:
+        super().__init__("test_event", data=data)
 
 
 async def test_workflow_context_type_annotations_no_parameter() -> None:

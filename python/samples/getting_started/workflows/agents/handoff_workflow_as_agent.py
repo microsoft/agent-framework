@@ -8,12 +8,11 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Content,
-    HandoffAgentUserRequest,
-    HandoffBuilder,
     WorkflowAgent,
     tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 
 """Sample: Handoff Workflow as Agent with Human-in-the-Loop.

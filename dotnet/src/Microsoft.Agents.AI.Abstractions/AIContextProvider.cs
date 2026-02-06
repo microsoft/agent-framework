@@ -129,12 +129,29 @@ public abstract class AIContextProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
         /// </summary>
+        /// <param name="agent">The agent being invoked.</param>
+        /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokingContext(IEnumerable<ChatMessage> requestMessages)
+        public InvokingContext(
+            AIAgent agent,
+            AgentSession? session,
+            IEnumerable<ChatMessage> requestMessages)
         {
-            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.Agent = Throw.IfNull(agent);
+            this.Session = session;
+            this.RequestMessages = Throw.IfNull(requestMessages);
         }
+
+        /// <summary>
+        /// Gets the agent that is being invoked.
+        /// </summary>
+        public AIAgent Agent { get; }
+
+        /// <summary>
+        /// Gets the agent session associated with the agent invocation.
+        /// </summary>
+        public AgentSession? Session { get; }
 
         /// <summary>
         /// Gets the caller provided messages that will be used by the agent for this invocation.
@@ -158,14 +175,32 @@ public abstract class AIContextProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
         /// </summary>
+        /// <param name="agent">The agent being invoked.</param>
+        /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
         /// <param name="aiContextProviderMessages">The messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? aiContextProviderMessages)
+        public InvokedContext(
+            AIAgent agent,
+            AgentSession? session,
+            IEnumerable<ChatMessage> requestMessages,
+            IEnumerable<ChatMessage>? aiContextProviderMessages)
         {
-            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.Agent = Throw.IfNull(agent);
+            this.Session = session;
+            this.RequestMessages = Throw.IfNull(requestMessages);
             this.AIContextProviderMessages = aiContextProviderMessages;
         }
+
+        /// <summary>
+        /// Gets the agent that is being invoked.
+        /// </summary>
+        public AIAgent Agent { get; }
+
+        /// <summary>
+        /// Gets the agent session associated with the agent invocation.
+        /// </summary>
+        public AgentSession? Session { get; }
 
         /// <summary>
         /// Gets the caller provided messages that were used by the agent for this invocation.

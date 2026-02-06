@@ -2,19 +2,20 @@
 
 import asyncio
 
-from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, executor
+from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from typing_extensions import Never
 
 """
 Sample: Foundational sequential workflow with streaming using function-style executors.
 
 Two lightweight steps run in order. The first converts text to uppercase.
-The second reverses the text and yields the workflow output. Events are printed as they arrive from run_stream.
+The second reverses the text and yields the workflow output. Events are printed as they arrive from a streaming run.
 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
 pass intermediate values using ctx.send_message, and yield final output using ctx.yield_output().
-Demonstrate how streaming exposes ExecutorInvokedEvent and ExecutorCompletedEvent for observability.
+Demonstrate how streaming exposes executor_invoked events (type='executor_invoked') and 
+executor_completed events (type='executor_completed') for observability.
 
 Prerequisites:
 - No external services required.
@@ -64,20 +65,20 @@ async def main():
     )
 
     # Step 2: Run the workflow and stream events in real time.
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         # You will see executor invoke and completion events as the workflow progresses.
         print(f"Event: {event}")
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             print(f"Workflow completed with result: {event.data}")
 
     """
     Sample Output:
 
-    Event: ExecutorInvokedEvent(executor_id=upper_case_executor)
-    Event: ExecutorCompletedEvent(executor_id=upper_case_executor)
-    Event: ExecutorInvokedEvent(executor_id=reverse_text_executor)
-    Event: ExecutorCompletedEvent(executor_id=reverse_text_executor)
-    Event: WorkflowOutputEvent(data='DLROW OLLEH', executor_id=reverse_text_executor)
+    Event: executor_invoked event (type='executor_invoked', executor_id=upper_case_executor)
+    Event: executor_completed event (type='executor_completed', executor_id=upper_case_executor)
+    Event: executor_invoked event (type='executor_invoked', executor_id=reverse_text_executor)
+    Event: executor_completed event (type='executor_completed', executor_id=reverse_text_executor)
+    Event: output event (type='output', data='DLROW OLLEH', executor_id=reverse_text_executor)
     Workflow completed with result: DLROW OLLEH
     """
 

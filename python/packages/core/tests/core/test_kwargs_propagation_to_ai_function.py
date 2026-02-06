@@ -2,16 +2,94 @@
 
 """Tests for kwargs propagation from get_response() to @tool functions."""
 
+from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 
 from agent_framework import (
+    BaseChatClient,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationLayer,
+    ResponseStream,
     tool,
 )
-from agent_framework._tools import _handle_function_calls_response, _handle_function_calls_streaming_response
+from agent_framework.observability import ChatTelemetryLayer
+
+
+class _MockBaseChatClient(BaseChatClient[Any]):
+    """Mock chat client for testing function invocation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run_responses: list[ChatResponse] = []
+        self.streaming_responses: list[list[ChatResponseUpdate]] = []
+        self.call_count: int = 0
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        stream: bool,
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            return self._get_streaming_response(messages=messages, options=options, **kwargs)
+
+        async def _get() -> ChatResponse:
+            return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        return _get()
+
+    async def _get_non_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        self.call_count += 1
+        if self.run_responses:
+            return self.run_responses.pop(0)
+        return ChatResponse(messages=ChatMessage(role="assistant", text="default response"))
+
+    def _get_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            self.call_count += 1
+            if self.streaming_responses:
+                for update in self.streaming_responses.pop(0):
+                    yield update
+            else:
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text("default streaming response")], role="assistant", finish_reason="stop"
+                )
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+
+class FunctionInvokingMockClient(
+    ChatMiddlewareLayer[Any],
+    FunctionInvocationLayer[Any],
+    ChatTelemetryLayer[Any],
+    _MockBaseChatClient,
+):
+    """Mock client with function invocation support."""
+
+    pass
 
 
 class TestKwargsPropagationToFunctionTool:
@@ -27,42 +105,36 @@ class TestKwargsPropagationToFunctionTool:
             captured_kwargs.update(kwargs)
             return f"result: x={x}"
 
-        # Create a mock client
-        mock_client = type("MockClient", (), {})()
+        client = FunctionInvokingMockClient()
+        client.run_responses = [
+            # First response: function call
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="capture_kwargs_tool", arguments='{"x": 42}'
+                            )
+                        ],
+                    )
+                ]
+            ),
+            # Second response: final answer
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Done!")]),
+        ]
 
-        call_count = [0]
-
-        async def mock_get_response(self, messages, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # First call: return a function call
-                return ChatResponse(
-                    messages=[
-                        ChatMessage(
-                            role="assistant",
-                            contents=[
-                                Content.from_function_call(
-                                    call_id="call_1", name="capture_kwargs_tool", arguments='{"x": 42}'
-                                )
-                            ],
-                        )
-                    ]
-                )
-            # Second call: return final response
-            return ChatResponse(messages=[ChatMessage("assistant", ["Done!"])])
-
-        # Wrap the function with function invocation decorator
-        wrapped = _handle_function_calls_response(mock_get_response)
-
-        # Call with custom kwargs that should propagate to the tool
-        # Note: tools are passed in options dict, custom kwargs are passed separately
-        result = await wrapped(
-            mock_client,
-            messages=[],
-            options={"tools": [capture_kwargs_tool]},
-            user_id="user-123",
-            session_token="secret-token",
-            custom_data={"key": "value"},
+        result = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test")],
+            stream=False,
+            options={
+                "tools": [capture_kwargs_tool],
+                "additional_function_arguments": {
+                    "user_id": "user-123",
+                    "session_token": "secret-token",
+                    "custom_data": {"key": "value"},
+                },
+            },
         )
 
         # Verify the tool was called and received the kwargs
@@ -81,43 +153,38 @@ class TestKwargsPropagationToFunctionTool:
         @tool(approval_mode="never_require")
         def simple_tool(x: int) -> str:
             """A simple tool without **kwargs."""
-            # This should not receive any extra kwargs
             return f"result: x={x}"
 
-        mock_client = type("MockClient", (), {})()
+        client = FunctionInvokingMockClient()
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(call_id="call_1", name="simple_tool", arguments='{"x": 99}')
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="Completed!")]),
+        ]
 
-        call_count = [0]
-
-        async def mock_get_response(self, messages, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return ChatResponse(
-                    messages=[
-                        ChatMessage(
-                            role="assistant",
-                            contents=[
-                                Content.from_function_call(call_id="call_1", name="simple_tool", arguments='{"x": 99}')
-                            ],
-                        )
-                    ]
-                )
-            return ChatResponse(messages=[ChatMessage("assistant", ["Completed!"])])
-
-        wrapped = _handle_function_calls_response(mock_get_response)
-
-        # Call with kwargs - the tool should work but not receive them
-        result = await wrapped(
-            mock_client,
-            messages=[],
-            options={"tools": [simple_tool]},
-            user_id="user-123",  # This kwarg should be ignored by the tool
+        # Call with additional_function_arguments - the tool should work but not receive them
+        result = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test")],
+            stream=False,
+            options={
+                "tools": [simple_tool],
+                "additional_function_arguments": {"user_id": "user-123"},
+            },
         )
 
         # Verify the tool was called successfully (no error from extra kwargs)
         assert result.messages[-1].text == "Completed!"
 
     async def test_kwargs_isolated_between_function_calls(self) -> None:
-        """Test that kwargs don't leak between different function call invocations."""
+        """Test that kwargs are consistent across multiple function call invocations."""
         invocation_kwargs: list[dict[str, Any]] = []
 
         @tool(approval_mode="never_require")
@@ -126,40 +193,37 @@ class TestKwargsPropagationToFunctionTool:
             invocation_kwargs.append(dict(kwargs))
             return f"called with {name}"
 
-        mock_client = type("MockClient", (), {})()
+        client = FunctionInvokingMockClient()
+        client.run_responses = [
+            # Two function calls in one response
+            ChatResponse(
+                messages=[
+                    ChatMessage(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="tracking_tool", arguments='{"name": "first"}'
+                            ),
+                            Content.from_function_call(
+                                call_id="call_2", name="tracking_tool", arguments='{"name": "second"}'
+                            ),
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[ChatMessage(role="assistant", text="All done!")]),
+        ]
 
-        call_count = [0]
-
-        async def mock_get_response(self, messages, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # Two function calls in one response
-                return ChatResponse(
-                    messages=[
-                        ChatMessage(
-                            role="assistant",
-                            contents=[
-                                Content.from_function_call(
-                                    call_id="call_1", name="tracking_tool", arguments='{"name": "first"}'
-                                ),
-                                Content.from_function_call(
-                                    call_id="call_2", name="tracking_tool", arguments='{"name": "second"}'
-                                ),
-                            ],
-                        )
-                    ]
-                )
-            return ChatResponse(messages=[ChatMessage("assistant", ["All done!"])])
-
-        wrapped = _handle_function_calls_response(mock_get_response)
-
-        # Call with kwargs
-        result = await wrapped(
-            mock_client,
-            messages=[],
-            options={"tools": [tracking_tool]},
-            request_id="req-001",
-            trace_context={"trace_id": "abc"},
+        result = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test")],
+            stream=False,
+            options={
+                "tools": [tracking_tool],
+                "additional_function_arguments": {
+                    "request_id": "req-001",
+                    "trace_context": {"trace_id": "abc"},
+                },
+            },
         )
 
         # Both invocations should have received the same kwargs
@@ -179,15 +243,11 @@ class TestKwargsPropagationToFunctionTool:
             captured_kwargs.update(kwargs)
             return f"processed: {value}"
 
-        mock_client = type("MockClient", (), {})()
-
-        call_count = [0]
-
-        async def mock_get_streaming_response(self, messages, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # First call: return function call update
-                yield ChatResponseUpdate(
+        client = FunctionInvokingMockClient()
+        client.streaming_responses = [
+            # First stream: function call
+            [
+                ChatResponseUpdate(
                     role="assistant",
                     contents=[
                         Content.from_function_call(
@@ -196,22 +256,31 @@ class TestKwargsPropagationToFunctionTool:
                             arguments='{"value": "streaming-test"}',
                         )
                     ],
+                    finish_reason="stop",
                 )
-            else:
-                # Second call: return final response
-                yield ChatResponseUpdate(contents=[Content.from_text(text="Stream complete!")], role="assistant")
-
-        wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+            ],
+            # Second stream: final response
+            [
+                ChatResponseUpdate(
+                    contents=[Content.from_text("Stream complete!")], role="assistant", finish_reason="stop"
+                )
+            ],
+        ]
 
         # Collect streaming updates
         updates: list[ChatResponseUpdate] = []
-        async for update in wrapped(
-            mock_client,
-            messages=[],
-            options={"tools": [streaming_capture_tool]},
-            streaming_session="session-xyz",
-            correlation_id="corr-123",
-        ):
+        stream = client.get_response(
+            messages=[ChatMessage(role="user", text="Test")],
+            stream=True,
+            options={
+                "tools": [streaming_capture_tool],
+                "additional_function_arguments": {
+                    "streaming_session": "session-xyz",
+                    "correlation_id": "corr-123",
+                },
+            },
+        )
+        async for update in stream:
             updates.append(update)
 
         # Verify kwargs were captured by the tool

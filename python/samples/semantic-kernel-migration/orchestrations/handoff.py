@@ -8,13 +8,10 @@ from typing import cast
 
 from agent_framework import (
     ChatMessage,
-    HandoffBuilder,
-    HandoffUserInputRequest,
-    RequestInfoEvent,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import HandoffBuilder, HandoffUserInputRequest
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -214,17 +211,17 @@ async def _drain_events(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEv
     return [event async for event in stream]
 
 
-def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
-    requests: list[RequestInfoEvent] = []
+def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent]:
+    requests: list[WorkflowEvent] = []
     for event in events:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, HandoffUserInputRequest):
+        if event.type == "request_info" and isinstance(event.data, HandoffUserInputRequest):
             requests.append(event)
     return requests
 
 
 def _extract_final_conversation(events: list[WorkflowEvent]) -> list[ChatMessage]:
     for event in events:
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             data = cast(list[ChatMessage], event.data)
             return data
     return []
@@ -244,7 +241,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         .build()
     )
 
-    events = await _drain_events(workflow.run_stream(initial_task))
+    events = await _drain_events(workflow.run(initial_task, stream=True))
     pending = _collect_handoff_requests(events)
     scripted_iter = iter(scripted_responses)
 

@@ -3,16 +3,16 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import (
     Executor,
-    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowExecutor,
     handler,
     response_handler,
@@ -192,7 +192,7 @@ class ResourceAllocator(Executor):
         super().__init__(id)
         self._cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     async def _handle_resource_request(self, request: ResourceRequest) -> ResourceResponse | None:
         """Allocates resources based on request and available cache."""
@@ -207,7 +207,7 @@ class ResourceAllocator(Executor):
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, ResourceRequest):
             return
 
@@ -246,14 +246,14 @@ class PolicyEngine(Executor):
             "disk": 1000,  # Liberal disk policy
         }
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @handler
     async def handle_subworkflow_request(
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, PolicyRequest):
             return
 

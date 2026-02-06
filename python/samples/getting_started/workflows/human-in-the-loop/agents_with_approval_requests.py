@@ -3,7 +3,7 @@
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Annotated, Never
+from typing import Annotated
 
 from agent_framework import (
     AgentExecutorResponse,
@@ -16,6 +16,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from typing_extensions import Never
 
 """
 Sample: Agents in a workflow with AI functions requiring approval
@@ -46,7 +47,7 @@ Demonstrate:
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
-- Basic familiarity with WorkflowBuilder, edges, events, RequestInfoEvent, and streaming runs.
+- Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
 """
 
 

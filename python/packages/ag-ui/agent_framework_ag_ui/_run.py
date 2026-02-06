@@ -5,8 +5,9 @@
 import json
 import logging
 import uuid
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -24,19 +25,21 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentProtocol,
     AgentThread,
     ChatMessage,
     Content,
+    SupportsAgentRun,
     prepare_function_call_results,
 )
-from agent_framework._middleware import extract_and_merge_function_middleware
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
-    FunctionInvocationConfiguration,
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _try_execute_function_calls,  # type: ignore
+    normalize_function_invocation_configuration,
 )
+from agent_framework._types import ResponseStream
+from agent_framework.exceptions import AgentExecutionException
 
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
@@ -576,7 +579,7 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
 async def _resolve_approval_responses(
     messages: list[Any],
     tools: list[Any],
-    agent: AgentProtocol,
+    agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
 ) -> None:
     """Execute approved function calls and replace approval content with results.
@@ -601,8 +604,13 @@ async def _resolve_approval_responses(
     # Execute approved tool calls
     if approved_responses and tools:
         chat_client = getattr(agent, "chat_client", None)
-        config = getattr(chat_client, "function_invocation_configuration", None) or FunctionInvocationConfiguration()
-        middleware_pipeline = extract_and_merge_function_middleware(chat_client, run_kwargs)
+        config = normalize_function_invocation_configuration(
+            getattr(chat_client, "function_invocation_configuration", None)
+        )
+        middleware_pipeline = FunctionMiddlewarePipeline(
+            *getattr(chat_client, "function_middleware", ()),
+            *run_kwargs.get("middleware", ()),
+        )
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
@@ -733,7 +741,7 @@ def _build_messages_snapshot(
 
 async def run_agent_stream(
     input_data: dict[str, Any],
-    agent: AgentProtocol,
+    agent: SupportsAgentRun,
     config: "AgentConfig",
 ) -> "AsyncGenerator[BaseEvent, None]":
     """Run agent and yield AG-UI events.
@@ -862,7 +870,14 @@ async def run_agent_stream(
     # Stream from agent - emit RunStarted after first update to get service IDs
     run_started_emitted = False
     all_updates: list[Any] = []  # Collect for structured output processing
-    async for update in agent.run_stream(messages, **run_kwargs):
+    response_stream = agent.run(messages, stream=True, **run_kwargs)
+    if isinstance(response_stream, ResponseStream):
+        stream = response_stream
+    else:
+        stream = await cast(Awaitable[ResponseStream[Any, Any]], response_stream)
+        if not isinstance(stream, ResponseStream):
+            raise AgentExecutionException("Chat client did not return a ResponseStream.")
+    async for update in stream:
         # Collect updates for structured output processing
         if response_format is not None:
             all_updates.append(update)

@@ -36,8 +36,8 @@ def test_initialization_with_parameters():
 def test_initialization_with_messages():
     """Test initializing with existing messages."""
     messages = [
-        ChatMessage("user", [Content.from_text(text="Hello")]),
-        ChatMessage("assistant", [Content.from_text(text="Hi there!")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="Hi there!")]),
     ]
 
     sliding_window = SlidingWindowChatMessageStore(messages=messages, max_tokens=1000)
@@ -51,8 +51,8 @@ async def test_add_messages_simple():
     sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
 
     new_messages = [
-        ChatMessage("user", [Content.from_text(text="What's the weather?")]),
-        ChatMessage("assistant", [Content.from_text(text="I can help with that.")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="What's the weather?")]),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="I can help with that.")]),
     ]
 
     await sliding_window.add_messages(new_messages)
@@ -68,7 +68,9 @@ async def test_list_all_messages_vs_list_messages():
     sliding_window = SlidingWindowChatMessageStore(max_tokens=50)  # Small limit to force truncation
 
     # Add many messages to trigger truncation
-    messages = [ChatMessage("user", [Content.from_text(text=f"Message {i} with some content")]) for i in range(10)]
+    messages = [
+        ChatMessage(role="user", contents=[Content.from_text(text=f"Message {i} with some content")]) for i in range(10)
+    ]
 
     await sliding_window.add_messages(messages)
 
@@ -85,7 +87,7 @@ async def test_list_all_messages_vs_list_messages():
 def test_get_token_count_basic():
     """Test basic token counting."""
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
+    sliding_window.truncated_messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
 
     token_count = sliding_window.get_token_count()
 
@@ -102,7 +104,7 @@ def test_get_token_count_with_system_message():
     token_count_empty = sliding_window.get_token_count()
 
     # Add a message
-    sliding_window.truncated_messages = [ChatMessage("user", [Content.from_text(text="Hello")])]
+    sliding_window.truncated_messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
     token_count_with_message = sliding_window.get_token_count()
 
     # With message should be more tokens
@@ -115,7 +117,7 @@ def test_get_token_count_function_call():
     function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
 
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [ChatMessage("assistant", [function_call])]
+    sliding_window.truncated_messages = [ChatMessage(role="assistant", contents=[function_call])]
 
     token_count = sliding_window.get_token_count()
     assert token_count > 0
@@ -126,7 +128,7 @@ def test_get_token_count_function_result():
     function_result = Content.from_function_result(call_id="call_123", result={"success": True, "data": "result"})
 
     sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [ChatMessage("tool", [function_result])]
+    sliding_window.truncated_messages = [ChatMessage(role="tool", contents=[function_result])]
 
     token_count = sliding_window.get_token_count()
     assert token_count > 0
@@ -149,7 +151,7 @@ def test_truncate_messages_removes_old_messages(mock_logger):
                 Content.from_text(text="This is another very long message that should also exceed the token limit")
             ],
         ),
-        ChatMessage("user", [Content.from_text(text="Short msg")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Short msg")]),
     ]
 
     sliding_window.truncated_messages = messages.copy()
@@ -171,7 +173,7 @@ def test_truncate_messages_removes_leading_tool_messages(mock_logger):
     tool_message = ChatMessage(
         role="tool", contents=[Content.from_function_result(call_id="call_123", result="result")]
     )
-    user_message = ChatMessage("user", [Content.from_text(text="Hello")])
+    user_message = ChatMessage(role="user", contents=[Content.from_text(text="Hello")])
 
     sliding_window.truncated_messages = [tool_message, user_message]
     sliding_window.truncate_messages()
@@ -229,12 +231,12 @@ async def test_real_world_scenario():
 
     # Simulate a conversation
     conversation = [
-        ChatMessage("user", [Content.from_text(text="Hello, how are you?")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Hello, how are you?")]),
         ChatMessage(
             role="assistant",
             contents=[Content.from_text(text="I'm doing well, thank you! How can I help you today?")],
         ),
-        ChatMessage("user", [Content.from_text(text="Can you tell me about the weather?")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Can you tell me about the weather?")]),
         ChatMessage(
             role="assistant",
             contents=[
@@ -244,7 +246,7 @@ async def test_real_world_scenario():
                 )
             ],
         ),
-        ChatMessage("user", [Content.from_text(text="What about telling me a joke instead?")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="What about telling me a joke instead?")]),
         ChatMessage(
             role="assistant",
             contents=[

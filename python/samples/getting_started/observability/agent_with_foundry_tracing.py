@@ -87,10 +87,7 @@ async def main():
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

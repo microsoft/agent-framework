@@ -22,11 +22,9 @@ import sys
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
 import pytest
 import redis.asyncio as aioredis
-from dt_testutils import OrchestrationHelper, create_agent_client
 
 # Add sample directory to path to import RedisStreamResponseHandler
 SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"
@@ -48,14 +46,11 @@ class TestSampleReliableStreaming:
     """Tests for 03_single_agent_streaming sample."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, worker_process: dict[str, Any], dts_endpoint: str) -> None:
+    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
         """Setup test fixtures."""
-        self.endpoint: str = dts_endpoint
-        self.taskhub: str = str(worker_process["taskhub"])
-
-        # Create agent client
-        dts_client, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
-        self.helper = OrchestrationHelper(dts_client)
+        # Create agent client using the factory fixture
+        _, self.agent_client = agent_client_factory.create()
+        self.helper = orchestration_helper
 
         # Redis configuration
         self.redis_connection_string = os.environ.get("REDIS_CONNECTION_STRING", "redis://localhost:6379")

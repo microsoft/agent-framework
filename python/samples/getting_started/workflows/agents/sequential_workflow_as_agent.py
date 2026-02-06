@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import SequentialBuilder
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 
 """

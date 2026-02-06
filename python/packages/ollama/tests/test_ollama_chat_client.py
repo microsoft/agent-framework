@@ -260,7 +260,7 @@ async def test_cmc_streaming(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history)
+    result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
         assert chunk.text == "test"
@@ -277,7 +277,7 @@ async def test_cmc_streaming_reasoning(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history)
+    result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
         reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
@@ -297,7 +297,7 @@ async def test_cmc_streaming_chat_failure(
     ollama_client = OllamaChatClient()
 
     with pytest.raises(ServiceResponseException) as exc_info:
-        async for _ in ollama_client.get_streaming_response(messages=chat_history):
+        async for _ in ollama_client.get_response(messages=chat_history, stream=True):
             pass
 
     assert "Ollama streaming chat request failed" in str(exc_info.value)
@@ -320,7 +320,7 @@ async def test_cmc_streaming_with_tool_call(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history, options={"tools": [hello_world]})
+    result = ollama_client.get_response(messages=chat_history, stream=True, options={"tools": [hello_world]})
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in result:
@@ -354,7 +354,7 @@ async def test_cmc_with_dict_tool_passthrough(
     await ollama_client.get_response(
         messages=chat_history,
         options={
-            "tools": [{"type": "web_search"}],
+            "tools": [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}],
         },
     )
 
@@ -362,7 +362,7 @@ async def test_cmc_with_dict_tool_passthrough(
     mock_chat.assert_called_once()
     call_kwargs = mock_chat.call_args.kwargs
     assert "tools" in call_kwargs
-    assert call_kwargs["tools"] == [{"type": "web_search"}]
+    assert call_kwargs["tools"] == [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}]
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -465,8 +465,8 @@ async def test_cmc_streaming_integration_with_tool_call(
     chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
-    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(
-        messages=chat_history, options={"tools": [hello_world]}
+    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(
+        messages=chat_history, stream=True, options={"tools": [hello_world]}
     )
 
     chunks: list[ChatResponseUpdate] = []
@@ -490,7 +490,7 @@ async def test_cmc_streaming_integration_with_chat_completion(
     chat_history.append(ChatMessage(text="Say Hello World", role="user"))
 
     ollama_client = OllamaChatClient()
-    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(messages=chat_history)
+    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(messages=chat_history, stream=True)
 
     full_text = ""
     async for chunk in result:
