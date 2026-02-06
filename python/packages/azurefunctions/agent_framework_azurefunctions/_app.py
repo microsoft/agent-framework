@@ -415,11 +415,7 @@ class AgentFunctionApp(DFAppBase):
             try:
                 req_body = req.get_json()
             except ValueError:
-                return func.HttpResponse(
-                    json.dumps({"error": "Invalid JSON body"}),
-                    status_code=400,
-                    mimetype="application/json",
-                )
+                return self._build_error_response("Invalid JSON body")
 
             instance_id = await client.start_new("workflow_orchestrator", client_input=req_body)
 
@@ -447,11 +443,7 @@ class AgentFunctionApp(DFAppBase):
             status = await client.get_status(instance_id)
 
             if not status:
-                return func.HttpResponse(
-                    json.dumps({"error": "Instance not found"}),
-                    status_code=404,
-                    mimetype="application/json",
-                )
+                return self._build_error_response("Instance not found", status_code=404)
 
             response = {
                 "instanceId": status.instance_id,
@@ -497,20 +489,12 @@ class AgentFunctionApp(DFAppBase):
             request_id = req.route_params.get("requestId")
 
             if not instance_id or not request_id:
-                return func.HttpResponse(
-                    json.dumps({"error": "Instance ID and Request ID are required."}),
-                    status_code=400,
-                    mimetype="application/json",
-                )
+                return self._build_error_response("Instance ID and Request ID are required.")
 
             try:
                 response_data = req.get_json()
             except ValueError:
-                return func.HttpResponse(
-                    json.dumps({"error": "Request body must be valid JSON."}),
-                    status_code=400,
-                    mimetype="application/json",
-                )
+                return self._build_error_response("Request body must be valid JSON.")
 
             # Send the response as an external event
             # The request_id is used as the event name for correlation
@@ -1228,6 +1212,15 @@ class AgentFunctionApp(DFAppBase):
         """Return the JSON response, serializing dictionaries as needed."""
         body_json = payload if isinstance(payload, str) else json.dumps(payload)
         return func.HttpResponse(body_json, status_code=status_code, mimetype=MIMETYPE_APPLICATION_JSON)
+
+    @staticmethod
+    def _build_error_response(message: str, status_code: int = 400) -> func.HttpResponse:
+        """Return a JSON error response with the given message and status code."""
+        return func.HttpResponse(
+            json.dumps({"error": message}),
+            status_code=status_code,
+            mimetype=MIMETYPE_APPLICATION_JSON,
+        )
 
     def _convert_payload_to_text(self, payload: dict[str, Any]) -> str:
         """Convert a structured payload into a human-readable text response."""
