@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using System.Text.Json;
+using System.Threading;
 
 namespace Microsoft.Agents.AI;
 
@@ -21,9 +23,13 @@ public sealed class AIAgentMetadata
     /// The name of the agent provider, if applicable. Where possible, this should map to the
     /// appropriate name defined in the OpenTelemetry Semantic Conventions for Generative AI systems.
     /// </param>
-    public AIAgentMetadata(string? providerName = null)
+    /// <param name="supportsStructuredOutput">
+    /// Indicates whether the agent supports structured output via <see cref="AIAgent.RunAsync{T}(AgentSession?, JsonSerializerOptions?, AgentRunOptions?, CancellationToken)"/>.
+    /// </param>
+    public AIAgentMetadata(string? providerName = null, bool supportsStructuredOutput = false)
     {
         this.ProviderName = providerName;
+        this.SupportsStructuredOutput = supportsStructuredOutput;
     }
 
     /// <summary>
@@ -37,4 +43,17 @@ public sealed class AIAgentMetadata
     /// OpenTelemetry Semantic Conventions for Generative AI systems.
     /// </remarks>
     public string? ProviderName { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the agent supports structured output.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> if the agent supports structured output via <see cref="AIAgent.RunAsync{T}(AgentSession?, JsonSerializerOptions?, AgentRunOptions?, CancellationToken)"/>;
+    /// otherwise, <see langword="false"/>.
+    /// </value>
+    /// <remarks>
+    /// Consumers can check this property before calling <see cref="AIAgent.RunAsync{T}(AgentSession?, JsonSerializerOptions?, AgentRunOptions?, CancellationToken)"/>
+    /// to determine if the agent supports structured output.
+    /// </remarks>
+    public bool SupportsStructuredOutput { get; }
 }

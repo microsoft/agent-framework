@@ -97,7 +97,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // Options must be cloned since ChatClientAgentOptions is mutable.
         this._agentOptions = options?.Clone();
 
-        this._agentMetadata = new AIAgentMetadata(chatClient.GetService<ChatClientMetadata>()?.ProviderName);
+        this._agentMetadata = new AIAgentMetadata(chatClient.GetService<ChatClientMetadata>()?.ProviderName, supportsStructuredOutput: true);
 
         // Get the type of the chat client before wrapping it as an agent invoking chat client.
         this._chatClientType = chatClient.GetType();

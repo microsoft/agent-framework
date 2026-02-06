@@ -108,6 +108,7 @@ public abstract partial class AIAgent
     /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentResponse{T}"/> with the agent's output.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the agent does not support structured output.</exception>
     /// <remarks>
     /// <para>
     /// This method handles collections of messages, allowing for complex conversational scenarios including
@@ -125,6 +126,12 @@ public abstract partial class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        var metadata = this.GetService<AIAgentMetadata>();
+        if (metadata?.SupportsStructuredOutput != true)
+        {
+            throw new NotSupportedException($"The agent '{this.GetType().Name}' does not support structured output. Consider using the UseStructuredOutput method on AIAgentBuilder to add structured output support to the agent.");
+        }
+
         serializerOptions ??= AgentAbstractionsJsonUtilities.DefaultOptions;
 
         var responseFormat = ChatResponseFormat.ForJsonSchema<T>(serializerOptions);

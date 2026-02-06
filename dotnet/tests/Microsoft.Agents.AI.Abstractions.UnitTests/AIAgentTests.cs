@@ -364,10 +364,89 @@ public class AIAgentTests
 
     #endregion
 
+    #region Structured Output Support Tests
+
     /// <summary>
-    /// Typed mock session.
+    /// Verify that RunAsync&lt;T&gt; throws NotSupportedException by default for agents that don't support structured output.
     /// </summary>
-    public abstract class TestAgentSession : AgentSession;
+    [Fact]
+    public async Task RunAsync_GenericT_ThrowsNotSupportedException_WhenAgentDoesNotSupportStructuredOutputAsync()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            agent.RunAsync<object>("test message"));
+
+        Assert.Contains("does not support structured output", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that AIAgentMetadata with SupportsStructuredOutput = true indicates support.
+    /// </summary>
+    [Fact]
+    public void AIAgentMetadata_WithSupportsStructuredOutput_True_IndicatesSupport()
+    {
+        // Arrange & Act
+        var metadata = new AIAgentMetadata("test-provider", supportsStructuredOutput: true);
+
+        // Assert
+        Assert.True(metadata.SupportsStructuredOutput);
+        Assert.Equal("test-provider", metadata.ProviderName);
+    }
+
+    /// <summary>
+    /// Verify that AIAgentMetadata defaults to SupportsStructuredOutput = false.
+    /// </summary>
+    [Fact]
+    public void AIAgentMetadata_DefaultsTo_SupportsStructuredOutput_False()
+    {
+        // Arrange & Act
+        var metadata = new AIAgentMetadata("test-provider");
+
+        // Assert
+        Assert.False(metadata.SupportsStructuredOutput);
+    }
+
+    /// <summary>
+    /// Verify that an agent that overrides GetService to return AIAgentMetadata with SupportsStructuredOutput = true indicates support.
+    /// </summary>
+    [Fact]
+    public void SupportsStructuredOutput_ReturnsTrue_WhenOverridden()
+    {
+        // Arrange
+        var agentMetadata = new AIAgentMetadata(supportsStructuredOutput: true);
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Setup(a => a.GetService(typeof(AIAgentMetadata), null))
+            .Returns(agentMetadata);
+
+        // Act
+        var metadata = agentMock.Object.GetService<AIAgentMetadata>();
+
+        // Assert
+        Assert.NotNull(metadata);
+        Assert.True(metadata!.SupportsStructuredOutput);
+    }
+
+    /// <summary>
+    /// Verify that the default agent does not support structured output.
+    /// </summary>
+    [Fact]
+    public void SupportsStructuredOutput_DefaultImplementation_ReturnsFalse()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var metadata = agent.GetService<AIAgentMetadata>();
+
+        // Assert - MockAgent does not provide AIAgentMetadata, so structured output is not supported
+        Assert.Null(metadata);
+    }
+
+    #endregion
 
     private sealed class MockAgent : AIAgent
     {
