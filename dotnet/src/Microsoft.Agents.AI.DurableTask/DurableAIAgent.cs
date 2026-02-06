@@ -13,6 +13,8 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// </summary>
 public sealed class DurableAIAgent : AIAgent
 {
+    private static readonly AIAgentMetadata s_agentMetadata = new("durable-task", supportsStructuredOutput: true);
+
     private readonly TaskOrchestrationContext _context;
     private readonly string _agentName;
 
@@ -26,6 +28,9 @@ public sealed class DurableAIAgent : AIAgent
         this._context = context;
         this._agentName = agentName;
     }
+
+    /// <inheritdoc/>
+    public override string? Name => this._agentName;
 
     /// <summary>
     /// Creates a new agent session for this agent using a random session ID.
@@ -51,6 +56,12 @@ public sealed class DurableAIAgent : AIAgent
     {
         return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
     }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
 
     /// <summary>
     /// Runs the agent with messages and returns the response.

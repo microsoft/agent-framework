@@ -21,6 +21,12 @@ public class AIAgentStructuredOutputTests
     public AIAgentStructuredOutputTests()
     {
         this._agentMock = new Mock<AIAgent> { CallBase = true };
+
+        // Setup GetService to return AIAgentMetadata with SupportsStructuredOutput = true
+        // This is required for RunAsync<T> to work, as it checks for structured output support
+        this._agentMock
+            .Setup(a => a.GetService(typeof(AIAgentMetadata), null))
+            .Returns(new AIAgentMetadata(supportsStructuredOutput: true));
     }
 
     #region Schema Wrapping Tests
