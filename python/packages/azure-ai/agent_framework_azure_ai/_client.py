@@ -105,10 +105,19 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         This is the core implementation without middleware, telemetry, or function invocation layers.
         For most use cases, prefer :class:`AzureAIClient` which includes all standard layers.
 
+        Note:
+            When using this client with an existing agent name, a **new agent version will be
+            created** on first invocation unless you specify ``agent_version`` or set
+            ``use_latest_version=True``. This may overwrite tools and configurations you
+            previously set up in Azure AI Foundry. For explicit control over agent creation
+            vs retrieval, use :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider`
+            which provides separate ``create_agent()`` and ``get_agent()`` methods.
+
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             agent_name: The name to use when creating new agents or using existing agents.
-            agent_version: The version of the agent to use.
+            agent_version: The version of the agent to use. If not specified and ``use_latest_version``
+                is not True, a new version will be created.
             agent_description: The description to use when creating new agents.
             conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
@@ -118,8 +127,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             credential: Azure async credential to use for authentication.
-            use_latest_version: Boolean flag that indicates whether to use latest agent version
-                if it exists in the service.
+            use_latest_version: Boolean flag that indicates whether to use the latest existing
+                agent version if it exists in the service. If False or not set, a new agent
+                version will be created on first invocation, which may overwrite existing
+                agent configurations.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -580,8 +591,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
+        Warning:
+            When using an existing agent name without specifying ``agent_version`` or
+            ``use_latest_version=True`` on the client, a **new agent version will be
+            created** on first invocation. This may overwrite tools and configurations
+            you previously set up in Azure AI Foundry.
+
         For creating and managing persistent agents on the server, use
-        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead, which
+        provides separate ``create_agent()`` and ``get_agent()`` methods for explicit
+        control over agent creation vs retrieval.
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
