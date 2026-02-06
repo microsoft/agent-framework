@@ -65,10 +65,10 @@ internal sealed class WorkflowHostAgent : AIAgent
         protocol.ThrowIfNotChatProtocol(allowCatchAll: true);
     }
 
-    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
 
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         _ = Throw.IfNull(session);
 
@@ -80,7 +80,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         return workflowSession.Serialize(jsonSerializerOptions);
     }
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._checkpointManager, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
 
     private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)

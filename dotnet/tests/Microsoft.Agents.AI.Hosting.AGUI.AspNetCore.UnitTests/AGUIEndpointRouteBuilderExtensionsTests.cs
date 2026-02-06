@@ -425,13 +425,13 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             if (session is not TestInMemoryAgentSession testSession)
             {
@@ -528,13 +528,13 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Test agent";
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
             new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         {
             if (session is not TestInMemoryAgentSession testSession)
             {

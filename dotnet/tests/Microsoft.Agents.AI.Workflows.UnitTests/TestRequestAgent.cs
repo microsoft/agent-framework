@@ -29,7 +29,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
@@ -37,7 +37,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             _ => throw new NotSupportedException(),
         });
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
@@ -45,7 +45,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             _ => throw new NotSupportedException(),
         });
 
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
         => default;
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

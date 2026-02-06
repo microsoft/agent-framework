@@ -302,7 +302,7 @@ public sealed partial class ChatClientAgent : AIAgent
         : this.ChatClient.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+    protected override async ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
     {
         ChatHistoryProvider? chatHistoryProvider = this._agentOptions?.ChatHistoryProviderFactory is not null
             ? await this._agentOptions.ChatHistoryProviderFactory.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }, cancellationToken).ConfigureAwait(false)
@@ -386,7 +386,7 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         _ = Throw.IfNull(session);
 
@@ -399,7 +399,7 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         Func<JsonElement, JsonSerializerOptions?, CancellationToken, ValueTask<ChatHistoryProvider>>? chatHistoryProviderFactory = this._agentOptions?.ChatHistoryProviderFactory is null ?
             null :

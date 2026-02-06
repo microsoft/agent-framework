@@ -573,13 +573,13 @@ public class AIAgentTests
 
         protected override string? IdCore { get; }
 
-        public override async ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
             => throw new NotImplementedException();
 
-        public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         protected override Task<AgentResponse> RunCoreAsync(
@@ -611,13 +611,13 @@ public class AIAgentTests
         public override string? Name => this._name;
         public override string? Description => this._description;
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
             => throw new NotImplementedException();
 
         protected override Task<AgentResponse> RunCoreAsync(

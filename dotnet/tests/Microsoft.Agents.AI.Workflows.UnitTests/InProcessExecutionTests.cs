@@ -144,12 +144,12 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedState,
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override System.Text.Json.JsonElement SerializeSession(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override System.Text.Json.JsonElement SerializeSessionCore(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(

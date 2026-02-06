@@ -135,13 +135,13 @@ public class AgentWorkflowBuilderTests
     {
         public override string Name => name;
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => new(new DoubleEchoAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => new(new DoubleEchoAgentSession());
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
