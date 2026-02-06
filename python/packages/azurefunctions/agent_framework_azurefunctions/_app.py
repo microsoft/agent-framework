@@ -49,7 +49,12 @@ from ._serialization import (
     reconstruct_message_for_handler,
     serialize_message,
 )
-from ._workflow import execute_hitl_response_handler, run_workflow_orchestrator
+from ._workflow import (
+    SOURCE_HITL_RESPONSE,
+    SOURCE_ORCHESTRATOR,
+    execute_hitl_response_handler,
+    run_workflow_orchestrator,
+)
 
 logger = logging.getLogger("agent_framework.azurefunctions")
 
@@ -276,7 +281,7 @@ class AgentFunctionApp(DFAppBase):
             data = json.loads(inputData)
             message_data = data["message"]
             shared_state_snapshot = data.get("shared_state_snapshot", {})
-            source_executor_ids = data.get("source_executor_ids", ["__orchestrator__"])
+            source_executor_ids = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
 
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
@@ -288,8 +293,8 @@ class AgentFunctionApp(DFAppBase):
             # Reconstruct message - try to match handler's expected types using public input_types
             message = reconstruct_message_for_handler(message_data, executor.input_types)
 
-            # Check if this is a HITL response message
-            is_hitl_response = isinstance(message_data, dict) and message_data.get("__hitl_response__")
+            # Check if this is a HITL response message by examining source_executor_ids
+            is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
 
             async def run() -> dict[str, Any]:
                 # Create runner context and shared state
