@@ -111,8 +111,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
-        await Task.Delay(100); // Allow time for activities to be captured
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
@@ -166,8 +164,6 @@ public sealed class ObservabilityTests : IDisposable
 
         // Act
         CreateWorkflow();
-        await Task.Delay(100); // Allow time for activities to be captured
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
@@ -197,8 +193,6 @@ public sealed class ObservabilityTests : IDisposable
 
         WorkflowBuilder builder = new(uppercase);
         var workflow = builder.Build(); // No WithOpenTelemetry() call
-        await Task.Delay(100); // Allow time for activities to be captured
-
         // Assert - No activities should be created
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");

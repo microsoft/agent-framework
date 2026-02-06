@@ -51,6 +51,21 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         this._workflowModel.Build(builder);
 
+        // Apply telemetry if configured
+        if (this._workflowOptions.TelemetrySourceName is not null || this._workflowOptions.TelemetryActivitySource is not null)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.TelemetrySourceName,
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
+        else if (this._workflowOptions.ConfigureTelemetry is not null)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(DeclarativeWorkflowOptions.ConfigureTelemetry)} was provided but telemetry is not enabled. " +
+                $"Set {nameof(DeclarativeWorkflowOptions.TelemetrySourceName)} or {nameof(DeclarativeWorkflowOptions.TelemetryActivitySource)} to enable telemetry.");
+        }
+
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
