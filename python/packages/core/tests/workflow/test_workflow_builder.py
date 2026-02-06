@@ -139,15 +139,252 @@ def test_add_agent_duplicate_id_raises_error():
         builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
 
 
+# Tests for build() and build_async() with executor factories
+
+
+def test_build_raises_error_with_async_executor_factories():
+    """Test that build() raises ValueError when async executor factories are detected."""
+
+    async def create_async_executor() -> MockExecutor:
+        return MockExecutor(id="executor_async")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"AsyncExecutor": create_async_executor})
+        .set_start_executor("AsyncExecutor")
+    )
+
+    # Attempting to build synchronously with async factories should raise an error
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
+def test_build_raises_error_when_factory_returns_non_executor():
+    """Test that build() raises TypeError when a factory returns a non-Executor type."""
+
+    def create_invalid_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return "not an executor"  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"InvalidExecutor": create_invalid_executor})
+        .set_start_executor("InvalidExecutor")
+    )
+
+    # Attempting to build with a factory that returns non-Executor should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'InvalidExecutor' returned str instead of an Executor\."):
+        builder.build()
+
+
+def test_build_raises_error_when_factory_returns_none():
+    """Test that build() raises TypeError when a factory returns None."""
+
+    def create_none_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return None  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder().register_executors({"NoneExecutor": create_none_executor}).set_start_executor("NoneExecutor")
+    )
+
+    # Attempting to build with a factory that returns None should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'NoneExecutor' returned NoneType instead of an Executor\."):
+        builder.build()
+
+
+def test_build_raises_error_when_sync_factory_raises_exception():
+    """Test that build() propagates exceptions raised by sync factories."""
+
+    def create_failing_executor() -> MockExecutor:
+        raise RuntimeError("Sync factory failed!")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # Exception from sync factory should propagate
+    with pytest.raises(RuntimeError, match="Sync factory failed!"):
+        builder.build()
+
+
+def test_build_raises_error_when_close_throws_exception():
+    """Test that build() raises ValueError even when instance.close() throws an exception."""
+
+    class FailingCoroutine:
+        """A mock coroutine that raises an exception when close() is called."""
+
+        def close(self):
+            raise RuntimeError("Close failed!")
+
+        def __await__(self):
+            # This makes it awaitable but we won't get here
+            return self  # type: ignore[return-value]
+
+    def create_failing_async_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return FailingCoroutine()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_async_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # The ValueError about async factories should still be raised despite close() failing
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
+def test_build_calls_close_on_async_factory():
+    """Test that build() actually calls close() on awaitable instances."""
+    close_called = {"value": False}
+
+    class TrackingCoroutine:
+        """A mock coroutine that tracks if close() is called."""
+
+        def close(self):
+            close_called["value"] = True
+
+        def __await__(self):
+            return self  # type: ignore[return-value]
+
+    def create_tracking_async_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return TrackingCoroutine()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"TrackingExecutor": create_tracking_async_executor})
+        .set_start_executor("TrackingExecutor")
+    )
+
+    # Build should detect async factory and call close()
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+    # Verify close() was actually called
+    assert close_called["value"], "close() should have been called on the awaitable instance"
+
+
+def test_build_handles_awaitable_without_close_method():
+    """Test that build() handles awaitable instances that don't have a close() method."""
+
+    class AwaitableWithoutClose:
+        """A mock awaitable without a close() method."""
+
+        def __await__(self):
+            return self  # type: ignore[return-value]
+
+    def create_awaitable_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return AwaitableWithoutClose()  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"AwaitableExecutor": create_awaitable_executor})
+        .set_start_executor("AwaitableExecutor")
+    )
+
+    # Should still raise ValueError about async factories, even without close() method
+    with pytest.raises(ValueError, match="Async executor factories were detected."):
+        builder.build()
+
+
+async def test_build_async_with_async_executor_factories():
+    """Test that build_async() works with async executor factories."""
+
+    async def create_executor_a() -> MockExecutor:
+        return MockExecutor(id="executor_a")
+
+    async def create_executor_b() -> MockExecutor:
+        return MockExecutor(id="executor_b")
+
+    # Build workflow with async executor factories
+    workflow = await (
+        WorkflowBuilder()
+        .register_executors({
+            "ExecutorA": create_executor_a,
+            "ExecutorB": create_executor_b,
+        })
+        .set_start_executor("ExecutorA")
+        .add_edge("ExecutorA", "ExecutorB")
+        .build_async()
+    )
+
+    assert workflow.start_executor_id == "executor_a"
+    assert len(workflow.executors) == 2
+    assert "executor_a" in workflow.executors
+    assert "executor_b" in workflow.executors
+
+
+async def test_build_async_with_mixed_sync_and_async_factories():
+    """Test that build_async() works with a mix of sync and async executor factories."""
+
+    def create_sync_executor() -> MockExecutor:
+        return MockExecutor(id="executor_sync")
+
+    async def create_async_executor() -> MockExecutor:
+        return MockExecutor(id="executor_async")
+
+    # Build workflow with mixed sync and async executor factories
+    workflow = await (
+        WorkflowBuilder()
+        .register_executors({
+            "SyncExecutor": create_sync_executor,
+            "AsyncExecutor": create_async_executor,
+        })
+        .set_start_executor("SyncExecutor")
+        .add_edge("SyncExecutor", "AsyncExecutor")
+        .build_async()
+    )
+
+    assert workflow.start_executor_id == "executor_sync"
+    assert len(workflow.executors) == 2
+    assert "executor_sync" in workflow.executors
+    assert "executor_async" in workflow.executors
+
+
+async def test_build_async_raises_error_when_factory_returns_non_executor():
+    """Test that build_async() raises TypeError when an async factory returns a non-Executor type."""
+
+    async def create_invalid_executor() -> MockExecutor:  # type: ignore[reportReturnType]
+        return None  # type: ignore[return-value]
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"InvalidExecutor": create_invalid_executor})
+        .set_start_executor("InvalidExecutor")
+    )
+
+    # Attempting to build with an async factory that returns non-Executor should raise TypeError
+    with pytest.raises(TypeError, match=r"Factory 'InvalidExecutor' returned NoneType instead of an Executor\."):
+        await builder.build_async()
+
+
+async def test_build_async_raises_error_when_factory_raises_exception():
+    """Test that build_async() propagates exceptions raised by async factories."""
+
+    async def create_failing_executor() -> MockExecutor:
+        raise RuntimeError("Factory failed!")
+
+    builder = (
+        WorkflowBuilder()
+        .register_executors({"FailingExecutor": create_failing_executor})
+        .set_start_executor("FailingExecutor")
+    )
+
+    # Exception from async factory should propagate
+    with pytest.raises(RuntimeError, match="Factory failed!"):
+        await builder.build_async()
+
+
 # Tests for new executor registration patterns
 
 
-def test_register_executor_basic():
+def test_register_executors_basic():
     """Test basic executor registration with lazy initialization."""
     builder = WorkflowBuilder()
 
     # Register an executor factory - ID must match the registered name
-    result = builder.register_executor(lambda: MockExecutor(id="TestExecutor"), name="TestExecutor")
+    result = builder.register_executors({"TestExecutor": lambda: MockExecutor(id="TestExecutor")})
 
     # Verify that register returns the builder for chaining
     assert result is builder
@@ -159,15 +396,18 @@ def test_register_executor_basic():
 
 
 def test_register_multiple_executors():
-    """Test registering multiple executors and connecting them with edges."""
+    """Test registering multiple executors with a mapping of factories and connecting them with edges."""
     builder = WorkflowBuilder()
 
-    # Register multiple executors - IDs must match registered names
-    builder.register_executor(lambda: MockExecutor(id="ExecutorA"), name="ExecutorA")
-    builder.register_executor(lambda: MockExecutor(id="ExecutorB"), name="ExecutorB")
-    builder.register_executor(lambda: MockExecutor(id="ExecutorC"), name="ExecutorC")
+    # IDs must match registered names
+    result = builder.register_executors({
+        "ExecutorA": lambda: MockExecutor(id="ExecutorA"),
+        "ExecutorB": lambda: MockExecutor(id="ExecutorB"),
+        "ExecutorC": lambda: MockExecutor(id="ExecutorC"),
+    })
 
-    # Build workflow with edges using registered names
+    assert result is builder
+
     workflow = (
         builder
         .set_start_executor("ExecutorA")
@@ -176,11 +416,54 @@ def test_register_multiple_executors():
         .build()
     )
 
-    # Verify all executors are present
     assert "ExecutorA" in workflow.executors
     assert "ExecutorB" in workflow.executors
     assert "ExecutorC" in workflow.executors
     assert workflow.start_executor_id == "ExecutorA"
+
+
+def test_register_executors_multiple_calls_with_non_overlapping_names():
+    """Test that register_executors can be called multiple times with non-overlapping names."""
+    builder = WorkflowBuilder()
+
+    # First registration
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+
+    # Second registration with different names
+    builder.register_executors({
+        "ExecutorB": lambda: MockExecutor(id="ExecutorB"),
+        "ExecutorC": lambda: MockExecutor(id="ExecutorC"),
+    })
+
+    # Build workflow and verify all executors are present
+    workflow = (
+        builder
+        .set_start_executor("ExecutorA")
+        .add_edge("ExecutorA", "ExecutorB")
+        .add_edge("ExecutorB", "ExecutorC")
+        .build()
+    )
+
+    assert "ExecutorA" in workflow.executors
+    assert "ExecutorB" in workflow.executors
+    assert "ExecutorC" in workflow.executors
+
+
+def test_register_executors_rejects_empty_inputs():
+    """Test that empty executor mappings and entries are rejected."""
+    builder = WorkflowBuilder()
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        builder.register_executors({})
+
+    with pytest.raises(ValueError, match="name cannot be empty"):
+        builder.register_executors({"": lambda: MockExecutor(id="ExecutorA")})
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        builder.register_executors({"   ": lambda: MockExecutor(id="ExecutorA")})
+
+    with pytest.raises(TypeError, match="must be callable"):
+        builder.register_executors({"ExecutorA": None})  # type: ignore[arg-type]
 
 
 def test_register_with_multiple_names():
@@ -195,7 +478,7 @@ def test_register_with_multiple_names():
         counter["val"] += 1
         return MockExecutor(id="ExecutorA" if counter["val"] == 1 else "ExecutorB")
 
-    builder.register_executor(make_executor, name=["ExecutorA", "ExecutorB"])
+    builder.register_executors({"ExecutorA": make_executor, "ExecutorB": make_executor})
 
     # Set up workflow
     workflow = builder.set_start_executor("ExecutorA").add_edge("ExecutorA", "ExecutorB").build()
@@ -211,24 +494,71 @@ def test_register_duplicate_name_raises_error():
     builder = WorkflowBuilder()
 
     # Register first executor
-    builder.register_executor(lambda: MockExecutor(id="executor_1"), name="MyExecutor")
+    builder.register_executors({"MyExecutor": lambda: MockExecutor(id="executor_1")})
 
     # Registering second executor with same name should raise ValueError
     with pytest.raises(ValueError, match="already registered"):
-        builder.register_executor(lambda: MockExecutor(id="executor_2"), name="MyExecutor")
+        builder.register_executors({"MyExecutor": lambda: MockExecutor(id="executor_2")})
 
 
 def test_register_duplicate_id_raises_error():
     """Test that registering duplicate id raises an error."""
-    builder = WorkflowBuilder()
-
-    # Register first executor
-    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor1")
-    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor2")
+    builder = WorkflowBuilder().register_executors({
+        "MyExecutor1": lambda: MockExecutor(id="executor"),
+        "MyExecutor2": lambda: MockExecutor(id="executor"),
+    })
     builder.set_start_executor("MyExecutor1")
 
     # Registering second executor with same ID should raise ValueError
-    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been registered."):
+    with pytest.raises(
+        ValueError,
+        match=r"Executor with ID 'executor' from factory 'MyExecutor2' conflicts with existing factory 'MyExecutor1'\.",
+    ):
+        builder.build()
+
+
+def test_register_factory_conflicts_with_direct_executor():
+    """Test that a factory-produced executor conflicting with a directly-added executor raises an error."""
+    # Add an executor directly via add_edge
+    direct_executor = MockExecutor(id="executor")
+    builder = WorkflowBuilder()
+    builder.add_edge(direct_executor, direct_executor)  # Add it to self._executors
+
+    # Now register a factory that produces the same ID
+    builder.register_executors({"MyFactory": lambda: MockExecutor(id="executor")})
+    builder.set_start_executor("MyFactory")
+
+    # Building should raise ValueError
+    with pytest.raises(ValueError, match=r"Executor with ID 'executor' has already been added to the workflow\."):
+        builder.build()
+
+
+def test_unregistered_factory_name_in_edge_raises_error():
+    """Test that referencing an unregistered factory name in an edge raises ValueError."""
+    builder = WorkflowBuilder()
+
+    # Register only ExecutorA
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+    builder.set_start_executor("ExecutorA")
+
+    # Add edge to unregistered ExecutorB
+    builder.add_edge("ExecutorA", "ExecutorB")
+
+    # Building should raise ValueError because ExecutorB was never registered
+    with pytest.raises(ValueError, match="Factory 'ExecutorB' has not been registered"):
+        builder.build()
+
+
+def test_unregistered_start_executor_factory_name_raises_error():
+    """Test that setting an unregistered factory name as start executor raises ValueError."""
+    builder = WorkflowBuilder()
+
+    # Register ExecutorA but set start to unregistered ExecutorB
+    builder.register_executors({"ExecutorA": lambda: MockExecutor(id="ExecutorA")})
+    builder.set_start_executor("ExecutorB")
+
+    # Building should raise ValueError because ExecutorB was never registered
+    with pytest.raises(ValueError, match="Failed to resolve starting executor from registered factories"):
         builder.build()
 
 
@@ -286,8 +616,10 @@ def test_register_and_add_edge_with_strings():
     builder = WorkflowBuilder()
 
     # Register executors
-    builder.register_executor(lambda: MockExecutor(id="source"), name="Source")
-    builder.register_executor(lambda: MockExecutor(id="target"), name="Target")
+    builder.register_executors({
+        "Source": lambda: MockExecutor(id="source"),
+        "Target": lambda: MockExecutor(id="target"),
+    })
 
     # Add edge using string names
     workflow = builder.set_start_executor("Source").add_edge("Source", "Target").build()
@@ -321,9 +653,11 @@ def test_register_with_fan_out_edges():
     builder = WorkflowBuilder()
 
     # Register executors - IDs must match registered names
-    builder.register_executor(lambda: MockExecutor(id="Source"), name="Source")
-    builder.register_executor(lambda: MockExecutor(id="Target1"), name="Target1")
-    builder.register_executor(lambda: MockExecutor(id="Target2"), name="Target2")
+    builder.register_executors({
+        "Source": lambda: MockExecutor(id="Source"),
+        "Target1": lambda: MockExecutor(id="Target1"),
+        "Target2": lambda: MockExecutor(id="Target2"),
+    })
 
     # Add fan-out edges using registered names
     workflow = builder.set_start_executor("Source").add_fan_out_edges("Source", ["Target1", "Target2"]).build()
@@ -339,9 +673,11 @@ def test_register_with_fan_in_edges():
     builder = WorkflowBuilder()
 
     # Register executors - IDs must match registered names
-    builder.register_executor(lambda: MockExecutor(id="Source1"), name="Source1")
-    builder.register_executor(lambda: MockExecutor(id="Source2"), name="Source2")
-    builder.register_executor(lambda: MockAggregator(id="Aggregator"), name="Aggregator")
+    builder.register_executors({
+        "Source1": lambda: MockExecutor(id="Source1"),
+        "Source2": lambda: MockExecutor(id="Source2"),
+        "Aggregator": lambda: MockAggregator(id="Aggregator"),
+    })
 
     # Add fan-in edges using registered names
     # Both Source1 and Source2 need to be reachable, so connect Source1 to Source2
@@ -364,9 +700,11 @@ def test_register_with_chain():
     builder = WorkflowBuilder()
 
     # Register executors - IDs must match registered names
-    builder.register_executor(lambda: MockExecutor(id="Step1"), name="Step1")
-    builder.register_executor(lambda: MockExecutor(id="Step2"), name="Step2")
-    builder.register_executor(lambda: MockExecutor(id="Step3"), name="Step3")
+    builder.register_executors({
+        "Step1": lambda: MockExecutor(id="Step1"),
+        "Step2": lambda: MockExecutor(id="Step2"),
+        "Step3": lambda: MockExecutor(id="Step3"),
+    })
 
     # Add chain using registered names
     workflow = builder.add_chain(["Step1", "Step2", "Step3"]).set_start_executor("Step1").build()
@@ -388,7 +726,7 @@ def test_register_factory_called_only_once():
         return MockExecutor(id="Test")
 
     builder = WorkflowBuilder()
-    builder.register_executor(factory, name="Test")
+    builder.register_executors({"Test": factory})
 
     # Factory should not be called yet
     assert call_count == 0
@@ -415,7 +753,7 @@ def test_mixing_eager_and_lazy_initialization_error():
     eager_executor = MockExecutor(id="eager")
 
     # Register a lazy executor
-    builder.register_executor(lambda: MockExecutor(id="Lazy"), name="Lazy")
+    builder.register_executors({"Lazy": lambda: MockExecutor(id="Lazy")})
 
     # Mixing eager and lazy should raise an error during add_edge
     with pytest.raises(
@@ -436,8 +774,10 @@ def test_register_with_condition():
         return msg.data > 0
 
     # Register executors - IDs must match registered names
-    builder.register_executor(lambda: MockExecutor(id="Source"), name="Source")
-    builder.register_executor(lambda: MockExecutor(id="Target"), name="Target")
+    builder.register_executors({
+        "Source": lambda: MockExecutor(id="Source"),
+        "Target": lambda: MockExecutor(id="Target"),
+    })
 
     # Add edge with condition
     workflow = builder.set_start_executor("Source").add_edge("Source", "Target", condition=condition_func).build()
@@ -518,8 +858,10 @@ def test_with_output_from_with_registered_names():
     """Test with_output_from with registered factory names (strings)."""
     workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: MockExecutor(id="ExecutorA"), name="ExecutorAFactory")
-        .register_executor(lambda: MockExecutor(id="ExecutorB"), name="ExecutorBFactory")
+        .register_executors({
+            "ExecutorAFactory": lambda: MockExecutor(id="ExecutorA"),
+            "ExecutorBFactory": lambda: MockExecutor(id="ExecutorB"),
+        })
         .set_start_executor("ExecutorAFactory")
         .add_edge("ExecutorAFactory", "ExecutorBFactory")
         .with_output_from(["ExecutorBFactory"])

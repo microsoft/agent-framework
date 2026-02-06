@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import logging
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from opentelemetry import trace
 
 from .._agents import SupportsAgentRun
 from .._threads import AgentThread
@@ -139,8 +142,10 @@ class WorkflowBuilder:
             # Build a workflow
             workflow = (
                 WorkflowBuilder()
-                .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
+                .register_executors({
+                    "UpperCase": lambda: UpperCaseExecutor(id="upper"),
+                    "Reverse": lambda: ReverseExecutor(id="reverse"),
+                })
                 .add_edge("UpperCase", "Reverse")
                 .set_start_executor("UpperCase")
                 .build()
@@ -184,7 +189,7 @@ class WorkflowBuilder:
             | _MultiSelectionEdgeGroupRegistration
             | _FanInEdgeRegistration
         ] = []
-        self._executor_registry: dict[str, Callable[[], Executor]] = {}
+        self._executor_registry: dict[str, Callable[[], Executor | Awaitable[Executor]]] = {}
 
         # Output executors filter; if set, only outputs from these executors are yielded
         self._output_executors: list[Executor | SupportsAgentRun | str] = []
@@ -247,21 +252,23 @@ class WorkflowBuilder:
             f"WorkflowBuilder expected an Executor or SupportsAgentRun instance; got {type(candidate).__name__}."
         )
 
-    def register_executor(self, factory_func: Callable[[], Executor], name: str | list[str]) -> Self:
-        """Register an executor factory function for lazy initialization.
+    def register_executors(self, executor_factories: dict[str, Callable[[], Executor | Awaitable[Executor]]]) -> Self:
+        """Register multiple executor factory functions for lazy initialization.
 
-        This method allows you to register a factory function that creates an executor.
-        The executor will be instantiated only when the workflow is built, enabling
-        deferred initialization and potentially reducing startup time.
+        This method allows you to register multiple factory functions at once. Each
+        executor is instantiated only when the workflow is built, enabling deferred
+        initialization and reducing builder boilerplate.
 
         Args:
-            factory_func: A callable that returns an Executor instance when called.
-            name: The name(s) of the registered executor factory. This doesn't have to match
-                  the executor's ID, but it must be unique within the workflow.
+            executor_factories: A mapping of executor names to factory callables that
+                return Executor instances when called.
+
+        Raises:
+            ValueError: If executor_factories is empty or contains empty names, or if a name is already registered.
+            TypeError: If an executor factory is not callable.
 
         Example:
             .. code-block:: python
-                from typing_extensions import Never
                 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 
 
@@ -273,49 +280,34 @@ class WorkflowBuilder:
 
                 class ReverseExecutor(Executor):
                     @handler
-                    async def process(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+                    async def process(self, text: str, ctx: WorkflowContext[str]) -> None:
                         await ctx.yield_output(text[::-1])
 
 
-                # Build a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                    .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
+                    .register_executors({
+                        "UpperCase": lambda: UpperCaseExecutor(id="upper"),
+                        "Reverse": lambda: ReverseExecutor(id="reverse"),
+                    })
                     .set_start_executor("UpperCase")
                     .add_edge("UpperCase", "Reverse")
                     .build()
                 )
-
-            If multiple names are provided, the same factory function will be registered under each name.
-
-            .. code-block:: python
-
-                from agent_framework import WorkflowBuilder, Executor, WorkflowContext, handler
-
-
-                class LoggerExecutor(Executor):
-                    @handler
-                    async def log(self, message: str, ctx: WorkflowContext) -> None:
-                        print(f"Log: {message}")
-
-
-                # Register the same executor factory under multiple names
-                workflow = (
-                    WorkflowBuilder()
-                    .register_executor(lambda: LoggerExecutor(id="logger"), name=["ExecutorA", "ExecutorB"])
-                    .set_start_executor("ExecutorA")
-                    .add_edge("ExecutorA", "ExecutorB")
-                    .build()
         """
-        names = [name] if isinstance(name, str) else name
+        if not executor_factories:
+            raise ValueError("Executor factories cannot be empty.")
 
-        for n in names:
-            if n in self._executor_registry:
-                raise ValueError(f"An executor factory with the name '{n}' is already registered.")
+        for name, factory_function in executor_factories.items():
+            if not name or not name.strip():
+                raise ValueError("Executor factory name cannot be empty or whitespace-only")
+            if not callable(factory_function):
+                raise TypeError(f"Executor factory for '{name}' must be callable.")
+            if name in self._executor_registry:
+                raise ValueError(f"An executor factory with the name '{name}' is already registered.")
 
-        for n in names:
-            self._executor_registry[n] = factory_func
+        for name, factory_function in executor_factories.items():
+            self._executor_registry[name] = factory_function
 
         return self
 
@@ -348,7 +340,7 @@ class WorkflowBuilder:
                 # Build a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ..., name="SomeOtherExecutor")
+                    .register_executors({"SomeOtherExecutor": lambda: ...})
                     .register_agent(
                         lambda: AnthropicAgent(name="writer", model="claude-3-5-sonnet-20241022"),
                         name="WriterAgent",
@@ -393,7 +385,7 @@ class WorkflowBuilder:
 
             Note: If instances are provided for both source and target, they will be shared across
                 all workflow instances created from the built Workflow. To avoid this, consider
-                registering the executors and agents using `register_executor` and `register_agent`
+                registering the executors and agents using `register_executors` and `register_agent`
                 and referencing them by factory name for lazy initialization instead.
 
         Returns:
@@ -421,8 +413,10 @@ class WorkflowBuilder:
                 # Connect executors with an edge
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="a"),
+                        "ProcessorB": lambda: ProcessorB(id="b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .build()
@@ -430,8 +424,10 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="a"),
+                        "ProcessorB": lambda: ProcessorB(id="b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB", condition=only_large_numbers)
                     .set_start_executor("ProcessorA")
                     .build()
@@ -477,7 +473,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -508,9 +504,11 @@ class WorkflowBuilder:
                 # Broadcast to multiple validators
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: DataSource(id="source"), name="DataSource")
-                    .register_executor(lambda: ValidatorA(id="val_a"), name="ValidatorA")
-                    .register_executor(lambda: ValidatorB(id="val_b"), name="ValidatorB")
+                    .register_executors({
+                        "DataSource": lambda: DataSource(id="source"),
+                        "ValidatorA": lambda: ValidatorA(id="val_a"),
+                        "ValidatorB": lambda: ValidatorB(id="val_b"),
+                    })
                     .add_fan_out_edges("DataSource", ["ValidatorA", "ValidatorB"])
                     .set_start_executor("DataSource")
                     .build()
@@ -565,7 +563,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and case targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -601,9 +599,11 @@ class WorkflowBuilder:
                 # Route based on score value
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Evaluator(id="eval"), name="Evaluator")
-                    .register_executor(lambda: HighScoreHandler(id="high"), name="HighScoreHandler")
-                    .register_executor(lambda: LowScoreHandler(id="low"), name="LowScoreHandler")
+                    .register_executors({
+                        "Evaluator": lambda: Evaluator(id="eval"),
+                        "HighScoreHandler": lambda: HighScoreHandler(id="high"),
+                        "LowScoreHandler": lambda: LowScoreHandler(id="low"),
+                    })
                     .add_switch_case_edge_group(
                         "Evaluator",
                         [
@@ -671,7 +671,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for source and targets, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -715,9 +715,11 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: TaskDispatcher(id="dispatcher"), name="TaskDispatcher")
-                    .register_executor(lambda: WorkerA(id="worker_a"), name="WorkerA")
-                    .register_executor(lambda: WorkerB(id="worker_b"), name="WorkerB")
+                    .register_executors({
+                        "TaskDispatcher": lambda: TaskDispatcher(id="dispatcher"),
+                        "WorkerA": lambda: WorkerA(id="worker_a"),
+                        "WorkerB": lambda: WorkerB(id="worker_b"),
+                    })
                     .add_multi_selection_edge_group(
                         "TaskDispatcher",
                         ["WorkerA", "WorkerB"],
@@ -778,7 +780,7 @@ class WorkflowBuilder:
 
         Note: If instances are provided for sources and target, they will be shared across
               all workflow instances created from the built Workflow. To avoid this, consider
-              registering the executors and agents using `register_executor` and `register_agent`
+              registering the executors and agents using `register_executors` and `register_agent`
               and referencing them by factory name for lazy initialization instead.
 
         Example:
@@ -804,9 +806,11 @@ class WorkflowBuilder:
                 # Collect results from multiple producers
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Producer(id="prod_1"), name="Producer1")
-                    .register_executor(lambda: Producer(id="prod_2"), name="Producer2")
-                    .register_executor(lambda: Aggregator(id="agg"), name="Aggregator")
+                    .register_executors({
+                        "Producer1": lambda: Producer(id="prod_1"),
+                        "Producer2": lambda: Producer(id="prod_2"),
+                        "Aggregator": lambda: Aggregator(id="agg"),
+                    })
                     .add_fan_in_edges(["Producer1", "Producer2"], "Aggregator")
                     .set_start_executor("Producer1")
                     .build()
@@ -850,7 +854,7 @@ class WorkflowBuilder:
 
         Note: If executor instances are provided, they will be shared across all workflow instances created
               from the built Workflow. To avoid this, consider registering the executors and agents using
-              `register_executor` and `register_agent` and referencing them by factory name for lazy
+              `register_executors` and `register_agent` and referencing them by factory name for lazy
               initialization instead.
 
         Example:
@@ -881,9 +885,11 @@ class WorkflowBuilder:
                 # Chain executors in sequence
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: Step1(id="step1"), name="step1")
-                    .register_executor(lambda: Step2(id="step2"), name="step2")
-                    .register_executor(lambda: Step3(id="step3"), name="step3")
+                    .register_executors({
+                        "step1": lambda: Step1(id="step1"),
+                        "step2": lambda: Step2(id="step2"),
+                        "step3": lambda: Step3(id="step3"),
+                    })
                     .add_chain(["step1", "step2", "step3"])
                     .set_start_executor("step1")
                     .build()
@@ -945,8 +951,10 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: EntryPoint(id="entry"), name="EntryPoint")
-                    .register_executor(lambda: Processor(id="proc"), name="Processor")
+                    .register_executors({
+                        "EntryPoint": lambda: EntryPoint(id="entry"),
+                        "Processor": lambda: Processor(id="proc"),
+                    })
                     .add_edge("EntryPoint", "Processor")
                     .set_start_executor("EntryPoint")
                     .build()
@@ -1003,8 +1011,10 @@ class WorkflowBuilder:
                 workflow = (
                     WorkflowBuilder()
                     .set_max_iterations(500)
-                    .register_executor(lambda: StepA(id="step_a"), name="StepA")
-                    .register_executor(lambda: StepB(id="step_b"), name="StepB")
+                    .register_executors({
+                        "StepA": lambda: StepA(id="step_a"),
+                        "StepB": lambda: StepB(id="step_b"),
+                    })
                     .add_edge("StepA", "StepB")
                     .add_edge("StepB", "StepA")  # Cycle
                     .set_start_executor("StepA")
@@ -1053,8 +1063,10 @@ class WorkflowBuilder:
                 storage = FileCheckpointStorage("./checkpoints")
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: ProcessorA(id="proc_a"), name="ProcessorA")
-                    .register_executor(lambda: ProcessorB(id="proc_b"), name="ProcessorB")
+                    .register_executors({
+                        "ProcessorA": lambda: ProcessorA(id="proc_a"),
+                        "ProcessorB": lambda: ProcessorB(id="proc_b"),
+                    })
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .with_checkpointing(storage)
@@ -1083,62 +1095,43 @@ class WorkflowBuilder:
         self._output_executors = list(executors)
         return self
 
-    def _resolve_edge_registry(self) -> tuple[Executor, dict[str, Executor], list[EdgeGroup]]:
-        """Resolve deferred edge registrations into executors and edge groups.
+    def _resolve_edge_registrations(self, factory_name_to_instance: dict[str, Executor]) -> list[EdgeGroup]:
+        """Process edge registrations into edge groups using resolved executor instances.
+
+        Args:
+            factory_name_to_instance: Mapping of registered factory names to executor instances.
 
         Returns:
-            tuple: A tuple containing:
-                - The starting Executor instance.
-                - A dictionary mapping registered factory names to resolved Executor instances.
-                - A list of EdgeGroup instances representing the workflow edges composed of resolved executors.
-
-        Notes:
-            Non-factory executors (i.e., those added directly) are not included in the returned list,
-            as they are already part of the workflow builder's internal state.
+            list[EdgeGroup]: A list of EdgeGroup instances for the registered edges.
         """
-        if not self._start_executor:
-            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
-
-        start_executor: Executor | None = None
-        if isinstance(self._start_executor, Executor):
-            start_executor = self._start_executor
-
-        # Maps registered factory names to created executor instances for edge resolution
-        factory_name_to_instance: dict[str, Executor] = {}
-        # Maps executor IDs to created executor instances to prevent duplicates
-        executor_id_to_instance: dict[str, Executor] = {}
-        deferred_edge_groups: list[EdgeGroup] = []
-        for name, exec_factory in self._executor_registry.items():
-            instance = exec_factory()
-            if instance.id in executor_id_to_instance:
-                raise ValueError(f"Executor with ID '{instance.id}' has already been registered.")
-            if instance.id in self._executors:
-                raise ValueError(f"Executor ID collision: An executor with ID '{instance.id}' already exists.")
-            executor_id_to_instance[instance.id] = instance
-
-            if isinstance(self._start_executor, str) and name == self._start_executor:
-                start_executor = instance
-
-            # All executors will get their own internal edge group for receiving system messages
-            deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
-            factory_name_to_instance[name] = instance
 
         def _get_executor(name: str) -> Executor:
-            """Helper to get executor by the registered name. Raises if not found."""
+            """Helper to get executor by the registered name.
+
+            Args:
+                name: The registered name of the executor to get.
+
+            Returns:
+                Executor: The Executor instance.
+
+            Raises:
+                ValueError: If the executor is not found.
+            """
             if name not in factory_name_to_instance:
                 raise ValueError(f"Factory '{name}' has not been registered.")
             return factory_name_to_instance[name]
 
+        edge_groups: list[EdgeGroup] = []
         for registration in self._edge_registry:
             match registration:
                 case _EdgeRegistration(source, target, condition):
                     source_exec: Executor = _get_executor(source)
                     target_exec: Executor = _get_executor(target)
-                    deferred_edge_groups.append(SingleEdgeGroup(source_exec.id, target_exec.id, condition))  # type: ignore[call-arg]
+                    edge_groups.append(SingleEdgeGroup(source_exec.id, target_exec.id, condition))  # type: ignore[call-arg]
                 case _FanOutEdgeRegistration(source, targets):
                     source_exec = _get_executor(source)
                     target_execs = [_get_executor(t) for t in targets]
-                    deferred_edge_groups.append(FanOutEdgeGroup(source_exec.id, [t.id for t in target_execs]))  # type: ignore[call-arg]
+                    edge_groups.append(FanOutEdgeGroup(source_exec.id, [t.id for t in target_execs]))  # type: ignore[call-arg]
                 case _SwitchCaseEdgeGroupRegistration(source, cases):
                     source_exec = _get_executor(source)
                     cases_converted: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
@@ -1152,21 +1145,221 @@ class WorkflowBuilder:
                             cases_converted.append(
                                 SwitchCaseEdgeGroupCase(condition=case.condition, target_id=target_exec.id)
                             )
-                    deferred_edge_groups.append(SwitchCaseEdgeGroup(source_exec.id, cases_converted))  # type: ignore[call-arg]
+                    edge_groups.append(SwitchCaseEdgeGroup(source_exec.id, cases_converted))  # type: ignore[call-arg]
                 case _MultiSelectionEdgeGroupRegistration(source, targets, selection_func):
                     source_exec = _get_executor(source)
                     target_execs = [_get_executor(t) for t in targets]
-                    deferred_edge_groups.append(
+                    edge_groups.append(
                         FanOutEdgeGroup(source_exec.id, [t.id for t in target_execs], selection_func)  # type: ignore[call-arg]
                     )
                 case _FanInEdgeRegistration(sources, target):
                     source_execs = [_get_executor(s) for s in sources]
                     target_exec = _get_executor(target)
-                    deferred_edge_groups.append(FanInEdgeGroup([s.id for s in source_execs], target_exec.id))  # type: ignore[call-arg]
+                    edge_groups.append(FanInEdgeGroup([s.id for s in source_execs], target_exec.id))  # type: ignore[call-arg]
+        return edge_groups
+
+    def _process_instantiated_executors(
+        self,
+        factory_name_to_instance: dict[str, Executor],
+    ) -> tuple[Executor, dict[str, Executor], list[EdgeGroup]]:
+        """Process instantiated executors: validate IDs, create edge groups, resolve edges.
+
+        Args:
+            factory_name_to_instance: Mapping of factory names to already-instantiated executors.
+
+        Returns:
+            tuple: A tuple containing:
+                - The starting Executor instance.
+                - The factory_name_to_instance mapping.
+                - A list of EdgeGroup instances representing the workflow edges.
+
+        Raises:
+            ValueError: If start executor is not set, if duplicate executor IDs are found,
+                or if start executor cannot be resolved.
+        """
+        if not self._start_executor:
+            raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
+
+        start_executor: Executor | None = None
+        if isinstance(self._start_executor, Executor):
+            start_executor = self._start_executor
+
+        deferred_edge_groups: list[EdgeGroup] = []
+        # Map of executor IDs to their factory names for error message clarity
+        executor_id_to_factory_name: dict[str, str] = {}
+
+        for name, instance in factory_name_to_instance.items():
+            if instance.id in executor_id_to_factory_name:
+                existing_factory = executor_id_to_factory_name[instance.id]
+                raise ValueError(
+                    f"Executor with ID '{instance.id}' from factory '{name}' "
+                    f"conflicts with existing factory '{existing_factory}'."
+                )
+            if instance.id in self._executors:
+                raise ValueError(f"Executor with ID '{instance.id}' has already been added to the workflow.")
+            executor_id_to_factory_name[instance.id] = name
+
+            if isinstance(self._start_executor, str) and name == self._start_executor:
+                start_executor = instance
+
+            # All executors will get their own internal edge group for receiving system messages
+            deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
+
+        # Process edge registrations using shared helper
+        deferred_edge_groups.extend(self._resolve_edge_registrations(factory_name_to_instance))
+
         if start_executor is None:
             raise ValueError("Failed to resolve starting executor from registered factories.")
 
         return (start_executor, factory_name_to_instance, deferred_edge_groups)
+
+    def _resolve_edge_registry(self) -> tuple[Executor, dict[str, Executor], list[EdgeGroup]]:
+        """Resolve deferred edge registrations into executors and edge groups.
+
+        Factory functions are called synchronously to instantiate executors. If any factory
+        returns an awaitable, an error is raised directing the caller to use :meth:`build_async`
+        instead.
+
+        Returns:
+            tuple: A tuple containing:
+                - The starting Executor instance.
+                - A dictionary mapping registered factory names to resolved Executor instances.
+                - A list of EdgeGroup instances representing the workflow edges composed of resolved executors.
+
+        Raises:
+            ValueError: If an async executor factory is detected.
+
+        Notes:
+            Non-factory executors (i.e., those added directly) are not included in the returned list,
+            as they are already part of the workflow builder's internal state.
+        """
+        factory_name_to_instance: dict[str, Executor] = {}
+        for name, executor_factory in self._executor_registry.items():
+            instance = executor_factory()
+            if inspect.isawaitable(instance):
+                # Close un-awaited coroutines to avoid runtime warnings or memory leaks
+                try:
+                    if hasattr(instance, "close"):
+                        instance.close()  # type: ignore[reportGeneralTypeIssues]
+                finally:
+                    raise ValueError("Async executor factories were detected. Use build_async() instead.")
+
+            if not isinstance(instance, Executor):
+                raise TypeError(f"Factory '{name}' returned {type(instance).__name__} instead of an Executor.")
+
+            factory_name_to_instance[name] = instance
+
+        return self._process_instantiated_executors(factory_name_to_instance)
+
+    async def _resolve_edge_registry_async(self) -> tuple[Executor, dict[str, Executor], list[EdgeGroup]]:
+        """Resolve deferred edge registrations with support for async executor factories.
+
+        This async variant of :meth:`_resolve_edge_registry` allows executor factories to
+        return awaitables. Factory functions are called and any awaitable results are awaited
+        before processing. All other logic (validation, edge resolution) is identical to the
+        sync version.
+
+        Returns:
+            tuple: A tuple containing:
+                - The starting Executor instance.
+                - A dictionary mapping registered factory names to resolved Executor instances.
+                - A list of EdgeGroup instances representing the workflow edges composed of resolved executors.
+
+        Notes:
+            Non-factory executors (i.e., those added directly) are not included in the returned list,
+            as they are already part of the workflow builder's internal state.
+
+        See Also:
+            :meth:`_resolve_edge_registry`: Synchronous version that raises an error on async factories.
+        """
+        factory_name_to_instance: dict[str, Executor] = {}
+        for name, executor_factory in self._executor_registry.items():
+            instance = executor_factory()
+            if inspect.isawaitable(instance):
+                # Handle maybe awaitable executor instances
+                instance = await instance
+
+            if not isinstance(instance, Executor):
+                raise TypeError(f"Factory '{name}' returned {type(instance).__name__} instead of an Executor.")
+
+            factory_name_to_instance[name] = instance
+
+        return self._process_instantiated_executors(factory_name_to_instance)
+
+    def _create_workflow_from_resolved_registry(
+        self,
+        span: trace.Span,
+        start_executor: Executor,
+        deferred_executors: dict[str, Executor],
+        deferred_edge_groups: list[EdgeGroup],
+    ) -> Workflow:
+        """Create and validate a Workflow instance from resolved executor registry data.
+
+        This is a shared helper used by both :meth:`build` and :meth:`build_async` to avoid
+        code duplication in the workflow creation and validation logic.
+
+        Args:
+            span: The OpenTelemetry span for tracking the build process.
+            start_executor: The resolved starting executor instance.
+            deferred_executors: Mapping of factory names to instantiated executors.
+            deferred_edge_groups: List of edge groups from resolved registrations.
+
+        Returns:
+            Workflow: A fully constructed and validated Workflow instance.
+
+        Raises:
+            WorkflowValidationError: If workflow validation fails.
+        """
+        executors = self._executors | {exe.id: exe for exe in deferred_executors.values()}
+        edge_groups = self._edge_groups + deferred_edge_groups
+        output_executors = (
+            [
+                deferred_executors[factory_name].id
+                for factory_name in self._output_executors
+                if isinstance(factory_name, str)
+            ]
+            + [ex.id for ex in self._output_executors if isinstance(ex, Executor)]
+            + [resolve_agent_id(agent) for agent in self._output_executors if isinstance(agent, SupportsAgentRun)]
+        )
+
+        # Perform validation before creating the workflow
+        validate_workflow_graph(
+            edge_groups,
+            executors,
+            start_executor,
+            output_executors,
+        )
+
+        # Add validation completed event
+        span.add_event(OtelAttr.BUILD_VALIDATION_COMPLETED)
+
+        context = InProcRunnerContext(self._checkpoint_storage)
+
+        # Create workflow instance after validation
+        workflow = Workflow(
+            edge_groups,
+            executors,
+            start_executor,
+            context,
+            self._max_iterations,
+            name=self._name,
+            description=self._description,
+            output_executors=output_executors,
+        )
+        build_attributes: dict[str, Any] = {
+            OtelAttr.WORKFLOW_ID: workflow.id,
+            OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
+        }
+        if workflow.name:
+            build_attributes[OtelAttr.WORKFLOW_NAME] = workflow.name
+        if workflow.description:
+            build_attributes[OtelAttr.WORKFLOW_DESCRIPTION] = workflow.description
+        span.set_attributes(build_attributes)
+
+        # Add workflow build completed event
+        span.add_event(OtelAttr.BUILD_COMPLETED)
+
+        return workflow
 
     def build(self) -> Workflow:
         """Build and return the constructed workflow.
@@ -1201,7 +1394,7 @@ class WorkflowBuilder:
                 # Build and execute a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register_executor(lambda: MyExecutor(id="executor"), name="MyExecutor")
+                    .register_executors({"MyExecutor": lambda: MyExecutor(id="executor")})
                     .set_start_executor("MyExecutor")
                     .build()
                 )
@@ -1222,61 +1415,84 @@ class WorkflowBuilder:
 
                 # Resolve lazy edge registrations
                 start_executor, deferred_executors, deferred_edge_groups = self._resolve_edge_registry()
-                executors = self._executors | {exe.id: exe for exe in deferred_executors.values()}
-                edge_groups = self._edge_groups + deferred_edge_groups
-                output_executors = (
-                    [
-                        deferred_executors[factory_name].id
-                        for factory_name in self._output_executors
-                        if isinstance(factory_name, str)
-                    ]
-                    + [ex.id for ex in self._output_executors if isinstance(ex, Executor)]
-                    + [
-                        resolve_agent_id(agent)
-                        for agent in self._output_executors
-                        if isinstance(agent, SupportsAgentRun)
-                    ]
+
+                # Create and validate workflow
+                return self._create_workflow_from_resolved_registry(
+                    span, start_executor, deferred_executors, deferred_edge_groups
                 )
-
-                # Perform validation before creating the workflow
-                validate_workflow_graph(
-                    edge_groups,
-                    executors,
-                    start_executor,
-                    output_executors,
-                )
-
-                # Add validation completed event
-                span.add_event(OtelAttr.BUILD_VALIDATION_COMPLETED)
-
-                context = InProcRunnerContext(self._checkpoint_storage)
-
-                # Create workflow instance after validation
-                workflow = Workflow(
-                    edge_groups,
-                    executors,
-                    start_executor,
-                    context,
-                    self._max_iterations,
-                    name=self._name,
-                    description=self._description,
-                    output_executors=output_executors,
-                )
-                build_attributes: dict[str, Any] = {
-                    OtelAttr.WORKFLOW_ID: workflow.id,
-                    OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
+            except Exception as exc:
+                attributes = {
+                    OtelAttr.BUILD_ERROR_MESSAGE: str(exc),
+                    OtelAttr.BUILD_ERROR_TYPE: type(exc).__name__,
                 }
-                if workflow.name:
-                    build_attributes[OtelAttr.WORKFLOW_NAME] = workflow.name
-                if workflow.description:
-                    build_attributes[OtelAttr.WORKFLOW_DESCRIPTION] = workflow.description
-                span.set_attributes(build_attributes)
+                span.add_event(OtelAttr.BUILD_ERROR, attributes)  # type: ignore[reportArgumentType, arg-type]
+                capture_exception(span, exc)
+                raise
 
-                # Add workflow build completed event
-                span.add_event(OtelAttr.BUILD_COMPLETED)
+    async def build_async(self) -> Workflow:
+        """Build and return the constructed workflow with async executor factory support.
 
-                return workflow
+        This async version of :meth:`build` supports executor factories that return
+        awaitables (coroutines). Use this method when any of your registered executor
+        factories are async functions.
 
+        This method performs validation before building the workflow to ensure:
+        - A starting executor has been set
+        - All edges connect valid executors
+        - The graph is properly connected
+        - Type compatibility between connected executors
+
+        Returns:
+            Workflow: An immutable Workflow instance ready for execution.
+
+        Raises:
+            ValueError: If starting executor is not set.
+            WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
+                TypeCompatibilityError, and GraphConnectivityError subclasses).
+
+        Example:
+            .. code-block:: python
+
+                from typing_extensions import Never
+                from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+
+
+                class MyExecutor(Executor):
+                    @handler
+                    async def process(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+                        await ctx.yield_output(text.upper())
+
+
+                async def create_executor() -> MyExecutor:
+                    # Async initialization (e.g., fetching config, establishing connections)
+                    return MyExecutor(id="executor")
+
+
+                # Build with async executor factories
+                workflow = await (
+                    WorkflowBuilder()
+                    .register_executors({"MyExecutor": create_executor})
+                    .set_start_executor("MyExecutor")
+                    .build_async()
+                )
+
+                # The workflow is now immutable and ready to run
+                events = await workflow.run("hello")
+                print(events.get_outputs())  # ['HELLO']
+        """
+        # Create workflow build span that includes validation and workflow creation
+        with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
+            try:
+                # Add workflow build started event
+                span.add_event(OtelAttr.BUILD_STARTED)
+
+                # Resolve lazy edge registrations with support for async executor factories
+                start_executor, deferred_executors, deferred_edge_groups = await self._resolve_edge_registry_async()
+
+                # Create and validate workflow
+                return self._create_workflow_from_resolved_registry(
+                    span, start_executor, deferred_executors, deferred_edge_groups
+                )
             except Exception as exc:
                 attributes = {
                     OtelAttr.BUILD_ERROR_MESSAGE: str(exc),
