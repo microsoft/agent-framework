@@ -458,8 +458,8 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 
     # Check serialized message includes trace context
     serialized_msg = checkpoint.messages["source"][0]
-    assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
-    assert serialized_msg["source_span_ids"] == ["span123"]
+    assert serialized_msg.trace_contexts == [{"traceparent": "00-trace-span-01"}]
+    assert serialized_msg.source_span_ids == ["span123"]
 
     # Test deserialization
     await ctx.apply_checkpoint(checkpoint)

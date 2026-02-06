@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 import uuid
 from copy import copy
 from dataclasses import dataclass
@@ -12,16 +11,10 @@ from enum import Enum
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import INTERNAL_SOURCE_ID
 from ._events import WorkflowEvent
 from ._state import State
 from ._typing_utils import is_instance_of
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +62,13 @@ class Message:
     def to_dict(self) -> dict[str, Any]:
         """Convert the Message to a dictionary for serialization."""
         return {
-            "data": encode_checkpoint_value(self.data),
+            "data": self.data,
             "source_id": self.source_id,
             "target_id": self.target_id,
             "type": self.type.value,
             "trace_contexts": self.trace_contexts,
             "source_span_ids": self.source_span_ids,
-            "original_request_info_event": encode_checkpoint_value(self.original_request_info_event),
+            "original_request_info_event": self.original_request_info_event,
         }
 
     @staticmethod
@@ -89,26 +82,14 @@ class Message:
             raise KeyError("Missing 'source_id' field in Message dictionary.")
 
         return Message(
-            data=decode_checkpoint_value(data["data"]),
+            data=data["data"],
             source_id=data["source_id"],
             target_id=data.get("target_id"),
             type=MessageType(data.get("type", "standard")),
             trace_contexts=data.get("trace_contexts"),
             source_span_ids=data.get("source_span_ids"),
-            original_request_info_event=decode_checkpoint_value(data.get("original_request_info_event")),
+            original_request_info_event=data.get("original_request_info_event"),
         )
-
-
-class _WorkflowState(TypedDict):
-    """TypedDict representing the serializable state of a workflow execution.
-
-    This includes all state data needed for checkpointing and restoration.
-    """
-
-    messages: dict[str, list[dict[str, Any]]]
-    state: dict[str, Any]
-    iteration_count: int
-    pending_request_info_events: dict[str, dict[str, Any]]
 
 
 @runtime_checkable
@@ -384,15 +365,12 @@ class InProcRunnerContext:
         if not storage:
             raise ValueError("Checkpoint storage not configured")
 
-        self._workflow_id = self._workflow_id or str(uuid.uuid4())
-        workflow_state = self._get_serialized_workflow_state(state, iteration_count)
-
         checkpoint = WorkflowCheckpoint(
-            workflow_id=self._workflow_id,
-            messages=workflow_state["messages"],
-            state=workflow_state["state"],
-            pending_request_info_events=workflow_state["pending_request_info_events"],
-            iteration_count=workflow_state["iteration_count"],
+            workflow_id=self._workflow_id or str(uuid.uuid4()),
+            messages=dict(self._messages),
+            state=state.export_state(),
+            pending_request_info_events=dict(self._pending_request_info_events),
+            iteration_count=iteration_count,
             metadata=metadata or {},
         )
         checkpoint_id = await storage.save_checkpoint(checkpoint)
@@ -422,13 +400,11 @@ class InProcRunnerContext:
         self._messages.clear()
         messages_data = checkpoint.messages
         for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [Message.from_dict(msg) for msg in message_list]
+            self._messages[source_id] = list(message_list)
 
         # Restore pending request info events
         self._pending_request_info_events.clear()
-        pending_requests_data = checkpoint.pending_request_info_events
-        for request_id, request_data in pending_requests_data.items():
-            request_info_event = WorkflowEvent.from_dict(request_data)
+        for request_id, request_info_event in checkpoint.pending_request_info_events.items():
             self._pending_request_info_events[request_id] = request_info_event
             await self.add_event(request_info_event)
 
@@ -455,22 +431,6 @@ class InProcRunnerContext:
             True if streaming mode is enabled, False otherwise.
         """
         return self._streaming
-
-    def _get_serialized_workflow_state(self, state: State, iteration_count: int) -> _WorkflowState:
-        serialized_messages: dict[str, list[dict[str, Any]]] = {}
-        for source_id, message_list in self._messages.items():
-            serialized_messages[source_id] = [msg.to_dict() for msg in message_list]
-
-        serialized_pending_request_info_events: dict[str, dict[str, Any]] = {
-            request_id: request.to_dict() for request_id, request in self._pending_request_info_events.items()
-        }
-
-        return {
-            "messages": serialized_messages,
-            "state": encode_checkpoint_value(state.export_state()),
-            "iteration_count": iteration_count,
-            "pending_request_info_events": serialized_pending_request_info_events,
-        }
 
     async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a request_info event to the context and track it for correlation.

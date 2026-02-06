@@ -24,9 +24,7 @@ from agent_framework import (
     FileCheckpointStorage,
     Workflow,
     WorkflowBuilder,
-    WorkflowCheckpoint,
     WorkflowContext,
-    get_checkpoint_summary,
     handler,
     response_handler,
 )
@@ -200,24 +198,6 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     return workflow_builder.build()
 
 
-def render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
-    """Pretty-print saved checkpoints with the new framework summaries."""
-
-    print("\nCheckpoint summary:")
-    for summary in [get_checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)]:
-        # Compose a single line per checkpoint so the user can scan the output
-        # and pick the resume point that still has outstanding human work.
-        line = (
-            f"- {summary.checkpoint_id} | timestamp={summary.timestamp} | iter={summary.iteration_count} "
-            f"| targets={summary.targets} | states={summary.executor_ids}"
-        )
-        if summary.status:
-            line += f" | status={summary.status}"
-        if summary.pending_request_info_events:
-            line += f" | pending_request_id={summary.pending_request_info_events[0].request_id}"
-        print(line)
-
-
 def prompt_for_responses(requests: dict[str, HumanApprovalRequest]) -> dict[str, str]:
     """Interactive CLI prompt for any live RequestInfo requests."""
 
@@ -310,10 +290,6 @@ async def main() -> None:
         print("No checkpoints recorded.")
         return
 
-    # Show the user what is available before we prompt for the index. The
-    # summary helper keeps this output consistent with other tooling.
-    render_checkpoint_summary(checkpoints)
-
     sorted_cps = sorted(checkpoints, key=lambda c: c.timestamp)
     print("\nAvailable checkpoints:")
     for idx, cp in enumerate(sorted_cps):
@@ -338,10 +314,6 @@ async def main() -> None:
         return
 
     chosen = sorted_cps[idx]
-    summary = get_checkpoint_summary(chosen)
-    if summary.status == "completed":
-        print("Selected checkpoint already reflects a completed workflow; nothing to resume.")
-        return
 
     new_workflow = create_workflow(checkpoint_storage=storage)
     # Resume with a fresh workflow instance. The checkpoint carries the

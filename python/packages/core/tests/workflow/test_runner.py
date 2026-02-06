@@ -61,7 +61,7 @@ def test_create_runner():
         executor_b.id: executor_b,
     }
 
-    runner = Runner(edge_groups, executors, state=State(), ctx=InProcRunnerContext())
+    runner = Runner(edge_groups, executors, state=State(), ctx=InProcRunnerContext(), graph_signature_hash="test_hash")
 
     assert runner.context is not None and isinstance(runner.context, RunnerContext)
 
@@ -84,7 +84,7 @@ async def test_runner_run_until_convergence():
     state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, state, ctx)
+    runner = Runner(edges, executors, state, ctx, graph_signature_hash="test_hash")
 
     result: int | None = None
     await executor_a.execute(
@@ -122,7 +122,7 @@ async def test_runner_run_until_convergence_not_completed():
     state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, state, ctx, max_iterations=5)
+    runner = Runner(edges, executors, state, ctx, max_iterations=5, graph_signature_hash="test_hash")
 
     await executor_a.execute(
         MockMessage(data=0),
@@ -156,7 +156,7 @@ async def test_runner_already_running():
     state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, state, ctx)
+    runner = Runner(edges, executors, state, ctx, graph_signature_hash="test_hash")
 
     await executor_a.execute(
         MockMessage(data=0),
@@ -176,7 +176,7 @@ async def test_runner_already_running():
 
 async def test_runner_emits_runner_completion_for_agent_response_without_targets():
     ctx = InProcRunnerContext()
-    runner = Runner([], {}, State(), ctx)
+    runner = Runner([], {}, State(), ctx, graph_signature_hash="test_hash")
 
     await ctx.send_message(
         Message(
@@ -228,7 +228,7 @@ async def test_runner_cancellation_stops_active_executor():
     shared_state = State()
     ctx = InProcRunnerContext()
 
-    runner = Runner(edges, executors, shared_state, ctx)
+    runner = Runner(edges, executors, shared_state, ctx, graph_signature_hash="test_hash")
 
     await executor_a.execute(
         MockMessage(data=0),

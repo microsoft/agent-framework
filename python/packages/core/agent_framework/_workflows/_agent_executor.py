@@ -13,9 +13,7 @@ from .._agents import SupportsAgentRun
 from .._threads import AgentThread
 from .._types import AgentResponse, AgentResponseUpdate, ChatMessage
 from ._agent_utils import resolve_agent_id
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
-from ._conversation_state import encode_chat_messages
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -229,11 +227,11 @@ class AgentExecutor(Executor):
         serialized_thread = await self._agent_thread.serialize()
 
         return {
-            "cache": encode_chat_messages(self._cache),
-            "full_conversation": encode_chat_messages(self._full_conversation),
+            "cache": self._cache,
+            "full_conversation": self._full_conversation,
             "agent_thread": serialized_thread,
-            "pending_agent_requests": encode_checkpoint_value(self._pending_agent_requests),
-            "pending_responses_to_agent": encode_checkpoint_value(self._pending_responses_to_agent),
+            "pending_agent_requests": self._pending_agent_requests,
+            "pending_responses_to_agent": self._pending_responses_to_agent,
         }
 
     @override
@@ -243,12 +241,10 @@ class AgentExecutor(Executor):
         Args:
             state: Checkpoint data dict
         """
-        from ._conversation_state import decode_chat_messages
-
         cache_payload = state.get("cache")
         if cache_payload:
             try:
-                self._cache = decode_chat_messages(cache_payload)
+                self._cache = cache_payload
             except Exception as exc:
                 logger.warning("Failed to restore cache: %s", exc)
                 self._cache = []
@@ -258,7 +254,7 @@ class AgentExecutor(Executor):
         full_conversation_payload = state.get("full_conversation")
         if full_conversation_payload:
             try:
-                self._full_conversation = decode_chat_messages(full_conversation_payload)
+                self._full_conversation = full_conversation_payload
             except Exception as exc:
                 logger.warning("Failed to restore full conversation: %s", exc)
                 self._full_conversation = []
@@ -279,11 +275,11 @@ class AgentExecutor(Executor):
 
         pending_requests_payload = state.get("pending_agent_requests")
         if pending_requests_payload:
-            self._pending_agent_requests = decode_checkpoint_value(pending_requests_payload)
+            self._pending_agent_requests = pending_requests_payload
 
         pending_responses_payload = state.get("pending_responses_to_agent")
         if pending_responses_payload:
-            self._pending_responses_to_agent = decode_checkpoint_value(pending_responses_payload)
+            self._pending_responses_to_agent = pending_responses_payload
 
     def reset(self) -> None:
         """Reset the internal cache of the executor."""

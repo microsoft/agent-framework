@@ -363,12 +363,10 @@ class TestRequestInfoAndResponse:
 
             # Step 3: Verify the pending request info event was properly serialized
             serialized_event = checkpoint_with_request.pending_request_info_events[request_info_event.request_id]
-            assert "data" in serialized_event
-            assert "request_id" in serialized_event
-            assert "source_executor_id" in serialized_event
-            assert "request_type" in serialized_event
-            assert serialized_event["request_id"] == request_info_event.request_id
-            assert serialized_event["source_executor_id"] == "approval_executor"
+            assert serialized_event.data
+            assert serialized_event.request_type is UserApprovalRequest
+            assert serialized_event.request_id == request_info_event.request_id
+            assert serialized_event.source_executor_id == "approval_executor"
 
             # Step 4: Create a fresh workflow and restore from checkpoint
             new_executor = ApprovalRequiredExecutor(id="approval_executor")

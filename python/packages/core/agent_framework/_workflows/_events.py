@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Generic, Literal, cast
 
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
 
 if sys.version_info >= (3, 13):
@@ -396,7 +395,7 @@ class WorkflowEvent(Generic[DataT]):
             raise ValueError(f"to_dict() only supported for 'request_info' events, got '{self.type}'")
         return {
             "type": self.type,
-            "data": encode_checkpoint_value(self.data),
+            "data": self.data,
             "request_id": self._request_id,
             "source_executor_id": self._source_executor_id,
             "request_type": serialize_type(self._request_type) if self._request_type else None,
@@ -410,7 +409,7 @@ class WorkflowEvent(Generic[DataT]):
             if prop not in data:
                 raise KeyError(f"Missing '{prop}' field in WorkflowEvent dictionary.")
 
-        request_data = decode_checkpoint_value(data["data"])
+        request_data = data["data"]
         request_type = deserialize_type(data["request_type"])
 
         if request_type is not type(request_data):
