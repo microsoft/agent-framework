@@ -16,12 +16,12 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
-    public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         return serializedState.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.CreateSessionAsync(cancellationToken);
     }
 
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         if (session is not EchoAgentSession typedSession)
         {
@@ -31,7 +31,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return typedSession.Serialize(jsonSerializerOptions);
     }
 
-    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
         new(new EchoAgentSession());
 
     private static ChatMessage UpdateSession(ChatMessage message, InMemoryAgentSession? session = null)
