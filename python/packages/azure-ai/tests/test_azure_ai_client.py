@@ -303,7 +303,7 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
         ChatMessage(role="assistant", contents=[Content.from_text(text="System response")]),
     ]
 
-    result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages, {})  # type: ignore
 
     assert len(result_messages) == 2
     assert result_messages[0].role == "user"
@@ -322,9 +322,86 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
         ChatMessage(role="assistant", contents=[Content.from_text(text="Hi there!")]),
     ]
 
-    result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages, {})  # type: ignore
 
     assert len(result_messages) == 2
+    assert instructions is None
+
+
+async def test_prepare_messages_filters_old_function_results_with_previous_response_id(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test _prepare_messages_for_azure_ai filters old function results when using previous_response_id."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Simulate a multi-turn conversation with function calls
+    messages = [
+        # Turn 1 - user asks a question
+        ChatMessage(role="user", contents=[Content.from_text(text="Calculate 15% tip on $85")]),
+        # Turn 1 - assistant makes a function call
+        ChatMessage(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_123", name="calculate_tip", arguments='{"bill_amount": 85, "tip_percent": 15}'
+                )
+            ],
+        ),
+        # Turn 1 - function result
+        ChatMessage(
+            role="user",
+            contents=[Content.from_function_result(call_id="call_123", result="Tip: $12.75, Total: $97.75")],
+        ),
+        # Turn 1 - assistant responds with text
+        ChatMessage(role="assistant", contents=[Content.from_text(text="The tip is $12.75")]),
+        # Turn 2 - NEW user message
+        ChatMessage(role="user", contents=[Content.from_text(text="Now calculate 20% tip on $85")]),
+    ]
+
+    # Test WITH previous_response_id (should filter to only new user message)
+    options = {"conversation_id": "resp_turn1"}
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages, options)  # type: ignore
+
+    # Should only have the NEW user message from turn 2
+    assert len(result_messages) == 1
+    assert result_messages[0].role == "user"
+    assert any(c.type == "text" for c in result_messages[0].contents)
+    # Should not have function results
+    assert not any(c.type == "function_result" for c in result_messages[0].contents)
+    assert instructions is None
+
+
+async def test_prepare_messages_includes_all_without_previous_response_id(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test _prepare_messages_for_azure_ai includes all messages without previous_response_id."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Same messages as previous test
+    messages = [
+        ChatMessage(role="user", contents=[Content.from_text(text="Calculate 15% tip on $85")]),
+        ChatMessage(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_123", name="calculate_tip", arguments='{"bill_amount": 85, "tip_percent": 15}'
+                )
+            ],
+        ),
+        ChatMessage(
+            role="user",
+            contents=[Content.from_function_result(call_id="call_123", result="Tip: $12.75, Total: $97.75")],
+        ),
+        ChatMessage(role="assistant", contents=[Content.from_text(text="The tip is $12.75")]),
+        ChatMessage(role="user", contents=[Content.from_text(text="Now calculate 20% tip on $85")]),
+    ]
+
+    # Test WITHOUT previous_response_id (should include all messages)
+    options: dict[str, Any] = {}
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages, options)  # type: ignore
+
+    # Should have all non-system messages (5 in this case)
+    assert len(result_messages) == 5
     assert instructions is None
 
 
