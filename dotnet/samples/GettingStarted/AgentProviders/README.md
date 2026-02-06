@@ -28,6 +28,7 @@ See the README.md for each sample for the prerequisites for that sample.
 |[Creating an AIAgent with OpenAI Assistants](./Agent_With_OpenAIAssistants/)|This sample demonstrates how to create an AIAgent using OpenAI Assistants as the underlying inference service.</br>WARNING: The Assistants API is deprecated and will be shut down. For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration|
 |[Creating an AIAgent with OpenAI ChatCompletion](./Agent_With_OpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using OpenAI ChatCompletion as the underlying inference service|
 |[Creating an AIAgent with OpenAI Responses](./Agent_With_OpenAIResponses/)|This sample demonstrates how to create an AIAgent using OpenAI Responses as the underlying inference service|
+|[Creating an AIAgent with Dapr](./Agent_With_Dapr/)|This sample demonstrates how to create an AIAgent using Dapr and Ollama|
 
 ## Running the samples from the console
 
