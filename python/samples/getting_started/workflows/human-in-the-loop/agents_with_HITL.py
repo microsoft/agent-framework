@@ -28,7 +28,7 @@ Pipeline layout:
 writer_agent -> Coordinator -> writer_agent -> Coordinator -> final_editor_agent -> Coordinator -> output
 
 The writer agent drafts marketing copy. A custom executor emits a request_info event (type='request_info') so a
-human can comment, then relays the human guidance back into the conversation before the final editor agent 
+human can comment, then relays the human guidance back into the conversation before the final editor agent
 produces the polished output.
 
 Demonstrates:

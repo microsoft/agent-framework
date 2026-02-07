@@ -14,7 +14,7 @@ The second reverses the text and yields the workflow output. Events are printed 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
 pass intermediate values using ctx.send_message, and yield final output using ctx.yield_output().
-Demonstrate how streaming exposes executor_invoked events (type='executor_invoked') and 
+Demonstrate how streaming exposes executor_invoked events (type='executor_invoked') and
 executor_completed events (type='executor_completed') for observability.
 
 Prerequisites:

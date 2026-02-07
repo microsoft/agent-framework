@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Multi-Agent Orchestration Sample - Durable Task Integration (Combined Worker + Client)
 
 This sample demonstrates running both the worker and client in a single process for
@@ -7,8 +9,8 @@ concurrent multi-agent orchestration. The worker registers two domain-specific a
 The orchestration uses OrchestrationAgentExecutor to execute agents concurrently
 and aggregate their responses.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 

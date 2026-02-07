@@ -2,7 +2,6 @@ files: ^python/
 fail_fast: true
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    alias: pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-toml
@@ -29,7 +28,6 @@ repos:
         types: ["python"]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
   - repo: https://github.com/asottile/pyupgrade
-    alias: pyupgrade
     rev: v3.20.0
     hooks:
       - id: pyupgrade
@@ -37,7 +35,6 @@ repos:
         args: [--py310-plus]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
-    alias: poe-pre-commit-check
     hooks:
       - id: poe-check
         name: Run checks through Poe
@@ -45,7 +42,6 @@ repos:
         language: system
         files: ^python/
   - repo: https://github.com/PyCQA/bandit
-    alias: bandit
     rev: 1.8.5
     hooks:
       - id: bandit
@@ -53,7 +49,6 @@ repos:
         args: ["-c", "python/pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
-    alias: uv-lock
     # uv version.
     rev: 0.7.18
     hooks:

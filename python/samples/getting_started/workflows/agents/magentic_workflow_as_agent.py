@@ -6,7 +6,6 @@ from agent_framework import (
     ChatAgent,
     HostedCodeInterpreterTool,
 )
-from agent_framework_orchestrations import MagenticBuilder
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
 

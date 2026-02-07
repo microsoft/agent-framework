@@ -237,7 +237,7 @@ async def main() -> None:
     )
 
     print("Starting iteration (cleanup happens after):")
-    async for update in stream4:
+    async for _update in stream4:
         pass  # Just consume the stream
     print(f"Cleanup was performed: {cleanup_performed['value']}")
 

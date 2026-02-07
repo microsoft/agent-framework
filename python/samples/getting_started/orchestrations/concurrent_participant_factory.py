@@ -3,8 +3,6 @@
 import asyncio
 from typing import Any
 
-from typing_extensions import Never
-
 from agent_framework import (
     ChatAgent,
     ChatMessage,
@@ -16,6 +14,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
+from typing_extensions import Never
 
 """
 Sample: Concurrent Orchestration with participant factories and Custom Aggregator

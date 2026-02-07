@@ -10,7 +10,6 @@ from agent_framework import (
     WorkflowEvent,
     tool,
 )
-from agent_framework_orchestrations import ConcurrentBuilder
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 

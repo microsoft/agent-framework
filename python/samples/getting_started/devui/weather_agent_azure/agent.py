@@ -56,9 +56,9 @@ async def security_filter_middleware(
 
                 if context.stream:
                     # Streaming mode: return async generator
-                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                    async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[Content.from_text(text=error_message)],
+                            contents=[Content.from_text(text=msg)],
                             role="assistant",
                         )
 

@@ -52,12 +52,14 @@ async def main() -> None:
         vector_distance_metric="cosine",
         thread_id=thread_id,
     )
-    chat_message_store_factory = lambda: RedisChatMessageStore(
-        redis_url="redis://localhost:6379",
-        thread_id=thread_id,
-        key_prefix="chat_messages",
-        max_messages=100,
-    )
+
+    def chat_message_store_factory():
+        return RedisChatMessageStore(
+            redis_url="redis://localhost:6379",
+            thread_id=thread_id,
+            key_prefix="chat_messages",
+            max_messages=100,
+        )
 
     # Create chat client for the agent
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))

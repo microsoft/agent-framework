@@ -281,7 +281,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 ChatMessage(
-                    role=Role.USER,
+                    role="user",
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -457,7 +457,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [ChatMessage(role="user", text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
@@ -562,7 +562,7 @@ async def chatkit_endpoint(request: Request):
 
 
 @app.post("/upload/{attachment_id}")
-async def upload_file(attachment_id: str, file: UploadFile = File(...)):
+async def upload_file(attachment_id: str, file: Annotated[UploadFile, File()]):
     """Handle file upload for two-phase upload.
 
     The client POSTs the file bytes here after creating the attachment

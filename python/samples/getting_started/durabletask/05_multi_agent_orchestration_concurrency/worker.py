@@ -1,11 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting multiple agents with orchestration using Durable Task.
 
 This worker registers two domain-specific agents (physicist and chemist) and an orchestration
-function that runs them concurrently. The orchestration uses OrchestrationAgentExecutor 
+function that runs them concurrently. The orchestration uses OrchestrationAgentExecutor
 to execute agents in parallel and aggregate their responses.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -33,7 +35,7 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 def create_physicist_agent() -> "ChatAgent":
     """Create the Physicist agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Physicist agent
     """
@@ -45,7 +47,7 @@ def create_physicist_agent() -> "ChatAgent":
 
 def create_chemist_agent() -> "ChatAgent":
     """Create the Chemist agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Chemist agent
     """
@@ -57,14 +59,14 @@ def create_chemist_agent() -> "ChatAgent":
 
 def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: str) -> Generator[Task[Any], Any, dict[str, str]]:
     """Orchestration that runs both agents in parallel and aggregates results.
-    
+
     Uses DurableAIAgentOrchestrationContext to wrap the orchestration context and
     access agents via the OrchestrationAgentExecutor.
-    
+
     Args:
         context: The orchestration context
         prompt: The prompt to send to both agents
-        
+
     Returns:
         dict: Dictionary with 'physicist' and 'chemist' response texts
     """
@@ -115,12 +117,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -143,10 +145,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents and orchestrations registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents and orchestrations registered
     """

@@ -150,11 +150,10 @@ def _handle_events(events: list[WorkflowEvent]) -> list[WorkflowEvent[HandoffAge
                         speaker = message.author_name or message.role
                         print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
                     print("===================================")
-        elif event.type == "request_info":
+        elif event.type == "request_info" and isinstance(event.data, HandoffAgentUserRequest):
             # Request info event: Workflow is requesting user input
-            if isinstance(event.data, HandoffAgentUserRequest):
-                _print_handoff_agent_user_request(event.data.agent_response)
-                requests.append(cast(WorkflowEvent[HandoffAgentUserRequest], event))
+            _print_handoff_agent_user_request(event.data.agent_response)
+            requests.append(cast(WorkflowEvent[HandoffAgentUserRequest], event))
 
     return requests
 

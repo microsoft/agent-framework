@@ -26,7 +26,7 @@ Self-Reflection LLM Runner
 Reflexion: language agents with verbal reinforcement learning.
 Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023.
 In Proceedings of the 37th International Conference on Neural Information Processing Systems (NIPS '23). Curran Associates Inc., Red Hook, NY, USA, Article 377, 8634–8652.
-https://arxiv.org/abs/2303.11366 
+https://arxiv.org/abs/2303.11366
 
 This module implements a self-reflection loop for LLM responses using groundedness evaluation.
 It loads prompts from a JSONL file, runs them through an LLM with self-reflection,
@@ -123,8 +123,7 @@ def run_eval(
             print(f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}")
             continue
         if run.status == "completed":
-            output_items = list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
-            return output_items
+            return list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
         time.sleep(5)
 
     print("Eval result retrieval timeout.")
@@ -142,14 +141,14 @@ async def execute_query_with_self_reflection(
 ) -> dict[str, Any]:
     """
     Execute a query with self-reflection loop.
-    
+
     Args:
         agent: ChatAgent instance to use for generating responses
         full_user_query: Complete prompt including system prompt, user request, and context
         context: Context document for groundedness evaluation
         evaluator: Groundedness evaluator function
         max_self_reflections: Maximum number of self-reflection iterations
-        
+
     Returns:
         Dictionary containing:
             - best_response: The best response achieved

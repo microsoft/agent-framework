@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """
 Example showing how to configure AI agents with different trigger configurations.
 

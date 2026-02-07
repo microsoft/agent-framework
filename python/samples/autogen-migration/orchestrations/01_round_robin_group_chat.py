@@ -56,7 +56,7 @@ async def run_autogen() -> None:
 async def run_agent_framework() -> None:
     """Agent Framework's SequentialBuilder for sequential agent orchestration."""
     from agent_framework.openai import OpenAIChatClient
-    from agent_framework_orchestrations import SequentialBuilder
+    from agent_framework.orchestrations import SequentialBuilder
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
