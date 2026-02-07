@@ -606,9 +606,7 @@ async def _resolve_approval_responses(
     # Execute approved tool calls
     if approved_responses and tools:
         client = getattr(agent, "client", None)
-        config = normalize_function_invocation_configuration(
-            getattr(client, "function_invocation_configuration", None)
-        )
+        config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
             *getattr(client, "function_middleware", ()),
             *run_kwargs.get("middleware", ()),

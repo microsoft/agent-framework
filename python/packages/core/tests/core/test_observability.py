@@ -27,8 +27,8 @@ from agent_framework import (
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
-    MessageListTimestampFilter,
     ChatTelemetryLayer,
+    MessageListTimestampFilter,
     OtelAttr,
     get_function_span,
 )

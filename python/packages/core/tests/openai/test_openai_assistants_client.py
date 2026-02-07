@@ -204,9 +204,7 @@ async def test_get_assistant_id_or_create_create_new(
     mock_async_openai: MagicMock,
 ) -> None:
     """Test _get_assistant_id_or_create when creating a new assistant."""
-    client = create_test_openai_assistants_client(
-        mock_async_openai, model_id="gpt-4", assistant_name="TestAssistant"
-    )
+    client = create_test_openai_assistants_client(mock_async_openai, model_id="gpt-4", assistant_name="TestAssistant")
 
     assistant_id = await client._get_assistant_id_or_create()  # type: ignore
 
