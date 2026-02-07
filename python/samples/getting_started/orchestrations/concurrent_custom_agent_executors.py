@@ -27,7 +27,7 @@ ConcurrentBuilder API and the default aggregator.
 Demonstrates:
 - Executors that create their Agent in __init__ (via AzureOpenAIChatClient)
 - A @handler that converts AgentExecutorRequest -> AgentExecutorResponse
-- ConcurrentBuilder().participants([...]) to build fan-out/fan-in
+- ConcurrentBuilder(participants=[...]) to build fan-out/fan-in
 - Default aggregator returning list[Message] (one user + one assistant per agent)
 - Workflow completion when all participants become idle
 
@@ -103,7 +103,7 @@ async def main() -> None:
     marketer = MarketerExec(client)
     legal = LegalExec(client)
 
-    workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
+    workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).build()
 
     events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")
     outputs = events.get_outputs()

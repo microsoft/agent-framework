@@ -6,10 +6,10 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ConcurrentBuilder, Message
+from agent_framework import Message, ConcurrentBuilderWorkflowEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent as SKAgent, ChatCompletionAgent, ConcurrentOrchestration
+from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
@@ -22,7 +22,7 @@ PROMPT = "Explain the concept of temperature from multiple scientific perspectiv
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[SKAgent]:
+def build_semantic_kernel_agents() -> list[Agent]:
     credential = AzureCliCredential()
 
     physics_agent = ChatCompletionAgent(
