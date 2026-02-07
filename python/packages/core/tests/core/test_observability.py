@@ -27,7 +27,7 @@ from agent_framework import (
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
-    ChatMessageListTimestampFilter,
+    MessageListTimestampFilter,
     ChatTelemetryLayer,
     OtelAttr,
     get_function_span,
@@ -54,12 +54,12 @@ def test_enum_values():
     assert OtelAttr.AGENT_INVOKE_OPERATION == "invoke_agent"
 
 
-# region Test ChatMessageListTimestampFilter
+# region Test MessageListTimestampFilter
 
 
 def test_filter_without_index_key():
     """Test filter method when record doesn't have INDEX_KEY."""
-    log_filter = ChatMessageListTimestampFilter()
+    log_filter = MessageListTimestampFilter()
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0, msg="test message", args=(), exc_info=None
     )
@@ -73,14 +73,14 @@ def test_filter_without_index_key():
 
 def test_filter_with_index_key():
     """Test filter method when record has INDEX_KEY."""
-    log_filter = ChatMessageListTimestampFilter()
+    log_filter = MessageListTimestampFilter()
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0, msg="test message", args=(), exc_info=None
     )
     original_created = record.created
 
     # Add the index key
-    setattr(record, ChatMessageListTimestampFilter.INDEX_KEY, 5)
+    setattr(record, MessageListTimestampFilter.INDEX_KEY, 5)
 
     result = log_filter.filter(record)
 
@@ -91,7 +91,7 @@ def test_filter_with_index_key():
 
 def test_index_key_constant():
     """Test that INDEX_KEY constant is correctly defined."""
-    assert ChatMessageListTimestampFilter.INDEX_KEY == "chat_message_index"
+    assert MessageListTimestampFilter.INDEX_KEY == "chat_message_index"
 
 
 # region Test get_function_span

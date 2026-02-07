@@ -95,7 +95,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/agents/custom/custom_agent.py`](./getting_started/agents/custom/custom_agent.py) | Custom Agent Implementation Example |
-| [`getting_started/client/custom_chat_client.py`](./getting_started/client/custom_chat_client.py) | Custom Chat Client Implementation Example |
+| [`getting_started/chat_client/custom_chat_client.py`](./getting_started/chat_client/custom_chat_client.py) | Custom Chat Client Implementation Example |
 
 ### Ollama
 
@@ -145,14 +145,14 @@ The recommended way to use Ollama is via the native `OllamaChatClient` from the 
 
 | File | Description |
 |------|-------------|
-| [`getting_started/client/azure_ai_chat_client.py`](./getting_started/client/azure_ai_chat_client.py) | Azure AI Chat Client Direct Usage Example |
-| [`getting_started/client/azure_assistants_client.py`](./getting_started/client/azure_assistants_client.py) | Azure OpenAI Assistants Client Direct Usage Example |
-| [`getting_started/client/azure_chat_client.py`](./getting_started/client/azure_chat_client.py) | Azure Chat Client Direct Usage Example |
-| [`getting_started/client/azure_responses_client.py`](./getting_started/client/azure_responses_client.py) | Azure OpenAI Responses Client Direct Usage Example |
-| [`getting_started/client/chat_response_cancellation.py`](./getting_started/client/chat_response_cancellation.py) | Chat Response Cancellation Example |
-| [`getting_started/client/openai_assistants_client.py`](./getting_started/client/openai_assistants_client.py) | OpenAI Assistants Client Direct Usage Example |
-| [`getting_started/client/openai_chat_client.py`](./getting_started/client/openai_chat_client.py) | OpenAI Chat Client Direct Usage Example |
-| [`getting_started/client/openai_responses_client.py`](./getting_started/client/openai_responses_client.py) | OpenAI Responses Client Direct Usage Example |
+| [`getting_started/chat_client/azure_ai_chat_client.py`](./getting_started/chat_client/azure_ai_chat_client.py) | Azure AI Chat Client Direct Usage Example |
+| [`getting_started/chat_client/azure_assistants_client.py`](./getting_started/chat_client/azure_assistants_client.py) | Azure OpenAI Assistants Client Direct Usage Example |
+| [`getting_started/chat_client/azure_chat_client.py`](./getting_started/chat_client/azure_chat_client.py) | Azure Chat Client Direct Usage Example |
+| [`getting_started/chat_client/azure_responses_client.py`](./getting_started/chat_client/azure_responses_client.py) | Azure OpenAI Responses Client Direct Usage Example |
+| [`getting_started/chat_client/chat_response_cancellation.py`](./getting_started/chat_client/chat_response_cancellation.py) | Chat Response Cancellation Example |
+| [`getting_started/chat_client/openai_assistants_client.py`](./getting_started/chat_client/openai_assistants_client.py) | OpenAI Assistants Client Direct Usage Example |
+| [`getting_started/chat_client/openai_chat_client.py`](./getting_started/chat_client/openai_chat_client.py) | OpenAI Chat Client Direct Usage Example |
+| [`getting_started/chat_client/openai_responses_client.py`](./getting_started/chat_client/openai_responses_client.py) | OpenAI Responses Client Direct Usage Example |
 
 
 ## Context Providers

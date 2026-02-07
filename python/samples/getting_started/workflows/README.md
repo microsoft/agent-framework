@@ -169,7 +169,7 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 
 ### Environment Variables
 
-- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/client/README.md#environment-variables).
+- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
   These variables are required for samples that construct `AzureOpenAIChatClient`
 
 - **OpenAI** (used in orchestration samples):

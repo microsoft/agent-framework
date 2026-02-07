@@ -238,7 +238,7 @@ For more advanced orchestration patterns including Sequential, Concurrent, Group
 ## More Examples & Samples
 
 - [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/client): Direct chat client usage patterns
+- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
 - [Workflow Samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflows): Advanced multi-agent patterns
 
