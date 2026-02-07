@@ -1387,6 +1387,29 @@ class TestAgentFunctionAppWorkflow:
         setup_exec.assert_not_called()
         setup_orch.assert_not_called()
 
+    def test_init_with_workflow_deduplicates_agents(self) -> None:
+        """Test that agents in both 'agents' and workflow are not double-registered."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "SharedAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+
+        mock_workflow = Mock()
+        mock_workflow.executors = {"SharedAgent": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+        ):
+            # Same agent passed explicitly AND present in workflow — should not raise
+            app = AgentFunctionApp(agents=[mock_agent], workflow=mock_workflow)
+
+        assert "SharedAgent" in app.agents
+
     def test_build_status_url(self) -> None:
         """Test _build_status_url constructs correct URL."""
         mock_workflow = Mock()

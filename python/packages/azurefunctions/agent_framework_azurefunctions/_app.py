@@ -554,8 +554,7 @@ class AgentFunctionApp(DFAppBase):
                                      The app level enable_mcp_tool_trigger setting will override this setting.
 
         Raises:
-            ValueError: If the agent doesn't have a 'name' attribute or if an agent
-                       with the same name is already registered
+            ValueError: If the agent doesn't have a 'name' attribute.
         """
         # Get agent name from the agent's name attribute
         name = getattr(agent, "name", None)
@@ -563,7 +562,8 @@ class AgentFunctionApp(DFAppBase):
             raise ValueError("Agent does not have a 'name' attribute. All agents must have a 'name' attribute.")
 
         if name in self._agent_metadata:
-            raise ValueError(f"Agent with name '{name}' is already registered. Each agent must have a unique name.")
+            logger.warning("[AgentFunctionApp] Agent '%s' is already registered, skipping duplicate.", name)
+            return
 
         effective_enable_http_endpoint = (
             self.enable_http_endpoints if enable_http_endpoint is None else self._coerce_to_bool(enable_http_endpoint)
