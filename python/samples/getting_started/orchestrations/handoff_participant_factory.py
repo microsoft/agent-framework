@@ -6,8 +6,8 @@ from typing import Annotated, cast
 
 from agent_framework import (
     AgentResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Workflow,
     WorkflowEvent,
     WorkflowRunState,
@@ -63,7 +63,7 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_triage_agent() -> ChatAgent:
+def create_triage_agent() -> Agent:
     """Factory function to create a triage agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -74,7 +74,7 @@ def create_triage_agent() -> ChatAgent:
     )
 
 
-def create_refund_agent() -> ChatAgent:
+def create_refund_agent() -> Agent:
     """Factory function to create a refund agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You process refund requests.",
@@ -84,7 +84,7 @@ def create_refund_agent() -> ChatAgent:
     )
 
 
-def create_order_status_agent() -> ChatAgent:
+def create_order_status_agent() -> Agent:
     """Factory function to create an order status agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You handle order and shipping inquiries.",
@@ -94,7 +94,7 @@ def create_order_status_agent() -> ChatAgent:
     )
 
 
-def create_return_agent() -> ChatAgent:
+def create_return_agent() -> Agent:
     """Factory function to create a return agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You manage product return requests.",
@@ -143,7 +143,7 @@ def _handle_events(events: list[WorkflowEvent]) -> list[WorkflowEvent[HandoffAge
                     print(f"- {speaker}: {message.text}")
             elif event.type == "output":
                 # The output of the handoff workflow is a collection of chat messages from all participants
-                conversation = cast(list[ChatMessage], event.data)
+                conversation = cast(list[Message], event.data)
                 if isinstance(conversation, list):
                     print("\n=== Final Conversation Snapshot ===")
                     for message in conversation:

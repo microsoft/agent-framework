@@ -23,7 +23,7 @@ This sample demonstrates the three main methods of AzureAIProjectAgentProvider:
 It also shows how to use a single provider instance to spawn multiple agents
 with different configurations, which is efficient for multi-agent scenarios.
 
-Each method returns a ChatAgent that can be used for conversations.
+Each method returns a Agent that can be used for conversations.
 """
 
 
@@ -41,7 +41,7 @@ async def create_agent_example() -> None:
     """Example of using provider.create_agent() to create a new agent.
 
     This method creates a new agent version on the Azure AI service and returns
-    a ChatAgent. Use this when you want to create a fresh agent with
+    a Agent. Use this when you want to create a fresh agent with
     specific configuration.
     """
     print("=== provider.create_agent() Example ===")
@@ -199,7 +199,7 @@ async def multiple_agents_example() -> None:
 async def as_agent_example() -> None:
     """Example of using provider.as_agent() to wrap an SDK object without HTTP calls.
 
-    This method wraps an existing AgentVersionDetails into a ChatAgent without
+    This method wraps an existing AgentVersionDetails into a Agent without
     making additional HTTP calls. Use this when you already have the full
     AgentVersionDetails from a previous SDK operation.
     """

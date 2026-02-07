@@ -5,7 +5,7 @@ from typing import Any
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     Executor,
     WorkflowContext,
     handler,
@@ -18,13 +18,13 @@ from azure.identity import AzureCliCredential
 Sample: Sequential workflow mixing agents and a custom summarizer executor
 
 This demonstrates how SequentialBuilder chains participants with a shared
-conversation context (list[ChatMessage]). An agent produces content; a custom
+conversation context (list[Message]). An agent produces content; a custom
 executor appends a compact summary to the conversation. The workflow completes
 after all participants have executed in sequence, and the final output contains
 the complete conversation.
 
 Custom executor contract:
-- Provide at least one @handler accepting AgentExecutorResponse and a WorkflowContext[list[ChatMessage]]
+- Provide at least one @handler accepting AgentExecutorResponse and a WorkflowContext[list[Message]]
 - Emit the updated conversation via ctx.send_message([...])
 
 Prerequisites:
@@ -36,22 +36,22 @@ class Summarizer(Executor):
     """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
-    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[Message]]) -> None:
         """Append a summary message to a copy of the full conversation.
 
         Note: A custom executor must be able to handle the message type from the prior participant, and produce
         the message type expected by the next participant. In this case, the prior participant is an agent thus
         the input is AgentExecutorResponse (an agent will be wrapped in an AgentExecutor, which produces
         `AgentExecutorResponse`). If the next participant is also an agent or this is the final participant,
-        the output must be `list[ChatMessage]`.
+        the output must be `list[Message]`.
         """
         if not agent_response.full_conversation:
-            await ctx.send_message([ChatMessage("assistant", ["No conversation to summarize."])])
+            await ctx.send_message([Message("assistant", ["No conversation to summarize."])])
             return
 
         users = sum(1 for m in agent_response.full_conversation if m.role == "user")
         assistants = sum(1 for m in agent_response.full_conversation if m.role == "assistant")
-        summary = ChatMessage("assistant", [f"Summary -> users:{users} assistants:{assistants}"])
+        summary = Message("assistant", [f"Summary -> users:{users} assistants:{assistants}"])
         final_conversation = list(agent_response.full_conversation) + [summary]
         await ctx.send_message(final_conversation)
 
@@ -74,7 +74,7 @@ async def main() -> None:
 
     if outputs:
         print("===== Final Conversation =====")
-        messages: list[ChatMessage] | Any = outputs[0]
+        messages: list[Message] | Any = outputs[0]
         for i, msg in enumerate(messages, start=1):
             name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")

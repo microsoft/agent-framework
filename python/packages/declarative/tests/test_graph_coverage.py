@@ -1835,8 +1835,8 @@ class TestAgentExternalLoopCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def, agents={"TestAgent": mock_agent})
 
-        # Mock the internal method to avoid storing ChatMessage objects in state
-        # (PowerFx cannot serialize ChatMessage)
+        # Mock the internal method to avoid storing Message objects in state
+        # (PowerFx cannot serialize Message)
         with patch.object(
             executor,
             "_invoke_agent_and_store_results",

@@ -5,8 +5,8 @@ from typing import cast
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
@@ -36,7 +36,7 @@ async def main() -> None:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Participant agents
-    expert = ChatAgent(
+    expert = Agent(
         name="PythonExpert",
         instructions=(
             "You are an expert in Python in a workgroup. "
@@ -46,7 +46,7 @@ async def main() -> None:
         chat_client=chat_client,
     )
 
-    verifier = ChatAgent(
+    verifier = Agent(
         name="AnswerVerifier",
         instructions=(
             "You are a programming expert in a workgroup. "
@@ -57,7 +57,7 @@ async def main() -> None:
         chat_client=chat_client,
     )
 
-    clarifier = ChatAgent(
+    clarifier = Agent(
         name="AnswerClarifier",
         instructions=(
             "You are an accessibility expert in a workgroup. "
@@ -68,7 +68,7 @@ async def main() -> None:
         chat_client=chat_client,
     )
 
-    skeptic = ChatAgent(
+    skeptic = Agent(
         name="Skeptic",
         instructions=(
             "You are a devil's advocate in a workgroup. "
@@ -124,7 +124,7 @@ async def main() -> None:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

@@ -43,7 +43,7 @@ python/
 
 ```python
 # Core imports
-from agent_framework import ChatAgent, ChatMessage, tool
+from agent_framework import Agent, Message, tool
 
 # Provider imports (lazy-loaded)
 from agent_framework.openai import OpenAIChatClient

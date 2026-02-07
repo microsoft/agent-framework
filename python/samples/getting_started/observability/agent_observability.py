@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
@@ -39,7 +39,7 @@ async def main():
     with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        agent = ChatAgent(
+        agent = Agent(
             chat_client=OpenAIChatClient(),
             tools=get_weather,
             name="WeatherAgent",

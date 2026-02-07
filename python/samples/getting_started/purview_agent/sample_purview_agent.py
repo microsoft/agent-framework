@@ -25,7 +25,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import AgentResponse, ChatAgent, ChatMessage
+from agent_framework import AgentResponse, Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import (
     PurviewChatPolicyMiddleware,
@@ -150,7 +150,7 @@ async def run_with_agent_middleware() -> None:
         ),
     )
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
@@ -159,12 +159,12 @@ async def run_with_agent_middleware() -> None:
 
     print("-- Agent MiddlewareTypes Path --")
     first: AgentResponse = await agent.run(
-        ChatMessage("user", ["Tell me a joke about a pirate."], additional_properties={"user_id": user_id})
+        Message("user", ["Tell me a joke about a pirate."], additional_properties={"user_id": user_id})
     )
     print("First response (agent middleware):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage(
+        Message(
             role="user", text="That was funny. Tell me another one.", additional_properties={"user_id": user_id}
         )
     )
@@ -194,7 +194,7 @@ async def run_with_chat_middleware() -> None:
         ],
     )
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
@@ -202,7 +202,7 @@ async def run_with_chat_middleware() -> None:
 
     print("-- Chat MiddlewareTypes Path --")
     first: AgentResponse = await agent.run(
-        ChatMessage(
+        Message(
             role="user",
             text="Give me a short clean joke.",
             additional_properties={"user_id": user_id},
@@ -211,7 +211,7 @@ async def run_with_chat_middleware() -> None:
     print("First response (chat middleware):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage(
+        Message(
             role="user",
             text="One more please.",
             additional_properties={"user_id": user_id},
@@ -241,7 +241,7 @@ async def run_with_custom_cache_provider() -> None:
         cache_provider=custom_cache,
     )
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
@@ -252,14 +252,14 @@ async def run_with_custom_cache_provider() -> None:
     print("Using SimpleDictCacheProvider")
 
     first: AgentResponse = await agent.run(
-        ChatMessage(
+        Message(
             role="user", text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id}
         )
     )
     print("First response (custom provider):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage("user", ["That's hilarious! One more?"], additional_properties={"user_id": user_id})
+        Message("user", ["That's hilarious! One more?"], additional_properties={"user_id": user_id})
     )
     print("Second response (custom provider):\n", second)
 
@@ -283,7 +283,7 @@ async def run_with_custom_cache_provider() -> None:
         ),
     )
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
@@ -294,12 +294,12 @@ async def run_with_custom_cache_provider() -> None:
     print("Using default InMemoryCacheProvider with settings-based configuration")
 
     first: AgentResponse = await agent.run(
-        ChatMessage("user", ["Tell me a joke about AI."], additional_properties={"user_id": user_id})
+        Message("user", ["Tell me a joke about AI."], additional_properties={"user_id": user_id})
     )
     print("First response (default cache):\n", first)
 
     second: AgentResponse = await agent.run(
-        ChatMessage("user", ["Nice! Another AI joke please."], additional_properties={"user_id": user_id})
+        Message("user", ["Nice! Another AI joke please."], additional_properties={"user_id": user_id})
     )
     print("Second response (default cache):\n", second)
 

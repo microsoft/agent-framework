@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, ChatMessage, WorkflowBuilder
+from agent_framework import AgentResponseUpdate, Message, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -52,7 +52,7 @@ async def main():
 
     # Run the workflow with the user's initial message and stream events as they occur.
     async for event in workflow.run(
-        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."]),
+        Message("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."]),
         stream=True,
     ):
         # The outputs of the workflow are whatever the agents produce. So the events are expected to

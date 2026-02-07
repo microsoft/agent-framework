@@ -34,9 +34,9 @@ from ._tools import (
     ToolProtocol,
 )
 from ._types import (
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
     prepare_messages,
     validate_chat_options,
@@ -49,7 +49,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from ._agents import ChatAgent
+    from ._agents import Agent
     from ._middleware import (
         MiddlewareTypes,
     )
@@ -65,11 +65,11 @@ logger = get_logger()
 
 __all__ = [
     "BaseChatClient",
-    "ChatClientProtocol",
+    "SupportsChatGetResponse",
 ]
 
 
-# region ChatClientProtocol Protocol
+# region SupportsChatGetResponse Protocol
 
 # Contravariant for the Protocol
 TOptions_contra = TypeVar(
@@ -84,7 +84,7 @@ TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
 
 
 @runtime_checkable
-class ChatClientProtocol(Protocol[TOptions_contra]):
+class SupportsChatGetResponse(Protocol[TOptions_contra]):
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
@@ -101,7 +101,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatClientProtocol, ChatResponse, ChatMessage
+            from agent_framework import SupportsChatGetResponse, ChatResponse, Message
 
 
             # Any class implementing the required methods is compatible
@@ -126,7 +126,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 
             # Verify the instance satisfies the protocol
             client = CustomChatClient()
-            assert isinstance(client, ChatClientProtocol)
+            assert isinstance(client, SupportsChatGetResponse)
     """
 
     additional_properties: dict[str, Any]
@@ -134,7 +134,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: "ChatOptions[TResponseModelT]",
@@ -144,7 +144,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: "TOptions_contra | ChatOptions[None] | None" = None,
@@ -154,7 +154,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: "TOptions_contra | ChatOptions[Any] | None" = None,
@@ -163,7 +163,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: "TOptions_contra | ChatOptions[Any] | None" = None,
@@ -224,7 +224,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseChatClient, ChatResponse, ChatMessage
+            from agent_framework import BaseChatClient, ChatResponse, Message
             from collections.abc import AsyncIterable
 
 
@@ -241,7 +241,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
                     else:
                         # Non-streaming implementation
                         return ChatResponse(
-                            messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
+                            messages=[Message(role="assistant", text="Hello!")], response_id="custom-response"
                         )
 
 
@@ -336,7 +336,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -363,7 +363,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: "ChatOptions[TResponseModelT]",
@@ -373,7 +373,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: "TOptions_co | ChatOptions[None] | None" = None,
@@ -383,7 +383,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: "TOptions_co | ChatOptions[Any] | None" = None,
@@ -392,7 +392,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: "TOptions_co | ChatOptions[Any] | None" = None,
@@ -446,10 +446,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         middleware: Sequence["MiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[TOptions_co]":
-        """Create a ChatAgent with this client.
+    ) -> "Agent[TOptions_co]":
+        """Create a Agent with this client.
 
-        This is a convenience method that creates a ChatAgent instance with this
+        This is a convenience method that creates a Agent instance with this
         chat client already configured.
 
         Keyword Args:
@@ -472,7 +472,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
-            A ChatAgent instance configured with this chat client.
+            A Agent instance configured with this chat client.
 
         Examples:
             .. code-block:: python
@@ -492,9 +492,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
                 # Run the agent
                 response = await agent.run("Hello!")
         """
-        from ._agents import ChatAgent
+        from ._agents import Agent
 
-        return ChatAgent(
+        return Agent(
             chat_client=self,
             id=id,
             name=name,

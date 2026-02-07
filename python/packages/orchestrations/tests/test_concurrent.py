@@ -7,8 +7,8 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowContext,
     WorkflowRunState,
     handler,
@@ -32,7 +32,7 @@ class _FakeAgentExec(Executor):
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
-        response = AgentResponse(messages=ChatMessage(role="assistant", text=self._reply_text))
+        response = AgentResponse(messages=Message(role="assistant", text=self._reply_text))
         full_conversation = list(request.messages) + list(response.messages)
         await ctx.send_message(AgentExecutorResponse(self.id, response, full_conversation=full_conversation))
 
@@ -99,18 +99,18 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
     wf = ConcurrentBuilder(participants=[e1, e2, e3]).build()
 
     completed = False
-    output: list[ChatMessage] | None = None
+    output: list[Message] | None = None
     async for ev in wf.run("prompt: hello world", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = cast(list[ChatMessage], ev.data)
+            output = cast(list[Message], ev.data)
         if completed and output is not None:
             break
 
     assert completed
     assert output is not None
-    messages: list[ChatMessage] = output
+    messages: list[Message] = output
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
@@ -130,7 +130,7 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
     async def summarize(results: list[AgentExecutorResponse]) -> str:
         texts: list[str] = []
         for r in results:
-            msgs: list[ChatMessage] = r.agent_response.messages
+            msgs: list[Message] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
@@ -161,7 +161,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     def summarize_sync(results: list[AgentExecutorResponse], _ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
         texts: list[str] = []
         for r in results:
-            msgs: list[ChatMessage] = r.agent_response.messages
+            msgs: list[Message] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
@@ -205,7 +205,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_response.messages
+                msgs: list[Message] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" & ".join(sorted(texts)))
 
@@ -239,7 +239,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_response.messages
+                msgs: list[Message] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" | ".join(sorted(texts)))
 
@@ -279,7 +279,7 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
         async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
             texts: list[str] = []
             for r in results:
-                msgs: list[ChatMessage] = r.agent_response.messages
+                msgs: list[Message] = r.agent_response.messages
                 texts.append(msgs[-1].text if msgs else "")
             await ctx.yield_output(" | ".join(sorted(texts)))
 
@@ -343,7 +343,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
 
     wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
 
-    baseline_output: list[ChatMessage] | None = None
+    baseline_output: list[Message] | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -367,7 +367,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     )
     wf_resume = ConcurrentBuilder(participants=list(resumed_participants), checkpoint_storage=storage).build()
 
-    resumed_output: list[ChatMessage] | None = None
+    resumed_output: list[Message] | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
@@ -389,7 +389,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
     wf = ConcurrentBuilder(participants=agents).build()
 
-    baseline_output: list[ChatMessage] | None = None
+    baseline_output: list[Message] | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -410,7 +410,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     resumed_agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
     wf_resume = ConcurrentBuilder(participants=resumed_agents).build()
 
-    resumed_output: list[ChatMessage] | None = None
+    resumed_output: list[Message] | None = None
     async for ev in wf_resume.run(
         checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
     ):
@@ -439,7 +439,7 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
         agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
         wf = ConcurrentBuilder(participants=agents, checkpoint_storage=buildtime_storage).build()
 
-        baseline_output: list[ChatMessage] | None = None
+        baseline_output: list[Message] | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]
@@ -521,18 +521,18 @@ async def test_concurrent_with_register_participants() -> None:
     wf = ConcurrentBuilder(participant_factories=[create_agent1, create_agent2, create_agent3]).build()
 
     completed = False
-    output: list[ChatMessage] | None = None
+    output: list[Message] | None = None
     async for ev in wf.run("test prompt", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = cast(list[ChatMessage], ev.data)
+            output = cast(list[Message], ev.data)
         if completed and output is not None:
             break
 
     assert completed
     assert output is not None
-    messages: list[ChatMessage] = output
+    messages: list[Message] = output
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3

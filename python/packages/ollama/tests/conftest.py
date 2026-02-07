@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from pytest import fixture
 
 
@@ -43,5 +43,5 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 
 
 @fixture
-def chat_history() -> list[ChatMessage]:
+def chat_history() -> list[Message]:
     return []

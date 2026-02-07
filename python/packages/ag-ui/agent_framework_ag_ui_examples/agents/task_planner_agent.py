@@ -4,7 +4,7 @@
 
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, tool
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 
@@ -61,7 +61,7 @@ _TASK_PLANNER_INSTRUCTIONS = (
 )
 
 
-def task_planner_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def task_planner_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a task planner agent with user approval for actions.
 
     Args:
@@ -70,7 +70,7 @@ def task_planner_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAg
     Returns:
         A configured AgentFrameworkAgent instance with task planning capabilities
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="task_planner",
         instructions=_TASK_PLANNER_INSTRUCTIONS,
         chat_client=chat_client,

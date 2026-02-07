@@ -15,7 +15,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -25,11 +25,11 @@ logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def create_joker_agent() -> ChatAgent:
+def create_joker_agent() -> Agent:
     """Create the Joker agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Joker agent
+        Agent: The configured Joker agent
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="Joker",

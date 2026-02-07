@@ -5,8 +5,8 @@ from typing import cast
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
@@ -17,7 +17,7 @@ Sample: Group Chat with Agent-Based Manager
 
 What it does:
 - Demonstrates the new set_manager() API for agent-based coordination
-- Manager is a full ChatAgent with access to tools, context, and observability
+- Manager is a full Agent with access to tools, context, and observability
 - Coordinates a researcher and writer agent to solve tasks collaboratively
 
 Prerequisites:
@@ -42,7 +42,7 @@ async def main() -> None:
     # Note: This agent (and the underlying chat client) must support structured outputs.
     # The group chat workflow relies on this to parse the orchestrator's decisions.
     # `response_format` is set internally by the GroupChat workflow when the agent is invoked.
-    orchestrator_agent = ChatAgent(
+    orchestrator_agent = Agent(
         name="Orchestrator",
         description="Coordinates multi-agent collaboration by selecting speakers",
         instructions=ORCHESTRATOR_AGENT_INSTRUCTIONS,
@@ -50,14 +50,14 @@ async def main() -> None:
     )
 
     # Participant agents
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects relevant background information",
         instructions="Gather concise facts that help a teammate answer the question.",
         chat_client=chat_client,
     )
 
-    writer = ChatAgent(
+    writer = Agent(
         name="Writer",
         description="Synthesizes polished answers from gathered information",
         instructions="Compose clear and structured answers using any notes provided.",
@@ -103,7 +103,7 @@ async def main() -> None:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

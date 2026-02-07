@@ -20,7 +20,7 @@ Interactive developer UI for testing and debugging agents and workflows.
 ```python
 from agent_framework.devui import serve
 
-agent = ChatAgent(...)
+agent = Agent(...)
 serve(entities=[agent], port=8080, auto_open=True)
 ```
 

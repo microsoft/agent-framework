@@ -404,11 +404,11 @@ def test_safe_json_parse_with_none():
 
 def test_get_role_value_with_enum():
     """Test get_role_value with enum role."""
-    from agent_framework import ChatMessage, Content
+    from agent_framework import Content, Message
 
     from agent_framework_ag_ui._utils import get_role_value
 
-    message = ChatMessage(role="user", contents=[Content.from_text("test")])
+    message = Message(role="user", contents=[Content.from_text("test")])
     result = get_role_value(message)
     assert result == "user"
 

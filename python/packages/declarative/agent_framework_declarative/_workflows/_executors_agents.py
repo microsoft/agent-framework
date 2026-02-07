@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
     WorkflowContext,
     handler,
     response_handler,
@@ -170,7 +170,7 @@ def _extract_json_from_response(text: str) -> Any:
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
-def _validate_conversation_history(messages: list[ChatMessage], agent_name: str) -> None:
+def _validate_conversation_history(messages: list[Message], agent_name: str) -> None:
     """Validate that conversation history has matching tool calls and results.
 
     This helps catch issues where tool call messages are stored without their
@@ -263,7 +263,7 @@ class AgentResult:
     success: bool
     response: str
     agent_name: str
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     tool_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
     error: str | None = None
 
@@ -309,7 +309,7 @@ class AgentExternalInputRequest:
     agent_name: str
     agent_response: str
     iteration: int = 0
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     function_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
 
 
@@ -340,7 +340,7 @@ class AgentExternalInputResponse:
     """
 
     user_input: str
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     function_results: dict[str, Content] = field(default_factory=lambda: cast(dict[str, Content], {}))
 
 
@@ -637,20 +637,20 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             Tuple of (accumulated_response, all_messages, tool_calls)
         """
         accumulated_response = ""
-        all_messages: list[ChatMessage] = []
+        all_messages: list[Message] = []
         tool_calls: list[Content] = []
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
-            user_message = ChatMessage(role="user", text=input_text)
+            user_message = Message(role="user", text=input_text)
             state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
         # Note: We get a fresh copy to avoid mutation issues
-        conversation_history: list[ChatMessage] = state.get(messages_path) or []
+        conversation_history: list[Message] = state.get(messages_path) or []
 
         # Build messages list for agent (use history if available, otherwise just input)
-        messages_for_agent: list[ChatMessage] | str = conversation_history if conversation_history else input_text
+        messages_for_agent: list[Message] | str = conversation_history if conversation_history else input_text
 
         # Validate conversation history before invoking agent
         if isinstance(messages_for_agent, list) and messages_for_agent:
@@ -672,7 +672,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if not isinstance(result, str):
             result_messages: Any = getattr(result, "messages", None)
             if result_messages is not None:
-                all_messages = list(cast(list[ChatMessage], result_messages))
+                all_messages = list(cast(list[Message], result_messages))
             result_tool_calls: Any = getattr(result, "tool_calls", None)
             if result_tool_calls is not None:
                 tool_calls = list(cast(list[Content], result_tool_calls))
@@ -707,7 +707,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "Agent '%s': No messages in response, creating simple assistant message",
                 agent_name,
             )
-            assistant_message = ChatMessage(role="assistant", text=accumulated_response)
+            assistant_message = Message(role="assistant", text=accumulated_response)
             state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:

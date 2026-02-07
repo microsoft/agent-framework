@@ -27,7 +27,7 @@ import asyncio
 
 from agent_framework import (
     AgentThread,
-    ChatAgent,
+    Agent,
     ChatMessageStore,
     InMemoryCheckpointStorage,
 )
@@ -43,13 +43,13 @@ async def basic_checkpointing() -> None:
 
     chat_client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
+    def create_assistant() -> Agent:
         return chat_client.as_agent(
             name="assistant",
             instructions="You are a helpful assistant. Keep responses brief.",
         )
 
-    def create_reviewer() -> ChatAgent:
+    def create_reviewer() -> Agent:
         return chat_client.as_agent(
             name="reviewer",
             instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
@@ -87,7 +87,7 @@ async def checkpointing_with_thread() -> None:
 
     chat_client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
+    def create_assistant() -> Agent:
         return chat_client.as_agent(
             name="memory_assistant",
             instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
@@ -131,7 +131,7 @@ async def streaming_with_checkpoints() -> None:
 
     chat_client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
+    def create_assistant() -> Agent:
         return chat_client.as_agent(
             name="streaming_assistant",
             instructions="You are a helpful assistant.",

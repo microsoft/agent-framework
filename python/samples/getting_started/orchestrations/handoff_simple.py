@@ -5,8 +5,8 @@ from typing import Annotated, cast
 
 from agent_framework import (
     AgentResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     WorkflowEvent,
     WorkflowRunState,
     tool,
@@ -54,7 +54,7 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
@@ -138,7 +138,7 @@ def _handle_events(events: list[WorkflowEvent]) -> list[WorkflowEvent[HandoffAge
                     print(f"- {speaker}: {message.text}")
             elif event.type == "output":
                 # The output of the handoff workflow is a collection of chat messages from all participants
-                conversation = cast(list[ChatMessage], event.data)
+                conversation = cast(list[Message], event.data)
                 if isinstance(conversation, list):
                     print("\n=== Final Conversation Snapshot ===")
                     for message in conversation:

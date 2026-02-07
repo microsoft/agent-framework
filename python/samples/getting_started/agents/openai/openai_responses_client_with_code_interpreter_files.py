@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
+from agent_framework import Agent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIResponsesClient
 from openai import AsyncOpenAI
 
@@ -66,7 +66,7 @@ async def main() -> None:
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
     # Create agent using OpenAI Responses client
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=HostedCodeInterpreterTool(inputs=[{"file_id": file_id}]),

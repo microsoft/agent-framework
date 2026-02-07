@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -39,7 +39,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage("user", text=prompt)
+        initial_message = Message("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
@@ -85,7 +85,7 @@ class AggregateInsights(Executor):
         await ctx.yield_output(consolidated)
 
 
-def create_researcher_agent() -> ChatAgent:
+def create_researcher_agent() -> Agent:
     """Creates a research domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -96,7 +96,7 @@ def create_researcher_agent() -> ChatAgent:
     )
 
 
-def create_marketer_agent() -> ChatAgent:
+def create_marketer_agent() -> Agent:
     """Creates a marketing domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -107,7 +107,7 @@ def create_marketer_agent() -> ChatAgent:
     )
 
 
-def create_legal_agent() -> ChatAgent:
+def create_legal_agent() -> Agent:
     """Creates a legal domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(

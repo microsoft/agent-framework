@@ -48,7 +48,7 @@ from _tools import (
 from agent_framework import (
     AgentExecutorResponse,
     AgentResponseUpdate,
-    ChatMessage,
+    Message,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -65,9 +65,9 @@ load_dotenv()
 
 
 @executor(id="start_executor")
-async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+async def start_executor(input: str, ctx: WorkflowContext[list[Message]]) -> None:
     """Initiates the workflow by sending the user query to all specialized agents."""
-    await ctx.send_message([ChatMessage("user", [input])])
+    await ctx.send_message([Message("user", [input])])
 
 
 class ResearchLead(Executor):
@@ -102,11 +102,11 @@ class ResearchLead(Executor):
 
         # Generate comprehensive travel plan summary
         messages = [
-            ChatMessage(
+            Message(
                 role="system",
                 text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
             ),
-            ChatMessage(
+            Message(
                 role="user",
                 text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
             ),

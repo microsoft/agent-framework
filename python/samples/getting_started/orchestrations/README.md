@@ -52,10 +52,10 @@ from agent_framework.orchestrations import (
 
 **Magentic checkpointing tip**: Treat `MagenticBuilder.participants` keys as stable identifiers. When resuming from a checkpoint, the rebuilt workflow must reuse the same participant names; otherwise the checkpoint cannot be applied and the run will fail fast.
 
-**Handoff workflow tip**: Handoff workflows maintain the full conversation history including any `ChatMessage.additional_properties` emitted by your agents. This ensures routing metadata remains intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)` to configure which agents can route to which others with a fluent, type-safe API.
+**Handoff workflow tip**: Handoff workflows maintain the full conversation history including any `Message.additional_properties` emitted by your agents. This ensures routing metadata remains intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)` to configure which agents can route to which others with a fluent, type-safe API.
 
 **Sequential orchestration note**: Sequential orchestration uses a few small adapter nodes for plumbing:
-- `input-conversation` normalizes input to `list[ChatMessage]`
+- `input-conversation` normalizes input to `list[Message]`
 - `to-conversation:<participant>` converts agent responses into the shared conversation
 - `complete` publishes the final output event (type='output')
 

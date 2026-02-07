@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
+from agent_framework import AgentResponseUpdate, AgentThread, Content, Message, tool
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -686,7 +686,7 @@ class TestFormatPrompt:
     def test_format_user_message(self) -> None:
         """Test formatting user message."""
         agent = ClaudeAgent()
-        msg = ChatMessage(
+        msg = Message(
             role="user",
             contents=[Content.from_text(text="Hello")],
         )
@@ -697,9 +697,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text(text="Hi")]),
-            ChatMessage(role="assistant", contents=[Content.from_text(text="Hello!")]),
-            ChatMessage(role="user", contents=[Content.from_text(text="How are you?")]),
+            Message(role="user", contents=[Content.from_text(text="Hi")]),
+            Message(role="assistant", contents=[Content.from_text(text="Hello!")]),
+            Message(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

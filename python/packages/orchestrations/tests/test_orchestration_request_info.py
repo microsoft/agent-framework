@@ -11,7 +11,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    ChatMessage,
+    Message,
     SupportsAgentRun,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorRequest, AgentExecutorResponse
@@ -72,16 +72,16 @@ class TestAgentRequestInfoResponse:
 
     def test_create_response_with_messages(self):
         """Test creating an AgentRequestInfoResponse with messages."""
-        messages = [ChatMessage(role="user", text="Additional info")]
+        messages = [Message(role="user", text="Additional info")]
         response = AgentRequestInfoResponse(messages=messages)
 
         assert response.messages == messages
 
     def test_from_messages_factory(self):
-        """Test creating response from ChatMessage list."""
+        """Test creating response from Message list."""
         messages = [
-            ChatMessage(role="user", text="Message 1"),
-            ChatMessage(role="user", text="Message 2"),
+            Message(role="user", text="Message 1"),
+            Message(role="user", text="Message 2"),
         ]
         response = AgentRequestInfoResponse.from_messages(messages)
 
@@ -113,7 +113,7 @@ class TestAgentRequestInfoExecutor:
         """Test that request_info handler calls ctx.request_info."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Agent response")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", text="Agent response")])
         agent_response = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -131,7 +131,7 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user provides additional messages."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", text="Original")])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -157,7 +157,7 @@ class TestAgentRequestInfoExecutor:
         """Test response handler when user approves (no additional messages)."""
         executor = AgentRequestInfoExecutor(id="test_executor")
 
-        agent_response = AgentResponse(messages=[ChatMessage(role="assistant", text="Original")])
+        agent_response = AgentResponse(messages=[Message(role="assistant", text="Original")])
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
@@ -200,7 +200,7 @@ class _TestAgent:
 
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -209,10 +209,10 @@ class _TestAgent:
         """Dummy run method."""
         if stream:
             return self._run_stream_impl()
-        return AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")])
+        return AgentResponse(messages=[Message(role="assistant", text="Test response")])
 
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(messages=[ChatMessage(role="assistant", text="Test response stream")])
+        yield AgentResponseUpdate(messages=[Message(role="assistant", text="Test response stream")])
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Creates a new conversation thread for the agent."""

@@ -5,7 +5,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context
+from agent_framework import Context, Message
 from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
@@ -36,10 +36,10 @@ def mock_index_client() -> AsyncMock:
 
 
 @pytest.fixture
-def sample_messages() -> list[ChatMessage]:
+def sample_messages() -> list[Message]:
     """Create sample chat messages for testing."""
     return [
-        ChatMessage(role="user", text="What is in the documents?"),
+        Message(role="user", text="What is in the documents?"),
     ]
 
 
@@ -276,9 +276,7 @@ class TestSemanticSearch:
 
     @pytest.mark.asyncio
     @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
-    async def test_semantic_search_basic(
-        self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
-    ) -> None:
+    async def test_semantic_search_basic(self, mock_search_class: MagicMock, sample_messages: list[Message]) -> None:
         """Test basic semantic search without vector search."""
         # Setup mock
         mock_search_client = AsyncMock()
@@ -318,7 +316,7 @@ class TestSemanticSearch:
         )
 
         # Empty message
-        context = await provider.invoking([ChatMessage(role="user", text="")])
+        context = await provider.invoking([Message(role="user", text="")])
 
         assert isinstance(context, Context)
         assert len(context.messages) == 0
@@ -326,7 +324,7 @@ class TestSemanticSearch:
     @pytest.mark.asyncio
     @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_semantic_search_with_vector_query(
-        self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
+        self, mock_search_class: MagicMock, sample_messages: list[Message]
     ) -> None:
         """Test semantic search with vector query."""
         # Setup mock
@@ -520,10 +518,10 @@ class TestMessageFiltering:
 
         # Mix of message types
         messages = [
-            ChatMessage(role="system", text="System message"),
-            ChatMessage(role="user", text="User message"),
-            ChatMessage(role="assistant", text="Assistant message"),
-            ChatMessage(role="tool", text="Tool message"),
+            Message(role="system", text="System message"),
+            Message(role="user", text="User message"),
+            Message(role="assistant", text="Assistant message"),
+            Message(role="tool", text="Tool message"),
         ]
 
         context = await provider.invoking(messages)
@@ -548,9 +546,9 @@ class TestMessageFiltering:
 
         # Messages with empty/whitespace text
         messages = [
-            ChatMessage(role="user", text=""),
-            ChatMessage(role="user", text="   "),
-            ChatMessage(role="user", text=""),  # ChatMessage with None text becomes empty string
+            Message(role="user", text=""),
+            Message(role="user", text="   "),
+            Message(role="user", text=""),  # Message with None text becomes empty string
         ]
 
         context = await provider.invoking(messages)
@@ -581,7 +579,7 @@ class TestCitations:
             mode="semantic",
         )
 
-        context = await provider.invoking([ChatMessage(role="user", text="test query")])
+        context = await provider.invoking([Message(role="user", text="test query")])
 
         # Check that citation is included
         assert isinstance(context, Context)
@@ -603,7 +601,7 @@ class TestAgenticSearch:
         mock_search_class: MagicMock,
         mock_index_class: MagicMock,
         mock_retrieval_class: MagicMock,
-        sample_messages: list[ChatMessage],
+        sample_messages: list[Message],
     ) -> None:
         """Test basic agentic search with Knowledge Base retrieval."""
         # Setup search client mock
@@ -660,7 +658,7 @@ class TestAgenticSearch:
         mock_search_class: MagicMock,
         mock_index_class: MagicMock,
         mock_retrieval_class: MagicMock,
-        sample_messages: list[ChatMessage],
+        sample_messages: list[Message],
     ) -> None:
         """Test agentic search when no results are returned."""
         # Setup mocks
@@ -705,7 +703,7 @@ class TestAgenticSearch:
         mock_search_class: MagicMock,
         mock_index_class: MagicMock,
         mock_retrieval_class: MagicMock,
-        sample_messages: list[ChatMessage],
+        sample_messages: list[Message],
     ) -> None:
         """Test agentic search with medium reasoning effort."""
         # Setup mocks

@@ -2,16 +2,16 @@
 
 """Helpers for managing chat conversation history.
 
-These utilities operate on standard `list[ChatMessage]` collections and simple
+These utilities operate on standard `list[Message]` collections and simple
 dictionary snapshots so orchestrators can share logic without new mixins.
 """
 
 from collections.abc import Sequence
 
-from .._types import ChatMessage
+from .._types import Message
 
 
-def latest_user_message(conversation: Sequence[ChatMessage]) -> ChatMessage:
+def latest_user_message(conversation: Sequence[Message]) -> Message:
     """Return the most recent user-authored message from `conversation`."""
     for message in reversed(conversation):
         role_value = getattr(message.role, "value", message.role)
@@ -20,7 +20,7 @@ def latest_user_message(conversation: Sequence[ChatMessage]) -> ChatMessage:
     raise ValueError("No user message in conversation")
 
 
-def ensure_author(message: ChatMessage, fallback: str) -> ChatMessage:
+def ensure_author(message: Message, fallback: str) -> Message:
     """Attach `fallback` author if message is missing `author_name`."""
     message.author_name = message.author_name or fallback
     return message

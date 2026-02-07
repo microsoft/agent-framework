@@ -7,7 +7,7 @@ This gallery helps Semantic Kernel (SK) developers move to the Microsoft Agent F
 ## What’s Included
 
 ### Chat completion parity
-- [01_basic_chat_completion.py](chat_completion/01_basic_chat_completion.py) — Minimal SK `ChatCompletionAgent` and AF `ChatAgent` conversation.
+- [01_basic_chat_completion.py](chat_completion/01_basic_chat_completion.py) — Minimal SK `ChatCompletionAgent` and AF `Agent` conversation.
 - [02_chat_completion_with_tool.py](chat_completion/02_chat_completion_with_tool.py) — Adds a simple tool/function call in both SDKs.
 - [03_chat_completion_thread_and_stream.py](chat_completion/03_chat_completion_thread_and_stream.py) — Demonstrates thread reuse and streaming prompts.
 

@@ -19,7 +19,7 @@ from ._events import (
 )
 from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
-from ._runner_context import Message
+from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
 from ._workflow import WorkflowRunResult
 from ._workflow_context import WorkflowContext
@@ -340,7 +340,7 @@ class WorkflowExecutor(Executor):
         data["workflow"] = self.workflow.to_dict()
         return data
 
-    def can_handle(self, message: Message) -> bool:
+    def can_handle(self, message: WorkflowMessage) -> bool:
         """Override can_handle to only accept messages that the wrapped workflow can handle.
 
         This prevents the WorkflowExecutor from accepting messages that should go to other

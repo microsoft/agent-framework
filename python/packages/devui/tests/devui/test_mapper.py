@@ -304,7 +304,7 @@ async def test_executor_completed_event_with_agent_response(
 
     This is a REGRESSION TEST for the serialization bug where
     WorkflowEvent.data contained AgentExecutorResponse with nested
-    AgentResponse and ChatMessage objects (SerializationMixin) that
+    AgentResponse and Message objects (SerializationMixin) that
     Pydantic couldn't serialize.
     """
     # Create event with realistic nested data - the exact structure that caused the bug
@@ -579,13 +579,13 @@ async def test_workflow_output_event(mapper: MessageMapper, test_request: AgentF
 
 async def test_workflow_output_event_with_list_data(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test output event (type='output') with list data (common for sequential/concurrent workflows)."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
     from agent_framework._workflows._events import WorkflowEvent
 
-    # Sequential/Concurrent workflows often output list[ChatMessage]
+    # Sequential/Concurrent workflows often output list[Message]
     messages = [
-        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role="assistant", contents=[Content.from_text(text="World")]),
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="World")]),
     ]
     event = WorkflowEvent.output(executor_id="complete", data=messages)
     events = await mapper.convert_event(event, test_request)

@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
+from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
 from typing_extensions import Never
@@ -76,7 +76,7 @@ def main():
     )
 
     # Create agents
-    weather_agent = ChatAgent(
+    weather_agent = Agent(
         name="weather-assistant",
         description="Provides weather information and time",
         instructions=(
@@ -87,7 +87,7 @@ def main():
         tools=[get_weather, get_time],
     )
 
-    simple_agent = ChatAgent(
+    simple_agent = Agent(
         name="general-assistant",
         description="A simple conversational agent",
         instructions="You are a helpful assistant.",

@@ -12,7 +12,7 @@ Integration with Mem0 for agent memory management.
 from agent_framework.mem0 import Mem0Provider
 
 provider = Mem0Provider(api_key="your-key")
-agent = ChatAgent(..., context_provider=provider)
+agent = Agent(..., context_provider=provider)
 ```
 
 ## Import Path

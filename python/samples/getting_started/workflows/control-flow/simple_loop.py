@@ -6,8 +6,8 @@ from enum import Enum
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -94,7 +94,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._judge_agent_id,
         )
 
@@ -113,7 +113,7 @@ class ParseJudgeResponse(Executor):
             await ctx.send_message(NumberSignal.BELOW)
 
 
-def create_judge_agent() -> ChatAgent:
+def create_judge_agent() -> Agent:
     """Create a judge agent that evaluates guesses."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),

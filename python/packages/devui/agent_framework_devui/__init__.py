@@ -41,7 +41,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         Single cleanup hook:
         >>> from agent_framework.devui import serve, register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> serve(entities=[agent])
 
@@ -52,7 +52,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         >>> # In agents/my_agent/agent.py
         >>> from agent_framework.devui import register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> # Run: devui ./agents
     """

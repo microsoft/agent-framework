@@ -15,7 +15,6 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     Executor,
     FileCheckpointStorage,
@@ -833,7 +832,7 @@ class _StreamingTestAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -849,7 +848,7 @@ class _StreamingTestAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+            return AgentResponse(messages=[Message("assistant", [self._reply_text])])
 
         return _run()
 

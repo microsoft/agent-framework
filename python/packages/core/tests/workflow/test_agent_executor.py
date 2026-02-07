@@ -9,9 +9,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     ChatMessageStore,
     Content,
+    Message,
     ResponseStream,
     WorkflowRunState,
 )
@@ -29,7 +29,7 @@ class _CountingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -46,7 +46,7 @@ class _CountingAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [f"Response #{self.call_count}: {self.name}"])])
+            return AgentResponse(messages=[Message("assistant", [f"Response #{self.call_count}: {self.name}"])])
 
         return _run()
 
@@ -61,8 +61,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Add some initial messages to the thread to verify thread state persistence
     initial_messages = [
-        ChatMessage(role="user", text="Initial message 1"),
-        ChatMessage(role="assistant", text="Initial response 1"),
+        Message(role="user", text="Initial message 1"),
+        Message(role="assistant", text="Initial response 1"),
     ]
     await initial_thread.on_new_messages(initial_messages)
 
@@ -165,9 +165,9 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to thread
     thread_messages = [
-        ChatMessage(role="user", text="Message in thread 1"),
-        ChatMessage(role="assistant", text="Thread response 1"),
-        ChatMessage(role="user", text="Message in thread 2"),
+        Message(role="user", text="Message in thread 1"),
+        Message(role="assistant", text="Thread response 1"),
+        Message(role="user", text="Message in thread 2"),
     ]
     await thread.on_new_messages(thread_messages)
 
@@ -175,8 +175,8 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to executor cache
     cache_messages = [
-        ChatMessage(role="user", text="Cached user message"),
-        ChatMessage(role="assistant", text="Cached assistant response"),
+        Message(role="user", text="Cached user message"),
+        Message(role="assistant", text="Cached assistant response"),
     ]
     executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
 

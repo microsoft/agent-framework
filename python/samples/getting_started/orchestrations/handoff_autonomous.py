@@ -6,8 +6,8 @@ from typing import cast
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     resolve_agent_id,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -38,7 +38,7 @@ Key Concepts:
 
 def create_agents(
     chat_client: AzureOpenAIChatClient,
-) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
+) -> tuple[Agent, Agent, Agent]:
     """Create coordinator and specialists for autonomous iteration."""
     coordinator = chat_client.as_agent(
         instructions=(
@@ -129,7 +129,7 @@ async def main() -> None:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the handoff workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

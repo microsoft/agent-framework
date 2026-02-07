@@ -13,7 +13,7 @@ Redis-based storage for agent threads and context.
 from agent_framework.redis import RedisChatMessageStore
 
 store = RedisChatMessageStore(redis_url="redis://localhost:6379")
-agent = ChatAgent(..., chat_message_store_factory=lambda: store)
+agent = Agent(..., chat_message_store_factory=lambda: store)
 ```
 
 ## Import Path

@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from agent_framework import get_logger
-from agent_framework._types import AgentResponse, ChatMessage
+from agent_framework._types import AgentResponse, Message
 
 from ._handlers import (
     ActionContext,
@@ -160,7 +160,7 @@ def _extract_json_from_response(text: str) -> Any:
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
-def _build_messages_from_state(ctx: ActionContext) -> list[ChatMessage]:
+def _build_messages_from_state(ctx: ActionContext) -> list[Message]:
     """Build the message list to send to an agent.
 
     This collects messages from:
@@ -172,9 +172,9 @@ def _build_messages_from_state(ctx: ActionContext) -> list[ChatMessage]:
         ctx: The action context
 
     Returns:
-        List of ChatMessage objects to send to the agent
+        List of Message objects to send to the agent
     """
-    messages: list[ChatMessage] = []
+    messages: list[Message] = []
 
     # Get conversation history
     history = ctx.state.get("conversation.messages", [])
@@ -285,23 +285,23 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
         evaluated_input = ctx.state.eval_if_expression(input_messages)
         if evaluated_input:
             if isinstance(evaluated_input, str):
-                messages.append(ChatMessage(role="user", text=evaluated_input))
+                messages.append(Message(role="user", text=evaluated_input))
             elif isinstance(evaluated_input, list):
                 for msg_item in evaluated_input:  # type: ignore
                     if isinstance(msg_item, str):
-                        messages.append(ChatMessage(role="user", text=msg_item))
-                    elif isinstance(msg_item, ChatMessage):
+                        messages.append(Message(role="user", text=msg_item))
+                    elif isinstance(msg_item, Message):
                         messages.append(msg_item)
                     elif isinstance(msg_item, dict) and "content" in msg_item:
                         item_dict = cast(dict[str, Any], msg_item)
                         role: str = str(item_dict.get("role", "user"))
                         content: str = str(item_dict.get("content", ""))
                         if role == "user":
-                            messages.append(ChatMessage(role="user", text=content))
+                            messages.append(Message(role="user", text=content))
                         elif role == "assistant":
-                            messages.append(ChatMessage(role="assistant", text=content))
+                            messages.append(Message(role="assistant", text=content))
                         elif role == "system":
-                            messages.append(ChatMessage(role="system", text=content))
+                            messages.append(Message(role="system", text=content))
 
     # Evaluate and include input arguments
     evaluated_args: dict[str, Any] = {}
@@ -363,7 +363,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                     # Add to conversation history
                     if text:
-                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                        ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                     # Store in output variables (.NET style)
                     if output_messages_var:
@@ -416,7 +416,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                     # Add to conversation history
                     if text:
-                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                        ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                     # Store in output variables (.NET style)
                     if output_messages_var:
@@ -562,8 +562,8 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
     # Add input as user message if provided
     if input_value:
         if isinstance(input_value, str):
-            messages.append(ChatMessage(role="user", text=input_value))
-        elif isinstance(input_value, ChatMessage):
+            messages.append(Message(role="user", text=input_value))
+        elif isinstance(input_value, Message):
             messages.append(input_value)
 
     logger.debug(f"InvokePromptAgent: calling '{agent_name}' with {len(messages)} messages")
@@ -592,7 +592,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                 ctx.state.set_agent_result(text=text, messages=response_messages)
 
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                 if output_path:
                     ctx.state.set(output_path, text)
@@ -612,7 +612,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                 ctx.state.set_agent_result(text=text, messages=response_messages)
 
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                 if output_path:
                     ctx.state.set(output_path, text)

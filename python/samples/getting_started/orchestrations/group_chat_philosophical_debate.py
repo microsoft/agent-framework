@@ -6,8 +6,8 @@ from typing import cast
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
@@ -48,7 +48,7 @@ def _get_chat_client() -> AzureOpenAIChatClient:
 async def main() -> None:
     # Create debate moderator with structured output for speaker selection
     # Note: Participant names and descriptions are automatically injected by the orchestrator
-    moderator = ChatAgent(
+    moderator = Agent(
         name="Moderator",
         description="Guides philosophical discussion by selecting next speaker",
         instructions="""
@@ -78,7 +78,7 @@ In your final_message, provide a brief synthesis highlighting key themes that em
         chat_client=_get_chat_client(),
     )
 
-    farmer = ChatAgent(
+    farmer = Agent(
         name="Farmer",
         description="A rural farmer from Southeast Asia",
         instructions="""
@@ -94,7 +94,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    developer = ChatAgent(
+    developer = Agent(
         name="Developer",
         description="An urban software developer from the United States",
         instructions="""
@@ -110,7 +110,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    teacher = ChatAgent(
+    teacher = Agent(
         name="Teacher",
         description="A retired history teacher from Eastern Europe",
         instructions="""
@@ -127,7 +127,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    activist = ChatAgent(
+    activist = Agent(
         name="Activist",
         description="A young activist from South America",
         instructions="""
@@ -143,7 +143,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    spiritual_leader = ChatAgent(
+    spiritual_leader = Agent(
         name="SpiritualLeader",
         description="A spiritual leader from the Middle East",
         instructions="""
@@ -159,7 +159,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    artist = ChatAgent(
+    artist = Agent(
         name="Artist",
         description="An artist from Africa",
         instructions="""
@@ -175,7 +175,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    immigrant = ChatAgent(
+    immigrant = Agent(
         name="Immigrant",
         description="An immigrant entrepreneur from Asia living in Canada",
         instructions="""
@@ -191,7 +191,7 @@ Share your perspective authentically. Feel free to:
         chat_client=_get_chat_client(),
     )
 
-    doctor = ChatAgent(
+    doctor = Agent(
         name="Doctor",
         description="A doctor from Scandinavia",
         instructions="""
@@ -255,7 +255,7 @@ Share your perspective authentically. Feel free to:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

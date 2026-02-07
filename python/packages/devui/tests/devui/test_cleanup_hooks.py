@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage, Content
+from agent_framework import AgentResponse, Content, Message
 
 from agent_framework_devui import register_cleanup
 from agent_framework_devui._discovery import EntityDiscovery
@@ -39,12 +39,12 @@ class MockAgent:
 
             async def _stream():
                 yield AgentResponse(
-                    messages=[ChatMessage(role="assistant", contents=[Content.from_text(text="Test response")])],
+                    messages=[Message(role="assistant", contents=[Content.from_text(text="Test response")])],
                 )
 
             return _stream()
         return AgentResponse(
-            messages=[ChatMessage(role="assistant", contents=[Content.from_text(text="Test response")])],
+            messages=[Message(role="assistant", contents=[Content.from_text(text="Test response")])],
         )
 
 
@@ -267,7 +267,7 @@ async def test_cleanup_with_file_based_discovery():
         # Write agent module with cleanup registration
         agent_file = agent_dir / "__init__.py"
         agent_file.write_text("""
-from agent_framework import AgentResponse, ChatMessage, Role, Content
+from agent_framework import AgentResponse, Message, Role, Content
 from agent_framework_devui import register_cleanup
 
 class MockCredential:
@@ -289,12 +289,12 @@ class TestAgent:
         if stream:
             async def _stream():
                 yield AgentResponse(
-                    messages=[ChatMessage(role="assistant", content=[Content.from_text(text="Test")])],
+                    messages=[Message(role="assistant", content=[Content.from_text(text="Test")])],
                     inner_messages=[],
                 )
             return _stream()
         return AgentResponse(
-            messages=[ChatMessage(role="assistant", content=[Content.from_text(text="Test")])],
+            messages=[Message(role="assistant", content=[Content.from_text(text="Test")])],
             inner_messages=[],
         )
 

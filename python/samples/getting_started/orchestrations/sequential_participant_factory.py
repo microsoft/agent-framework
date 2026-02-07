@@ -3,8 +3,8 @@
 import asyncio
 
 from agent_framework import (
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Executor,
     Workflow,
     WorkflowContext,
@@ -42,13 +42,13 @@ class Accumulate(Executor):
         self._accumulated: list[str] = []
 
     @handler
-    async def accumulate(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def accumulate(self, conversation: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
         self._accumulated.extend([msg.text for msg in conversation])
         print(f"Number of queries received so far: {len(self._accumulated)}")
         await ctx.send_message(conversation)
 
 
-def create_agent() -> ChatAgent:
+def create_agent() -> Agent:
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="ContentProducer",
@@ -60,7 +60,7 @@ async def run_workflow(workflow: Workflow, query: str) -> None:
     outputs = events.get_outputs()
 
     if outputs:
-        messages: list[ChatMessage] = outputs[0]
+        messages: list[Message] = outputs[0]
         for message in messages:
             name = message.author_name or ("assistant" if message.role == "assistant" else "user")
             print(f"{name}: {message.text}")

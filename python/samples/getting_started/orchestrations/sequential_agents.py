@@ -3,7 +3,7 @@
 import asyncio
 from typing import cast
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
@@ -12,7 +12,7 @@ from azure.identity import AzureCliCredential
 Sample: Sequential workflow (agent-focused API) with shared conversation context
 
 Build a high-level sequential workflow using SequentialBuilder and two domain agents.
-The shared conversation (list[ChatMessage]) flows through each participant. Each agent
+The shared conversation (list[Message]) flows through each participant. Each agent
 appends its assistant message to the context. The workflow outputs the final conversation
 list when complete.
 
@@ -46,10 +46,10 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Run and collect outputs
-    outputs: list[list[ChatMessage]] = []
+    outputs: list[list[Message]] = []
     async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
         if event.type == "output":
-            outputs.append(cast(list[ChatMessage], event.data))
+            outputs.append(cast(list[Message], event.data))
 
     if outputs:
         print("===== Final Conversation =====")

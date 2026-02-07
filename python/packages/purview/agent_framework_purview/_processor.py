@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._logging import get_logger
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
@@ -62,7 +62,7 @@ class ScopedContentProcessor:
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def process_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, user_id: str | None = None
+        self, messages: Iterable[Message], activity: Activity, user_id: str | None = None
     ) -> tuple[bool, str | None]:
         """Process messages for policy evaluation.
 
@@ -90,7 +90,7 @@ class ScopedContentProcessor:
         return should_block, resolved_user_id
 
     async def _map_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, provided_user_id: str | None = None
+        self, messages: Iterable[Message], activity: Activity, provided_user_id: str | None = None
     ) -> tuple[list[ProcessContentRequest], str | None]:
         """Map messages to ProcessContentRequests.
 

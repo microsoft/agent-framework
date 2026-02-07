@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
 
@@ -13,7 +13,7 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
     tool for the approval UI flow that shouldn't be sent to the LLM.
     """
     messages = [
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
@@ -23,7 +23,7 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
                 )
             ],
         ),
-        ChatMessage(
+        Message(
             role="user",
             contents=[Content.from_text(text='{"accepted": true}')],
         ),
@@ -44,11 +44,11 @@ def test_sanitize_tool_history_filters_out_confirm_changes_only_message() -> Non
 
 def test_deduplicate_messages_prefers_non_empty_tool_results() -> None:
     messages = [
-        ChatMessage(
+        Message(
             role="tool",
             contents=[Content.from_function_result(call_id="call1", result="")],
         ),
-        ChatMessage(
+        Message(
             role="tool",
             contents=[Content.from_function_result(call_id="call1", result="result data")],
         ),
@@ -71,13 +71,13 @@ def test_convert_approval_results_to_tool_messages() -> None:
     # Simulate what happens after _resolve_approval_responses:
     # A user message contains function_result content (the executed tool result)
     messages = [
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_function_call(call_id="call_123", name="my_mcp_tool", arguments="{}"),
             ],
         ),
-        ChatMessage(
+        Message(
             role="user",
             contents=[
                 Content.from_function_result(call_id="call_123", result="tool execution result"),
@@ -109,13 +109,13 @@ def test_convert_approval_results_preserves_other_user_content() -> None:
     from agent_framework_ag_ui._run import _convert_approval_results_to_tool_messages
 
     messages = [
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_function_call(call_id="call_123", name="my_tool", arguments="{}"),
             ],
         ),
-        ChatMessage(
+        Message(
             role="user",
             contents=[
                 Content.from_text(text="User also said something"),
@@ -152,12 +152,12 @@ def test_sanitize_tool_history_filters_confirm_changes_keeps_other_tools() -> No
     """
     messages = [
         # User asks something
-        ChatMessage(
+        Message(
             role="user",
             contents=[Content.from_text(text="What time is it?")],
         ),
         # Assistant calls MCP tool + confirm_changes
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_function_call(call_id="call_1", name="get_datetime", arguments="{}"),
@@ -165,12 +165,12 @@ def test_sanitize_tool_history_filters_confirm_changes_keeps_other_tools() -> No
             ],
         ),
         # Tool result for the actual MCP tool
-        ChatMessage(
+        Message(
             role="tool",
             contents=[Content.from_function_result(call_id="call_1", result="2024-01-01 12:00:00")],
         ),
         # User asks something else
-        ChatMessage(
+        Message(
             role="user",
             contents=[Content.from_text(text="What's the date?")],
         ),
@@ -204,12 +204,12 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
     respond with "Here's your 5-step plan" instead of "Here's your 2-step plan".
     """
     messages = [
-        ChatMessage(
+        Message(
             role="user",
             contents=[Content.from_text(text="Build a robot")],
         ),
         # Assistant message with both generate_task_steps and confirm_changes
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
@@ -225,7 +225,7 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
             ],
         ),
         # Approval response
-        ChatMessage(
+        Message(
             role="user",
             contents=[
                 Content.from_function_approval_response(

@@ -24,8 +24,8 @@ from ._exceptions import (
 )
 from ._executor import Executor
 from ._runner_context import (
-    Message,
     RunnerContext,
+    WorkflowMessage,
 )
 from ._state import State
 
@@ -162,14 +162,14 @@ class Runner:
             self._running = False
 
     async def _run_iteration(self) -> None:
-        async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
+        async def _deliver_messages(source_executor_id: str, messages: list[WorkflowMessage]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
-            async def _deliver_message_inner(edge_runner: EdgeRunner, message: Message) -> bool:
+            async def _deliver_message_inner(edge_runner: EdgeRunner, message: WorkflowMessage) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._state, self._ctx)
 
-            def _normalize_message_payload(message: Message) -> None:
+            def _normalize_message_payload(message: WorkflowMessage) -> None:
                 data = message.data
                 if not isinstance(data, dict):
                     return

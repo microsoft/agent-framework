@@ -65,14 +65,14 @@ else:
 
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
     from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
-        ChatMessage,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
         Content,
+        Message,
         ResponseStream,
     )
 
@@ -100,7 +100,7 @@ __all__ = [
 logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
+TChatClient = TypeVar("TChatClient", bound="SupportsChatGetResponse[Any]")
 # region Helpers
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel, default=BaseModel)
@@ -1794,14 +1794,14 @@ def _extract_tools(options: dict[str, Any] | None) -> Any:
 
 
 def _collect_approval_responses(
-    messages: list[ChatMessage],
+    messages: list[Message],
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages."""
-    from ._types import ChatMessage
+    from ._types import Message
 
     fcc_todo: dict[str, Content] = {}
     for msg in messages:
-        for content in msg.contents if isinstance(msg, ChatMessage) else []:
+        for content in msg.contents if isinstance(msg, Message) else []:
             # Collect BOTH approved and rejected responses
             if content.type == "function_approval_response":
                 fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
@@ -1809,7 +1809,7 @@ def _collect_approval_responses(
 
 
 def _replace_approval_contents_with_results(
-    messages: list[ChatMessage],
+    messages: list[Message],
     fcc_todo: dict[str, Content],
     approved_function_results: list[Content],
 ) -> None:
@@ -1878,7 +1878,7 @@ def _extract_function_calls(response: ChatResponse) -> list[Content]:
     ]
 
 
-def _prepend_fcc_messages(response: ChatResponse, fcc_messages: list[ChatMessage]) -> None:
+def _prepend_fcc_messages(response: ChatResponse, fcc_messages: list[Message]) -> None:
     if not fcc_messages:
         return
     for msg in reversed(fcc_messages):
@@ -1898,7 +1898,7 @@ class FunctionRequestResult(TypedDict, total=False):
 
     action: Literal["return", "continue", "stop"]
     errors_in_a_row: int
-    result_message: ChatMessage | None
+    result_message: Message | None
     update_role: Literal["assistant", "tool"] | None
     function_call_results: list[Content] | None
 
@@ -1907,18 +1907,18 @@ def _handle_function_call_results(
     *,
     response: ChatResponse,
     function_call_results: list[Content],
-    fcc_messages: list[ChatMessage],
+    fcc_messages: list[Message],
     errors_in_a_row: int,
     had_errors: bool,
     max_errors: int,
 ) -> FunctionRequestResult:
-    from ._types import ChatMessage
+    from ._types import Message
 
     if any(fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results):
         if response.messages and response.messages[0].role == "assistant":
             response.messages[0].contents.extend(function_call_results)
         else:
-            response.messages.append(ChatMessage(role="assistant", contents=function_call_results))
+            response.messages.append(Message(role="assistant", contents=function_call_results))
         return {
             "action": "return",
             "errors_in_a_row": errors_in_a_row,
@@ -1945,7 +1945,7 @@ def _handle_function_call_results(
     else:
         errors_in_a_row = 0
 
-    result_message = ChatMessage(role="tool", contents=function_call_results)
+    result_message = Message(role="tool", contents=function_call_results)
     response.messages.append(result_message)
     fcc_messages.extend(response.messages)
     return {
@@ -1960,10 +1960,10 @@ def _handle_function_call_results(
 async def _process_function_requests(
     *,
     response: ChatResponse | None,
-    prepped_messages: list[ChatMessage] | None,
+    prepped_messages: list[Message] | None,
     tool_options: dict[str, Any] | None,
     attempt_idx: int,
-    fcc_messages: list[ChatMessage] | None,
+    fcc_messages: list[Message] | None,
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: Callable[..., Awaitable[tuple[list[Content], bool, bool]]],
@@ -2072,7 +2072,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[TResponseModelT],
@@ -2082,7 +2082,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: TOptions_co | ChatOptions[None] | None = None,
@@ -2092,7 +2092,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: TOptions_co | ChatOptions[Any] | None = None,
@@ -2101,7 +2101,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: TOptions_co | ChatOptions[Any] | None = None,
@@ -2146,7 +2146,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
                 prepped_messages = prepare_messages(messages)
-                fcc_messages: list[ChatMessage] = []
+                fcc_messages: list[Message] = []
                 response: ChatResponse | None = None
 
                 for attempt_idx in range(
@@ -2240,7 +2240,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
-            fcc_messages: list[ChatMessage] = []
+            fcc_messages: list[Message] = []
             response: ChatResponse | None = None
 
             for attempt_idx in range(

@@ -199,7 +199,7 @@ async def test_list_items_pagination():
 @pytest.mark.asyncio
 async def test_list_items_converts_function_calls():
     """Test that list_items properly converts function calls to ResponseFunctionToolCallItem."""
-    from agent_framework import ChatMessage, ChatMessageStore
+    from agent_framework import ChatMessageStore, Message
 
     store = InMemoryConversationStore()
 
@@ -216,8 +216,8 @@ async def test_list_items_converts_function_calls():
 
     # Simulate messages from agent execution with function calls
     messages = [
-        ChatMessage(role="user", contents=[{"type": "text", "text": "What's the weather in SF?"}]),
-        ChatMessage(
+        Message(role="user", contents=[{"type": "text", "text": "What's the weather in SF?"}]),
+        Message(
             role="assistant",
             contents=[
                 {
@@ -228,7 +228,7 @@ async def test_list_items_converts_function_calls():
                 }
             ],
         ),
-        ChatMessage(
+        Message(
             role="tool",
             contents=[
                 {
@@ -238,7 +238,7 @@ async def test_list_items_converts_function_calls():
                 }
             ],
         ),
-        ChatMessage(role="assistant", contents=[{"type": "text", "text": "The weather is sunny, 65°F"}]),
+        Message(role="assistant", contents=[{"type": "text", "text": "The weather is sunny, 65°F"}]),
     ]
 
     # Add messages to thread
@@ -284,7 +284,7 @@ async def test_list_items_converts_function_calls():
 @pytest.mark.asyncio
 async def test_list_items_handles_images_and_files():
     """Test that list_items properly converts data content (images/files) to OpenAI types."""
-    from agent_framework import ChatMessage, ChatMessageStore
+    from agent_framework import ChatMessageStore, Message
 
     store = InMemoryConversationStore()
 
@@ -300,7 +300,7 @@ async def test_list_items_handles_images_and_files():
 
     # Simulate message with image and file
     messages = [
-        ChatMessage(
+        Message(
             role="user",
             contents=[
                 {"type": "text", "text": "Check this image and PDF"},

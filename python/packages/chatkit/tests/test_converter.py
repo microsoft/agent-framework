@@ -5,7 +5,7 @@
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import ChatMessage
+from agent_framework import Message
 from chatkit.types import UserMessageTextContent
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -43,7 +43,7 @@ class TestThreadItemConverter:
         result = await converter.to_agent_input(input_item)
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
+        assert isinstance(result[0], Message)
         assert result[0].role == "user"
         assert result[0].text == "Hello, how can you help me?"
 
@@ -110,13 +110,13 @@ class TestThreadItemConverter:
         assert result[0].text == "Hello world!"
 
     def test_hidden_context_to_input(self, converter):
-        """Test converting hidden context item to ChatMessage."""
+        """Test converting hidden context item to Message."""
         hidden_item = Mock()
         hidden_item.content = "This is hidden context information"
 
         result = converter.hidden_context_to_input(hidden_item)
 
-        assert isinstance(result, ChatMessage)
+        assert isinstance(result, Message)
         assert result.role == "system"
         assert result.text == "<HIDDEN_CONTEXT>This is hidden context information</HIDDEN_CONTEXT>"
 
@@ -288,7 +288,7 @@ class TestThreadItemConverter:
         assert message.contents[1].media_type == "application/pdf"
 
     def test_task_to_input(self, converter):
-        """Test converting TaskItem to ChatMessage."""
+        """Test converting TaskItem to Message."""
         from datetime import datetime
 
         from chatkit.types import CustomTask, TaskItem
@@ -302,7 +302,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.task_to_input(task_item)
-        assert isinstance(result, ChatMessage)
+        assert isinstance(result, Message)
         assert result.role == "user"
         assert "Analysis: Analyzed the data" in result.text
         assert "<Task>" in result.text
@@ -347,7 +347,7 @@ class TestThreadItemConverter:
         result = converter.workflow_to_input(workflow_item)
         assert isinstance(result, list)
         assert len(result) == 2
-        assert all(isinstance(msg, ChatMessage) for msg in result)
+        assert all(isinstance(msg, Message) for msg in result)
         assert "Step 1: First step" in result[0].text
         assert "Step 2: Second step" in result[1].text
 
@@ -369,7 +369,7 @@ class TestThreadItemConverter:
         assert result is None
 
     def test_widget_to_input(self, converter):
-        """Test converting WidgetItem to ChatMessage."""
+        """Test converting WidgetItem to Message."""
         from datetime import datetime
 
         from chatkit.types import WidgetItem
@@ -384,7 +384,7 @@ class TestThreadItemConverter:
         )
 
         result = converter.widget_to_input(widget_item)
-        assert isinstance(result, ChatMessage)
+        assert isinstance(result, Message)
         assert result.role == "user"
         assert "widget_1" in result.text
         assert "graphical UI widget" in result.text
@@ -417,6 +417,6 @@ class TestSimpleToAgentInput:
         result = await simple_to_agent_input(input_item)
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
+        assert isinstance(result[0], Message)
         assert result[0].role == "user"
         assert result[0].text == "Test message"

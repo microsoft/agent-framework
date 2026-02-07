@@ -32,7 +32,7 @@ from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 
 settings = PurviewSettings(...)
 middleware = PurviewPolicyMiddleware(settings=settings)
-agent = ChatAgent(..., middleware=[middleware])
+agent = Agent(..., middleware=[middleware])
 ```
 
 ## Import Path

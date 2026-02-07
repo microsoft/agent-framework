@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentThread, ChatAgent, ChatMessageStore
+from agent_framework import AgentThread, Agent, ChatMessageStore
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 
@@ -40,7 +40,7 @@ async def main() -> None:
     chat_client = OpenAIChatClient()
 
     # Define factory functions for workflow participants
-    def create_assistant() -> ChatAgent:
+    def create_assistant() -> Agent:
         return chat_client.as_agent(
             name="assistant",
             instructions=(
@@ -49,7 +49,7 @@ async def main() -> None:
             ),
         )
 
-    def create_summarizer() -> ChatAgent:
+    def create_summarizer() -> Agent:
         return chat_client.as_agent(
             name="summarizer",
             instructions=(
@@ -124,7 +124,7 @@ async def demonstrate_thread_serialization() -> None:
     """
     chat_client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
+    def create_assistant() -> Agent:
         return chat_client.as_agent(
             name="memory_assistant",
             instructions="You are a helpful assistant with good memory. Remember details from our conversation.",

@@ -14,7 +14,7 @@ This folder contains simple examples demonstrating direct usage of various chat 
 | [`openai_assistants_client.py`](openai_assistants_client.py) | Direct usage of OpenAI Assistants Client for basic chat interactions with OpenAI assistants. |
 | [`openai_chat_client.py`](openai_chat_client.py) | Direct usage of OpenAI Chat Client for chat interactions with OpenAI models. |
 | [`openai_responses_client.py`](openai_responses_client.py) | Direct usage of OpenAI Responses Client for structured response generation with OpenAI models. |
-| [`custom_chat_client.py`](custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
+| [`custom_chat_client.py`](custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `Agent` using the `as_agent()` method. |
 
 ## Environment Variables
 

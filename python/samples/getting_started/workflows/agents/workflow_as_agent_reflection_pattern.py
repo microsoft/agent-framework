@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from agent_framework import (
     AgentResponse,
-    ChatClientProtocol,
-    ChatMessage,
+    SupportsChatGetResponse,
+    Message,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -44,8 +44,8 @@ class ReviewRequest:
     """Structured request passed from Worker to Reviewer for evaluation."""
 
     request_id: str
-    user_messages: list[ChatMessage]
-    agent_messages: list[ChatMessage]
+    user_messages: list[Message]
+    agent_messages: list[Message]
 
 
 @dataclass
@@ -60,7 +60,7 @@ class ReviewResponse:
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
-    def __init__(self, id: str, chat_client: ChatClientProtocol) -> None:
+    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
         self._chat_client = chat_client
 
@@ -75,7 +75,7 @@ class Reviewer(Executor):
 
         # Construct review instructions and context.
         messages = [
-            ChatMessage(
+            Message(
                 role="system",
                 text=(
                     "You are a reviewer for an AI agent. Provide feedback on the "
@@ -93,7 +93,7 @@ class Reviewer(Executor):
         messages.extend(request.agent_messages)
 
         # Add explicit review instruction.
-        messages.append(ChatMessage("user", ["Please review the agent's responses."]))
+        messages.append(Message("user", ["Please review the agent's responses."]))
 
         print("Reviewer: Sending review request to LLM...")
         response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
@@ -112,17 +112,17 @@ class Reviewer(Executor):
 class Worker(Executor):
     """Executor that generates responses and incorporates feedback when necessary."""
 
-    def __init__(self, id: str, chat_client: ChatClientProtocol) -> None:
+    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
         self._chat_client = chat_client
-        self._pending_requests: dict[str, tuple[ReviewRequest, list[ChatMessage]]] = {}
+        self._pending_requests: dict[str, tuple[ReviewRequest, list[Message]]] = {}
 
     @handler
-    async def handle_user_messages(self, user_messages: list[ChatMessage], ctx: WorkflowContext[ReviewRequest]) -> None:
+    async def handle_user_messages(self, user_messages: list[Message], ctx: WorkflowContext[ReviewRequest]) -> None:
         print("Worker: Received user messages, generating response...")
 
         # Initialize chat with system prompt.
-        messages = [ChatMessage("system", ["You are a helpful assistant."])]
+        messages = [Message("system", ["You are a helpful assistant."])]
         messages.extend(user_messages)
 
         print("Worker: Calling LLM to generate response...")
@@ -161,8 +161,8 @@ class Worker(Executor):
         print("Worker: Regenerating response with feedback...")
 
         # Incorporate review feedback.
-        messages.append(ChatMessage("system", [review.feedback]))
-        messages.append(ChatMessage("system", ["Please incorporate the feedback and regenerate the response."]))
+        messages.append(Message("system", [review.feedback]))
+        messages.append(Message("system", ["Please incorporate the feedback and regenerate the response."]))
         messages.extend(request.user_messages)
 
         # Retry with updated prompt.

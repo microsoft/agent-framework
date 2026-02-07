@@ -45,7 +45,7 @@ def get_time() -> str:
 
 async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query, thread=thread, store=True)
     while len(result.user_input_requests) > 0:
@@ -57,7 +57,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
             )
             user_approval = input("Approve function call? (y/n): ")
             new_input.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
