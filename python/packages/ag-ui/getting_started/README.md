@@ -292,7 +292,6 @@ Create a file named `client.py`:
 import asyncio
 import os
 
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -333,7 +332,7 @@ async def main():
 
                     # Stream text content as it arrives
                     for content in update.contents:
-                        if isinstance(content, TextContent) and content.text:
+                        if content.type == "text" and content.text:
                             print(content.text, end="", flush=True)
 
                 print()  # New line after response

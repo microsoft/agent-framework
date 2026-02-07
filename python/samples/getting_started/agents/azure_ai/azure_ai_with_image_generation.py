@@ -5,7 +5,6 @@ import tempfile
 from pathlib import Path
 from urllib import request as urllib_request
 
-import aiofiles
 from agent_framework import HostedImageGenerationTool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
@@ -89,8 +88,8 @@ async def main() -> None:
             if data_bytes is None:
                 raise RuntimeError("Image output present but could not retrieve bytes.")
 
-            async with aiofiles.open(file_path, "wb") as f:
-                await f.write(data_bytes)
+            with open(file_path, "wb") as f:
+                f.write(data_bytes)
 
             print(f"Image downloaded and saved to: {file_path}")
         else:

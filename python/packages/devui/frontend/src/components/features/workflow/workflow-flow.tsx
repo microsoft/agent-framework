@@ -565,7 +565,7 @@ export const WorkflowFlow = memo(function WorkflowFlow({
           0% { stroke-dashoffset: 0; }
           100% { stroke-dashoffset: -10; }
         }
-        
+
         /* Dark theme styles for React Flow controls */
         .dark .react-flow__controls {
           background-color: rgba(31, 41, 55, 0.9) !important;

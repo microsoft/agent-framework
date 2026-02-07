@@ -40,7 +40,7 @@ actions:
   - kind: SetValue
     path: turn.greeting
     value: Hello, World!
-    
+
   - kind: SendActivity
     activity:
       text: =turn.greeting

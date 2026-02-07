@@ -24,7 +24,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
+    "agent-framework-core>=1.0.0b260130",
     "azure-core>=1.30.0",
     "httpx>=0.27.0",
 ]

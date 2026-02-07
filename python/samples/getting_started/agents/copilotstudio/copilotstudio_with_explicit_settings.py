@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "microsoft-agents",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/getting_started/agents/copilotstudio/copilotstudio_with_explicit_settings.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio

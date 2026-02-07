@@ -31,7 +31,7 @@ A focused sample demonstrating Azure AI's RedTeam functionality to assess the sa
 
 ### Python Environment
 ```bash
-pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity aiofiles
+pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity
 ```
 
 Note: The sample uses `python-dotenv` to load environment variables from a `.env` file.

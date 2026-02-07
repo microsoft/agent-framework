@@ -53,7 +53,7 @@ def extract_poe_tasks(file: Path) -> set[str]:
 
 
 def main() -> None:
-    pyproject_file = Path(__file__).parent / "pyproject.toml"
+    pyproject_file = Path(__file__).parent.parent / "pyproject.toml"
     projects = discover_projects(pyproject_file)
 
     if len(sys.argv) < 2:

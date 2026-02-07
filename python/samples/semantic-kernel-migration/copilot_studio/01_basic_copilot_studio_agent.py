@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/copilot_studio/01_basic_copilot_studio_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Call a Copilot Studio agent with SK and Agent Framework."""
 

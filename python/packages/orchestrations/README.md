@@ -5,7 +5,7 @@ Orchestration patterns for Microsoft Agent Framework. This package provides high
 ## Installation
 
 ```bash
-pip install agent-framework-orchestrations
+pip install agent-framework-orchestrations --pre
 ```
 
 ## Orchestration Patterns
@@ -15,9 +15,9 @@ pip install agent-framework-orchestrations
 Chain agents/executors in sequence, passing conversation context along:
 
 ```python
-from agent_framework_orchestrations import SequentialBuilder
+from agent_framework.orchestrations import SequentialBuilder
 
-workflow = SequentialBuilder().participants([agent1, agent2, agent3]).build()
+workflow = SequentialBuilder(participants=[agent1, agent2, agent3]).build()
 ```
 
 ### ConcurrentBuilder
@@ -25,9 +25,9 @@ workflow = SequentialBuilder().participants([agent1, agent2, agent3]).build()
 Fan-out to multiple agents in parallel, then aggregate results:
 
 ```python
-from agent_framework_orchestrations import ConcurrentBuilder
+from agent_framework.orchestrations import ConcurrentBuilder
 
-workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
+workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).build()
 ```
 
 ### HandoffBuilder
@@ -35,7 +35,7 @@ workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
 Decentralized agent routing where agents decide handoff targets:
 
 ```python
-from agent_framework_orchestrations import HandoffBuilder
+from agent_framework.orchestrations import HandoffBuilder
 
 workflow = (
     HandoffBuilder()
@@ -50,7 +50,7 @@ workflow = (
 Orchestrator-directed multi-agent conversations:
 
 ```python
-from agent_framework_orchestrations import GroupChatBuilder
+from agent_framework.orchestrations import GroupChatBuilder
 
 workflow = GroupChatBuilder(
     participants=[agent1, agent2],
@@ -63,20 +63,12 @@ workflow = GroupChatBuilder(
 Sophisticated multi-agent orchestration using the Magentic One pattern:
 
 ```python
-from agent_framework_orchestrations import MagenticBuilder
+from agent_framework.orchestrations import MagenticBuilder
 
 workflow = MagenticBuilder(
     participants=[researcher, writer, reviewer],
     manager_agent=manager_agent,
 ).build()
-```
-
-## Usage with agent_framework
-
-You can also import orchestrations through the main agent_framework package:
-
-```python
-from agent_framework.orchestrations import SequentialBuilder, ConcurrentBuilder
 ```
 
 ## Documentation

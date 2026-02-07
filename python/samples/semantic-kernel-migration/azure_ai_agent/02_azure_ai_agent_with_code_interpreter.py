@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/azure_ai_agent/02_azure_ai_agent_with_code_interpreter.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Enable the hosted code interpreter for Azure AI agents in SK and AF.
 

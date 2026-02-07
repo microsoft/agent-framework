@@ -3,7 +3,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import aiofiles
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -23,9 +22,8 @@ async def main() -> None:
     # Load the OpenAPI specification
     resources_path = Path(__file__).parent.parent / "resources" / "countries.json"
 
-    async with aiofiles.open(resources_path, "r") as f:
-        content = await f.read()
-        openapi_countries = json.loads(content)
+    with open(resources_path) as f:
+        openapi_countries = json.load(f)
 
     async with (
         AzureCliCredential() as credential,

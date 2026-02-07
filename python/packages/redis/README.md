@@ -32,7 +32,7 @@ The `RedisChatMessageStore` provides persistent conversation storage using Redis
 
 See the complete [Redis chat message store examples](../../samples/getting_started/threads/redis_chat_message_store_thread.py) including:
 - User session management
-- Conversation persistence across restarts  
+- Conversation persistence across restarts
 - Thread serialization and deserialization
 - Automatic message trimming
 - Error handling patterns

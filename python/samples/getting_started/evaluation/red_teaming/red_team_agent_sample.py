@@ -23,7 +23,7 @@ Prerequisites:
     - Environment variables set in .env file or environment
 
 Installation:
-    pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity aiofiles
+    pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity
 
 Reference:
     Azure AI Red Teaming: https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb

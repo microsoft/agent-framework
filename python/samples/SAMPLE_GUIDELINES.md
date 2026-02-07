@@ -2,6 +2,45 @@
 
 Samples are extremely important for developers to get started with Agent Framework. We strive to provide a wide range of samples that demonstrate the capabilities of Agent Framework with consistency and quality. This document outlines the guidelines for creating samples.
 
+## File Structure
+
+Every sample file should follow this order:
+
+1. PEP 723 inline script metadata (if external dependencies are needed)
+2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
+3. Required imports
+4. Module docstring: `"""This sample demonstrates..."""`
+5. Helper functions
+6. Main function(s) demonstrating functionality
+7. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+
+When modifying samples, update associated README files in the same or parent folders.
+
+## External Dependencies
+
+When samples depend on external packages not included in the dev environment (e.g., `semantic-kernel`, `autogen-agentchat`, `pandas`), declare them using [PEP 723](https://peps.python.org/pep-0723/) inline script metadata at the top of the file, before the copyright header:
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "some-external-package",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/path/to/script.py
+
+# Copyright (c) Microsoft. All rights reserved.
+```
+
+This makes samples self-contained and runnable without installing extra packages into the dev environment. Do not add sample-only dependencies to the root `pyproject.toml` dev group.
+
+## Syntax Checking
+
+Run `uv run poe samples-syntax` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
+
+Some samples depend on external packages (e.g., `azure.ai.agentserver.agentframework`, `microsoft_agents`) that are not installed in the dev environment. These are excluded in `pyrightconfig.samples.json`. When adding or modifying these excluded samples, add them to the exclude list and manually verify they have no import errors from `agent_framework` packages by temporarily removing them from the exclude list and running the check.
+
 ## General Guidelines
 
 - **Clear and Concise**: Samples should be clear and concise. They should demonstrate a specific set of features or capabilities of Agent Framework. The less concepts a sample demonstrates, the better.
@@ -49,7 +88,7 @@ For the getting started samples and the concept samples, we should have the foll
     ```python
     # 1. Create the instance of the Kernel to register the plugin and service.
     ...
-    
+
     # 2. Create the agent with the kernel instance.
     ...
     ```
@@ -64,7 +103,7 @@ For the getting started samples and the concept samples, we should have the foll
     User:> Why is the sky blue in one sentence?
     Mosscap:> The sky is blue due to the scattering of sunlight by the molecules in the Earth's atmosphere,
     a phenomenon known as Rayleigh scattering, which causes shorter blue wavelengths to become more
-    prominent in our visual perception.    
+    prominent in our visual perception.
     '''
     ```
 

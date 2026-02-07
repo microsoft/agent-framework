@@ -6,6 +6,7 @@ import argparse
 from enum import Enum
 import glob
 import logging
+import os
 import tempfile
 import subprocess  # nosec
 
@@ -96,14 +97,29 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
                 logger.info(f' {with_color("OK[ignored]", Colors.CGREENBG)}')
                 continue
 
-            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
-                temp_file.write(code_block.encode("utf-8"))
-                temp_file.flush()
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                # Use the same rules as pyrightconfig.samples.json:
+                # typeCheckingMode=off, only reportMissingImports and reportAttributeAccessIssue enabled.
+                pyright_cfg = os.path.join(tmp_dir, "pyrightconfig.json")
+                with open(pyright_cfg, "w") as cfg:
+                    cfg.write(
+                        '{"include":["."],"typeCheckingMode":"off",'
+                        '"reportMissingImports":"error","reportAttributeAccessIssue":"error"}'
+                    )
+                tmp_file = os.path.join(tmp_dir, "snippet.py")
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    f.write(code_block)
 
-                # Run pyright on the temporary file using subprocess.run
-
-                result = subprocess.run(["uv", "run", "pyright", temp_file.name], capture_output=True, text=True, cwd=".")  # nosec
-                if result.returncode != 0:
+                result = subprocess.run(["uv", "run", "pyright", "-p", tmp_dir], capture_output=True, text=True, cwd=".")  # nosec
+                # Filter to only errors from our config rules; syntax-level errors
+                # (top-level await, etc.) are expected in README documentation snippets.
+                # Only flag reportMissingImports for agent_framework modules, not third-party packages.
+                relevant_errors = [
+                    line for line in result.stdout.splitlines()
+                    if ("reportMissingImports" in line and "agent_framework" in line)
+                    or "reportAttributeAccessIssue" in line
+                ]
+                if relevant_errors:
                     highlighted_code = highlight(code_block, PythonLexer(), TerminalFormatter())  # type: ignore
                     logger.info(
                         f" {with_color('FAIL', Colors.CREDBG)}\n"

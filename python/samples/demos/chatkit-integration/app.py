@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/demos/chatkit-integration/app.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """

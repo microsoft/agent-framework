@@ -6,7 +6,6 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
-import aiofiles
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
@@ -33,13 +32,12 @@ Show how to:
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, fan out and fan in edges, events, and streaming runs.
-- aiofiles installed for async file I/O.
 - Write access to a tmp directory next to this script.
 - A source text at resources/long_text.txt.
 - Optional for SVG export: install graphviz.
 
 Installation:
-    pip install agent-framework aiofiles graphviz
+    pip install agent-framework graphviz
 """
 
 # Define the temporary directory for storing intermediate results
@@ -128,8 +126,8 @@ class Map(Executor):
 
         # Write this mapper's results as simple text lines for easy debugging.
         file_path = os.path.join(TEMP_DIR, f"map_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{item}: {count}\n" for item, count in results])
+        with open(file_path, "w") as f:
+            f.writelines([f"{item}: {count}\n" for item, count in results])
 
         await ctx.send_message(MapCompleted(file_path))
 
@@ -163,8 +161,8 @@ class Shuffle(Executor):
         async def _process_chunk(chunk: list[tuple[str, list[int]]], index: int) -> None:
             """Write one grouped partition for reducer index and notify that reducer."""
             file_path = os.path.join(TEMP_DIR, f"shuffle_results_{index}.txt")
-            async with aiofiles.open(file_path, "w") as f:
-                await f.writelines([f"{key}: {value}\n" for key, value in chunk])
+            with open(file_path, "w") as f:
+                f.writelines([f"{key}: {value}\n" for key, value in chunk])
             await ctx.send_message(ShuffleCompleted(file_path, self._reducer_ids[index]))
 
         tasks = [asyncio.create_task(_process_chunk(chunk, i)) for i, chunk in enumerate(chunks)]
@@ -179,9 +177,9 @@ class Shuffle(Executor):
         # Load all intermediate pairs.
         map_results: list[tuple[str, int]] = []
         for result in data:
-            async with aiofiles.open(result.file_path, "r") as f:
+            with open(result.file_path) as f:
                 map_results.extend([
-                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in await f.readlines()
+                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in f.readlines()
                 ])
 
         # Group values by token.
@@ -230,8 +228,8 @@ class Reduce(Executor):
             return
 
         # Read grouped values from the shuffle output.
-        async with aiofiles.open(data.file_path, "r") as f:
-            lines = await f.readlines()
+        with open(data.file_path) as f:
+            lines = f.readlines()
 
         # Sum values per key. Values are serialized Python lists like [1, 1, ...].
         reduced_results: dict[str, int] = defaultdict(int)
@@ -241,8 +239,8 @@ class Reduce(Executor):
 
         # Persist our partition totals.
         file_path = os.path.join(TEMP_DIR, f"reduced_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
+        with open(file_path, "w") as f:
+            f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
 
         await ctx.send_message(ReduceCompleted(file_path))
 
@@ -324,8 +322,8 @@ async def main():
         print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
 
     # Step 3: Open the text file and read its content.
-    async with aiofiles.open(os.path.join(DIR, "../resources", "long_text.txt"), "r") as f:
-        raw_text = await f.read()
+    with open(os.path.join(DIR, "../resources", "long_text.txt")) as f:
+        raw_text = f.read()
 
     # Step 4: Run the workflow with the raw text as input.
     async for event in workflow.run(raw_text, stream=True):

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_responses/01_basic_responses_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Issue a basic Responses API call using SK and Agent Framework."""
 

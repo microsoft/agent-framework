@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_responses/02_responses_agent_with_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Attach a lightweight function tool to the Responses API in SK and AF."""
 
