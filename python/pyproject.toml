@@ -45,12 +45,6 @@ dev = [
     "tomli",
     "prek>=0.3.2",
 ]
-docs = [
-    # Documentation
-    "debugpy>=1.8.16",
-    "py2docfx>=0.1.22.dev2259826",
-    "pip",
-]
 
 [tool.uv]
 package = false
@@ -106,7 +100,7 @@ line-length = 120
 target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
-exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
+exclude = ["run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
 extend-exclude = [
     "[{][{]cookiecutter.package_name[}][}]",
 ]
@@ -186,7 +180,7 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework*"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "packages/devui/frontend/**"]
+exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -207,7 +201,7 @@ disallow_untyped_decorators = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs", "samples"]
+exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "samples"]
 
 [tool.poe]
 executor.type = "uv"
@@ -215,7 +209,7 @@ executor.type = "uv"
 [tool.poe.tasks]
 markdown-code-lint = "uv run python check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
 prek-install = "prek install --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
+install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"

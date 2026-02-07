@@ -1,4 +1,3 @@
-files: ^python/
 fail_fast: true
 repos:
   - repo: builtin
@@ -6,25 +5,25 @@ repos:
       - id: check-toml
         name: Check TOML files
         files: \.toml$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: check-yaml
         name: Check YAML files
         files: \.yaml$
       - id: check-json
         name: Check JSON files
         files: \.json$
-        exclude: ^.*\.vscode\/.*|^python/demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
+        exclude: ^.*\.vscode\/.*|^demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
       - id: end-of-file-fixer
         name: Fix End of File
         files: \.py$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: mixed-line-ending
         name: Check Mixed Line Endings
         files: \.py$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: trailing-whitespace
         name: Trim Trailing Whitespace
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: check-merge-conflict
         name: Check Merge Conflicts
       - id: detect-private-key
@@ -37,27 +36,26 @@ repos:
       - id: check-ast
         name: Check Valid Python Samples
         types: ["python"]
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
     hooks:
       - id: pyupgrade
         name: Upgrade Python syntax
         args: [--py310-plus]
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
     hooks:
       - id: poe-check
         name: Run checks through Poe
-        entry: uv --directory ./python run poe prek-check
+        entry: uv run poe prek-check
         language: system
-        files: ^python/
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.3
     hooks:
       - id: bandit
         name: Bandit Security Checks
-        args: ["-c", "python/pyproject.toml"]
+        args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
@@ -66,5 +64,4 @@ repos:
       # Update the uv lockfile
       - id: uv-lock
         name: Update uv lockfile
-        files: python/pyproject.toml
-        args: [--project, python]
+        files: pyproject.toml

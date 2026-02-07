@@ -20,10 +20,10 @@ from agent_framework.azure import DurableAIAgentWorker
 
 # Create the worker
 with TaskHubGrpcWorker(...) as worker:
-    
+
     # Register the agent worker wrapper
     agent_worker = DurableAIAgentWorker(worker)
-    
+
     # Register the agent
     agent_worker.add_agent(my_agent)
 ```

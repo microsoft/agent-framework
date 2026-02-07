@@ -88,7 +88,7 @@ For the getting started samples and the concept samples, we should have the foll
     ```python
     # 1. Create the instance of the Kernel to register the plugin and service.
     ...
-    
+
     # 2. Create the agent with the kernel instance.
     ...
     ```
@@ -103,7 +103,7 @@ For the getting started samples and the concept samples, we should have the foll
     User:> Why is the sky blue in one sentence?
     Mosscap:> The sky is blue due to the scattering of sunlight by the molecules in the Earth's atmosphere,
     a phenomenon known as Rayleigh scattering, which causes shorter blue wavelengths to become more
-    prominent in our visual perception.    
+    prominent in our visual perception.
     '''
     ```
 
