@@ -113,9 +113,11 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
                 result = subprocess.run(["uv", "run", "pyright", "-p", tmp_dir], capture_output=True, text=True, cwd=".")  # nosec
                 # Filter to only errors from our config rules; syntax-level errors
                 # (top-level await, etc.) are expected in README documentation snippets.
+                # Only flag reportMissingImports for agent_framework modules, not third-party packages.
                 relevant_errors = [
                     line for line in result.stdout.splitlines()
-                    if "reportMissingImports" in line or "reportAttributeAccessIssue" in line
+                    if ("reportMissingImports" in line and "agent_framework" in line)
+                    or "reportAttributeAccessIssue" in line
                 ]
                 if relevant_errors:
                     highlighted_code = highlight(code_block, PythonLexer(), TerminalFormatter())  # type: ignore

@@ -207,7 +207,7 @@ exclude_dirs = ["tests", "scripts", "samples"]
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search --exclude ag-ui/getting_started --exclude ag-ui/README.md --exclude durabletask/README.md --exclude orchestrations/README.md --exclude observability/README.md"
+markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
 prek-install = "prek install --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python scripts/run_tasks_in_packages_if_exists.py test"
