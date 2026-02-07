@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "OpenAI": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\openai\\OpenAI.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "OpenAIChat": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\openai\\OpenAIChat.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "OpenAIResponses": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\openai\\OpenAIResponses.yaml \"What is the weather in Cambridge, MA in °C?\""
+    }
+  }
+}
