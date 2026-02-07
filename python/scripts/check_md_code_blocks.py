@@ -97,6 +97,8 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
                 continue
 
             with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
+                # Suppress unused import errors since README snippets often show imports without using them
+                temp_file.write(b"# pyright: reportUnusedImport=false\n")
                 temp_file.write(code_block.encode("utf-8"))
                 temp_file.flush()
 
