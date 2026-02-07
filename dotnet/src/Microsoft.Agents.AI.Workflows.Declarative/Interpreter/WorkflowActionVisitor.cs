@@ -51,6 +51,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         this._workflowModel.Build(builder);
 
+        // Apply telemetry if configured
+        if (this._workflowOptions.IsTelemetryEnabled)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
+
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
     }

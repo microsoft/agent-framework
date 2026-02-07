@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.InProc;
@@ -69,6 +70,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
+
+    /// <inheritdoc cref="ISuperStepRunner.TelemetryContext"/>
+    public WorkflowTelemetryContext TelemetryContext => this.Workflow.TelemetryContext;
 
     private readonly HashSet<Type> _knownValidInputTypes;
     public async ValueTask<bool> IsValidInputTypeAsync(Type messageType, CancellationToken cancellationToken = default)
@@ -201,6 +205,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 envelope.Message,
                 envelope.MessageType,
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
+                this.TelemetryContext,
                 cancellationToken
             ).ConfigureAwait(false);
         }

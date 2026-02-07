@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -132,6 +133,8 @@ public class TestRunContext : IRunnerContext
 
     public bool WithCheckpointing => false;
     public bool ConcurrentRunsEnabled => false;
+
+    WorkflowTelemetryContext IRunnerContext.TelemetryContext => WorkflowTelemetryContext.Disabled;
 
     ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken) =>
         new(this.Executors[executorId]);

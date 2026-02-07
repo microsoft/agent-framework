@@ -35,8 +35,10 @@ public static class Program
 
         using var traceProvider = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
-            .AddSource("Microsoft.Agents.AI.Workflows*")
             .AddSource(SourceName)
+            // The following source is only required if not specifying
+            // the `activitySource` in the WithOpenTelemetry call below
+            .AddSource("Microsoft.Agents.AI.Workflows*")
             .AddAzureMonitorTraceExporter(options => options.ConnectionString = applicationInsightsConnectionString)
             .Build();
 
@@ -51,6 +53,10 @@ public static class Program
         // Build the workflow by connecting executors sequentially
         var workflow = new WorkflowBuilder(uppercase)
             .AddEdge(uppercase, reverse)
+            .WithOpenTelemetry(
+                // Set `EnableSensitiveData` to true to include message content in traces
+                configure: cfg => cfg.EnableSensitiveData = true,
+                activitySource: s_activitySource)
             .Build();
 
         // Execute the workflow with input data

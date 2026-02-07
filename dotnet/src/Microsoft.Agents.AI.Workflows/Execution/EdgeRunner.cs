@@ -14,9 +14,6 @@ internal interface IStatefulEdgeRunner
 
 internal abstract class EdgeRunner
 {
-    protected static readonly string s_namespace = typeof(EdgeRunner).Namespace!;
-    protected static readonly ActivitySource s_activitySource = new(s_namespace);
-
     // TODO: Can this be sync?
     protected internal abstract ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer);
 }
@@ -26,4 +23,6 @@ internal abstract class EdgeRunner<TEdgeData>(
 {
     protected IRunnerContext RunContext { get; } = Throw.IfNull(runContext);
     protected TEdgeData EdgeData { get; } = Throw.IfNull(edgeData);
+
+    protected Activity? StartActivity() => this.RunContext.TelemetryContext.StartEdgeGroupProcessActivity();
 }

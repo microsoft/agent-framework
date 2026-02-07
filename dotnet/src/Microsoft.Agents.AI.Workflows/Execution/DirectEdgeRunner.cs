@@ -14,7 +14,7 @@ internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
-        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        using var activity = this.StartActivity();
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(DirectEdgeRunner))
             .SetTag(Tags.MessageSourceId, this.EdgeData.SourceId)
