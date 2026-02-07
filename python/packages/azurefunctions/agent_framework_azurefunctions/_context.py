@@ -30,12 +30,9 @@ class CapturingRunnerContext(RunnerContext):
     It captures all messages and events produced during execution without requiring durable
     entity storage, allowing the results to be returned to the orchestrator.
 
-    Unlike the full InProcRunnerContext, this implementation:
-    - Does NOT support checkpointing (always returns False for has_checkpointing)
-    - Does NOT support streaming (always returns False for is_streaming)
-    - Captures messages and events in memory for later retrieval
-
-    The orchestrator manages state coordination; this context just captures execution output.
+    Unlike InProcRunnerContext, this implementation does NOT support checkpointing
+    (always returns False for has_checkpointing). The orchestrator manages state
+    coordination; this context just captures execution output.
     """
 
     def __init__(self) -> None:
