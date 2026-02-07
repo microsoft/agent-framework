@@ -330,5 +330,5 @@ uv run poe publish
 Prek hooks run automatically on commit and execute a subset of the checks on changed files only. You can also run all checks using prek directly:
 
 ```bash
-prek run -a
+uv run prek run -a
 ```
