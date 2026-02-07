@@ -3,13 +3,13 @@
 import asyncio
 from typing import Literal
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 
 """TypedDict-based Chat Options.
 
-In Agent Framework, we have made ChatClient and ChatAgent generic over a ChatOptions typeddict, this means that
+In Agent Framework, we have made ChatClient and Agent generic over a ChatOptions typeddict, this means that
 you can override which options are available for a given client or agent by providing your own TypedDict subclass.
 And we include the most common options for all ChatClient providers out of the box.
 
@@ -21,7 +21,7 @@ which provides:
     including overriding unsupported options.
 
 The sample shows usage with both OpenAI and Anthropic clients, demonstrating
-how provider-specific options work for ChatClient and ChatAgent. But the same approach works for other providers too.
+how provider-specific options work for ChatClient and Agent. But the same approach works for other providers too.
 """
 
 
@@ -49,14 +49,14 @@ async def demo_anthropic_chat_client() -> None:
 
 
 async def demo_anthropic_agent() -> None:
-    """Demonstrate ChatAgent with Anthropic client and typed options."""
-    print("\n=== ChatAgent with Anthropic and Typed Options ===\n")
+    """Demonstrate Agent with Anthropic client and typed options."""
+    print("\n=== Agent with Anthropic and Typed Options ===\n")
 
     client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         name="claude-assistant",
         instructions="You are a helpful assistant powered by Claude. Be concise.",
         default_options={
@@ -132,15 +132,15 @@ async def demo_openai_chat_client_reasoning_models() -> None:
 
 
 async def demo_openai_agent() -> None:
-    """Demonstrate ChatAgent with OpenAI client and typed options."""
-    print("\n=== ChatAgent with OpenAI and Typed Options ===\n")
+    """Demonstrate Agent with OpenAI client and typed options."""
+    print("\n=== Agent with OpenAI and Typed Options ===\n")
 
     # Create a typed agent - IDE will autocomplete options!
     # The type annotation can be done either on the agent like below,
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
-    agent = ChatAgent[OpenAIReasoningChatOptions](
-        chat_client=OpenAIChatClient(),
+    agent = Agent[OpenAIReasoningChatOptions](
+        client=OpenAIChatClient(),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time

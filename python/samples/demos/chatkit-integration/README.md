@@ -38,7 +38,7 @@ graph TB
         subgraph Integration["Agent Framework Integration"]
             Converter[ThreadItemConverter]
             Streamer[stream_agent_response]
-            Agent[ChatAgent]
+            Agent[Agent]
         end
 
         Widgets[Widget Rendering<br/>render_weather_widget<br/>render_city_selector_widget]
@@ -61,7 +61,7 @@ graph TB
     AttStore -.->|save files| Files
     AttStore -.->|save metadata| SQLite
 
-    Converter -->|ChatMessage array| Agent
+    Converter -->|Message array| Agent
     Agent -->|AgentResponseUpdate| Streamer
     Streamer -->|ThreadStreamEvent| ChatKit
 
@@ -88,7 +88,7 @@ The sample implements a ChatKit server using the `ChatKitServer` base class from
 - **`WeatherChatKitServer`**: Custom ChatKit server implementation that:
 
   - Extends `ChatKitServer[dict[str, Any]]`
-  - Uses Agent Framework's `ChatAgent` with Azure OpenAI
+  - Uses Agent Framework's `Agent` with Azure OpenAI
   - Converts ChatKit messages to Agent Framework format using `ThreadItemConverter`
   - Streams responses back to ChatKit using `stream_agent_response`
   - Creates and streams interactive widgets after agent responses

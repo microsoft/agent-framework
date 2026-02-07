@@ -126,7 +126,7 @@ AZURE_OPENAI_RESOURCE_URL=https://myresource.openai.azure.com
 ### Semantic Mode
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import DefaultAzureCredential
 
@@ -141,8 +141,8 @@ search_provider = AzureAISearchContextProvider(
 
 # Create agent with search context
 async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
-    async with ChatAgent(
-        chat_client=client,
+    async with Agent(
+        client=client,
         model=model_deployment,
         context_provider=search_provider,
     ) as agent:
@@ -166,8 +166,8 @@ search_provider = AzureAISearchContextProvider(
 )
 
 # Use with agent (same as semantic mode)
-async with ChatAgent(
-    chat_client=client,
+async with Agent(
+    client=client,
     model=model_deployment,
     context_provider=search_provider,
 ) as agent:

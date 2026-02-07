@@ -20,7 +20,7 @@ sequenceDiagram
     participant Agent as Agent.run()
     participant AML as AgentMiddlewareLayer
     participant AMP as AgentMiddlewarePipeline
-    participant RawAgent as RawChatAgent.run()
+    participant RawAgent as RawAgent.run()
     participant CML as ChatMiddlewareLayer
     participant CMP as ChatMiddlewarePipeline
     participant FIL as FunctionInvocationLayer
@@ -46,14 +46,14 @@ sequenceDiagram
     alt Non-Streaming (stream=False)
         RawAgent->>RawAgent: _prepare_run_context() [async]
         Note right of RawAgent: Builds: thread_messages, chat_options, tools
-        RawAgent->>CML: chat_client.get_response(stream=False)
+        RawAgent->>CML: client.get_response(stream=False)
     else Streaming (stream=True)
         RawAgent->>RawAgent: ResponseStream.from_awaitable()
         Note right of RawAgent: Defers async prep to stream consumption
         RawAgent-->>User: Returns ResponseStream immediately
         Note over RawAgent,CML: Async work happens on iteration
         RawAgent->>RawAgent: _prepare_run_context() [deferred]
-        RawAgent->>CML: chat_client.get_response(stream=True)
+        RawAgent->>CML: client.get_response(stream=True)
     end
 
     Note over CML,CMP: Chat Middleware Layer
@@ -132,7 +132,7 @@ sequenceDiagram
 | Field | Type | Description |
 |-------|------|-------------|
 | `agent` | `SupportsAgentRun` | The agent being invoked |
-| `messages` | `list[ChatMessage]` | Input messages (mutable) |
+| `messages` | `list[Message]` | Input messages (mutable) |
 | `thread` | `AgentThread \| None` | Conversation thread |
 | `options` | `Mapping[str, Any]` | Chat options dict |
 | `stream` | `bool` | Whether streaming is enabled |
@@ -142,9 +142,9 @@ sequenceDiagram
 
 **Key Operations:**
 1. `categorize_middleware()` separates middleware by type (agent, chat, function)
-2. Chat and function middleware are forwarded to `chat_client`
+2. Chat and function middleware are forwarded to `client`
 3. `AgentMiddlewarePipeline.execute()` runs the agent middleware chain
-4. Final handler calls `RawChatAgent.run()`
+4. Final handler calls `RawAgent.run()`
 
 **What Can Be Modified:**
 - `context.messages` - Add, remove, or modify input messages
@@ -154,14 +154,14 @@ sequenceDiagram
 
 ### 2. Chat Middleware Layer (`ChatMiddlewareLayer`)
 
-**Entry Point:** `chat_client.get_response(messages, options)`
+**Entry Point:** `client.get_response(messages, options)`
 
 **Context Object:** `ChatContext`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `chat_client` | `ChatClientProtocol` | The chat client |
-| `messages` | `Sequence[ChatMessage]` | Messages to send |
+| `client` | `SupportsChatGetResponse` | The chat client |
+| `messages` | `Sequence[Message]` | Messages to send |
 | `options` | `Mapping[str, Any]` | Chat options |
 | `stream` | `bool` | Whether streaming |
 | `metadata` | `dict` | Shared data between middleware |
@@ -275,7 +275,7 @@ class TerminatingMiddleware(FunctionMiddleware):
 ### Agent Layer → Chat Layer
 
 ```python
-# RawChatAgent._prepare_run_context() builds:
+# RawAgent._prepare_run_context() builds:
 {
     "thread": AgentThread,          # Validated/created thread
     "input_messages": [...],        # Normalized input messages
@@ -463,7 +463,7 @@ Returns `Awaitable[AgentResponse]`:
 ```python
 async def _run_non_streaming():
     ctx = await self._prepare_run_context(...)  # Async preparation
-    response = await self.chat_client.get_response(stream=False, ...)
+    response = await self.client.get_response(stream=False, ...)
     await self._finalize_response_and_update_thread(...)
     return AgentResponse(...)
 ```
@@ -476,7 +476,7 @@ Returns `ResponseStream[AgentResponseUpdate, AgentResponse]` **synchronously**:
 # Async preparation is deferred using ResponseStream.from_awaitable()
 async def _get_stream():
     ctx = await self._prepare_run_context(...)  # Deferred until iteration
-    return self.chat_client.get_response(stream=True, ...)
+    return self.client.get_response(stream=True, ...)
 
 return (
     ResponseStream.from_awaitable(_get_stream())

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -17,8 +17,8 @@ def get_weather(city: str) -> dict[str, str]:
 
 async def main() -> None:
     """Run the Bedrock sample agent, invoke the weather tool, and log the response."""
-    agent = ChatAgent(
-        chat_client=BedrockChatClient(),
+    agent = Agent(
+        client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
         name="BedrockWeatherAgent",
         tool_choice="auto",

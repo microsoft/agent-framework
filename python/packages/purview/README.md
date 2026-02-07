@@ -8,7 +8,7 @@
 
 - Middleware-based policy enforcement (agent-level and chat-client level)
 - Blocks or allows content at both ingress (prompt) and egress (response)
-- Works with any `ChatAgent` / agent orchestration using the standard Agent Framework middleware pipeline
+- Works with any `Agent` / agent orchestration using the standard Agent Framework middleware pipeline
 - Supports both synchronous `TokenCredential` and `AsyncTokenCredential` from `azure-identity`
 - Configuration via `PurviewSettings` / `PurviewAppLocation`
 - Built-in caching with configurable TTL and size limits for protection scopes in `PurviewSettings`
@@ -53,26 +53,26 @@ Add Purview when you need to:
 
 ```python
 import asyncio
-from agent_framework import ChatAgent, ChatMessage, Role
+from agent_framework import Agent, Message, Role
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import InteractiveBrowserCredential
 
 async def main():
-	chat_client = AzureOpenAIChatClient()  # uses environment for endpoint + deployment
+	client = AzureOpenAIChatClient()  # uses environment for endpoint + deployment
 
 	purview_middleware = PurviewPolicyMiddleware(
 		credential=InteractiveBrowserCredential(),
 		settings=PurviewSettings(app_name="My Sample App")
 	)
 
-	agent = ChatAgent(
-		chat_client=chat_client,
+	agent = Agent(
+		client=client,
 		instructions="You are a helpful assistant.",
 		middleware=[purview_middleware]
 	)
 
-	response = await agent.run(ChatMessage("user", ["Summarize zero trust in one sentence."]))
+	response = await agent.run(Message("user", ["Summarize zero trust in one sentence."]))
 	print(response)
 
 asyncio.run(main())
@@ -218,7 +218,7 @@ settings = PurviewSettings(
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import DefaultAzureCredential
@@ -226,8 +226,8 @@ from azure.identity import DefaultAzureCredential
 credential = DefaultAzureCredential()
 client = AzureOpenAIChatClient()
 
-agent = ChatAgent(
-	chat_client=client,
+agent = Agent(
+	client=client,
 	instructions="You are helpful.",
 	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
 )
@@ -237,14 +237,14 @@ Use the chat middleware when you attach directly to a chat client (e.g. minimal 
 
 ```python
 import os
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
 from azure.identity import DefaultAzureCredential
 
 credential = DefaultAzureCredential()
 
-chat_client = AzureOpenAIChatClient(
+client = AzureOpenAIChatClient(
 	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
 	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
@@ -253,7 +253,7 @@ chat_client = AzureOpenAIChatClient(
 	],
 )
 
-agent = ChatAgent(chat_client=chat_client, instructions="You are helpful.")
+agent = Agent(client=client, instructions="You are helpful.")
 ```
 
 The policy logic is identical; the difference is only the hook point in the pipeline.
@@ -272,7 +272,7 @@ The policy logic is identical; the difference is only the hook point in the pipe
 3. **After successful agent execution** (`response phase`): the produced messages are evaluated using the same user_id from the prompt phase.
 4. **If blocked**: result messages are replaced with a blocking notice.
 
-The user identifier is discovered from `ChatMessage.additional_properties['user_id']` during the prompt phase and reused for the response phase, ensuring both evaluations map consistently to the same user. If no user_id is present, policy evaluation is skipped entirely.
+The user identifier is discovered from `Message.additional_properties['user_id']` during the prompt phase and reused for the response phase, ensuring both evaluations map consistently to the same user. If no user_id is present, policy evaluation is skipped entirely.
 
 You can customize the blocking messages using the `blocked_prompt_message` and `blocked_response_message` fields in `PurviewSettings`. For more advanced scenarios, you can wrap the middleware or post-process `context.result` in later middleware.
 
@@ -315,7 +315,7 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 ---
 
 ## Notes
-- **User Identification**: Provide a `user_id` per request (e.g. in `ChatMessage(..., additional_properties={"user_id": "<guid>"})`) for per-user policy scoping. If no user_id is provided, policy evaluation is skipped entirely.
+- **User Identification**: Provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`) for per-user policy scoping. If no user_id is provided, policy evaluation is skipped entirely.
 - **Blocking Messages**: Can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
 - **Streaming Responses**: Post-response policy evaluation presently applies only to non-streaming chat responses.
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.

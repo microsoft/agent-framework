@@ -37,11 +37,11 @@ from .._tools import (
     HostedFileSearchTool,
 )
 from .._types import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     UsageDetails,
     prepare_function_call_results,
@@ -350,7 +350,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -603,7 +603,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:

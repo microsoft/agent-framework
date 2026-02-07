@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import ChatClientProtocol
+from agent_framework import SupportsChatGetResponse
 from agent_framework.exceptions import ServiceInitializationError
 from pydantic import ValidationError
 
@@ -55,7 +55,7 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
 
         assert client.model_id == "test-model-id"
         assert client.manager is mock_foundry_local_manager
-        assert isinstance(client, ChatClientProtocol)
+        assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manager: MagicMock) -> None:

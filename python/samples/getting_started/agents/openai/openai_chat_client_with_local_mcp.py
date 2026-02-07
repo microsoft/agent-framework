@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, MCPStreamableHTTPTool
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 
 """
@@ -29,8 +29,8 @@ async def mcp_tools_on_run_level() -> None:
             name="Microsoft Learn MCP",
             url="https://learn.microsoft.com/api/mcp",
         ) as mcp_server,
-        ChatAgent(
-            chat_client=OpenAIChatClient(),
+        Agent(
+            client=OpenAIChatClient(),
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         ) as agent,

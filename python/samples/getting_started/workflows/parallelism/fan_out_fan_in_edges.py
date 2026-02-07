@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from agent_framework import (
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
-    ChatAgent,  # Tracing event for agent execution steps
-    ChatMessage,  # Chat message structure
+    Agent,  # Tracing event for agent execution steps
+    Message,  # Chat message structure
     Executor,  # Base class for custom Python executors
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowContext,  # Per run context and event bus
@@ -41,7 +41,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage("user", text=prompt)
+        initial_message = Message("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
@@ -87,7 +87,7 @@ class AggregateInsights(Executor):
         await ctx.yield_output(consolidated)
 
 
-def create_researcher_agent() -> ChatAgent:
+def create_researcher_agent() -> Agent:
     """Creates a research domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -98,7 +98,7 @@ def create_researcher_agent() -> ChatAgent:
     )
 
 
-def create_marketer_agent() -> ChatAgent:
+def create_marketer_agent() -> Agent:
     """Creates a marketing domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -109,7 +109,7 @@ def create_marketer_agent() -> ChatAgent:
     )
 
 
-def create_legal_agent() -> ChatAgent:
+def create_legal_agent() -> Agent:
     """Creates a legal/compliance domain expert agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(

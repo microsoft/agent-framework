@@ -30,7 +30,7 @@ Run:
 import asyncio
 import os
 
-from agent_framework import ChatMessage, tool
+from agent_framework import Message, tool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
@@ -128,9 +128,9 @@ async def main() -> None:
 
     # Build sample chat messages to persist to Redis
     messages = [
-        ChatMessage("user", ["runA CONVO: User Message"]),
-        ChatMessage("assistant", ["runA CONVO: Assistant Message"]),
-        ChatMessage("system", ["runA CONVO: System Message"]),
+        Message("user", ["runA CONVO: User Message"]),
+        Message("assistant", ["runA CONVO: Assistant Message"]),
+        Message("system", ["runA CONVO: System Message"]),
     ]
 
     # Declare/start a conversation/thread and write messages under 'runA'.
@@ -142,7 +142,7 @@ async def main() -> None:
     # Retrieve relevant memories for a hypothetical model call. The provider uses
     # the current request messages as the retrieval query and returns context to
     # be injected into the model's instructions.
-    ctx = await provider.invoking([ChatMessage("system", ["B: Assistant Message"])])
+    ctx = await provider.invoking([Message("system", ["B: Assistant Message"])])
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)

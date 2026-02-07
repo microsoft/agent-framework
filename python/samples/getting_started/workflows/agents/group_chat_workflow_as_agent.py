@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 
@@ -19,18 +19,18 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects relevant background information.",
         instructions="Gather concise facts that help a teammate answer the question.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
+        client=OpenAIChatClient(model_id="gpt-4o-mini"),
     )
 
-    writer = ChatAgent(
+    writer = Agent(
         name="Writer",
         description="Synthesizes a polished answer using the gathered notes.",
         instructions="Compose clear and structured answers using any notes provided.",
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
     )
 
     # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds

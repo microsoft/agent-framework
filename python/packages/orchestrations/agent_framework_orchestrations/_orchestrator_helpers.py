@@ -8,12 +8,12 @@ No inheritance required - just import and call.
 
 import logging
 
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 
 logger = logging.getLogger(__name__)
 
 
-def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[ChatMessage]:
+def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]:
     """Remove tool-related content from conversation for clean handoffs.
 
     During handoffs, tool calls can cause API errors because:
@@ -37,7 +37,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
     Returns:
         Cleaned conversation safe for handoff routing
     """
-    cleaned: list[ChatMessage] = []
+    cleaned: list[Message] = []
     for msg in conversation:
         # Skip tool response messages entirely
         if msg.role == "tool":
@@ -58,7 +58,7 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
         # Has tool content - only keep if it also has text
         if msg.text and msg.text.strip():
             # Create fresh text-only message while preserving additional_properties
-            msg_copy = ChatMessage(
+            msg_copy = Message(
                 role=msg.role,
                 text=msg.text,
                 author_name=msg.author_name,
@@ -74,7 +74,7 @@ def create_completion_message(
     text: str | None = None,
     author_name: str,
     reason: str = "completed",
-) -> ChatMessage:
+) -> Message:
     """Create a standardized completion message.
 
     Simple helper to avoid duplicating completion message creation.
@@ -85,10 +85,10 @@ def create_completion_message(
         reason: Reason for completion (for default text generation)
 
     Returns:
-        ChatMessage with assistant role
+        Message with assistant role
     """
     message_text = text or f"Conversation {reason}."
-    return ChatMessage(
+    return Message(
         role="assistant",
         text=message_text,
         author_name=author_name,

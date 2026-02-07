@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.exceptions import AgentException, ServiceInitializationError
 from redisvl.utils.vectorize import CustomTextVectorizer
 
@@ -113,18 +113,18 @@ class TestRedisProviderInitialization:
 
 class TestRedisProviderMessages:
     @pytest.fixture
-    def sample_messages(self) -> list[ChatMessage]:
+    def sample_messages(self) -> list[Message]:
         return [
-            ChatMessage(role="user", text="Hello, how are you?"),
-            ChatMessage(role="assistant", text="I'm doing well, thank you!"),
-            ChatMessage(role="system", text="You are a helpful assistant"),
+            Message(role="user", text="Hello, how are you?"),
+            Message(role="assistant", text="I'm doing well, thank you!"),
+            Message(role="system", text="You are a helpful assistant"),
         ]
 
     # Writes require at least one scoping filter to avoid unbounded operations
     async def test_messages_adding_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.invoked("thread123", ChatMessage(role="user", text="Hello"))
+            await provider.invoked("thread123", Message(role="user", text="Hello"))
 
     # Captures the per-operation thread id when provided
     async def test_thread_created_sets_per_operation_id(self, patch_index_from_dict):  # noqa: ARG002
@@ -157,7 +157,7 @@ class TestRedisProviderModelInvoking:
     async def test_model_invoking_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.invoking(ChatMessage(role="user", text="Hi"))
+            await provider.invoking(Message(role="user", text="Hi"))
 
     # Ensures text-only search path is used and context is composed from hits
     async def test_textquery_path_and_context_contents(
@@ -168,7 +168,7 @@ class TestRedisProviderModelInvoking:
         provider = RedisProvider(user_id="u1")
 
         # Act
-        ctx = await provider.invoking([ChatMessage(role="user", text="q1")])
+        ctx = await provider.invoking([Message(role="user", text="q1")])
 
         # Assert: TextQuery used (not HybridQuery), filter_expression included
         assert patch_queries["TextQuery"].call_count == 1
@@ -190,7 +190,7 @@ class TestRedisProviderModelInvoking:
     ):  # noqa: ARG002
         mock_index.query = AsyncMock(return_value=[])
         provider = RedisProvider(user_id="u1")
-        ctx = await provider.invoking([ChatMessage(role="user", text="any")])
+        ctx = await provider.invoking([Message(role="user", text="any")])
         assert ctx.messages == []
 
     # Ensures hybrid vector-text search is used when a vectorizer and vector field are configured
@@ -198,7 +198,7 @@ class TestRedisProviderModelInvoking:
         mock_index.query = AsyncMock(return_value=[{"content": "Hit"}])
         provider = RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
 
-        ctx = await provider.invoking([ChatMessage(role="user", text="hello")])
+        ctx = await provider.invoking([Message(role="user", text="hello")])
 
         # Assert: HybridQuery used with vector and vector field
         assert patch_queries["HybridQuery"].call_count == 1
@@ -240,9 +240,9 @@ class TestMessagesAddingBehavior:
         )
 
         msgs = [
-            ChatMessage(role="user", text="u"),
-            ChatMessage(role="assistant", text="a"),
-            ChatMessage(role="system", text="s"),
+            Message(role="user", text="u"),
+            Message(role="assistant", text="a"),
+            Message(role="system", text="s"),
         ]
 
         await provider.invoked(msgs)
@@ -265,8 +265,8 @@ class TestMessagesAddingBehavior:
     ):  # noqa: ARG002
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
         msgs = [
-            ChatMessage(role="user", text="   "),
-            ChatMessage(role="tool", text="tool output"),
+            Message(role="user", text="   "),
+            Message(role="tool", text="tool output"),
         ]
         await provider.invoked(msgs)
         # No valid messages -> no load
@@ -279,8 +279,8 @@ class TestIndexCreationPublicCalls:
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
         provider = RedisProvider(user_id="u1")
-        await provider.invoked(ChatMessage(role="user", text="m1"))
-        await provider.invoked(ChatMessage(role="user", text="m2"))
+        await provider.invoked(Message(role="user", text="m1"))
+        await provider.invoked(Message(role="user", text="m2"))
         # create only on first call
         assert mock_index.create.await_count == 1
 
@@ -291,7 +291,7 @@ class TestIndexCreationPublicCalls:
         mock_index.exists = AsyncMock(return_value=False)
         provider = RedisProvider(user_id="u1")
         mock_index.query = AsyncMock(return_value=[{"content": "C"}])
-        await provider.invoking([ChatMessage(role="user", text="q")])
+        await provider.invoking([Message(role="user", text="q")])
         assert mock_index.create.await_count == 1
 
 
@@ -321,7 +321,7 @@ class TestVectorPopulation:
             vector_field_name="vec",
         )
 
-        await provider.invoked(ChatMessage(role="user", text="hello"))
+        await provider.invoked(Message(role="user", text="hello"))
         assert mock_index.load.await_count == 1
         (loaded_args, _kwargs) = mock_index.load.call_args
         docs = loaded_args[0]

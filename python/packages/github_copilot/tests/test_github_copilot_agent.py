@@ -11,8 +11,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    ChatMessage,
     Content,
+    Message,
 )
 from agent_framework.exceptions import ServiceException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
@@ -290,11 +290,11 @@ class TestGitHubCopilotAgentRun:
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """Test run method with ChatMessage."""
+        """Test run method with Message."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        chat_message = ChatMessage(role="user", contents=[Content.from_text("Hello")])
+        chat_message = Message(role="user", contents=[Content.from_text("Hello")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)

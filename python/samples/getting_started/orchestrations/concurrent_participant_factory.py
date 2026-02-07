@@ -4,8 +4,8 @@ import asyncio
 from typing import Any
 
 from agent_framework import (
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Executor,
     Workflow,
     WorkflowContext,
@@ -27,7 +27,7 @@ AzureOpenAIChatClient.get_response() to synthesize a concise, consolidated summa
 from the experts' outputs.
 
 All participants and the aggregator are created via factory functions that return
-their respective ChatAgent or Executor instances.
+their respective Agent or Executor instances.
 
 Using participant factories allows you to set up proper state isolation between workflow
 instances created by the same builder. This is particularly useful when you need to handle
@@ -36,7 +36,7 @@ requests or tasks in parallel with stateful participants.
 Demonstrates:
 - ConcurrentBuilder(participant_factories=[...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
-- Aggregation implemented via an LLM call (chat_client.get_response)
+- Aggregation implemented via an LLM call (client.get_response)
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
@@ -44,7 +44,7 @@ Prerequisites:
 """
 
 
-def create_researcher() -> ChatAgent:
+def create_researcher() -> Agent:
     """Factory function to create a researcher agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -55,7 +55,7 @@ def create_researcher() -> ChatAgent:
     )
 
 
-def create_marketer() -> ChatAgent:
+def create_marketer() -> Agent:
     """Factory function to create a marketer agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -66,7 +66,7 @@ def create_marketer() -> ChatAgent:
     )
 
 
-def create_legal() -> ChatAgent:
+def create_legal() -> Agent:
     """Factory function to create a legal/compliance agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -82,7 +82,7 @@ class SummarizationExecutor(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="summarization_executor")
-        self.chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+        self.client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     @handler
     async def summarize_results(self, results: list[Any], ctx: WorkflowContext[Never, str]) -> None:
@@ -96,16 +96,16 @@ class SummarizationExecutor(Executor):
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}: (error: {type(e).__name__}: {e})")
 
         # Ask the model to synthesize a concise summary of the experts' outputs
-        system_msg = ChatMessage(
+        system_msg = Message(
             "system",
             text=(
                 "You are a helpful assistant that consolidates multiple domain expert outputs "
                 "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
             ),
         )
-        user_msg = ChatMessage("user", text="\n\n".join(expert_sections))
+        user_msg = Message("user", text="\n\n".join(expert_sections))
 
-        response = await self.chat_client.get_response([system_msg, user_msg])
+        response = await self.client.get_response([system_msg, user_msg])
 
         await ctx.yield_output(response.messages[-1].text if response.messages else "")
 

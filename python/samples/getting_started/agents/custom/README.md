@@ -7,7 +7,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 | File | Description |
 |------|-------------|
 | [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BaseAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper thread management, and message history handling. |
-| [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
+| [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `Agent` using the `as_agent()` method. |
 
 ## Key Takeaways
 
@@ -20,7 +20,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 ### Custom Chat Clients
 - Custom chat clients allow you to integrate any backend service or create new LLM providers
 - You must implement `_inner_get_response()` with a stream parameter to handle both streaming and non-streaming responses
-- Custom chat clients can be used with `ChatAgent` to leverage all agent framework features
+- Custom chat clients can be used with `Agent` to leverage all agent framework features
 - Use the `as_agent()` method to easily create agents from your custom chat clients
 
 Both approaches allow you to extend the framework for your specific use cases while maintaining compatibility with the broader Agent Framework ecosystem.

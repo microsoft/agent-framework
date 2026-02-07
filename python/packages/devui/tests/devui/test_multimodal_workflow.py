@@ -48,8 +48,8 @@ class TestMultimodalWorkflowInput:
         assert executor._is_openai_multimodal_format([{"foo": "bar"}]) is False  # no type field
 
     def test_convert_openai_input_to_chat_message_with_image(self):
-        """Test that OpenAI format with image is converted to ChatMessage with DataContent."""
-        from agent_framework import ChatMessage
+        """Test that OpenAI format with image is converted to Message with DataContent."""
+        from agent_framework import Message
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -67,11 +67,11 @@ class TestMultimodalWorkflowInput:
             }
         ]
 
-        # Convert to ChatMessage
+        # Convert to Message
         result = executor._convert_input_to_chat_message(openai_input)
 
-        # Verify result is ChatMessage
-        assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
+        # Verify result is Message
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
         assert result.role == "user"
 
         # Verify contents
@@ -89,7 +89,7 @@ class TestMultimodalWorkflowInput:
     async def test_parse_workflow_input_handles_json_string_with_multimodal(self):
         """Test that _parse_workflow_input correctly handles JSON string with multimodal content."""
 
-        from agent_framework import ChatMessage
+        from agent_framework import Message
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -114,8 +114,8 @@ class TestMultimodalWorkflowInput:
         # Parse the input
         result = await executor._parse_workflow_input(mock_workflow, json_string_input)
 
-        # Verify result is ChatMessage with multimodal content
-        assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
+        # Verify result is Message with multimodal content
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
         assert len(result.contents) == 2
 
         # Verify text content
@@ -129,7 +129,7 @@ class TestMultimodalWorkflowInput:
     async def test_parse_workflow_input_still_handles_simple_dict(self):
         """Test that simple dict input still works (backward compatibility)."""
 
-        from agent_framework import ChatMessage
+        from agent_framework import Message
 
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
@@ -139,14 +139,14 @@ class TestMultimodalWorkflowInput:
         simple_input = {"text": "Hello world", "role": "user"}
         json_string_input = json.dumps(simple_input)
 
-        # Mock workflow with ChatMessage input type
+        # Mock workflow with Message input type
         mock_workflow = MagicMock()
         mock_executor = MagicMock()
-        mock_executor.input_types = [ChatMessage]
+        mock_executor.input_types = [Message]
         mock_workflow.get_start_executor.return_value = mock_executor
 
         # Parse the input
         result = await executor._parse_workflow_input(mock_workflow, json_string_input)
 
-        # Result should be ChatMessage (from _parse_structured_workflow_input)
-        assert isinstance(result, ChatMessage), f"Expected ChatMessage, got {type(result)}"
+        # Result should be Message (from _parse_structured_workflow_input)
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"

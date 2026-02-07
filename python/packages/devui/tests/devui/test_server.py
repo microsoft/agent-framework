@@ -142,7 +142,7 @@ async def test_credential_cleanup() -> None:
     """Test that async credentials are properly closed during server cleanup."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credential with async close
     mock_credential = AsyncMock()
@@ -155,7 +155,7 @@ async def test_credential_cleanup() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -175,7 +175,7 @@ async def test_credential_cleanup_error_handling() -> None:
     """Test that credential cleanup errors are handled gracefully."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credential that raises error on close
     mock_credential = AsyncMock()
@@ -188,7 +188,7 @@ async def test_credential_cleanup_error_handling() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -207,7 +207,7 @@ async def test_multiple_credential_attributes() -> None:
     """Test that we check all common credential attribute names."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credentials
     mock_cred1 = Mock()
@@ -223,7 +223,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()

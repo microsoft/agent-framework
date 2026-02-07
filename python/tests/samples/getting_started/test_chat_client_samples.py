@@ -8,28 +8,28 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch, mark, param
 
-from samples.getting_started.chat_client.azure_ai_chat_client import (
+from samples.getting_started.client.azure_ai_chat_client import (
     main as azure_ai_chat_client,
 )
-from samples.getting_started.chat_client.azure_assistants_client import (
+from samples.getting_started.client.azure_assistants_client import (
     main as azure_assistants_client,
 )
-from samples.getting_started.chat_client.azure_chat_client import (
+from samples.getting_started.client.azure_chat_client import (
     main as azure_chat_client,
 )
-from samples.getting_started.chat_client.azure_responses_client import (
+from samples.getting_started.client.azure_responses_client import (
     main as azure_responses_client,
 )
-from samples.getting_started.chat_client.chat_response_cancellation import (
+from samples.getting_started.client.chat_response_cancellation import (
     main as chat_response_cancellation,
 )
-from samples.getting_started.chat_client.openai_assistants_client import (
+from samples.getting_started.client.openai_assistants_client import (
     main as openai_assistants_client,
 )
-from samples.getting_started.chat_client.openai_chat_client import (
+from samples.getting_started.client.openai_chat_client import (
     main as openai_chat_client,
 )
-from samples.getting_started.chat_client.openai_responses_client import (
+from samples.getting_started.client.openai_responses_client import (
     main as openai_responses_client,
 )
 

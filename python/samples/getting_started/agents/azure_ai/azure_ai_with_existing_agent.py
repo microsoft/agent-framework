@@ -36,7 +36,7 @@ async def using_provider_get_agent() -> None:
         )
 
         try:
-            # Get newly created agent as ChatAgent by using provider.get_agent()
+            # Get newly created agent as Agent by using provider.get_agent()
             provider = AzureAIProjectAgentProvider(project_client=project_client)
             agent = await provider.get_agent(name=azure_ai_agent.name)
 

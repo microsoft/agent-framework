@@ -7,11 +7,11 @@ from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any
 
 from agent_framework import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     tool,
 )
@@ -29,13 +29,11 @@ class TestableAGUIChatClient(AGUIChatClient):
         """Expose http service for monkeypatching."""
         return self._http_service
 
-    def extract_state_from_messages(
-        self, messages: list[ChatMessage]
-    ) -> tuple[list[ChatMessage], dict[str, Any] | None]:
+    def extract_state_from_messages(self, messages: list[Message]) -> tuple[list[Message], dict[str, Any] | None]:
         """Expose state extraction helper."""
         return self._extract_state_from_messages(messages)
 
-    def convert_messages_to_agui_format(self, messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    def convert_messages_to_agui_format(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Expose message conversion helper."""
         return self._convert_messages_to_agui_format(messages)
 
@@ -44,7 +42,7 @@ class TestableAGUIChatClient(AGUIChatClient):
         return self._get_thread_id(options)
 
     def inner_get_response(
-        self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], stream: bool = False
+        self, *, messages: MutableSequence[Message], options: dict[str, Any], stream: bool = False
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
         return self._inner_get_response(messages=messages, options=options, stream=stream)
@@ -69,8 +67,8 @@ class TestAGUIChatClient:
         """Test state extraction when no state is present."""
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
-            ChatMessage(role="user", text="Hello"),
-            ChatMessage(role="assistant", text="Hi there"),
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Hi there"),
         ]
 
         result_messages, state = client.extract_state_from_messages(messages)
@@ -89,8 +87,8 @@ class TestAGUIChatClient:
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
-            ChatMessage(role="user", text="Hello"),
-            ChatMessage(
+            Message(role="user", text="Hello"),
+            Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
@@ -112,7 +110,7 @@ class TestAGUIChatClient:
         state_b64 = base64.b64encode(invalid_json.encode("utf-8")).decode("utf-8")
 
         messages = [
-            ChatMessage(
+            Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),
@@ -127,8 +125,8 @@ class TestAGUIChatClient:
         """Test message conversion to AG-UI format."""
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
-            ChatMessage(role="user", text="What is the weather?"),
-            ChatMessage(role="assistant", text="Let me check.", message_id="msg_123"),
+            Message(role="user", text="What is the weather?"),
+            Message(role="assistant", text="Let me check.", message_id="msg_123"),
         ]
 
         agui_messages = client.convert_messages_to_agui_format(messages)
@@ -175,7 +173,7 @@ class TestAGUIChatClient:
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [ChatMessage(role="user", text="Test message")]
+        messages = [Message(role="user", text="Test message")]
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
@@ -208,7 +206,7 @@ class TestAGUIChatClient:
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [ChatMessage(role="user", text="Test message")]
+        messages = [Message(role="user", text="Test message")]
         chat_options = {}
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
@@ -251,7 +249,7 @@ class TestAGUIChatClient:
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [ChatMessage(role="user", text="Test with tools")]
+        messages = [Message(role="user", text="Test with tools")]
         chat_options = ChatOptions(tools=[test_tool])
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
@@ -275,7 +273,7 @@ class TestAGUIChatClient:
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [ChatMessage(role="user", text="Test server tool execution")]
+        messages = [Message(role="user", text="Test server tool execution")]
 
         updates: list[ChatResponseUpdate] = []
         async for update in client.get_response(messages, stream=True):
@@ -317,7 +315,7 @@ class TestAGUIChatClient:
         client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [ChatMessage(role="user", text="Test server tool execution")]
+        messages = [Message(role="user", text="Test server tool execution")]
 
         async for _ in client.get_response(
             messages, stream=True, options={"tool_choice": "auto", "tools": [client_tool]}
@@ -333,8 +331,8 @@ class TestAGUIChatClient:
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
-            ChatMessage(role="user", text="Hello"),
-            ChatMessage(
+            Message(role="user", text="Hello"),
+            Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
             ),

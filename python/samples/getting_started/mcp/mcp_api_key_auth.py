@@ -2,7 +2,7 @@
 
 import os
 
-from agent_framework import ChatAgent, MCPStreamableHTTPTool
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 from httpx import AsyncClient
 
@@ -43,8 +43,8 @@ async def api_key_auth_example() -> None:
             url=mcp_server_url,
             http_client=http_client,  # Pass HTTP client with authentication headers
         ) as mcp_tool,
-        ChatAgent(
-            chat_client=OpenAIResponsesClient(),
+        Agent(
+            client=OpenAIResponsesClient(),
             name="Agent",
             instructions="You are a helpful assistant.",
             tools=mcp_tool,

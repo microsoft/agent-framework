@@ -378,12 +378,12 @@ def test_type_compatibility_collections() -> None:
 
     # List compatibility - key use case
     @dataclass
-    class ChatMessage:
+    class Message:
         text: str
 
-    assert is_type_compatible(list[ChatMessage], list[Union[str, ChatMessage]])
-    assert is_type_compatible(list[str], list[Union[str, ChatMessage]])
-    assert not is_type_compatible(list[Union[str, ChatMessage]], list[ChatMessage])
+    assert is_type_compatible(list[Message], list[Union[str, Message]])
+    assert is_type_compatible(list[str], list[Union[str, Message]])
+    assert not is_type_compatible(list[Union[str, Message]], list[Message])
 
     # Dict compatibility
     assert is_type_compatible(dict[str, int], dict[str, Union[int, float]])

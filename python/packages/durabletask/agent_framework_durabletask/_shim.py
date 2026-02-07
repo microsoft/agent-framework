@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentThread, ChatMessage, SupportsAgentRun
+from agent_framework import AgentThread, Message, SupportsAgentRun
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread
@@ -86,7 +86,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
@@ -136,7 +136,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """Create a new agent thread via the provider."""
         return self._executor.get_new_thread(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
         """Convert supported message inputs to a single string.
 
         Args:
@@ -149,7 +149,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             return ""
         if isinstance(messages, str):
             return messages
-        if isinstance(messages, ChatMessage):
+        if isinstance(messages, Message):
             return messages.text or ""
         if isinstance(messages, list):
             if not messages:
@@ -157,6 +157,6 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             first_item = messages[0]
             if isinstance(first_item, str):
                 return "\n".join(messages)  # type: ignore[arg-type]
-            # List of ChatMessage
+            # List of Message
             return "\n".join([msg.text or "" for msg in messages])  # type: ignore[union-attr]
         return ""

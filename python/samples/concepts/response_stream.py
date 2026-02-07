@@ -94,9 +94,9 @@ final = await response_stream.get_final_response()  # Get the aggregated result
 
 === Chaining with .map() and .with_finalizer() ===
 
-When building a ChatAgent on top of a ChatClient, we face a challenge:
+When building a Agent on top of a ChatClient, we face a challenge:
 - The ChatClient returns a ResponseStream[ChatResponseUpdate, ChatResponse]
-- The ChatAgent needs to return a ResponseStream[AgentResponseUpdate, AgentResponse]
+- The Agent needs to return a ResponseStream[AgentResponseUpdate, AgentResponse]
 - We can't iterate the ChatClient's stream twice!
 
 The `.map()` and `.with_finalizer()` methods solve this by creating new ResponseStreams that:
@@ -123,8 +123,8 @@ provider notifications, telemetry, thread updates) are still executed even when 
 stream is wrapped/mapped.
 
 ```python
-# ChatAgent does something like this internally:
-chat_stream = chat_client.get_response(messages, stream=True)
+# Agent does something like this internally:
+chat_stream = client.get_response(messages, stream=True)
 agent_stream = (
     chat_stream
     .map(_to_agent_update, _to_agent_response)
@@ -135,7 +135,7 @@ agent_stream = (
 This ensures:
 - The underlying ChatClient stream is only consumed once
 - The agent can add its own transform hooks, result hooks, and cleanup logic
-- Each layer (ChatClient, ChatAgent, middleware) can add independent behavior
+- Each layer (ChatClient, Agent, middleware) can add independent behavior
 - Inner stream post-processing (like context provider notification) still runs
 - Types flow naturally through the chain
 """
@@ -281,7 +281,7 @@ async def main() -> None:
     # Simulate what ChatClient returns
     inner_stream = ResponseStream(generate_updates(), finalizer=combine_updates)
 
-    # Simulate what ChatAgent does: wrap the inner stream
+    # Simulate what Agent does: wrap the inner stream
     def to_agent_format(update: ChatResponseUpdate) -> ChatResponseUpdate:
         """Map ChatResponseUpdate to agent format (simulated transformation)."""
         # In real code, this would convert to AgentResponseUpdate

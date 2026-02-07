@@ -2,7 +2,7 @@
 
 """Tests for orchestration helper functions."""
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 
 from agent_framework_ag_ui._orchestration._helpers import (
     approval_steps,
@@ -29,8 +29,8 @@ class TestPendingToolCallIds:
     def test_no_tool_calls(self):
         """Returns empty set when no tool calls in messages."""
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
-            ChatMessage(role="assistant", contents=[Content.from_text("Hi there")]),
+            Message(role="user", contents=[Content.from_text("Hello")]),
+            Message(role="assistant", contents=[Content.from_text("Hi there")]),
         ]
         result = pending_tool_call_ids(messages)
         assert result == set()
@@ -38,7 +38,7 @@ class TestPendingToolCallIds:
     def test_pending_tool_call(self):
         """Returns pending tool call ID when no result exists."""
         messages = [
-            ChatMessage(
+            Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="call_123", name="get_weather", arguments="{}")],
             ),
@@ -49,11 +49,11 @@ class TestPendingToolCallIds:
     def test_resolved_tool_call(self):
         """Returns empty set when tool call has result."""
         messages = [
-            ChatMessage(
+            Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="call_123", name="get_weather", arguments="{}")],
             ),
-            ChatMessage(
+            Message(
                 role="tool",
                 contents=[Content.from_function_result(call_id="call_123", result="sunny")],
             ),
@@ -64,7 +64,7 @@ class TestPendingToolCallIds:
     def test_multiple_tool_calls_some_resolved(self):
         """Returns only unresolved tool call IDs."""
         messages = [
-            ChatMessage(
+            Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="call_1", name="tool_a", arguments="{}"),
@@ -72,11 +72,11 @@ class TestPendingToolCallIds:
                     Content.from_function_call(call_id="call_3", name="tool_c", arguments="{}"),
                 ],
             ),
-            ChatMessage(
+            Message(
                 role="tool",
                 contents=[Content.from_function_result(call_id="call_1", result="result_a")],
             ),
-            ChatMessage(
+            Message(
                 role="tool",
                 contents=[Content.from_function_result(call_id="call_3", result="result_c")],
             ),
@@ -90,7 +90,7 @@ class TestIsStateContextMessage:
 
     def test_state_context_message(self):
         """Returns True for state context message."""
-        message = ChatMessage(
+        message = Message(
             role="system",
             contents=[Content.from_text("Current state of the application: {}")],
         )
@@ -98,7 +98,7 @@ class TestIsStateContextMessage:
 
     def test_non_system_message(self):
         """Returns False for non-system message."""
-        message = ChatMessage(
+        message = Message(
             role="user",
             contents=[Content.from_text("Current state of the application: {}")],
         )
@@ -106,7 +106,7 @@ class TestIsStateContextMessage:
 
     def test_system_message_without_state_prefix(self):
         """Returns False for system message without state prefix."""
-        message = ChatMessage(
+        message = Message(
             role="system",
             contents=[Content.from_text("You are a helpful assistant.")],
         )
@@ -114,7 +114,7 @@ class TestIsStateContextMessage:
 
     def test_empty_contents(self):
         """Returns False for message with empty contents."""
-        message = ChatMessage(role="system", contents=[])
+        message = Message(role="system", contents=[])
         assert is_state_context_message(message) is False
 
 
@@ -342,7 +342,7 @@ class TestLatestApprovalResponse:
     def test_no_approval_response(self):
         """Returns None when no approval response in last message."""
         messages = [
-            ChatMessage(role="assistant", contents=[Content.from_text("Hello")]),
+            Message(role="assistant", contents=[Content.from_text("Hello")]),
         ]
         result = latest_approval_response(messages)
         assert result is None
@@ -357,7 +357,7 @@ class TestLatestApprovalResponse:
             function_call=fc,
         )
         messages = [
-            ChatMessage(role="user", contents=[approval_content]),
+            Message(role="user", contents=[approval_content]),
         ]
         result = latest_approval_response(messages)
         assert result is approval_content

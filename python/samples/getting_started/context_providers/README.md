@@ -139,14 +139,14 @@ Different agents with isolated or shared memory configurations.
 To create a custom context provider, implement the `ContextProvider` protocol:
 
 ```python
-from agent_framework import ContextProvider, Context, ChatMessage
+from agent_framework import ContextProvider, Context, Message
 from collections.abc import MutableSequence, Sequence
 from typing import Any
 
 class MyContextProvider(ContextProvider):
     async def invoking(
         self,
-        messages: ChatMessage | MutableSequence[ChatMessage],
+        messages: Message | MutableSequence[Message],
         **kwargs: Any
     ) -> Context:
         """Provide context before the agent processes the request."""
@@ -155,8 +155,8 @@ class MyContextProvider(ContextProvider):
 
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:

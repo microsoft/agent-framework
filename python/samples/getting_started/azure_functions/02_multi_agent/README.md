@@ -76,8 +76,8 @@ Expected response:
 {
   "status": "healthy",
   "agents": [
-    {"name": "WeatherAgent", "type": "ChatAgent"},
-    {"name": "MathAgent", "type": "ChatAgent"}
+    {"name": "WeatherAgent", "type": "Agent"},
+    {"name": "MathAgent", "type": "Agent"}
   ],
   "agent_count": 2
 }

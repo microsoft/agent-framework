@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 
 from agent_framework_ag_ui._orchestration._tooling import (
     collect_server_tools,
@@ -31,14 +31,14 @@ def regular_tool() -> str:
     return "result"
 
 
-def _create_chat_agent_with_tool(tool_name: str = "regular_tool") -> ChatAgent:
-    """Create a ChatAgent with a mocked chat client and a simple tool.
+def _create_chat_agent_with_tool(tool_name: str = "regular_tool") -> Agent:
+    """Create a Agent with a mocked chat client and a simple tool.
 
     Note: tool_name parameter is kept for API compatibility but the tool
     will always be named 'regular_tool' since tool uses the function name.
     """
     mock_chat_client = MagicMock()
-    return ChatAgent(chat_client=mock_chat_client, tools=[regular_tool])
+    return Agent(client=mock_chat_client, tools=[regular_tool])
 
 
 def test_merge_tools_filters_duplicates() -> None:
@@ -59,7 +59,7 @@ def test_register_additional_client_tools_assigns_when_configured() -> None:
     mock_chat_client = MagicMock(spec=BaseChatClient)
     mock_chat_client.function_invocation_configuration = normalize_function_invocation_configuration(None)
 
-    agent = ChatAgent(chat_client=mock_chat_client)
+    agent = Agent(client=mock_chat_client)
 
     tools = [DummyTool("x")]
     register_additional_client_tools(agent, tools)
@@ -148,14 +148,14 @@ def test_collect_server_tools_no_default_options() -> None:
 def test_register_additional_client_tools_no_tools() -> None:
     """register_additional_client_tools does nothing with None tools."""
     mock_chat_client = MagicMock()
-    agent = ChatAgent(chat_client=mock_chat_client)
+    agent = Agent(client=mock_chat_client)
 
     # Should not raise
     register_additional_client_tools(agent, None)
 
 
 def test_register_additional_client_tools_no_chat_client() -> None:
-    """register_additional_client_tools does nothing when agent has no chat_client."""
+    """register_additional_client_tools does nothing when agent has no client."""
     from agent_framework_ag_ui._orchestration._tooling import register_additional_client_tools
 
     class MockAgent:

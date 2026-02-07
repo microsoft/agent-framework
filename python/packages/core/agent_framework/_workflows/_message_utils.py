@@ -4,38 +4,38 @@
 
 from collections.abc import Sequence
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 
 
 def normalize_messages_input(
-    messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-) -> list[ChatMessage]:
-    """Normalize heterogeneous message inputs to a list of ChatMessage objects.
+    messages: str | Message | Sequence[str | Message] | None = None,
+) -> list[Message]:
+    """Normalize heterogeneous message inputs to a list of Message objects.
 
     Args:
-        messages: String, ChatMessage, or sequence of either. None yields empty list.
+        messages: String, Message, or sequence of either. None yields empty list.
 
     Returns:
-        List of ChatMessage instances suitable for workflow consumption.
+        List of Message instances suitable for workflow consumption.
     """
     if messages is None:
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
+        return [Message(role="user", text=messages)]
 
-    if isinstance(messages, ChatMessage):
+    if isinstance(messages, Message):
         return [messages]
 
-    normalized: list[ChatMessage] = []
+    normalized: list[Message] = []
     for item in messages:
         if isinstance(item, str):
-            normalized.append(ChatMessage(role="user", text=item))
-        elif isinstance(item, ChatMessage):
+            normalized.append(Message(role="user", text=item))
+        elif isinstance(item, Message):
             normalized.append(item)
         else:
             raise TypeError(
-                f"Messages sequence must contain only str or ChatMessage instances; found {type(item).__name__}."
+                f"Messages sequence must contain only str or Message instances; found {type(item).__name__}."
             )
     return normalized
 

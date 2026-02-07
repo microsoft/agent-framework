@@ -27,7 +27,7 @@ from typing import Any
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -76,7 +76,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
     # Build prompt with human guidance if provided
     guidance_text = f"\n\nHuman guidance: {human_guidance}" if human_guidance else ""
 
-    system_msg = ChatMessage(
+    system_msg = Message(
         "system",
         text=(
             "You are a synthesis expert. Consolidate the following analyst perspectives "
@@ -84,7 +84,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
             "prioritize aspects as directed."
         ),
     )
-    user_msg = ChatMessage("user", text="\n\n".join(expert_sections) + guidance_text)
+    user_msg = Message("user", text="\n\n".join(expert_sections) + guidance_text)
 
     response = await _chat_client.get_response([system_msg, user_msg])
     return response.messages[-1].text if response.messages else ""

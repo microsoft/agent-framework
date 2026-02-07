@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, HostedWebSearchTool
+from agent_framework import Agent, HostedWebSearchTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -22,8 +22,8 @@ async def main() -> None:
         }
     }
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can search the web for current information.",
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
     )

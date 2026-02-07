@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, ChatMessage, WorkflowBuilder
+from agent_framework import AgentResponseUpdate, Message, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -26,15 +26,15 @@ Prerequisites:
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    writer_agent = chat_client.as_agent(
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    writer_agent = client.as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = chat_client.as_agent(
+    reviewer_agent = client.as_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."
@@ -52,7 +52,7 @@ async def main():
 
     # Run the workflow with the user's initial message and stream events as they occur.
     async for event in workflow.run(
-        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."]),
+        Message("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."]),
         stream=True,
     ):
         # The outputs of the workflow are whatever the agents produce. So the events are expected to

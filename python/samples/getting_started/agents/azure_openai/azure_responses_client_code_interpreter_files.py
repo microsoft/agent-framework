@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
+from agent_framework import Agent, HostedCodeInterpreterTool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from openai import AsyncAzureOpenAI
@@ -76,8 +76,8 @@ async def main() -> None:
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
     # Create agent using Azure OpenAI Responses client
-    agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+    agent = Agent(
+        client=AzureOpenAIResponsesClient(credential=credential),
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=HostedCodeInterpreterTool(inputs=[{"file_id": file_id}]),
     )

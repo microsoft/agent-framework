@@ -164,43 +164,43 @@ async def main() -> None:
     plugin = TicketingPlugin()
 
     # Create Azure OpenAI client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents with structured outputs
-    self_service_agent = chat_client.as_agent(
+    self_service_agent = client.as_agent(
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
         default_options={"response_format": SelfServiceResponse},
     )
 
-    ticketing_agent = chat_client.as_agent(
+    ticketing_agent = client.as_agent(
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
         default_options={"response_format": TicketingResponse},
     )
 
-    routing_agent = chat_client.as_agent(
+    routing_agent = client.as_agent(
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
         default_options={"response_format": RoutingResponse},
     )
 
-    windows_support_agent = chat_client.as_agent(
+    windows_support_agent = client.as_agent(
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
         default_options={"response_format": SupportResponse},
     )
 
-    resolution_agent = chat_client.as_agent(
+    resolution_agent = client.as_agent(
         name="TicketResolutionAgent",
         instructions=RESOLUTION_INSTRUCTIONS,
         tools=[plugin.resolve_ticket],
     )
 
-    escalation_agent = chat_client.as_agent(
+    escalation_agent = client.as_agent(
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],

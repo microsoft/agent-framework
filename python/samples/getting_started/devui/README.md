@@ -44,7 +44,7 @@ Each agent/workflow follows a strict structure required by DevUI's discovery sys
 
 ```
 agent_name/
-├── __init__.py      # Must export: agent = ChatAgent(...)
+├── __init__.py      # Must export: agent = Agent(...)
 ├── agent.py         # Agent implementation
 └── .env.example     # Example environment variables
 ```
@@ -100,13 +100,13 @@ Example:
 
 ```python
 # my_agent/__init__.py
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
-agent = ChatAgent(
+agent = Agent(
     name="MyAgent",
     description="My custom agent",
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     # ... your configuration
 )
 ```

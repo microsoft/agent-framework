@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -20,7 +20,7 @@ The workflow completes when all participants become idle.
 Demonstrates:
 - ConcurrentBuilder(participants=[...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
-- Aggregation implemented via an LLM call (chat_client.get_response)
+- Aggregation implemented via an LLM call (client.get_response)
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
@@ -29,23 +29,23 @@ Prerequisites:
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = chat_client.as_agent(
+    researcher = client.as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = chat_client.as_agent(
+    marketer = client.as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = chat_client.as_agent(
+    legal = client.as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -66,16 +66,16 @@ async def main() -> None:
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}: (error: {type(e).__name__}: {e})")
 
         # Ask the model to synthesize a concise summary of the experts' outputs
-        system_msg = ChatMessage(
+        system_msg = Message(
             "system",
             text=(
                 "You are a helpful assistant that consolidates multiple domain expert outputs "
                 "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
             ),
         )
-        user_msg = ChatMessage("user", text="\n\n".join(expert_sections))
+        user_msg = Message("user", text="\n\n".join(expert_sections))
 
-        response = await chat_client.get_response([system_msg, user_msg])
+        response = await client.get_response([system_msg, user_msg])
         # Return the model's final assistant text as the completion result
         return response.messages[-1].text if response.messages else ""
 
@@ -83,7 +83,7 @@ async def main() -> None:
     # - participants([...]) accepts SupportsAgentRun (agents) or Executor instances.
     #   Each participant becomes a parallel branch (fan-out) from an internal dispatcher.
     # - with_aggregator(...) overrides the default aggregator:
-    #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
+    #   • Default aggregator -> returns list[Message] (one user + one assistant per agent)
     #   • Custom callback    -> return value becomes workflow output (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (

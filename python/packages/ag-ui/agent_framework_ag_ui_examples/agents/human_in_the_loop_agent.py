@@ -5,7 +5,7 @@
 from enum import Enum
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, tool
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from pydantic import BaseModel, Field
 
 
@@ -43,16 +43,16 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return f"Generated {len(steps)} execution steps for the task."
 
 
-def human_in_the_loop_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
+def human_in_the_loop_agent(client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     """Create a human-in-the-loop agent using tool-based approach for predictive state.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
-        A configured ChatAgent instance with human-in-the-loop capabilities
+        A configured Agent instance with human-in-the-loop capabilities
     """
-    return ChatAgent(
+    return Agent(
         name="human_in_the_loop_agent",
         instructions="""You are a helpful assistant that can perform any task by breaking it down into steps.
 
@@ -81,6 +81,6 @@ def human_in_the_loop_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[A
     After the user approves and the function executes, THEN provide a brief acknowledgment like:
     "The plan has been created with X steps selected."
     """,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_task_steps],
     )

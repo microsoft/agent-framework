@@ -51,7 +51,7 @@ async def mcp_tools_on_agent_level() -> None:
     print("=== Tools Defined on Agent Level ===")
 
     # Tools are provided when creating the agent
-    # The ChatAgent will connect to the MCP server through its context manager
+    # The Agent will connect to the MCP server through its context manager
     # and discover tools at runtime
     async with (
         AzureCliCredential() as credential,

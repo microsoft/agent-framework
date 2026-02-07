@@ -5,7 +5,7 @@
 import json
 
 import pytest
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 
 from agent_framework_ag_ui._message_adapters import (
     agent_framework_messages_to_agui,
@@ -24,7 +24,7 @@ def sample_agui_message():
 @pytest.fixture
 def sample_agent_framework_message():
     """Create a sample Agent Framework message."""
-    return ChatMessage(role="user", contents=[Content.from_text(text="Hello")], message_id="msg-123")
+    return Message(role="user", contents=[Content.from_text(text="Hello")], message_id="msg-123")
 
 
 def test_agui_to_agent_framework_basic(sample_agui_message):
@@ -100,7 +100,7 @@ def test_agui_tool_result_to_agent_framework():
 def test_agui_tool_approval_updates_tool_call_arguments():
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
-    The LLM context (ChatMessage) should contain only enabled steps, so the LLM
+    The LLM context (Message) should contain only enabled steps, so the LLM
     generates responses based on what was actually approved/executed.
 
     The raw messages (for MESSAGES_SNAPSHOT) should contain all steps with status,
@@ -446,7 +446,7 @@ def test_agui_with_tool_calls_to_agent_framework():
 
 def test_agent_framework_to_agui_with_tool_calls():
     """Test converting Agent Framework message with tool calls to AG-UI."""
-    msg = ChatMessage(
+    msg = Message(
         role="assistant",
         contents=[
             Content.from_text(text="Calling tool"),
@@ -471,7 +471,7 @@ def test_agent_framework_to_agui_with_tool_calls():
 
 def test_agent_framework_to_agui_multiple_text_contents():
     """Test concatenating multiple text contents."""
-    msg = ChatMessage(
+    msg = Message(
         role="assistant",
         contents=[Content.from_text(text="Part 1 "), Content.from_text(text="Part 2")],
     )
@@ -484,7 +484,7 @@ def test_agent_framework_to_agui_multiple_text_contents():
 
 def test_agent_framework_to_agui_no_message_id():
     """Test message without message_id - should auto-generate ID."""
-    msg = ChatMessage(role="user", contents=[Content.from_text(text="Hello")])
+    msg = Message(role="user", contents=[Content.from_text(text="Hello")])
 
     messages = agent_framework_messages_to_agui([msg])
 
@@ -496,7 +496,7 @@ def test_agent_framework_to_agui_no_message_id():
 
 def test_agent_framework_to_agui_system_role():
     """Test system role conversion."""
-    msg = ChatMessage(role="system", contents=[Content.from_text(text="System")])
+    msg = Message(role="system", contents=[Content.from_text(text="System")])
 
     messages = agent_framework_messages_to_agui([msg])
 
@@ -541,7 +541,7 @@ def test_extract_text_from_custom_contents():
 
 def test_agent_framework_to_agui_function_result_dict():
     """Test converting FunctionResultContent with dict result to AG-UI."""
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result={"key": "value", "count": 42})],
         message_id="msg-789",
@@ -558,7 +558,7 @@ def test_agent_framework_to_agui_function_result_dict():
 
 def test_agent_framework_to_agui_function_result_none():
     """Test converting FunctionResultContent with None result to AG-UI."""
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result=None)],
         message_id="msg-789",
@@ -574,7 +574,7 @@ def test_agent_framework_to_agui_function_result_none():
 
 def test_agent_framework_to_agui_function_result_string():
     """Test converting FunctionResultContent with string result to AG-UI."""
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result="plain text result")],
         message_id="msg-789",
@@ -589,7 +589,7 @@ def test_agent_framework_to_agui_function_result_string():
 
 def test_agent_framework_to_agui_function_result_empty_list():
     """Test converting FunctionResultContent with empty list result to AG-UI."""
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result=[])],
         message_id="msg-789",
@@ -611,7 +611,7 @@ def test_agent_framework_to_agui_function_result_single_text_content():
     class MockTextContent:
         text: str
 
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result=[MockTextContent("Hello from MCP!")])],
         message_id="msg-789",
@@ -633,7 +633,7 @@ def test_agent_framework_to_agui_function_result_multiple_text_contents():
     class MockTextContent:
         text: str
 
-    msg = ChatMessage(
+    msg = Message(
         role="tool",
         contents=[
             Content.from_function_result(

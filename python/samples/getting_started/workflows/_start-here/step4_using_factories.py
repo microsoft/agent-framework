@@ -4,7 +4,7 @@ import asyncio
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
+    Agent,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -56,7 +56,7 @@ async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
     await ctx.send_message(result)
 
 
-def create_agent() -> ChatAgent:
+def create_agent() -> Agent:
     """Factory function to create a Writer agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You decode messages. Try to reconstruct the original message."),

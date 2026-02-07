@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -23,8 +23,8 @@ async def main() -> None:
         # Endpoint here should be application endpoint with format:
         # /api/projects/<project-name>/applications/<application-name>/protocols
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-        ChatAgent(
-            chat_client=AzureAIClient(
+        Agent(
+            client=AzureAIClient(
                 project_client=project_client,
             ),
         ) as agent,

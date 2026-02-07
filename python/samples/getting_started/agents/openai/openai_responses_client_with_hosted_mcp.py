@@ -3,7 +3,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import ChatAgent, HostedMCPTool
+from agent_framework import Agent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query)
     while len(result.user_input_requests) > 0:
@@ -29,10 +29,10 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
             )
-            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            new_inputs.append(Message(role="assistant", contents=[user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                Message(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs)
@@ -41,7 +41,7 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
 
 async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query, thread=thread, store=True)
     while len(result.user_input_requests) > 0:
@@ -53,7 +53,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
             )
             user_approval = input("Approve function call? (y/n): ")
             new_input.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
@@ -64,13 +64,13 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
 
 async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
-    new_input: list[ChatMessage] = []
+    new_input: list[Message] = []
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(ChatMessage(role="user", text=query))
+        new_input.append(Message(role="user", text=query))
         async for update in agent.run(new_input, thread=thread, stream=True, options={"store": True}):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
@@ -80,7 +80,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAge
                     )
                     user_approval = input("Approve function call? (y/n): ")
                     new_input.append(
-                        ChatMessage(
+                        Message(
                             role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")]
                         )
                     )
@@ -95,8 +95,8 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=HostedMCPTool(
@@ -126,8 +126,8 @@ async def run_hosted_mcp_without_approval() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=HostedMCPTool(
@@ -158,8 +158,8 @@ async def run_hosted_mcp_with_thread() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=HostedMCPTool(
@@ -189,8 +189,8 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=HostedMCPTool(

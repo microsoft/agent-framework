@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **agent-framework-core**: [BREAKING] Renamed core types for simpler API:
+  - `ChatAgent` → `Agent`
+  - `RawChatAgent` → `RawAgent`
+  - `ChatMessage` → `Message`
+  - `ChatClientProtocol` → `SupportsChatGetResponse`
+
 ## [1.0.0b260130] - 2026-01-30
 
 ### Added
@@ -268,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **agent-framework-core**: [BREAKING] Support Magentic agent tool call approvals and plan stalling HITL behavior (#2569)
-- **agent-framework-core**: [BREAKING] Standardize orchestration outputs as list of `ChatMessage`; allow agent as group chat manager (#2291)
+- **agent-framework-core**: [BREAKING] Standardize orchestration outputs as list of `Message`; allow agent as group chat manager (#2291)
 - **agent-framework-core**: [BREAKING] Respond with `AgentRunResponse` including serialized structured output (#2285)
 - **observability**: Use `executor_id` and `edge_group_id` as span names for clearer traces (#2538)
 - **agent-framework-devui**: Add multimodal input support for workflows and refactor chat input (#2593)
@@ -314,7 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-core**: Fix tool execution bleed-over in aiohttp/Bot Framework scenarios ([#2314](https://github.com/microsoft/agent-framework/pull/2314))
 - **agent-framework-core**: `@ai_function` now correctly handles `self` parameter ([#2266](https://github.com/microsoft/agent-framework/pull/2266))
 - **agent-framework-core**: Resolve string annotations in `FunctionExecutor` ([#2308](https://github.com/microsoft/agent-framework/pull/2308))
-- **agent-framework-core**: Langfuse observability captures ChatAgent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
+- **agent-framework-core**: Langfuse observability captures Agent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
 - **agent-framework-core**: Incomplete URL substring sanitization fix ([#2274](https://github.com/microsoft/agent-framework/pull/2274))
 - **observability**: Handle datetime serialization in tool results ([#2248](https://github.com/microsoft/agent-framework/pull/2248))
 

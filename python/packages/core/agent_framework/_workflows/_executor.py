@@ -17,7 +17,7 @@ from ._events import (
 )
 from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
-from ._runner_context import Message, MessageType, RunnerContext
+from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
@@ -244,7 +244,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         with create_processing_span(
             self.id,
             self.__class__.__name__,
-            str(MessageType.STANDARD if not isinstance(message, Message) else message.type),
+            str(MessageType.STANDARD if not isinstance(message, WorkflowMessage) else message.type),
             type(message).__name__,
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
@@ -253,7 +253,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             handler = self._find_handler(message)
 
             original_message = message
-            if isinstance(message, Message):
+            if isinstance(message, WorkflowMessage):
                 # Unwrap raw data for handler call
                 message = message.data
 
@@ -265,7 +265,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
                 request_id=original_message.original_request_info_event.request_id
-                if isinstance(original_message, Message) and original_message.original_request_info_event
+                if isinstance(original_message, WorkflowMessage) and original_message.original_request_info_event
                 else None,
             )
 
@@ -351,7 +351,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                 # Add to unified handler specs list
                 self._handler_specs.append({**handler_spec})
 
-    def can_handle(self, message: Message) -> bool:
+    def can_handle(self, message: WorkflowMessage) -> bool:
         """Check if the executor can handle a given message type.
 
         Args:
@@ -460,7 +460,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             The handler function if found, None otherwise
         """
-        if isinstance(message, Message):
+        if isinstance(message, WorkflowMessage):
             # Case where Message wrapper is passed instead of raw data
             # Handler can be a standard handler or a response handler
             if message.type == MessageType.STANDARD:

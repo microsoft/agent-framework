@@ -65,7 +65,7 @@ def create_weather_agent():
     """Create the Weather agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Weather agent with weather tool
+        Agent: The configured Weather agent with weather tool
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=WEATHER_AGENT_NAME,
@@ -78,7 +78,7 @@ def create_math_agent():
     """Create the Math agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Math agent with calculation tools
+        Agent: The configured Math agent with calculation tools
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=MATH_AGENT_NAME,

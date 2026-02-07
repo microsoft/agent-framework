@@ -76,7 +76,7 @@ export function RunWorkflowButton({
 
   // Analyze input requirements
   const inputAnalysis = useMemo(() => {
-    // Check if this is a ChatMessage schema (for AgentExecutor workflows)
+    // Check if this is a Message schema (for AgentExecutor workflows)
     const isChatMessage = isChatMessageSchema(inputSchema);
 
     if (!inputSchema)
