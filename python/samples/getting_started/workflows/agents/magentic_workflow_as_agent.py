@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import (
-    ChatAgent,
+    Agent,
     HostedCodeInterpreterTool,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
@@ -22,7 +22,7 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher_agent = ChatAgent(
+    researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
@@ -32,7 +32,7 @@ async def main() -> None:
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    coder_agent = ChatAgent(
+    coder_agent = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -41,7 +41,7 @@ async def main() -> None:
     )
 
     # Create a manager agent for orchestration
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",

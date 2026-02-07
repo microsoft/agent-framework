@@ -15,9 +15,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     ContextProvider,
+    Message,
     ResponseStream,
     normalize_messages,
 )
@@ -278,7 +278,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
@@ -289,7 +289,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -299,7 +299,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -341,7 +341,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_impl(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         thread: AgentThread | None = None,
         options: OptionsT | None = None,
@@ -366,7 +366,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise ServiceException(f"GitHub Copilot request failed: {ex}") from ex
 
-        response_messages: list[ChatMessage] = []
+        response_messages: list[Message] = []
         response_id: str | None = None
 
         # send_and_wait returns only the final ASSISTANT_MESSAGE event;
@@ -376,7 +376,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
             if response_event.data.content:
                 response_messages.append(
-                    ChatMessage(
+                    Message(
                         role="assistant",
                         contents=[Content.from_text(response_event.data.content)],
                         message_id=message_id,
@@ -389,7 +389,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _stream_updates(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         thread: AgentThread | None = None,
         options: OptionsT | None = None,

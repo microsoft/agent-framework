@@ -517,7 +517,7 @@ class WorkflowFactory:
         Args:
             name: The name to register the agent under. Must match the agent name
                 referenced in InvokeAzureAgent actions.
-            agent: The agent instance (typically a ChatAgent or similar).
+            agent: The agent instance (typically a Agent or similar).
 
         Returns:
             Self for method chaining.

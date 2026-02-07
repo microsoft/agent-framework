@@ -28,7 +28,7 @@ from typing import cast
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -51,7 +51,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
             print("=" * 60)
             print("Final discussion summary:")
             # To make the type checker happy, we cast event.data to the expected type
-            outputs = cast(list[ChatMessage], event.data)
+            outputs = cast(list[Message], event.data)
             for msg in outputs:
                 speaker = msg.author_name or msg.role
                 print(f"[{speaker}]: {msg.text}")

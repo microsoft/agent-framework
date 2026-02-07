@@ -12,11 +12,10 @@ from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    Agent,
     Annotation,
     BaseChatClient,
-    ChatAgent,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
     ChatOptions,
@@ -31,6 +30,7 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    Message,
     MiddlewareTypes,
     ResponseStream,
     Role,
@@ -44,7 +44,9 @@ from agent_framework.exceptions import ServiceInitializationError, ServiceInvali
 from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
-    Agent,
+    Agent as AzureAgent,
+)
+from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
     AgentsToolChoiceOptionMode,
@@ -346,7 +348,7 @@ class AzureAIAgentClient(
         self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
         self._agent_created = False  # Track whether agent was created inside this class
         self._should_close_client = should_close_client  # Track whether we should close client connection
-        self._agent_definition: Agent | None = None  # Cached definition for existing agent
+        self._agent_definition: AzureAgent | None = None  # Cached definition for existing agent
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -365,7 +367,7 @@ class AzureAIAgentClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -898,7 +900,7 @@ class AzureAIAgentClient(
             self.agent_id = None
             self._agent_created = False
 
-    async def _load_agent_definition_if_needed(self) -> Agent | None:
+    async def _load_agent_definition_if_needed(self) -> AzureAgent | None:
         """Load and cache agent details if not already loaded."""
         if self._agent_definition is None and self.agent_id is not None:
             self._agent_definition = await self.agents_client.get_agent(self.agent_id)
@@ -906,7 +908,7 @@ class AzureAIAgentClient(
 
     async def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
@@ -1020,7 +1022,7 @@ class AzureAIAgentClient(
     async def _prepare_tool_definitions_and_resources(
         self,
         options: Mapping[str, Any],
-        agent_definition: Agent | None,
+        agent_definition: AzureAgent | None,
         run_options: dict[str, Any],
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions and resources for the run options."""
@@ -1084,7 +1086,7 @@ class AzureAIAgentClient(
         return mcp_resources
 
     def _prepare_messages(
-        self, messages: Sequence[ChatMessage]
+        self, messages: Sequence[Message]
     ) -> tuple[
         list[ThreadMessageOptions] | None,
         list[str],
@@ -1301,10 +1303,10 @@ class AzureAIAgentClient(
         context_provider: ContextProvider | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[AzureAIAgentOptionsT]:
-        """Convert this chat client to a ChatAgent.
+    ) -> Agent[AzureAIAgentOptionsT]:
+        """Convert this chat client to a Agent.
 
-        This method creates a ChatAgent instance with this client pre-configured.
+        This method creates a Agent instance with this client pre-configured.
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
@@ -1324,7 +1326,7 @@ class AzureAIAgentClient(
             kwargs: Any additional keyword arguments.
 
         Returns:
-            A ChatAgent instance configured with this chat client.
+            A Agent instance configured with this chat client.
         """
         return super().as_agent(
             id=id,

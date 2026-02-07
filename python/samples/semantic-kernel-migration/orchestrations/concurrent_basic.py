@@ -15,10 +15,12 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, ConcurrentOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
@@ -31,7 +33,7 @@ PROMPT = "Explain the concept of temperature from multiple scientific perspectiv
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[SKAgent]:
     credential = AzureCliCredential()
 
     physics_agent = ChatCompletionAgent(
@@ -83,7 +85,7 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 ######################################################################
 
 
-async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]]:
+async def run_agent_framework_example(prompt: str) -> Sequence[list[Message]]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     physics = chat_client.as_agent(
@@ -98,15 +100,15 @@ async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]
 
     workflow = ConcurrentBuilder(participants=[physics, chemistry]).build()
 
-    outputs: list[list[ChatMessage]] = []
+    outputs: list[list[Message]] = []
     async for event in workflow.run(prompt, stream=True):
         if event.type == "output":
-            outputs.append(cast(list[ChatMessage], event.data))
+            outputs.append(cast(list[Message], event.data))
 
     return outputs
 
 
-def _print_agent_framework_outputs(conversations: Sequence[Sequence[ChatMessage]]) -> None:
+def _print_agent_framework_outputs(conversations: Sequence[Sequence[Message]]) -> None:
     if not conversations:
         print("No Agent Framework output.")
         return

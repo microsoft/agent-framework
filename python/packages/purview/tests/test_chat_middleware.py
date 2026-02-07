@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatContext, ChatMessage, MiddlewareTermination
+from agent_framework import ChatContext, Message, MiddlewareTermination
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
@@ -37,9 +37,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        return ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
-        )
+        return ChatContext(chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
     async def test_initialization(self, middleware: PurviewChatPolicyMiddleware) -> None:
         assert middleware._client is not None
@@ -57,7 +55,7 @@ class TestPurviewChatPolicyMiddleware:
 
                 class Result:
                     def __init__(self):
-                        self.messages = [ChatMessage(role="assistant", text="Hi there")]
+                        self.messages = [Message(role="assistant", text="Hi there")]
 
                 ctx.result = Result()
 
@@ -93,7 +91,7 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next(ctx: ChatContext) -> None:
                 class Result:
                     def __init__(self):
-                        self.messages = [ChatMessage(role="assistant", text="Sensitive output")]  # pragma: no cover
+                        self.messages = [Message(role="assistant", text="Sensitive output")]  # pragma: no cover
 
                 ctx.result = Result()
 
@@ -110,7 +108,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options.model = "test-model"
         streaming_context = ChatContext(
             chat_client=chat_client,
-            messages=[ChatMessage(role="user", text="Hello")],
+            messages=[Message(role="user", text="Hello")],
             options=chat_options,
             stream=True,
         )
@@ -142,7 +140,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Response")]
+                result.messages = [Message(role="assistant", text="Response")]
                 ctx.result = result
 
             await middleware.process(chat_context, mock_next)
@@ -166,7 +164,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Response")]
+                result.messages = [Message(role="assistant", text="Response")]
                 ctx.result = result
 
             await middleware.process(chat_context, mock_next)
@@ -190,7 +188,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):
@@ -216,7 +214,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         call_count = 0
@@ -232,7 +230,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="OK")]
+                result.messages = [Message(role="assistant", text="OK")]
                 ctx.result = result
 
             with pytest.raises(PurviewPaymentRequiredError):
@@ -249,7 +247,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):
@@ -259,7 +257,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Response")]
+                result.messages = [Message(role="assistant", text="Response")]
                 context.result = result
 
             # Should not raise, just log
@@ -291,7 +289,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         async def mock_process_messages(*args, **kwargs):
@@ -301,7 +299,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Response")]
+                result.messages = [Message(role="assistant", text="Response")]
                 context.result = result
 
             # Should not raise, just log
@@ -320,7 +318,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         with patch.object(middleware._processor, "process_messages", side_effect=ValueError("boom")):
@@ -342,7 +340,7 @@ class TestPurviewChatPolicyMiddleware:
         chat_options = MagicMock()
         chat_options.model = "test-model"
         context = ChatContext(
-            chat_client=chat_client, messages=[ChatMessage(role="user", text="Hello")], options=chat_options
+            chat_client=chat_client, messages=[Message(role="user", text="Hello")], options=chat_options
         )
 
         call_count = 0
@@ -358,7 +356,7 @@ class TestPurviewChatPolicyMiddleware:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="OK")]
+                result.messages = [Message(role="assistant", text="OK")]
                 ctx.result = result
 
             with pytest.raises(ValueError, match="post"):

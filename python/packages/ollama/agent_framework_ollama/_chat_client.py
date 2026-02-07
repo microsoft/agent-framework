@@ -18,7 +18,6 @@ from typing import Any, ClassVar, Generic, TypedDict
 from agent_framework import (
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -28,6 +27,7 @@ from agent_framework import (
     FunctionInvocationLayer,
     FunctionTool,
     HostedWebSearchTool,
+    Message,
     ResponseStream,
     ToolProtocol,
     UsageDetails,
@@ -356,7 +356,7 @@ class OllamaChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -397,7 +397,7 @@ class OllamaChatClient(
 
         return _get_response()
 
-    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         # Handle instructions by prepending to messages as system message
         instructions = options.get("instructions")
         if instructions:
@@ -448,13 +448,13 @@ class OllamaChatClient(
 
         return run_options
 
-    def _prepare_messages_for_ollama(self, messages: Sequence[ChatMessage]) -> list[OllamaMessage]:
+    def _prepare_messages_for_ollama(self, messages: Sequence[Message]) -> list[OllamaMessage]:
         ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
-    def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
-        message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
+    def _prepare_message_for_ollama(self, message: Message) -> list[OllamaMessage]:
+        message_converters: dict[str, Callable[[Message], list[OllamaMessage]]] = {
             "system": self._format_system_message,
             "user": self._format_user_message,
             "assistant": self._format_assistant_message,
@@ -462,10 +462,10 @@ class OllamaChatClient(
         }
         return message_converters[message.role](message)
 
-    def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_system_message(self, message: Message) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
 
-    def _format_user_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_user_message(self, message: Message) -> list[OllamaMessage]:
         if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
             raise ServiceInvalidRequestError(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
@@ -483,7 +483,7 @@ class OllamaChatClient(
             user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
 
-    def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_assistant_message(self, message: Message) -> list[OllamaMessage]:
         text_content = message.text
         # Ollama shouldn't have encrypted reasoning, so we just process text.
         reasoning_contents = "".join((c.text or "") for c in message.contents if c.type == "text_reasoning")
@@ -506,7 +506,7 @@ class OllamaChatClient(
             ]
         return [assistant_message]
 
-    def _format_tool_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
         return [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
@@ -538,7 +538,7 @@ class OllamaChatClient(
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[Message(role="assistant", contents=contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(

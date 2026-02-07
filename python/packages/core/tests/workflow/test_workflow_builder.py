@@ -11,8 +11,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowValidationError,
@@ -27,13 +27,13 @@ class DummyAgent(BaseAgent):
         return self._run_impl(messages)
 
     async def _run_impl(self, messages=None) -> AgentResponse:
-        norm: list[ChatMessage] = []
+        norm: list[Message] = []
         if messages:
             for m in messages:  # type: ignore[iteration-over-optional]
-                if isinstance(m, ChatMessage):
+                if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role="user", text=m))
+                    norm.append(Message(role="user", text=m))
         return AgentResponse(messages=norm)
 
     async def _run_stream_impl(self):  # type: ignore[override]

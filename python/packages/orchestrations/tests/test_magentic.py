@@ -11,9 +11,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     Executor,
+    Message,
     SupportsAgentRun,
     Workflow,
     WorkflowCheckpoint,
@@ -48,7 +48,7 @@ def test_magentic_context_reset_behavior():
         participant_descriptions={"Alice": "Researcher"},
     )
     # seed context state
-    ctx.chat_history.append(ChatMessage("assistant", ["draft"]))
+    ctx.chat_history.append(Message("assistant", ["draft"]))
     ctx.stall_count = 2
     prev_reset = ctx.reset_count
 
@@ -61,8 +61,8 @@ def test_magentic_context_reset_behavior():
 
 @dataclass
 class _SimpleLedger:
-    facts: ChatMessage
-    plan: ChatMessage
+    facts: Message
+    plan: Message
 
 
 class FakeManager(MagenticManagerBase):
@@ -108,25 +108,25 @@ class FakeManager(MagenticManagerBase):
             plan_payload = cast(dict[str, Any] | None, ledger_dict.get("plan"))
             if facts_payload is not None and plan_payload is not None:
                 try:
-                    facts = ChatMessage.from_dict(facts_payload)
-                    plan = ChatMessage.from_dict(plan_payload)
+                    facts = Message.from_dict(facts_payload)
+                    plan = Message.from_dict(plan_payload)
                     self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
                 except Exception:  # pragma: no cover - defensive
                     pass
 
-    async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- A\n"])
-        plan = ChatMessage("assistant", ["- Do X\n- Do Y\n"])
+    async def plan(self, magentic_context: MagenticContext) -> Message:
+        facts = Message("assistant", ["GIVEN OR VERIFIED FACTS\n- A\n"])
+        plan = Message("assistant", ["- Do X\n- Do Y\n"])
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage("assistant", [combined], author_name=self.name)
+        return Message("assistant", [combined], author_name=self.name)
 
-    async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        facts = ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- A2\n"])
-        plan = ChatMessage("assistant", ["- Do Z\n"])
+    async def replan(self, magentic_context: MagenticContext) -> Message:
+        facts = Message("assistant", ["GIVEN OR VERIFIED FACTS\n- A2\n"])
+        plan = Message("assistant", ["- Do Z\n"])
         self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
         combined = f"Task: {magentic_context.task}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
-        return ChatMessage("assistant", [combined], author_name=self.name)
+        return Message("assistant", [combined], author_name=self.name)
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         # At least two messages in chat history means request is satisfied for testing
@@ -139,8 +139,8 @@ class FakeManager(MagenticManagerBase):
             instruction_or_question=MagenticProgressLedgerItem(reason="test", answer=self.instruction_text),
         )
 
-    async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", [self.FINAL_ANSWER], author_name=self.name)
+    async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", [self.FINAL_ANSWER], author_name=self.name)
 
 
 class StubAgent(BaseAgent):
@@ -150,7 +150,7 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -160,7 +160,7 @@ class StubAgent(BaseAgent):
             return self._run_stream()
 
         async def _run() -> AgentResponse:
-            response = ChatMessage("assistant", [self._reply_text], author_name=self.name)
+            response = Message("assistant", [self._reply_text], author_name=self.name)
             return AgentResponse(messages=[response])
 
         return _run()
@@ -177,7 +177,7 @@ class DummyExec(Executor):
 
     @handler
     async def _noop(
-        self, message: GroupChatRequestMessage, ctx: WorkflowContext[ChatMessage]
+        self, message: GroupChatRequestMessage, ctx: WorkflowContext[Message]
     ) -> None:  # pragma: no cover - not called
         pass
 
@@ -190,13 +190,13 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
 
     assert isinstance(workflow, Workflow)
 
-    outputs: list[ChatMessage] = []
+    outputs: list[Message] = []
     orchestrator_event_count = 0
     async for event in workflow.run("compose summary", stream=True):
         if event.type == "output":
             msg = event.data
             if isinstance(msg, list):
-                outputs.extend(cast(list[ChatMessage], msg))
+                outputs.extend(cast(list[Message], msg))
         elif event.type == "magentic_orchestrator":
             orchestrator_event_count += 1
 
@@ -216,8 +216,8 @@ async def test_magentic_as_agent_does_not_accept_conversation() -> None:
 
     agent = workflow.as_agent(name="magentic-agent")
     conversation = [
-        ChatMessage("system", ["Guidelines"], author_name="system"),
-        ChatMessage("user", ["Summarize the findings"], author_name="requester"),
+        Message("system", ["Guidelines"], author_name="system"),
+        Message("user", ["Summarize the findings"], author_name="requester"),
     ]
     with pytest.raises(ValueError, match="Magentic only support a single task message to start the workflow."):
         await agent.run(conversation)
@@ -250,7 +250,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
     completed = False
-    output: list[ChatMessage] | None = None
+    output: list[Message] | None = None
     async for ev in wf.run(stream=True, responses={req_event.request_id: req_event.data.approve()}):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -262,7 +262,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert completed
     assert output is not None
     assert isinstance(output, list)
-    assert all(isinstance(msg, ChatMessage) for msg in output)
+    assert all(isinstance(msg, Message) for msg in output)
 
 
 async def test_magentic_plan_review_with_revise():
@@ -273,7 +273,7 @@ async def test_magentic_plan_review_with_revise():
         def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
             super().__init__(*args, **kwargs)
 
-        async def replan(self, magentic_context: MagenticContext) -> ChatMessage:  # type: ignore[override]
+        async def replan(self, magentic_context: MagenticContext) -> Message:  # type: ignore[override]
             self.replan_count += 1
             return await super().replan(magentic_context)
 
@@ -340,7 +340,7 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert isinstance(data, list)
     assert len(data) > 0  # type: ignore
     assert data[-1].role == "assistant"  # type: ignore
-    assert all(isinstance(msg, ChatMessage) for msg in data)  # type: ignore
+    assert all(isinstance(msg, Message) for msg in data)  # type: ignore
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -406,7 +406,7 @@ class StubManagerAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: Any = None,
@@ -416,22 +416,22 @@ class StubManagerAgent(BaseAgent):
             return self._run_stream()
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", ["ok"])])
+            return AgentResponse(messages=[Message("assistant", ["ok"])])
 
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[ChatMessage("assistant", ["ok"])])
+        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     mgr = StandardMagenticManager(StubManagerAgent())
 
-    async def fake_complete_plan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
+    async def fake_complete_plan(messages: list[Message], **kwargs: Any) -> Message:
         # Return a different response depending on call order length
         if any("FACTS" in (m.text or "") for m in messages):
-            return ChatMessage("assistant", ["- step A\n- step B"])
-        return ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
+            return Message("assistant", ["- step A\n- step B"])
+        return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
     mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
@@ -444,10 +444,10 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
     assert any(t in combined.text for t in ("- step A", "- step B", "- step"))
 
     # Now replan with new outputs
-    async def fake_complete_replan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
+    async def fake_complete_replan(messages: list[Message], **kwargs: Any) -> Message:
         if any("Please briefly explain" in (m.text or "") for m in messages):
-            return ChatMessage("assistant", ["- new step"])
-        return ChatMessage("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
+            return Message("assistant", ["- new step"])
+        return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
     mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
     combined2 = await mgr.replan(ctx.clone())
@@ -459,7 +459,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
 
     # Success path: valid JSON
-    async def fake_complete_ok(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
+    async def fake_complete_ok(messages: list[Message], **kwargs: Any) -> Message:
         json_text = (
             '{"is_request_satisfied": {"reason": "r", "answer": false}, '
             '"is_in_loop": {"reason": "r", "answer": false}, '
@@ -467,15 +467,15 @@ async def test_standard_manager_progress_ledger_success_and_error():
             '"next_speaker": {"reason": "r", "answer": "alice"}, '
             '"instruction_or_question": {"reason": "r", "answer": "do"}}'
         )
-        return ChatMessage("assistant", [json_text])
+        return Message("assistant", [json_text])
 
     mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
     ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
     # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
-    async def fake_complete_bad(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
-        return ChatMessage("assistant", ["not-json"])
+    async def fake_complete_bad(messages: list[Message], **kwargs: Any) -> Message:
+        return Message("assistant", ["not-json"])
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError):
@@ -487,11 +487,11 @@ class InvokeOnceManager(MagenticManagerBase):
         super().__init__(max_round_count=5, max_stall_count=3, max_reset_count=2)
         self._invoked = False
 
-    async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["ledger"])
+    async def plan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["ledger"])
 
-    async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["re-ledger"])
+    async def replan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["re-ledger"])
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         if not self._invoked:
@@ -513,8 +513,8 @@ class InvokeOnceManager(MagenticManagerBase):
             instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="done"),
         )
 
-    async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["final"])
+    async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["final"])
 
 
 class StubThreadAgent(BaseAgent):
@@ -526,7 +526,7 @@ class StubThreadAgent(BaseAgent):
             return self._run_stream()
 
         async def _run():
-            return AgentResponse(messages=[ChatMessage("assistant", ["thread-ok"], author_name=self.name)])
+            return AgentResponse(messages=[Message("assistant", ["thread-ok"], author_name=self.name)])
 
         return _run()
 
@@ -554,7 +554,7 @@ class StubAssistantsAgent(BaseAgent):
             return self._run_stream()
 
         async def _run():
-            return AgentResponse(messages=[ChatMessage("assistant", ["assistants-ok"], author_name=self.name)])
+            return AgentResponse(messages=[Message("assistant", ["assistants-ok"], author_name=self.name)])
 
         return _run()
 
@@ -566,8 +566,8 @@ class StubAssistantsAgent(BaseAgent):
         )
 
 
-async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[ChatMessage]:
-    captured: list[ChatMessage] = []
+async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[Message]:
+    captured: list[Message] = []
 
     wf = MagenticBuilder(participants=[participant], intermediate_outputs=True, manager=InvokeOnceManager()).build()
 
@@ -578,7 +578,7 @@ async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[
         # Capture streaming updates (type="output" with AgentResponseUpdate data)
         if ev.type == "output" and isinstance(ev.data, AgentResponseUpdate):
             captured.append(
-                ChatMessage(
+                Message(
                     role=ev.data.role or "assistant",
                     text=ev.data.text or "",
                     author_name=ev.data.author_name,
@@ -711,11 +711,11 @@ class NotProgressingManager(MagenticManagerBase):
     A manager that never marks progress being made, to test stall/reset limits.
     """
 
-    async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["ledger"])
+    async def plan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["ledger"])
 
-    async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["re-ledger"])
+    async def replan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["re-ledger"])
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         return MagenticProgressLedger(
@@ -726,8 +726,8 @@ class NotProgressingManager(MagenticManagerBase):
             instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="done"),
         )
 
-    async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-        return ChatMessage("assistant", ["final"])
+    async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["final"])
 
 
 async def test_magentic_stall_and_reset_reach_limits():
@@ -747,7 +747,7 @@ async def test_magentic_stall_and_reset_reach_limits():
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
     assert isinstance(output_event.data, list)
-    assert all(isinstance(msg, ChatMessage) for msg in output_event.data)  # type: ignore
+    assert all(isinstance(msg, Message) for msg in output_event.data)  # type: ignore
     assert len(output_event.data) > 0  # type: ignore
     assert output_event.data[-1].text is not None  # type: ignore
     assert output_event.data[-1].text == "Workflow terminated due to reaching maximum reset count."  # type: ignore
@@ -760,7 +760,7 @@ async def test_magentic_checkpoint_runtime_only() -> None:
     manager = FakeManager(max_round_count=10)
     wf = MagenticBuilder(participants=[DummyExec("agentA")], manager=manager).build()
 
-    baseline_output: ChatMessage | None = None
+    baseline_output: Message | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -794,7 +794,7 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
             participants=[DummyExec("agentA")], checkpoint_storage=buildtime_storage, manager=manager
         ).build()
 
-        baseline_output: ChatMessage | None = None
+        baseline_output: Message | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]
@@ -821,8 +821,8 @@ async def test_magentic_context_no_duplicate_on_reset():
     ctx = MagenticContext(task="task", participant_descriptions={"Alice": "Researcher"})
 
     # Add some history
-    ctx.chat_history.append(ChatMessage("assistant", ["response1"]))
-    ctx.chat_history.append(ChatMessage("assistant", ["response2"]))
+    ctx.chat_history.append(Message("assistant", ["response1"]))
+    ctx.chat_history.append(Message("assistant", ["response2"]))
     assert len(ctx.chat_history) == 2
 
     # Reset
@@ -832,7 +832,7 @@ async def test_magentic_context_no_duplicate_on_reset():
     assert len(ctx.chat_history) == 0, "chat_history should be empty after reset"
 
     # Add new history
-    ctx.chat_history.append(ChatMessage("assistant", ["new_response"]))
+    ctx.chat_history.append(Message("assistant", ["new_response"]))
     assert len(ctx.chat_history) == 1, "Should have exactly 1 message after adding to reset context"
 
 
@@ -844,8 +844,8 @@ async def test_magentic_checkpoint_restore_no_duplicate_history():
     wf = MagenticBuilder(participants=[DummyExec("agentA")], checkpoint_storage=storage, manager=manager).build()
 
     # Run with conversation history to create initial checkpoint
-    conversation: list[ChatMessage] = [
-        ChatMessage("user", ["task_msg"]),
+    conversation: list[Message] = [
+        Message("user", ["task_msg"]),
     ]
 
     async for event in wf.run(conversation, stream=True):
@@ -1022,8 +1022,8 @@ def test_magentic_agent_factory_with_standard_manager_options():
     from agent_framework_orchestrations._magentic import _MagenticTaskLedger  # type: ignore
 
     custom_task_ledger = _MagenticTaskLedger(
-        facts=ChatMessage("assistant", ["Custom facts"]),
-        plan=ChatMessage("assistant", ["Custom plan"]),
+        facts=Message("assistant", ["Custom facts"]),
+        plan=Message("assistant", ["Custom plan"]),
     )
 
     participant = StubAgent("agentA", "reply from agentA")

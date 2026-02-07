@@ -20,7 +20,7 @@ sequenceDiagram
     participant Agent as Agent.run()
     participant AML as AgentMiddlewareLayer
     participant AMP as AgentMiddlewarePipeline
-    participant RawAgent as RawChatAgent.run()
+    participant RawAgent as RawAgent.run()
     participant CML as ChatMiddlewareLayer
     participant CMP as ChatMiddlewarePipeline
     participant FIL as FunctionInvocationLayer
@@ -132,7 +132,7 @@ sequenceDiagram
 | Field | Type | Description |
 |-------|------|-------------|
 | `agent` | `SupportsAgentRun` | The agent being invoked |
-| `messages` | `list[ChatMessage]` | Input messages (mutable) |
+| `messages` | `list[Message]` | Input messages (mutable) |
 | `thread` | `AgentThread \| None` | Conversation thread |
 | `options` | `Mapping[str, Any]` | Chat options dict |
 | `stream` | `bool` | Whether streaming is enabled |
@@ -144,7 +144,7 @@ sequenceDiagram
 1. `categorize_middleware()` separates middleware by type (agent, chat, function)
 2. Chat and function middleware are forwarded to `chat_client`
 3. `AgentMiddlewarePipeline.execute()` runs the agent middleware chain
-4. Final handler calls `RawChatAgent.run()`
+4. Final handler calls `RawAgent.run()`
 
 **What Can Be Modified:**
 - `context.messages` - Add, remove, or modify input messages
@@ -160,8 +160,8 @@ sequenceDiagram
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `chat_client` | `ChatClientProtocol` | The chat client |
-| `messages` | `Sequence[ChatMessage]` | Messages to send |
+| `chat_client` | `SupportsChatGetResponse` | The chat client |
+| `messages` | `Sequence[Message]` | Messages to send |
 | `options` | `Mapping[str, Any]` | Chat options |
 | `stream` | `bool` | Whether streaming |
 | `metadata` | `dict` | Shared data between middleware |
@@ -275,7 +275,7 @@ class TerminatingMiddleware(FunctionMiddleware):
 ### Agent Layer → Chat Layer
 
 ```python
-# RawChatAgent._prepare_run_context() builds:
+# RawAgent._prepare_run_context() builds:
 {
     "thread": AgentThread,          # Validated/created thread
     "input_messages": [...],        # Normalized input messages

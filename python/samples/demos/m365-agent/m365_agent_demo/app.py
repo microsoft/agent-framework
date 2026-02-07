@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
@@ -95,7 +95,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-def build_agent() -> ChatAgent:
+def build_agent() -> Agent:
     """Create and return the chat agent instance with weather tool registered."""
     return OpenAIChatClient().as_agent(
         name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather

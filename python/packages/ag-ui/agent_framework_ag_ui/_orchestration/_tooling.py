@@ -39,7 +39,7 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
     functions need to be included for tool execution during approval flows.
 
     Args:
-        agent: Agent instance to collect tools from. Works with ChatAgent
+        agent: Agent instance to collect tools from. Works with Agent
             or any agent with default_options and optional mcp_tools attributes.
 
     Returns:
@@ -53,7 +53,7 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
     tools_from_agent = default_options.get("tools") if isinstance(default_options, dict) else None
     server_tools = list(tools_from_agent) if tools_from_agent else []
 
-    # Include functions from connected MCP tools (only available on ChatAgent)
+    # Include functions from connected MCP tools (only available on Agent)
     mcp_tools = getattr(agent, "mcp_tools", None)
     if mcp_tools:
         server_tools.extend(_collect_mcp_tool_functions(mcp_tools))
@@ -70,7 +70,7 @@ def register_additional_client_tools(agent: SupportsAgentRun, client_tools: list
     """Register client tools as additional declaration-only tools to avoid server execution.
 
     Args:
-        agent: Agent instance to register tools on. Works with ChatAgent
+        agent: Agent instance to register tools on. Works with Agent
             or any agent with a chat_client attribute.
         client_tools: List of client tools to register.
     """

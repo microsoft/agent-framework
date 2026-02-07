@@ -16,11 +16,10 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import ChatAgent, ChatMessage
+from agent_framework import Agent, GroupChatBuilder, Message
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
-from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
+from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
     GroupChatManager,
@@ -224,7 +223,7 @@ async def run_semantic_kernel_example(task: str) -> str:
 async def run_agent_framework_example(task: str) -> str:
     credential = AzureCliCredential()
 
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects background information and potential resources.",
         instructions=(
@@ -234,17 +233,19 @@ async def run_agent_framework_example(task: str) -> str:
         chat_client=AzureOpenAIChatClient(credential=credential),
     )
 
-    planner = ChatAgent(
+    planner = Agent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
         chat_client=AzureOpenAIResponsesClient(credential=credential),
     )
 
-    workflow = GroupChatBuilder(
-        participants=[researcher, planner],
-        orchestrator_agent=AzureOpenAIChatClient(credential=credential).as_agent(),
-    ).build()
+    workflow = (
+        GroupChatBuilder()
+        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).as_agent())
+        .participants([researcher, planner])
+        .build()
+    )
 
     final_response = ""
     async for event in workflow.run(task, stream=True):
@@ -253,7 +254,7 @@ async def run_agent_framework_example(task: str) -> str:
             if isinstance(data, list) and len(data) > 0:
                 # Get the final message from the conversation
                 final_message = data[-1]
-                final_response = final_message.text or "" if isinstance(final_message, ChatMessage) else str(data)
+                final_response = final_message.text or "" if isinstance(final_message, Message) else str(data)
             else:
                 final_response = str(data)
     return final_response

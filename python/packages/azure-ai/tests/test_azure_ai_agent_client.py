@@ -8,12 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -22,6 +20,8 @@ from agent_framework import (
     HostedFileSearchTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework._serialization import SerializationMixin
@@ -134,7 +134,7 @@ def test_azure_ai_chat_client_init_with_client(mock_agents_client: MagicMock) ->
     assert chat_client.agents_client is mock_agents_client
     assert chat_client.agent_id == "existing-agent-id"
     assert chat_client.thread_id == "test-thread-id"
-    assert isinstance(chat_client, ChatClientProtocol)
+    assert isinstance(chat_client, SupportsChatGetResponse)
 
 
 def test_azure_ai_chat_client_init_auto_create_client(
@@ -319,7 +319,7 @@ async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ag
     mock_stream.__aenter__ = AsyncMock(return_value=empty_async_iter())
     mock_stream.__aexit__ = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
     # Call without existing thread - should create new one
     response = chat_client.get_response(messages, stream=True)
@@ -346,7 +346,7 @@ async def test_azure_ai_chat_client_prepare_options_basic(mock_agents_client: Ma
     """Test _prepare_options with basic ChatOptions."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"max_tokens": 100, "temperature": 0.7}
 
     run_options, tool_results = await chat_client._prepare_options(messages, chat_options)  # type: ignore
@@ -359,7 +359,7 @@ async def test_azure_ai_chat_client_prepare_options_no_chat_options(mock_agents_
     """Test _prepare_options with default ChatOptions."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
     run_options, tool_results = await chat_client._prepare_options(messages, {})  # type: ignore
 
@@ -376,7 +376,7 @@ async def test_azure_ai_chat_client_prepare_options_with_image_content(mock_agen
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role="user", contents=[image_content])]
+    messages = [Message(role="user", contents=[image_content])]
 
     run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
 
@@ -465,8 +465,8 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
 
     # Test with system message (becomes instruction)
     messages = [
-        ChatMessage(role="system", text="You are a helpful assistant"),
-        ChatMessage(role="user", text="Hello"),
+        Message(role="system", text="You are a helpful assistant"),
+        Message(role="user", text="Hello"),
     ]
 
     run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
@@ -488,7 +488,7 @@ async def test_azure_ai_chat_client_prepare_options_with_instructions_from_optio
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {
         "instructions": "You are a thoughtful reviewer. Give brief feedback.",
     }
@@ -511,8 +511,8 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     messages = [
-        ChatMessage(role="system", text="Context: You are reviewing marketing copy."),
-        ChatMessage(role="user", text="Review this tagline"),
+        Message(role="system", text="Context: You are reviewing marketing copy."),
+        Message(role="user", text="Review this tagline"),
     ]
     chat_options: ChatOptions = {
         "instructions": "Be concise and constructive in your feedback.",
@@ -538,7 +538,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
         patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
         patch("agent_framework.ChatResponse.from_update_generator") as mock_from_generator,
     ):
-        mock_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Hello back")])
+        mock_response = ChatResponse(messages=[Message(role="assistant", text="Hello back")])
         mock_from_generator.return_value = mock_response
 
         result = await ChatResponse.from_update_generator(mock_streaming_response())
@@ -681,7 +681,7 @@ async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specifi
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
     chat_options = {"tools": [dict_tool], "tool_choice": required_tool_mode}
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
     run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
 
@@ -726,7 +726,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_never_require(mock_agent
 
     mcp_tool = HostedMCPTool(name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require")
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
@@ -758,7 +758,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents
         name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
     )
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
@@ -1407,17 +1407,17 @@ def get_weather(
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
         response = await azure_ai_chat_client.get_response(messages=messages)
@@ -1432,10 +1432,10 @@ async def test_azure_ai_chat_client_get_response() -> None:
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
         response = await azure_ai_chat_client.get_response(
@@ -1453,17 +1453,17 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
         response = azure_ai_chat_client.get_response(messages=messages, stream=True)
@@ -1484,10 +1484,10 @@ async def test_azure_ai_chat_client_streaming() -> None:
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
         response = azure_ai_chat_client.get_response(
@@ -1509,8 +1509,8 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
-    """Test ChatAgent basic run functionality with AzureAIAgentClient."""
-    async with ChatAgent(
+    """Test Agent basic run functionality with AzureAIAgentClient."""
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
@@ -1526,8 +1526,8 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
-    """Test ChatAgent basic streaming functionality with AzureAIAgentClient."""
-    async with ChatAgent(
+    """Test Agent basic streaming functionality with AzureAIAgentClient."""
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
@@ -1546,8 +1546,8 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
-    """Test ChatAgent thread persistence across runs with AzureAIAgentClient."""
-    async with ChatAgent(
+    """Test Agent thread persistence across runs with AzureAIAgentClient."""
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
@@ -1572,8 +1572,8 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
-    """Test ChatAgent existing thread ID functionality with AzureAIAgentClient."""
-    async with ChatAgent(
+    """Test Agent existing thread ID functionality with AzureAIAgentClient."""
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
@@ -1590,7 +1590,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         assert existing_thread_id is not None
 
     # Now continue with the same thread ID in a new agent instance
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as second_agent:
@@ -1610,9 +1610,9 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_code_interpreter():
-    """Test ChatAgent with code interpreter through AzureAIAgentClient."""
+    """Test Agent with code interpreter through AzureAIAgentClient."""
 
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
@@ -1630,7 +1630,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_file_search():
-    """Test ChatAgent with file search through AzureAIAgentClient."""
+    """Test Agent with file search through AzureAIAgentClient."""
 
     client = AzureAIAgentClient(credential=AzureCliCredential())
     file: FileInfo | None = None
@@ -1649,7 +1649,7 @@ async def test_azure_ai_chat_client_agent_file_search():
             inputs=[Content.from_hosted_vector_store(vector_store_id=vector_store.id)]
         )
 
-        async with ChatAgent(
+        async with Agent(
             chat_client=client,
             instructions="You are a helpful assistant that can search through uploaded employee files.",
             tools=[file_search_tool],
@@ -1688,7 +1688,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
         approval_mode="never_require",
     )
 
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
@@ -1715,7 +1715,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],
@@ -1740,7 +1740,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     """Test ChatOptions parameter coverage at run level."""
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
@@ -1764,7 +1764,7 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     """Test ChatOptions parameter coverage agent level."""
-    async with ChatAgent(
+    async with Agent(
         chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         tools=[get_weather],
@@ -2107,7 +2107,7 @@ def test_azure_ai_chat_client_prepare_messages_with_function_result(
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result="test result")
-    messages = [ChatMessage(role="user", contents=[function_result])]
+    messages = [Message(role="user", contents=[function_result])]
 
     additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
 
@@ -2127,7 +2127,7 @@ def test_azure_ai_chat_client_prepare_messages_with_raw_content_block(
     # Create content with raw_representation that is a MessageInputContentBlock
     raw_block = MessageInputTextBlock(text="Raw block text")
     custom_content = Content(type="custom", raw_representation=raw_block)
-    messages = [ChatMessage(role="user", contents=[custom_content])]
+    messages = [Message(role="user", contents=[custom_content])]
 
     additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
 

@@ -12,8 +12,8 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -91,7 +91,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -118,7 +118,7 @@ async def submit_to_email_assistant(analysis: AnalysisResult, ctx: WorkflowConte
 
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -133,7 +133,7 @@ async def summarize_email(analysis: AnalysisResult, ctx: WorkflowContext[AgentEx
     # Only called for long NotSpam emails by selection_func
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{analysis.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -180,7 +180,7 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
     await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))
 
 
-def create_email_analysis_agent() -> ChatAgent:
+def create_email_analysis_agent() -> Agent:
     """Creates the email analysis agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -193,7 +193,7 @@ def create_email_analysis_agent() -> ChatAgent:
     )
 
 
-def create_email_assistant_agent() -> ChatAgent:
+def create_email_assistant_agent() -> Agent:
     """Creates the email assistant agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
@@ -202,7 +202,7 @@ def create_email_assistant_agent() -> ChatAgent:
     )
 
 
-def create_email_summary_agent() -> ChatAgent:
+def create_email_summary_agent() -> Agent:
     """Creates the email summary agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an assistant that helps users summarize emails."),

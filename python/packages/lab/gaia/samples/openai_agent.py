@@ -25,12 +25,12 @@ Example:
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedWebSearchTool
+from agent_framework import Agent, HostedCodeInterpreterTool, HostedWebSearchTool
 from agent_framework.openai import OpenAIResponsesClient
 
 
 @asynccontextmanager
-async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
+async def create_gaia_agent() -> AsyncIterator[Agent]:
     """Create an OpenAI agent configured for GAIA benchmark tasks.
 
     Uses OpenAI Responses API for enhanced capabilities.
@@ -40,7 +40,7 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     - Code Interpreter tool for calculations and data analysis
 
     Yields:
-        ChatAgent: A configured agent ready to run GAIA tasks.
+        Agent: A configured agent ready to run GAIA tasks.
 
     Example:
         async with create_gaia_agent() as agent:

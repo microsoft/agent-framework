@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable
 from typing import Annotated
 
 from agent_framework import (
-    ChatMessage,
+    Message,
     Content,
     WorkflowEvent,
     tool,
@@ -91,10 +91,10 @@ def _print_output(event: WorkflowEvent) -> None:
     if not event.data:
         raise ValueError("WorkflowEvent has no data")
 
-    if not isinstance(event.data, list) and not all(isinstance(msg, ChatMessage) for msg in event.data):
-        raise ValueError("WorkflowEvent data is not a list of ChatMessage")
+    if not isinstance(event.data, list) and not all(isinstance(msg, Message) for msg in event.data):
+        raise ValueError("WorkflowEvent data is not a list of Message")
 
-    messages: list[ChatMessage] = event.data  # type: ignore
+    messages: list[Message] = event.data  # type: ignore
 
     print("\n" + "-" * 60)
     print("Workflow completed. Aggregated results from both agents:")

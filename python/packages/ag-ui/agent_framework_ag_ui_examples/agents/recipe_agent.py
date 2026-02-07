@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, tool
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -104,7 +104,7 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     """
 
 
-def recipe_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def recipe_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a recipe agent with streaming state updates.
 
     Args:
@@ -113,7 +113,7 @@ def recipe_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
     Returns:
         A configured AgentFrameworkAgent instance with recipe management
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="recipe_agent",
         instructions=_RECIPE_INSTRUCTIONS,
         chat_client=chat_client,

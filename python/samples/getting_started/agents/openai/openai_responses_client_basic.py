@@ -5,15 +5,7 @@ from collections.abc import Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import (
-    ChatAgent,
-    ChatContext,
-    ChatMessage,
-    ChatResponse,
-    MiddlewareTermination,
-    chat_middleware,
-    tool,
-)
+from agent_framework import Agent, ChatContext, Message, ChatResponse, Role, chat_middleware, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -46,8 +38,8 @@ async def security_and_override_middleware(
                     # Override the response instead of calling AI
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
-                                role="assistant",
+                            Message(
+                                role=Role.ASSISTANT,
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "
                                 "sensitive data.",
@@ -56,7 +48,8 @@ async def security_and_override_middleware(
                     )
 
                     # Set terminate flag to stop execution
-                    raise MiddlewareTermination
+                    context.terminate = True
+                    return
 
     # Continue to next middleware or AI execution
     await call_next(context)
@@ -79,7 +72,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -95,7 +88,7 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=OpenAIResponsesClient(
             middleware=[security_and_override_middleware],
         ),

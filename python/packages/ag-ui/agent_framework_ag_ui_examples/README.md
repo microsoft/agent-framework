@@ -12,7 +12,7 @@ pip install agent-framework-ag-ui
 
 ### Using Example Agents with Any Chat Client
 
-All example agents are factory functions that accept any `ChatClientProtocol`-compatible chat client:
+All example agents are factory functions that accept any `SupportsChatGetResponse`-compatible chat client:
 
 ```python
 from fastapi import FastAPI
@@ -38,12 +38,12 @@ add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/weathe
 
 ```python
 from fastapi import FastAPI
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
     chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
@@ -70,7 +70,7 @@ This integration supports all 7 AG-UI features:
 
 ## Examples
 
-All example agents are implemented as **factory functions** that accept any chat client implementing `ChatClientProtocol`. This provides maximum flexibility to use Azure OpenAI, OpenAI, Anthropic, or any custom chat client implementation.
+All example agents are implemented as **factory functions** that accept any chat client implementing `SupportsChatGetResponse`. This provides maximum flexibility to use Azure OpenAI, OpenAI, Anthropic, or any custom chat client implementation.
 
 ### Available Example Agents
 
@@ -97,7 +97,7 @@ from agent_framework_ag_ui_examples.agents import (
     recipe_agent,
 )
 
-# Create a chat client (use any ChatClientProtocol implementation)
+# Create a chat client (use any SupportsChatGetResponse implementation)
 azure_client = AzureOpenAIChatClient(model_id="gpt-4")
 openai_client = OpenAIChatClient(model_id="gpt-4o")
 
@@ -187,8 +187,8 @@ The package uses a clean, orchestrator-based architecture:
 You can create your own agent factories following the same pattern as the examples:
 
 ```python
-from agent_framework import ChatAgent, tool
-from agent_framework import ChatClientProtocol
+from agent_framework import Agent, tool
+from agent_framework import SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 @tool
@@ -196,7 +196,7 @@ def my_tool(param: str) -> str:
     """My custom tool."""
     return f"Result: {param}"
 
-def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def my_custom_agent(chat_client: SupportsChatGetResponse) -> AgentFrameworkAgent:
     """Create a custom agent with the specified chat client.
 
     Args:
@@ -205,7 +205,7 @@ def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="my_custom_agent",
         instructions="Custom instructions here",
         chat_client=chat_client,
@@ -229,12 +229,12 @@ agent = my_custom_agent(chat_client)
 State is injected as system messages and updated via predictive state updates:
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="recipe_agent",
     chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
 )
@@ -266,12 +266,12 @@ wrapped_agent = AgentFrameworkAgent(
 Predictive state updates automatically stream tool arguments as optimistic state updates:
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="document_writer",
     chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
 )

@@ -8,7 +8,7 @@ Make sure to run 'az login' before starting devui.
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -43,7 +43,7 @@ def get_forecast(
 
 
 # Agent instance following Agent Framework conventions
-agent = ChatAgent(
+agent = Agent(
     name="FoundryWeatherAgent",
     chat_client=AzureAIAgentClient(
         project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),

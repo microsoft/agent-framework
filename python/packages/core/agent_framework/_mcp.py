@@ -32,8 +32,8 @@ from ._tools import (
     _build_pydantic_model_from_json_schema,
 )
 from ._types import (
-    ChatMessage,
     Content,
+    Message,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -43,7 +43,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +69,9 @@ __all__ = [
 
 def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
-) -> ChatMessage:
+) -> Message:
     """Parse an MCP container type into an Agent Framework type."""
-    return ChatMessage(
+    return Message(
         role=mcp_type.role,
         contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
@@ -256,9 +256,9 @@ def _prepare_content_for_mcp(
 
 
 def _prepare_message_for_mcp(
-    content: ChatMessage,
+    content: Message,
 ) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Prepare a ChatMessage for MCP format."""
+    """Prepare a Message for MCP format."""
     messages: list[
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
     ] = []
@@ -335,7 +335,7 @@ class MCPTool:
         parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        chat_client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
@@ -513,7 +513,7 @@ class MCPTool:
                 message="No chat client available. Please set a chat client.",
             )
         logger.debug("Sampling callback called with params: %s", params)
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         for msg in params.messages:
             messages.append(_parse_message_from_mcp(msg))
         try:
@@ -634,7 +634,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = FunctionTool(
+                func: FunctionTool[BaseModel, list[Message] | Any | types.GetPromptResult] = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -801,7 +801,7 @@ class MCPTool:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
-    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage] | Any | types.GetPromptResult:
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[Message] | Any | types.GetPromptResult:
         """Call a prompt with the given arguments.
 
         Args:
@@ -909,7 +909,7 @@ class MCPStdioTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStdioTool, ChatAgent
+            from agent_framework import MCPStdioTool, Agent
 
             # Create an MCP stdio tool
             mcp_tool = MCPStdioTool(
@@ -921,7 +921,7 @@ class MCPStdioTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(chat_client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("List files in the directory")
     """
 
@@ -942,7 +942,7 @@ class MCPStdioTool(MCPTool):
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        chat_client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1031,7 +1031,7 @@ class MCPStreamableHTTPTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStreamableHTTPTool, ChatAgent
+            from agent_framework import MCPStreamableHTTPTool, Agent
 
             # Create an MCP HTTP tool
             mcp_tool = MCPStreamableHTTPTool(
@@ -1042,7 +1042,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(chat_client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Fetch data from the API")
     """
 
@@ -1061,7 +1061,7 @@ class MCPStreamableHTTPTool(MCPTool):
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        chat_client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
@@ -1148,7 +1148,7 @@ class MCPWebsocketTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPWebsocketTool, ChatAgent
+            from agent_framework import MCPWebsocketTool, Agent
 
             # Create an MCP WebSocket tool
             mcp_tool = MCPWebsocketTool(
@@ -1157,7 +1157,7 @@ class MCPWebsocketTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(chat_client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Connect to the real-time service")
     """
 
@@ -1175,7 +1175,7 @@ class MCPWebsocketTool(MCPTool):
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        chat_client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:

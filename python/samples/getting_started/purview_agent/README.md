@@ -1,6 +1,6 @@
 ## Purview Policy Enforcement Sample (Python)
 
-This getting-started sample shows how to attach Microsoft Purview policy evaluation to an Agent Framework `ChatAgent` using the **middleware** approach.
+This getting-started sample shows how to attach Microsoft Purview policy evaluation to an Agent Framework `Agent` using the **middleware** approach.
 
 **What this sample demonstrates:**
 1. Configure an Azure OpenAI chat client
@@ -99,7 +99,7 @@ Prompt blocks set a system-level message: `Prompt blocked by policy` and termina
 ### Agent Middleware Injection
 
 ```python
-agent = ChatAgent(
+agent = Agent(
 	chat_client=chat_client,
 	instructions="You are good at telling jokes.",
 	name="Joker",

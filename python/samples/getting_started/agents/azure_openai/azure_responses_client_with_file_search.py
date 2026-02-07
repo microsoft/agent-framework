@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, Content, HostedFileSearchTool
+from agent_framework import Agent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -22,7 +22,7 @@ Prerequisites:
 # Helper functions
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
+async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
     """Create a vector store with sample documents."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
@@ -35,7 +35,7 @@ async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, 
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
+    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
@@ -53,7 +53,7 @@ async def main() -> None:
 
     file_id, vector_store = await create_vector_store(client)
 
-    agent = ChatAgent(
+    agent = Agent(
         chat_client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
         tools=[HostedFileSearchTool(inputs=vector_store)],

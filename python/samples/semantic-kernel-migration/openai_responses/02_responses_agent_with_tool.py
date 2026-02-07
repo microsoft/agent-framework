@@ -42,7 +42,7 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
     from agent_framework._tools import tool
     from agent_framework.openai import OpenAIResponsesClient
 
@@ -50,7 +50,7 @@ async def run_agent_framework() -> None:
     async def add(a: float, b: float) -> float:
         return a + b
 
-    chat_agent = ChatAgent(
+    chat_agent = Agent(
         chat_client=OpenAIResponsesClient(),
         instructions="Use the add tool when math is required.",
         name="MathExpert",

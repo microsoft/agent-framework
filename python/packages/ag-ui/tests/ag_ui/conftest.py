@@ -13,13 +13,13 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     SupportsAgentRun,
+    SupportsChatGetResponse,
 )
 from agent_framework._clients import OptionsCoT
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -43,7 +43,7 @@ class StreamingChatClientStub(
     BaseChatClient[OptionsCoT],
     Generic[OptionsCoT],
 ):
-    """Typed streaming stub that satisfies ChatClientProtocol."""
+    """Typed streaming stub that satisfies SupportsChatGetResponse."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
         super().__init__(function_middleware=[])
@@ -55,7 +55,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[Any],
@@ -65,7 +65,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = ...,
@@ -75,7 +75,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = ...,
@@ -84,7 +84,7 @@ class StreamingChatClientStub(
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -106,7 +106,7 @@ class StreamingChatClientStub(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -121,7 +121,7 @@ class StreamingChatClientStub(
         return self._get_response_impl(messages, options, **kwargs)
 
     async def _get_response_impl(
-        self, messages: Sequence[ChatMessage], options: Mapping[str, Any], **kwargs: Any
+        self, messages: Sequence[Message], options: Mapping[str, Any], **kwargs: Any
     ) -> ChatResponse:
         """Non-streaming implementation."""
         if self._response_fn is not None:
@@ -132,7 +132,7 @@ class StreamingChatClientStub(
             contents.extend(update.contents)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[Message(role="assistant", contents=contents)],
             response_id="stub-response",
         )
 
@@ -141,7 +141,7 @@ def stream_from_updates(updates: list[ChatResponseUpdate]) -> StreamFn:
     """Create a stream function that yields from a static list of updates."""
 
     async def _stream(
-        messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+        messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         for update in updates:
             yield update
@@ -175,7 +175,7 @@ class StubAgent(SupportsAgentRun):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -185,7 +185,7 @@ class StubAgent(SupportsAgentRun):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -194,7 +194,7 @@ class StubAgent(SupportsAgentRun):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -226,7 +226,7 @@ class StubAgent(SupportsAgentRun):
 
 
 @pytest.fixture
-def streaming_chat_client_stub() -> type[ChatClientProtocol]:
+def streaming_chat_client_stub() -> type[SupportsChatGetResponse]:
     """Return the StreamingChatClientStub class for creating test instances."""
     return StreamingChatClientStub  # type: ignore[return-value]
 

@@ -5,7 +5,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, tool
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 
@@ -88,7 +88,7 @@ _RESEARCH_ASSISTANT_INSTRUCTIONS = (
 )
 
 
-def research_assistant_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def research_assistant_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a research assistant agent.
 
     Args:
@@ -97,7 +97,7 @@ def research_assistant_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrame
     Returns:
         A configured AgentFrameworkAgent instance with research capabilities
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="research_assistant",
         instructions=_RESEARCH_ASSISTANT_INSTRUCTIONS,
         chat_client=chat_client,

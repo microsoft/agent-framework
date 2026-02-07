@@ -9,7 +9,7 @@ import pytest
 
 agentlightning = pytest.importorskip("agentlightning")
 
-from agent_framework import AgentExecutor, AgentResponse, ChatAgent, WorkflowBuilder, Workflow
+from agent_framework import AgentExecutor, AgentResponse, Agent, WorkflowBuilder, Workflow
 from agent_framework_lab_lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import TracerTraceToTriplet
@@ -80,13 +80,13 @@ def workflow_two_agents():
             ),
         ):
             # Create the two agents
-            analyzer_agent = ChatAgent(
+            analyzer_agent = Agent(
                 chat_client=first_chat_client,
                 name="DataAnalyzer",
                 instructions="You are a data analyst. Analyze the given data and provide insights.",
             )
 
-            advisor_agent = ChatAgent(
+            advisor_agent = Agent(
                 chat_client=second_chat_client,
                 name="InvestmentAdvisor",
                 instructions="You are an investment advisor. Based on analysis results, provide recommendations.",

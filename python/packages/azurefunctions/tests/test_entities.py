@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage
+from agent_framework import AgentResponse, Message
 
 from agent_framework_azurefunctions._entities import create_agent_entity
 
@@ -19,7 +19,7 @@ FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", text="")
+    message = Message(role="assistant", text=text) if text is not None else Message(role="assistant", text="")
     return AgentResponse(messages=[message])
 
 

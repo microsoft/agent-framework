@@ -15,11 +15,9 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
+from agent_framework import Agent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
-from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
-    Agent,
     ChatCompletionAgent,
     MagenticOrchestration,
     OpenAIAssistantAgent,
@@ -129,7 +127,7 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 
 
 async def run_agent_framework_example(prompt: str) -> str | None:
-    researcher = ChatAgent(
+    researcher = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
@@ -138,7 +136,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
-    coder = ChatAgent(
+    coder = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -147,14 +145,14 @@ async def run_agent_framework_example(prompt: str) -> str | None:
     )
 
     # Create a manager agent for orchestration
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
         chat_client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
+    workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
 
     final_text: str | None = None
     async for event in workflow.run(prompt, stream=True):

@@ -8,15 +8,15 @@ from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    ChatAgent,
+    Agent,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
     ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     HostedMCPTool,
+    Message,
     MiddlewareTypes,
     ToolProtocol,
     get_logger,
@@ -329,7 +329,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if self.agent_name is None:
             raise ServiceInitializationError(
                 "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
-                "or 'name' when initializing ChatAgent."
+                "or 'name' when initializing Agent."
             )
 
         # If no agent_version is provided, either use latest version or create a new agent:
@@ -396,7 +396,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     @override
     async def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -489,9 +489,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
+    def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
-        result: list[ChatMessage] = []
+        result: list[Message] = []
         instructions_list: list[str] = []
         instructions: str | None = None
 
@@ -575,10 +575,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         context_provider: ContextProvider | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[AzureAIClientOptionsT]:
-        """Convert this chat client to a ChatAgent.
+    ) -> Agent[AzureAIClientOptionsT]:
+        """Convert this chat client to a Agent.
 
-        This method creates a ChatAgent instance with this client pre-configured.
+        This method creates a Agent instance with this client pre-configured.
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
@@ -598,7 +598,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             kwargs: Any additional keyword arguments.
 
         Returns:
-            A ChatAgent instance configured with this chat client.
+            A Agent instance configured with this chat client.
         """
         return super().as_agent(
             id=id,

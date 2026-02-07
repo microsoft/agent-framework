@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent, HostedMCPTool
+from agent_framework import Agent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -54,7 +54,7 @@ async def github_mcp_example() -> None:
     )
 
     # 5. Create agent with the GitHub MCP tool
-    async with ChatAgent(
+    async with Agent(
         chat_client=OpenAIResponsesClient(),
         name="GitHubAgent",
         instructions=(

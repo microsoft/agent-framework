@@ -5,8 +5,8 @@ from typing import Annotated
 
 from agent_framework import (
     AgentResponse,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     Content,
     WorkflowAgent,
     tool,
@@ -57,7 +57,7 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
@@ -213,7 +213,7 @@ async def main() -> None:
         function_results = [
             Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
         ]
-        response = await agent.run(ChatMessage("tool", function_results))
+        response = await agent.run(Message("tool", function_results))
         pending_requests = handle_response_and_requests(response)
 
 

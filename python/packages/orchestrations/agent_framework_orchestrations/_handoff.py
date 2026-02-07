@@ -36,11 +36,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from agent_framework import ChatAgent, SupportsAgentRun
+from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
 from agent_framework._threads import AgentThread
 from agent_framework._tools import FunctionTool, tool
-from agent_framework._types import AgentResponse, AgentResponseUpdate, ChatMessage
+from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -154,28 +154,28 @@ class HandoffAgentUserRequest:
     agent_response: AgentResponse
 
     @staticmethod
-    def create_response(response: str | list[str] | ChatMessage | list[ChatMessage]) -> list[ChatMessage]:
+    def create_response(response: str | list[str] | Message | list[Message]) -> list[Message]:
         """Create a HandoffAgentUserRequest from a simple text response."""
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         if isinstance(response, str):
-            messages.append(ChatMessage(role="user", text=response))
-        elif isinstance(response, ChatMessage):
+            messages.append(Message(role="user", text=response))
+        elif isinstance(response, Message):
             messages.append(response)
         elif isinstance(response, list):
             for item in response:
-                if isinstance(item, ChatMessage):
+                if isinstance(item, Message):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(ChatMessage(role="user", text=item))
+                    messages.append(Message(role="user", text=item))
                 else:
-                    raise TypeError("List items must be either str or ChatMessage instances")
+                    raise TypeError("List items must be either str or Message instances")
         else:
-            raise TypeError("Response must be str, list of str, ChatMessage, or list of ChatMessage")
+            raise TypeError("Response must be str, list of str, Message, or list of Message")
 
         return messages
 
     @staticmethod
-    def terminate() -> list[ChatMessage]:
+    def terminate() -> list[Message]:
         """Create a termination response for the handoff workflow."""
         return []
 
@@ -248,10 +248,8 @@ class HandoffAgentExecutor(AgentExecutor):
         Returns:
             A new AgentExecutor instance with handoff tools added
         """
-        if not isinstance(agent, ChatAgent):
-            raise TypeError(
-                "Handoff can only be applied to ChatAgent. Please ensure the agent is a ChatAgent instance."
-            )
+        if not isinstance(agent, Agent):
+            raise TypeError("Handoff can only be applied to Agent. Please ensure the agent is a Agent instance.")
 
         # Clone the agent to avoid mutating the original
         cloned_agent = self._clone_chat_agent(agent)  # type: ignore
@@ -265,13 +263,13 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return cloned_agent
 
-    def _clone_chat_agent(self, agent: ChatAgent) -> ChatAgent:
-        """Produce a deep copy of the ChatAgent while preserving runtime configuration."""
+    def _clone_chat_agent(self, agent: Agent) -> Agent:
+        """Produce a deep copy of the Agent while preserving runtime configuration."""
         options = agent.default_options
         middleware = list(agent.middleware or [])
 
         # Reconstruct the original tools list by combining regular tools with MCP tools.
-        # ChatAgent.__init__ separates MCP tools during initialization,
+        # Agent.__init__ separates MCP tools during initialization,
         # so we need to recombine them here to pass the complete tools list to the constructor.
         # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
         tools_from_options = options.get("tools")
@@ -303,7 +301,7 @@ class HandoffAgentExecutor(AgentExecutor):
             "user": options.get("user"),
         }
 
-        return ChatAgent(
+        return Agent(
             chat_client=agent.chat_client,
             id=agent.id,
             name=agent.name,
@@ -314,13 +312,13 @@ class HandoffAgentExecutor(AgentExecutor):
             default_options=cloned_options,  # type: ignore[arg-type]
         )
 
-    def _apply_auto_tools(self, agent: ChatAgent, targets: Sequence[HandoffConfiguration]) -> None:
+    def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:
         """Attach synthetic handoff tools to a chat agent and return the target lookup table.
 
         Creates handoff tools for each specialist agent that this agent can route to.
 
         Args:
-            agent: The ChatAgent to add handoff tools to
+            agent: The Agent to add handoff tools to
             targets: Sequence of handoff configurations defining target agents
         """
         default_options = agent.default_options
@@ -375,7 +373,7 @@ class HandoffAgentExecutor(AgentExecutor):
         self._full_conversation.extend(self._cache)
 
         # Check termination condition before running the agent
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         # Run the agent
@@ -427,19 +425,19 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([ChatMessage(role="user", text=self._autonomous_mode_prompt)])
+            self._cache.extend([Message(role="user", text=self._autonomous_mode_prompt)])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:
             # The response is handled via `handle_response`
             self._autonomous_mode_turns = 0  # Reset autonomous mode turn counter on handoff
-            await ctx.request_info(HandoffAgentUserRequest(response), list[ChatMessage])
+            await ctx.request_info(HandoffAgentUserRequest(response), list[Message])
 
     @response_handler
     async def handle_response(
         self,
         original_request: HandoffAgentUserRequest,
-        response: list[ChatMessage],
+        response: list[Message],
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse],
     ) -> None:
         """Handle user response for a request that is issued after agent runs.
@@ -458,7 +456,7 @@ class HandoffAgentExecutor(AgentExecutor):
         If the response is empty, it indicates termination of the handoff workflow.
         """
         if not response:
-            await cast(WorkflowContext[Never, list[ChatMessage]], ctx).yield_output(self._full_conversation)
+            await cast(WorkflowContext[Never, list[Message]], ctx).yield_output(self._full_conversation)
             return
 
         # Broadcast the user response to all other agents
@@ -472,7 +470,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
     async def _broadcast_messages(
         self,
-        messages: list[ChatMessage],
+        messages: list[Message],
         ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
         """Broadcast the workflow cache to the agent before running."""
@@ -506,7 +504,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return None
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[ChatMessage]]) -> bool:
+    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
         """Check termination conditions and yield completion if met.
 
         Args:
@@ -561,10 +559,10 @@ class HandoffBuilder:
     Participants must be agents. Support for custom executors is not available in handoff workflows.
 
     Outputs:
-    The final conversation history as a list of ChatMessage once the group chat completes.
+    The final conversation history as a list of Message once the group chat completes.
 
     Note:
-    1. Agents in handoff workflows must be ChatAgent instances and support local tool calls.
+    1. Agents in handoff workflows must be Agent instances and support local tool calls.
     2. Handoff doesn't support intermediate outputs from agents. All outputs are returned as
        they become available. This is because agents in handoff workflows are not considered
        sub-agents of a central orchestrator, thus all outputs are directly emitted.
@@ -576,8 +574,6 @@ class HandoffBuilder:
         name: str | None = None,
         participants: Sequence[SupportsAgentRun] | None = None,
         description: str | None = None,
-        checkpoint_storage: CheckpointStorage | None = None,
-        termination_condition: TerminationCondition | None = None,
     ) -> None:
         r"""Initialize a HandoffBuilder for creating conversational handoff workflows.
 
@@ -596,9 +592,6 @@ class HandoffBuilder:
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
             description: Optional human-readable description explaining the workflow's
                          purpose. Useful for documentation and observability.
-            checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
-            termination_condition: Optional callable that receives the full conversation and returns True
-                (or awaitable True) if the workflow should terminate.
         """
         self._name = name
         self._description = description
@@ -614,7 +607,7 @@ class HandoffBuilder:
         self._handoff_config: dict[str, set[HandoffConfiguration]] = {}
 
         # Checkpoint related members
-        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
+        self._checkpoint_storage: CheckpointStorage | None = None
 
         # Autonomous mode related
         self._autonomous_mode: bool = False
@@ -623,9 +616,7 @@ class HandoffBuilder:
         self._autonomous_mode_enabled_agents: list[str] = []
 
         # Termination related members
-        self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = (
-            termination_condition
-        )
+        self._termination_condition: Callable[[list[Message]], bool | Awaitable[bool]] | None = None
 
     def participants(self, participants: Sequence[SupportsAgentRun]) -> "HandoffBuilder":
         """Register the agents that will participate in the handoff workflow.
@@ -888,7 +879,7 @@ class HandoffBuilder:
 
 
             # Asynchronous condition
-            async def check_termination(conv: list[ChatMessage]) -> bool:
+            async def check_termination(conv: list[Message]) -> bool:
                 # Can perform async operations
                 return len(conv) > 20
 
@@ -929,9 +920,7 @@ class HandoffBuilder:
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
-            start_executor=start_executor,
-            checkpoint_storage=self._checkpoint_storage,
-        )
+        ).set_start_executor(start_executor)
 
         # Add the appropriate edges
         # In handoff workflows, all executors are connected, making a fully connected graph.
@@ -946,6 +935,10 @@ class HandoffBuilder:
                 builder = builder.add_fan_out_edges(executor, targets)
             elif len(targets) == 1:
                 builder = builder.add_edge(executor, targets[0])
+
+        # Configure checkpointing if enabled
+        if self._checkpoint_storage:
+            builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()
 

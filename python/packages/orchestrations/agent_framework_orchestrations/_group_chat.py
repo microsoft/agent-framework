@@ -26,11 +26,11 @@ import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, cast, overload
 
-from agent_framework import ChatAgent, SupportsAgentRun
+from agent_framework import Agent, SupportsAgentRun
 from agent_framework._threads import AgentThread
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -69,7 +69,7 @@ class GroupChatState:
     Attributes:
         current_round: The current round index of the group chat, starting from 0.
         participants: A mapping of participant names to their descriptions in the group chat.
-        conversation: The full conversation history up to this point as a list of ChatMessage.
+        conversation: The full conversation history up to this point as a list of Message.
     """
 
     # Round index, starting from 0
@@ -77,7 +77,7 @@ class GroupChatState:
     # participant name to description mapping as a ordered dict
     participants: OrderedDict[str, str]
     # Full conversation history up to this point
-    conversation: list[ChatMessage]
+    conversation: list[Message]
 
 
 # region Default orchestrator
@@ -165,13 +165,13 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     @override
     async def _handle_messages(
         self,
-        messages: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        messages: list[Message],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -192,7 +192,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
@@ -200,9 +200,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
 
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -287,7 +287,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
     def __init__(
         self,
-        agent: ChatAgent,
+        agent: Agent,
         participant_registry: ParticipantRegistry,
         *,
         max_rounds: int | None = None,
@@ -318,29 +318,29 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         self._thread = thread or agent.get_new_thread()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
-        self._cache: list[ChatMessage] = []
+        self._cache: list[Message] = []
 
     @override
-    def _append_messages(self, messages: Sequence[ChatMessage]) -> None:
+    def _append_messages(self, messages: Sequence[Message]) -> None:
         self._cache.extend(messages)
         return super()._append_messages(messages)
 
     @override
     async def _handle_messages(
         self,
-        messages: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        messages: list[Message],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[ChatMessage]], ctx),
+            cast(WorkflowContext[Never, list[Message]], ctx),
         ):
             return
 
@@ -361,22 +361,22 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
         # Remove tool-related content to prevent API errors from empty messages
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[ChatMessage]], ctx),
+            cast(WorkflowContext[Never, list[Message]], ctx),
         ):
             return
 
@@ -399,7 +399,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _invoke_agent(self) -> AgentOrchestrationOutput:
         """Invoke the orchestrator agent to determine the next speaker and termination."""
 
-        async def _invoke_agent_helper(conversation: list[ChatMessage]) -> AgentOrchestrationOutput:
+        async def _invoke_agent_helper(conversation: list[Message]) -> AgentOrchestrationOutput:
             # Run the agent in non-streaming mode for simplicity
             agent_response = await self._agent.run(
                 messages=conversation,
@@ -431,7 +431,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(ChatMessage(role="user", text=instruction))
+        current_conversation.append(Message(role="user", text=instruction))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -445,7 +445,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 logger.debug(f"Retrying agent orchestration invocation, attempts left: {retry_attempts}")
                 # We don't need the full conversation since the thread should maintain history
                 current_conversation = [
-                    ChatMessage(
+                    Message(
                         role="user",
                         text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
                     )
@@ -454,7 +454,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _check_agent_terminate_and_yield(
         self,
         agent_orchestration_output: AgentOrchestrationOutput,
-        ctx: WorkflowContext[Never, list[ChatMessage]],
+        ctx: WorkflowContext[Never, list[Message]],
     ) -> bool:
         """Check if the agent requested termination and yield completion if so.
 
@@ -518,7 +518,7 @@ class GroupChatBuilder:
     into a complete workflow graph that can be executed.
 
     Outputs:
-    The final conversation history as a list of ChatMessage once the group chat completes.
+    The final conversation history as a list of Message once the group chat completes.
     """
 
     DEFAULT_ORCHESTRATOR_ID: ClassVar[str] = "group_chat_orchestrator"
@@ -528,7 +528,7 @@ class GroupChatBuilder:
         *,
         participants: Sequence[SupportsAgentRun | Executor],
         # Orchestrator config (exactly one required)
-        orchestrator_agent: ChatAgent | Callable[[], ChatAgent] | None = None,
+        orchestrator_agent: Agent | Callable[[], Agent] | None = None,
         orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator] | None = None,
         selection_func: GroupChatSelectionFunction | None = None,
         orchestrator_name: str | None = None,
@@ -558,46 +558,101 @@ class GroupChatBuilder:
 
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
-        self._orchestrator_factory: Callable[[], ChatAgent | BaseGroupChatOrchestrator] | None = None
+        self._orchestrator_factory: Callable[[], Agent | BaseGroupChatOrchestrator] | None = None
         self._selection_func: GroupChatSelectionFunction | None = None
-        self._agent_orchestrator: ChatAgent | None = None
-        self._termination_condition: TerminationCondition | None = termination_condition
-        self._max_rounds: int | None = max_rounds
+        self._agent_orchestrator: Agent | None = None
+        self._termination_condition: TerminationCondition | None = None
+        self._max_rounds: int | None = None
         self._orchestrator_name: str | None = None
 
         # Checkpoint related members
-        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
+        self._checkpoint_storage: CheckpointStorage | None = None
 
         # Request info related members
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] = set()
 
         # Intermediate outputs
-        self._intermediate_outputs = intermediate_outputs
+        self._intermediate_outputs = False
 
         self._set_participants(participants)
 
-        # Set orchestrator if provided
-        if any(x is not None for x in [orchestrator_agent, orchestrator, selection_func]):
-            self._set_orchestrator(
-                orchestrator_agent=orchestrator_agent,
-                orchestrator=orchestrator,
-                selection_func=selection_func,
-                orchestrator_name=orchestrator_name,
-            )
+    @overload
+    def with_orchestrator(self, *, agent: Agent | Callable[[], Agent]) -> GroupChatBuilder:
+        """Set the orchestrator for this group chat workflow using a Agent.
 
-    def _set_orchestrator(
+        Args:
+            agent: An instance of Agent or a callable that produces one to manage the group chat.
+
+        Returns:
+            Self for fluent chaining.
+        """
+        ...
+
+    @overload
+    def with_orchestrator(
+        self, *, orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator]
+    ) -> GroupChatBuilder:
+        """Set the orchestrator for this group chat workflow using a custom orchestrator.
+
+        Args:
+            orchestrator: An instance of BaseGroupChatOrchestrator or a callable that produces one to
+                          manage the group chat.
+
+        Returns:
+            Self for fluent chaining.
+
+        Note:
+            When using a custom orchestrator that implements `BaseGroupChatOrchestrator`, setting
+            `termination_condition` and `max_rounds` on the builder will have no effect since the
+            orchestrator is already fully defined.
+        """
+        ...
+
+    @overload
+    def with_orchestrator(
         self,
         *,
-        orchestrator_agent: ChatAgent | Callable[[], ChatAgent] | None = None,
+        selection_func: GroupChatSelectionFunction,
+        orchestrator_name: str | None = None,
+    ) -> GroupChatBuilder:
+        """Set the orchestrator for this group chat workflow using a selection function.
+
+        Args:
+            selection_func: Callable that receives the current GroupChatState and returns
+                            the name of the next participant to speak, or None to finish.
+            orchestrator_name: Optional display name for the orchestrator in the workflow.
+                               If not provided, defaults to `GroupChatBuilder.DEFAULT_ORCHESTRATOR_ID`.
+
+        Returns:
+            Self for fluent chaining.
+        """
+        ...
+
+    def with_orchestrator(
+        self,
+        *,
+        agent: Agent | Callable[[], Agent] | None = None,
         orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator] | None = None,
         selection_func: GroupChatSelectionFunction | None = None,
         orchestrator_name: str | None = None,
-    ) -> None:
-        """Set the orchestrator for this group chat workflow (internal).
+    ) -> GroupChatBuilder:
+        """Set the orchestrator for this group chat workflow.
+
+        An group chat orchestrator is responsible for managing the flow of conversation, making
+        sure all participants are synced and picking the next speaker according to the defined logic
+        until the termination conditions are met.
+
+        There are a few ways to configure the orchestrator:
+        1. Provide a Agent instance or a factory function that produces one to use an agent-based orchestrator
+        2. Provide a BaseGroupChatOrchestrator instance or a factory function that produces one to use a custom
+           orchestrator
+        3. Provide a selection function to use that picks the next speaker based on the function logic
+
+        You can only use one of the above methods to configure the orchestrator.
 
         Args:
-            orchestrator_agent: An instance of ChatAgent or a callable that produces one to manage the group chat.
+            agent: An instance of Agent or a callable that produces one to manage the group chat.
             orchestrator: An instance of BaseGroupChatOrchestrator or a callable that produces one to manage the group
                           chat.
             selection_func: Callable that receives the current GroupChatState and returns
@@ -607,39 +662,61 @@ class GroupChatBuilder:
                                `GroupChatBuilder.DEFAULT_ORCHESTRATOR_ID`. This parameter is
                                ignored if using an agent or custom orchestrator.
 
+        Returns:
+            Self for fluent chaining.
+
         Raises:
             ValueError: If an orchestrator has already been set or if none or multiple
                         of the parameters are provided.
+
+        Note:
+            When using a custom orchestrator that implements `BaseGroupChatOrchestrator`, either
+            via the `orchestrator` or `orchestrator_factory` parameters, setting `termination_condition`
+            and `max_rounds` on the builder will have no effect since the orchestrator is already
+            fully defined.
+
+        Example:
+        .. code-block:: python
+
+            from agent_framework_orchestrations import GroupChatBuilder
+
+
+            orchestrator = CustomGroupChatOrchestrator(...)
+            workflow = GroupChatBuilder().with_orchestrator(orchestrator).participants([agent1, agent2]).build()
         """
         if self._agent_orchestrator is not None:
-            raise ValueError("An agent orchestrator has already been configured. Set orchestrator config once only.")
+            raise ValueError(
+                "An agent orchestrator has already been configured. Call with_orchestrator(...) once only."
+            )
 
         if self._orchestrator is not None:
-            raise ValueError("An orchestrator has already been configured. Set orchestrator config once only.")
+            raise ValueError("An orchestrator has already been configured. Call with_orchestrator(...) once only.")
 
         if self._orchestrator_factory is not None:
-            raise ValueError("A factory has already been configured. Set orchestrator config once only.")
+            raise ValueError("A factory has already been configured. Call with_orchestrator(...) once only.")
 
         if self._selection_func is not None:
-            raise ValueError("A selection function has already been configured. Set orchestrator config once only.")
+            raise ValueError("A selection function has already been configured. Call with_orchestrator(...) once only.")
 
-        if sum(x is not None for x in [orchestrator_agent, orchestrator, selection_func]) != 1:
-            raise ValueError("Exactly one of orchestrator_agent, orchestrator, or selection_func must be provided.")
+        if sum(x is not None for x in [agent, orchestrator, selection_func]) != 1:
+            raise ValueError("Exactly one of agent, orchestrator, or selection_func must be provided.")
 
-        if orchestrator_agent is not None and isinstance(orchestrator_agent, ChatAgent):
-            self._agent_orchestrator = orchestrator_agent
+        if agent is not None and isinstance(agent, Agent):
+            self._agent_orchestrator = agent
         elif orchestrator is not None and isinstance(orchestrator, BaseGroupChatOrchestrator):
             self._orchestrator = orchestrator
         elif selection_func is not None:
             self._selection_func = selection_func
             self._orchestrator_name = orchestrator_name
         else:
-            self._orchestrator_factory = orchestrator_agent or orchestrator
+            self._orchestrator_factory = agent or orchestrator
+
+        return self
 
     def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
         """Set participants (internal)."""
         if self._participants:
-            raise ValueError("participants already set.")
+            raise ValueError("participants have already been set. Call participants() at most once.")
 
         if not participants:
             raise ValueError("participants cannot be empty.")
@@ -679,21 +756,20 @@ class GroupChatBuilder:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework_orchestrations import GroupChatBuilder
 
 
-            def stop_after_two_calls(conversation: list[ChatMessage]) -> bool:
+            def stop_after_two_calls(conversation: list[Message]) -> bool:
                 calls = sum(1 for msg in conversation if msg.role == "assistant" and msg.author_name == "specialist")
                 return calls >= 2
 
 
             specialist_agent = ...
             workflow = (
-                GroupChatBuilder(
-                    participants=[agent1, specialist_agent],
-                    selection_func=my_selection_function,
-                )
+                GroupChatBuilder()
+                .with_orchestrator(selection_func=my_selection_function)
+                .participants([agent1, specialist_agent])
                 .with_termination_condition(stop_after_two_calls)
                 .build()
             )
@@ -745,10 +821,9 @@ class GroupChatBuilder:
 
             storage = MemoryCheckpointStorage()
             workflow = (
-                GroupChatBuilder(
-                    participants=[agent1, agent2],
-                    selection_func=my_selection_function,
-                )
+                GroupChatBuilder()
+                .with_orchestrator(selection_func=my_selection_function)
+                .participants([agent1, agent2])
                 .with_checkpointing(storage)
                 .build()
             )
@@ -785,6 +860,19 @@ class GroupChatBuilder:
 
         return self
 
+    def with_intermediate_outputs(self) -> GroupChatBuilder:
+        """Enable intermediate outputs from agent participants.
+
+        When enabled, the workflow returns each agent participant's response or yields
+        streaming updates as they become available. The output of the orchestrator will
+        always be available as the final output of the workflow.
+
+        Returns:
+            Self for fluent chaining
+        """
+        self._intermediate_outputs = True
+        return self
+
     def _resolve_orchestrator(self, participants: Sequence[Executor]) -> Executor:
         """Determine the orchestrator to use for the workflow.
 
@@ -795,11 +883,8 @@ class GroupChatBuilder:
             x is None
             for x in [self._agent_orchestrator, self._selection_func, self._orchestrator, self._orchestrator_factory]
         ):
-            raise ValueError(
-                "No orchestrator has been configured. "
-                "Pass orchestrator_agent, orchestrator, or selection_func to the constructor."
-            )
-        # We don't need to check if multiple are set since that is handled in _set_orchestrator()
+            raise ValueError("No orchestrator has been configured. Call with_orchestrator() to set one.")
+        # We don't need to check if multiple are set since that is handled in with_orchestrator()
 
         if self._agent_orchestrator:
             return AgentBasedGroupChatOrchestrator(
@@ -824,7 +909,7 @@ class GroupChatBuilder:
 
         if self._orchestrator_factory:
             orchestrator_instance = self._orchestrator_factory()
-            if isinstance(orchestrator_instance, ChatAgent):
+            if isinstance(orchestrator_instance, Agent):
                 return AgentBasedGroupChatOrchestrator(
                     agent=orchestrator_instance,
                     participant_registry=ParticipantRegistry(participants),
@@ -834,15 +919,12 @@ class GroupChatBuilder:
             if isinstance(orchestrator_instance, BaseGroupChatOrchestrator):
                 return orchestrator_instance
             raise TypeError(
-                f"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance. "
+                f"Orchestrator factory must return Agent or BaseGroupChatOrchestrator instance. "
                 f"Got {type(orchestrator_instance).__name__}."
             )
 
         # This should never be reached due to the checks above
-        raise RuntimeError(
-            "Orchestrator could not be resolved. "
-            "Pass orchestrator_agent, orchestrator, or selection_func to the constructor."
-        )
+        raise RuntimeError("Orchestrator could not be resolved. Please provide one via with_orchestrator()")
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
@@ -885,15 +967,18 @@ class GroupChatBuilder:
         orchestrator: Executor = self._resolve_orchestrator(participants)
 
         # Build workflow graph
-        workflow_builder = WorkflowBuilder(
-            start_executor=orchestrator,
-            checkpoint_storage=self._checkpoint_storage,
-            output_executors=[orchestrator] if not self._intermediate_outputs else None,
-        )
+        workflow_builder = WorkflowBuilder().set_start_executor(orchestrator)
         for participant in participants:
             # Orchestrator and participant bi-directional edges
             workflow_builder = workflow_builder.add_edge(orchestrator, participant)
             workflow_builder = workflow_builder.add_edge(participant, orchestrator)
+
+        if not self._intermediate_outputs:
+            # Constrain output to orchestrator only
+            workflow_builder = workflow_builder.with_output_from([orchestrator])
+
+        if self._checkpoint_storage is not None:
+            workflow_builder = workflow_builder.with_checkpointing(self._checkpoint_storage)
 
         return workflow_builder.build()
 

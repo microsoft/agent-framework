@@ -7,8 +7,8 @@ from typing import cast
 
 from agent_framework import (
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    Message,
     HostedCodeInterpreterTool,
     WorkflowEvent,
 )
@@ -24,9 +24,9 @@ Sample: Magentic Orchestration (multi-agent)
 What it does:
 - Orchestrates multiple agents using `MagenticBuilder` with streaming callbacks.
 
-- ResearcherAgent (ChatAgent backed by an OpenAI chat client) for
+- ResearcherAgent (Agent backed by an OpenAI chat client) for
     finding information.
-- CoderAgent (ChatAgent backed by OpenAI Assistants with the hosted
+- CoderAgent (Agent backed by OpenAI Assistants with the hosted
     code interpreter tool) for analysis and computation.
 
 The workflow is configured with:
@@ -44,7 +44,7 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher_agent = ChatAgent(
+    researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
@@ -54,7 +54,7 @@ async def main() -> None:
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    coder_agent = ChatAgent(
+    coder_agent = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -63,7 +63,7 @@ async def main() -> None:
     )
 
     # Create a manager agent for orchestration
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
@@ -110,7 +110,7 @@ async def main() -> None:
 
         elif event.type == "magentic_orchestrator":
             print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
-            if isinstance(event.data.content, ChatMessage):
+            if isinstance(event.data.content, Message):
                 print(f"Please review the plan:\n{event.data.content.text}")
             elif isinstance(event.data.content, MagenticProgressLedger):
                 print(f"Please review progress ledger:\n{json.dumps(event.data.content.to_dict(), indent=2)}")
@@ -130,7 +130,7 @@ async def main() -> None:
 
     if output_event:
         # The output of the magentic workflow is a collection of chat messages from all participants
-        outputs = cast(list[ChatMessage], output_event.data)
+        outputs = cast(list[Message], output_event.data)
         print("\n" + "=" * 80)
         print("\nFinal Conversation Transcript:\n")
         for message in outputs:

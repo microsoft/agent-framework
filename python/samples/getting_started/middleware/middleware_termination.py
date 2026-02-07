@@ -9,8 +9,7 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    ChatMessage,
-    MiddlewareTermination,
+    Message,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -62,7 +61,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     # Set a custom response
                     context.result = AgentResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 text=(
                                     f"Sorry, I cannot process requests containing '{blocked_word}'. "
@@ -73,7 +72,8 @@ class PreTerminationMiddleware(AgentMiddleware):
                     )
 
                     # Set terminate flag to prevent further processing
-                    raise MiddlewareTermination
+                    context.terminate = True
+                    break
 
         await call_next(context)
 
@@ -98,7 +98,7 @@ class PostTerminationMiddleware(AgentMiddleware):
                 f"[PostTerminationMiddleware] Maximum responses ({self.max_responses}) reached. "
                 "Terminating further processing."
             )
-            raise MiddlewareTermination
+            context.terminate = True
 
         # Allow the agent to process normally
         await call_next(context)

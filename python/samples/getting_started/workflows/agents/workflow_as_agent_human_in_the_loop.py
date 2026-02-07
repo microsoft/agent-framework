@@ -16,7 +16,7 @@ if str(_SAMPLES_ROOT) not in sys.path:
     sys.path.insert(0, str(_SAMPLES_ROOT))
 
 from agent_framework import (  # noqa: E402
-    ChatMessage,
+    Message,
     Content,
     Executor,
     WorkflowAgent,
@@ -159,7 +159,7 @@ async def main() -> None:
             result=human_response,
         )
         # Send the human review result back to the agent.
-        response = await agent.run(ChatMessage("tool", [human_review_function_result]))
+        response = await agent.run(Message("tool", [human_review_function_result]))
         print(f"📤 Agent Response: {response.messages[-1].text}")
 
     print("=" * 50)

@@ -10,7 +10,7 @@ from typing import cast
 
 import uvicorn
 from agent_framework import ChatOptions
-from agent_framework._clients import ChatClientProtocol
+from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.azure import AzureOpenAIChatClient
@@ -67,8 +67,8 @@ app.add_middleware(
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
 # Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
-chat_client: ChatClientProtocol[ChatOptions] = cast(
-    ChatClientProtocol[ChatOptions],
+chat_client: SupportsChatGetResponse[ChatOptions] = cast(
+    SupportsChatGetResponse[ChatOptions],
     AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient(),
 )
 

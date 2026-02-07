@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -66,14 +66,14 @@ async def main() -> None:
                 expert_sections.append(f"{getattr(r, 'executor_id', 'expert')}: (error: {type(e).__name__}: {e})")
 
         # Ask the model to synthesize a concise summary of the experts' outputs
-        system_msg = ChatMessage(
+        system_msg = Message(
             "system",
             text=(
                 "You are a helpful assistant that consolidates multiple domain expert outputs "
                 "into one cohesive, concise summary with clear takeaways. Keep it under 200 words."
             ),
         )
-        user_msg = ChatMessage("user", text="\n\n".join(expert_sections))
+        user_msg = Message("user", text="\n\n".join(expert_sections))
 
         response = await chat_client.get_response([system_msg, user_msg])
         # Return the model's final assistant text as the completion result
@@ -83,7 +83,7 @@ async def main() -> None:
     # - participants([...]) accepts SupportsAgentRun (agents) or Executor instances.
     #   Each participant becomes a parallel branch (fan-out) from an internal dispatcher.
     # - with_aggregator(...) overrides the default aggregator:
-    #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
+    #   • Default aggregator -> returns list[Message] (one user + one assistant per agent)
     #   • Custom callback    -> return value becomes workflow output (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (

@@ -12,7 +12,7 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from agent_framework import ChatClientProtocol
+    from agent_framework import SupportsChatGetResponse
 
 
 """
@@ -51,7 +51,7 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) -> None:
+async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = False) -> None:
     """Run an AI service.
 
     This function runs an AI service and prints the output.

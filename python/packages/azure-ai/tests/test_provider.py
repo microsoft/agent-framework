@@ -4,7 +4,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatAgent, FunctionTool
+from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
@@ -158,7 +158,7 @@ async def test_provider_create_agent(
             description="Test Agent",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "test-agent"
         mock_project_client.agents.create_version.assert_called_once()
 
@@ -192,7 +192,7 @@ async def test_provider_create_agent_with_env_model(
         # Call without model parameter - should use env var
         agent = await provider.create_agent(name="test-agent")
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         # Verify the model from env var was used
         call_args = mock_project_client.agents.create_version.call_args
         assert call_args[1]["definition"].model == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
@@ -322,7 +322,7 @@ async def test_provider_get_agent_with_name(mock_project_client: MagicMock) -> N
 
     agent = await provider.get_agent(name="test-agent")
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "test-agent"
     mock_project_client.agents.get.assert_called_with(agent_name="test-agent")
 
@@ -350,7 +350,7 @@ async def test_provider_get_agent_with_reference(mock_project_client: MagicMock)
     agent_reference = AgentReference(name="test-agent", version="1.0")
     agent = await provider.get_agent(reference=agent_reference)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "test-agent"
     mock_project_client.agents.get_version.assert_called_with(agent_name="test-agent", agent_version="1.0")
 
@@ -410,7 +410,7 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
     with patch("agent_framework_azure_ai._project_provider.AzureAIClient") as mock_azure_ai_client:
         agent = provider.as_agent(mock_agent_version)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "test-agent"
         assert agent.description == "Test Agent"
 
@@ -709,7 +709,7 @@ async def test_provider_create_and_get_agent_integration() -> None:
                 instructions="You are a helpful assistant. Always respond with 'Hello from provider!'",
             )
 
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.name == "ProviderTestAgent"
 
             # Run the agent

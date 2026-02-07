@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatResponseUpdate,
     Content,
     HostedWebSearchTool,
+    Message,
     chat_middleware,
     tool,
 )
@@ -77,7 +77,7 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 
 
 @fixture
-def chat_history() -> list[ChatMessage]:
+def chat_history() -> list[Message]:
     return []
 
 
@@ -244,12 +244,12 @@ async def test_empty_messages() -> None:
 async def test_cmc(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
-    chat_history.append(ChatMessage(text="hello world", role="system"))
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="system"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -261,11 +261,11 @@ async def test_cmc(
 async def test_cmc_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response_reasoning: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response_reasoning
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -278,11 +278,11 @@ async def test_cmc_reasoning(
 async def test_cmc_chat_failure(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
     # Simulate a failure in the Ollama client
     mock_chat.side_effect = Exception("Connection error")
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
 
@@ -297,12 +297,12 @@ async def test_cmc_chat_failure(
 async def test_cmc_streaming(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_streaming_chat_completion_response
-    chat_history.append(ChatMessage(text="hello world", role="system"))
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="system"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = ollama_client.get_response(messages=chat_history, stream=True)
@@ -315,11 +315,11 @@ async def test_cmc_streaming(
 async def test_cmc_streaming_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response_reasoning: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_streaming_chat_completion_response_reasoning
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = ollama_client.get_response(messages=chat_history, stream=True)
@@ -333,11 +333,11 @@ async def test_cmc_streaming_reasoning(
 async def test_cmc_streaming_chat_failure(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
     # Simulate a failure in the Ollama client for streaming
     mock_chat.side_effect = Exception("Streaming connection error")
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
 
@@ -353,7 +353,7 @@ async def test_cmc_streaming_chat_failure(
 async def test_cmc_streaming_with_tool_call(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
     mock_streaming_chat_completion_tool_call: AsyncStream[OllamaChatResponse],
 ) -> None:
@@ -362,7 +362,7 @@ async def test_cmc_streaming_with_tool_call(
         mock_streaming_chat_completion_response,
     ]
 
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = ollama_client.get_response(messages=chat_history, stream=True, options={"tools": [hello_world]})
@@ -386,7 +386,7 @@ async def test_cmc_streaming_with_tool_call(
 
 async def test_cmc_with_hosted_tool_call(
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
     with pytest.raises(ServiceInvalidRequestError):
         additional_properties = {
@@ -396,7 +396,7 @@ async def test_cmc_with_hosted_tool_call(
             }
         }
 
-        chat_history.append(ChatMessage(text="hello world", role="user"))
+        chat_history.append(Message(text="hello world", role="user"))
 
         ollama_client = OllamaChatClient()
         await ollama_client.get_response(
@@ -411,12 +411,12 @@ async def test_cmc_with_hosted_tool_call(
 async def test_cmc_with_data_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
-        ChatMessage(
+        Message(
             contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
             role="user",
         )
@@ -432,14 +432,14 @@ async def test_cmc_with_data_content_type(
 async def test_cmc_with_invalid_data_content_media_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     with pytest.raises(ServiceInvalidRequestError):
         mock_chat.return_value = mock_streaming_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(
+            Message(
                 contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
                 role="user",
             )
@@ -455,14 +455,14 @@ async def test_cmc_with_invalid_data_content_media_type(
 async def test_cmc_with_invalid_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     with pytest.raises(ServiceInvalidRequestError):
         mock_chat.return_value = mock_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(
+            Message(
                 contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
                 role="user",
             )
@@ -475,9 +475,9 @@ async def test_cmc_with_invalid_content_type(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_tool_call(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
+    chat_history.append(Message(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
@@ -490,9 +490,9 @@ async def test_cmc_integration_with_tool_call(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_chat_completion(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Say Hello World", role="user"))
+    chat_history.append(Message(text="Say Hello World", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -502,9 +502,9 @@ async def test_cmc_integration_with_chat_completion(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_tool_call(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
+    chat_history.append(Message(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(
@@ -527,9 +527,9 @@ async def test_cmc_streaming_integration_with_tool_call(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_chat_completion(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Say Hello World", role="user"))
+    chat_history.append(Message(text="Say Hello World", role="user"))
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(messages=chat_history, stream=True)

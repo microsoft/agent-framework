@@ -11,7 +11,6 @@ from agent_framework import (
     Annotation,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -24,6 +23,7 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedMCPTool,
     HostedWebSearchTool,
+    Message,
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
@@ -356,7 +356,7 @@ class AnthropicClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -385,7 +385,7 @@ class AnthropicClient(
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -430,7 +430,7 @@ class AnthropicClient(
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             run_options["system"] = messages[0].text
 
         # betas
@@ -516,22 +516,22 @@ class AnthropicClient(
             "schema": schema,
         }
 
-    def _prepare_messages_for_anthropic(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_anthropic(self, messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare a list of ChatMessages for the Anthropic client.
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
-    def _prepare_message_for_anthropic(self, message: ChatMessage) -> dict[str, Any]:
-        """Prepare a ChatMessage for the Anthropic client.
+    def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
+        """Prepare a Message for the Anthropic client.
 
         Args:
-            message: The ChatMessage to convert.
+            message: The Message to convert.
 
         Returns:
             A dictionary representing the message in Anthropic format.
@@ -693,7 +693,7 @@ class AnthropicClient(
         return ChatResponse(
             response_id=message.id,
             messages=[
-                ChatMessage(
+                Message(
                     role="assistant",
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,
