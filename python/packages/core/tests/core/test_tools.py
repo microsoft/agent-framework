@@ -70,6 +70,102 @@ def test_tool_decorator_without_args():
     assert test_tool.approval_mode == "never_require"
 
 
+def test_tool_decorator_with_pydantic_schema():
+    """Test that the tool decorator accepts an explicit Pydantic model schema."""
+    from pydantic import Field
+
+    class MyInput(BaseModel):
+        location: Annotated[str, Field(description="City name")]
+        unit: str = "celsius"
+
+    @tool(name="weather", description="Get weather", schema=MyInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        return f"{location}: {unit}"
+
+    assert isinstance(get_weather, FunctionTool)
+    assert get_weather.name == "weather"
+    params = get_weather.parameters()
+    assert "location" in params["properties"]
+    assert params["properties"]["location"].get("description") == "City name"
+    assert get_weather("Seattle") == "Seattle: celsius"
+    assert get_weather("Seattle", "fahrenheit") == "Seattle: fahrenheit"
+
+
+def test_tool_decorator_with_json_schema_dict():
+    """Test that the tool decorator accepts an explicit JSON schema dict."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "default": 10},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"Searching for: {query} (max {max_results})"
+
+    assert isinstance(search, FunctionTool)
+    params = search.parameters()
+    assert params["properties"]["query"]["type"] == "string"
+    assert params["properties"]["query"]["description"] == "Search query"
+    assert "max_results" in params["properties"]
+    assert search("hello") == "Searching for: hello (max 10)"
+
+
+def test_tool_decorator_schema_none_default():
+    """Test that schema=None (default) still infers from function signature."""
+
+    @tool(name="adder", schema=None)
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    assert isinstance(add, FunctionTool)
+    params = add.parameters()
+    assert params == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "adder_input",
+        "type": "object",
+    }
+    assert add(1, 2) == 3
+
+
+async def test_tool_decorator_with_schema_invoke():
+    """Test that invoke works correctly with explicit schema."""
+
+    class CalcInput(BaseModel):
+        a: int
+        b: int
+
+    @tool(name="calc", description="Calculator", schema=CalcInput)
+    def calculate(a: int, b: int) -> int:
+        return a + b
+
+    result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
+    assert result == 10
+
+
+def test_tool_decorator_with_schema_overrides_annotations():
+    """Test that explicit schema completely overrides function signature inference."""
+    from pydantic import Field
+
+    class DetailedInput(BaseModel):
+        location: Annotated[str, Field(description="The city and state")]
+        unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+    @tool(schema=DetailedInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        """Get weather for a location."""
+        return f"{location}: {unit}"
+
+    params = get_weather.parameters()
+    assert params["properties"]["location"].get("description") == "The city and state"
+    assert params["properties"]["unit"].get("description") == "Temperature unit"
+
+
 def test_tool_without_args():
     """Test the tool decorator."""
 

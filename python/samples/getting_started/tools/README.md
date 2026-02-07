@@ -19,6 +19,7 @@ keep `approval_mode="always_require"` unless you are confident in the tool behav
 | [`function_tool_with_thread_injection.py`](function_tool_with_thread_injection.py) | Shows how to access the current `thread` object inside a local tool via `**kwargs`. |
 | [`function_tool_with_max_exceptions.py`](function_tool_with_max_exceptions.py) | Shows how to limit the number of times a tool can fail with exceptions using `max_invocation_exceptions`. Useful for preventing expensive tools from being called repeatedly when they keep failing. |
 | [`function_tool_with_max_invocations.py`](function_tool_with_max_invocations.py) | Demonstrates limiting the total number of times a tool can be invoked using `max_invocations`. Useful for rate-limiting expensive operations or ensuring tools are only called a specific number of times per conversation. |
+| [`function_tool_with_explicit_schema.py`](function_tool_with_explicit_schema.py) | Demonstrates how to provide an explicit Pydantic model or JSON schema dictionary to the `@tool` decorator via the `schema` parameter, bypassing automatic inference from the function signature. |
 | [`tool_in_class.py`](tool_in_class.py) | Shows how to use the `tool` decorator with class methods to create stateful tools. Demonstrates how class state can control tool behavior dynamically, allowing you to adjust tool functionality at runtime by modifying class properties. |
 
 ## Key Concepts
@@ -26,6 +27,7 @@ keep `approval_mode="always_require"` unless you are confident in the tool behav
 ### Local Tool Features
 
 - **Function Declarations**: Define tool schemas without implementations for testing or external tools
+- **Explicit Schema**: Provide a Pydantic model or JSON schema dict to control the tool's parameter schema directly
 - **Dependency Injection**: Create tools from configurations with runtime-injected implementations
 - **Error Handling**: Gracefully handle and recover from tool execution failures
 - **Approval Workflows**: Require user approval before executing sensitive or important operations
@@ -53,6 +55,23 @@ def my_tool(param: Annotated[str, "Description"]) -> str:
 def sensitive_operation(data: Annotated[str, "Data to process"]) -> str:
     """This requires user approval before execution."""
     return f"Processed: {data}"
+```
+
+#### Tool with Explicit Schema
+
+```python
+from pydantic import BaseModel, Field
+from agent_framework import tool
+from typing import Annotated
+
+class WeatherInput(BaseModel):
+    location: Annotated[str, Field(description="City name")]
+    unit: str = "celsius"
+
+@tool(schema=WeatherInput)
+def get_weather(location: str, unit: str = "celsius") -> str:
+    """Get the weather for a location."""
+    return f"Weather in {location}: 22 {unit}"
 ```
 
 #### Tool with Invocation Limits
