@@ -207,7 +207,7 @@ exclude_dirs = ["tests", "scripts", "samples"]
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
+markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
 prek-install = "prek install --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
 test = "python scripts/run_tasks_in_packages_if_exists.py test"
@@ -279,7 +279,7 @@ sequence = [
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
 [tool.poe.tasks.prek-markdown-code-lint]
-cmd = "uv run python scripts/check_md_code_blocks.py ${files} --no-glob --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude AGENTS.md"
+cmd = "uv run python scripts/check_md_code_blocks.py ${files} --no-glob --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude AGENTS.md --exclude context_providers/azure_ai_search"
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
 [tool.poe.tasks.prek-pyright]
