@@ -63,7 +63,7 @@ These may appear in event streams (executor_invoked/executor_completed). They're
 
 ## Environment Variables
 
-- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/client/README.md#environment-variables).
+- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
 
 - **OpenAI** (used in some orchestration samples):
   - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)

@@ -245,12 +245,12 @@ class Executor(RequestInfoMixin, DictConvertible):
             self.id,
             self.__class__.__name__,
             str(MessageType.STANDARD if not isinstance(message, WorkflowMessage) else message.type),
-            type(WorkflowMessage).__name__,
+            type(message).__name__,
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
         ):
             # Find the handler and handler spec that matches the message type.
-            handler = self._find_handler(WorkflowMessage)
+            handler = self._find_handler(message)
 
             original_message = message
             if isinstance(message, WorkflowMessage):
@@ -272,7 +272,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             # Invoke the handler with the message and context
             # Use deepcopy to capture original input state before handler can mutate it
             with _framework_event_origin():
-                invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(WorkflowMessage))
+                invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
@@ -487,7 +487,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         for message_type in self._handlers:
             if is_instance_of(message, message_type):
                 return self._handlers[message_type]
-        raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(WorkflowMessage)}.")
+        raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
 
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.

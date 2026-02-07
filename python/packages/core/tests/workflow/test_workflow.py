@@ -25,6 +25,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
+    WorkflowMessage,
     WorkflowRunState,
     handler,
     response_handler,
@@ -274,7 +275,7 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         )
 
         # Verify workflow was created and can run
-        test_message = Message(data="test message", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="test message", source_id="test", target_id=None)
         result = await workflow.run(test_message)
         assert result is not None
 
@@ -535,7 +536,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(
         workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
         # Run with runtime checkpoint storage - should create checkpoints
-        test_message = Message(data="runtime checkpoint test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="runtime checkpoint test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=storage)
         assert result is not None
         assert result.get_final_state() == WorkflowRunState.IDLE
@@ -586,7 +587,7 @@ async def test_workflow_checkpoint_runtime_overrides_buildtime(
         )
 
         # Run with runtime checkpoint storage override
-        test_message = Message(data="override test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="override test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=runtime_storage)
         assert result is not None
 
@@ -910,7 +911,7 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
     """Test that stream properly validate parameter combinations."""
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     result = await workflow.run(test_message)
@@ -941,7 +942,7 @@ async def test_workflow_run_stream_parameter_validation(
     """Test stream=True specific parameter validation scenarios."""
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     events: list[WorkflowEvent] = []
