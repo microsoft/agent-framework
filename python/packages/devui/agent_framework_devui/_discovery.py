@@ -542,7 +542,7 @@ class EntityDiscovery:
 
         This safely checks for module-level assignments like:
         - agent = Agent(...)
-        - workflow = WorkflowBuilder()...
+        - workflow = WorkflowBuilder(start_executor=...)...
 
         Args:
             file_path: Python file to check

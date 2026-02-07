@@ -19,7 +19,6 @@ from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent as SKAgent
 from semantic_kernel.agents import ChatCompletionAgent, ConcurrentOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
@@ -33,7 +32,7 @@ PROMPT = "Explain the concept of temperature from multiple scientific perspectiv
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[SKAgent]:
+def build_semantic_kernel_agents() -> list[Agent]:
     credential = AzureCliCredential()
 
     physics_agent = ChatCompletionAgent(

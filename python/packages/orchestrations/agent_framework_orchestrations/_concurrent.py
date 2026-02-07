@@ -194,7 +194,7 @@ class ConcurrentBuilder:
         from agent_framework_orchestrations import ConcurrentBuilder
 
         # Minimal: use default aggregator (returns list[Message])
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).build()
 
 
         # Custom aggregator via callback (sync or async). The callback receives
@@ -203,14 +203,14 @@ class ConcurrentBuilder:
             return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_aggregator(summarize).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).with_aggregator(summarize).build()
 
 
         # Enable checkpoint persistence so runs can resume
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3], checkpoint_storage=storage).build()
 
         # Enable request info before aggregation
-        workflow = ConcurrentBuilder().participants([agent1, agent2]).with_request_info().build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2]).with_request_info().build()
     """
 
     def __init__(
@@ -233,14 +233,14 @@ class ConcurrentBuilder:
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
-        self._intermediate_outputs: bool = False
+        self._intermediate_outputs: bool = intermediate_outputs
 
         self._set_participants(participants)
 
     def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
         """Set participants (internal)."""
         if self._participants:
-            raise ValueError("participants() has already been called on this builder instance.")
+            raise ValueError("participants already set.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -262,7 +262,6 @@ class ConcurrentBuilder:
                 raise TypeError(f"participants must be SupportsAgentRun or Executor instances; got {type(p).__name__}")
 
         self._participants = list(participants)
-        return self
 
     def with_aggregator(
         self,
@@ -291,7 +290,7 @@ class ConcurrentBuilder:
                     await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(CustomAggregator()).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(CustomAggregator()).build()
 
 
             # Callback-based aggregator (string result)
@@ -299,7 +298,7 @@ class ConcurrentBuilder:
                 return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(summarize).build()
 
 
             # Callback-based aggregator (yield result)
@@ -307,7 +306,7 @@ class ConcurrentBuilder:
                 await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(summarize).build()
         """
         if self._aggregator is not None:
             raise ValueError("with_aggregator() has already been called on this builder instance.")
@@ -319,15 +318,6 @@ class ConcurrentBuilder:
         else:
             raise TypeError("aggregator must be an Executor or a callable")
 
-        return self
-
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "ConcurrentBuilder":
-        """Enable checkpoint persistence using the provided storage backend.
-
-        Args:
-            checkpoint_storage: CheckpointStorage instance for persisting workflow state
-        """
-        self._checkpoint_storage = checkpoint_storage
         return self
 
     def with_request_info(
@@ -361,19 +351,6 @@ class ConcurrentBuilder:
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
 
-        return self
-
-    def with_intermediate_outputs(self) -> "ConcurrentBuilder":
-        """Enable intermediate outputs from agent participants before aggregation.
-
-        When enabled, the workflow returns each agent participant's response or yields
-        streaming updates as they become available. The output of the aggregator will
-        always be available as the final output of the workflow.
-
-        Returns:
-            Self for fluent chaining
-        """
-        self._intermediate_outputs = True
         return self
 
     def _resolve_participants(self) -> list[Executor]:
@@ -422,7 +399,7 @@ class ConcurrentBuilder:
 
         .. code-block:: python
 
-            workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
+            workflow = ConcurrentBuilder(participants=[agent1, agent2]).build()
         """
         # Internal nodes
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
@@ -431,18 +408,14 @@ class ConcurrentBuilder:
         # Resolve participants and participant factories to executors
         participants: list[Executor] = self._resolve_participants()
 
-        builder = WorkflowBuilder()
-        builder.set_start_executor(dispatcher)
+        builder = WorkflowBuilder(
+            start_executor=dispatcher,
+            checkpoint_storage=self._checkpoint_storage,
+            output_executors=[aggregator] if not self._intermediate_outputs else None,
+        )
         # Fan-out for parallel execution
         builder.add_fan_out_edges(dispatcher, participants)
         # Direct fan-in to aggregator
         builder.add_fan_in_edges(participants, aggregator)
-
-        if not self._intermediate_outputs:
-            # Constrain output to aggregator only
-            builder = builder.with_output_from([aggregator])
-
-        if self._checkpoint_storage is not None:
-            builder = builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()

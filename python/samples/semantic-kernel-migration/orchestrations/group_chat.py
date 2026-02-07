@@ -16,10 +16,11 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import Agent, GroupChatBuilder, Message
+from agent_framework import Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
+from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
+from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
     GroupChatManager,
@@ -240,12 +241,10 @@ async def run_agent_framework_example(task: str) -> str:
         client=AzureOpenAIResponsesClient(credential=credential),
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).as_agent())
-        .participants([researcher, planner])
-        .build()
-    )
+    workflow = GroupChatBuilder(
+        participants=[researcher, planner],
+        orchestrator_agent=AzureOpenAIChatClient(credential=credential).as_agent(),
+    ).build()
 
     final_response = ""
     async for event in workflow.run(task, stream=True):

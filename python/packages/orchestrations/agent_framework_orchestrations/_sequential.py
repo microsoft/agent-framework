@@ -122,18 +122,17 @@ class SequentialBuilder:
         from agent_framework_orchestrations import SequentialBuilder
 
         # With agent instances
-        workflow = SequentialBuilder().participants([agent1, agent2, summarizer_exec]).build()
+        workflow = SequentialBuilder(participants=[agent1, agent2, summarizer_exec]).build()
 
         # Enable checkpoint persistence
-        workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
+        workflow = SequentialBuilder(participants=[agent1, agent2], checkpoint_storage=storage).build()
 
         # Enable request info for mid-workflow feedback (pauses before each agent)
-        workflow = SequentialBuilder().participants([agent1, agent2]).with_request_info().build()
+        workflow = SequentialBuilder(participants=[agent1, agent2]).with_request_info().build()
 
         # Enable request info only for specific agents
         workflow = (
-            SequentialBuilder()
-            .participants([agent1, agent2, agent3])
+            SequentialBuilder(participants=[agent1, agent2, agent3])
             .with_request_info(agents=[agent2])  # Only pause before agent2
             .build()
         )
@@ -157,14 +156,14 @@ class SequentialBuilder:
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
-        self._intermediate_outputs: bool = False
+        self._intermediate_outputs: bool = intermediate_outputs
 
         self._set_participants(participants)
 
     def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
         """Set participants (internal)."""
         if self._participants:
-            raise ValueError("participants() has already been called on this builder instance.")
+            raise ValueError("participants already set.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -185,12 +184,6 @@ class SequentialBuilder:
                 seen_agent_ids.add(pid)
 
         self._participants = list(participants)
-        return self
-
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "SequentialBuilder":
-        """Enable checkpointing for the built workflow using the provided storage."""
-        self._checkpoint_storage = checkpoint_storage
-        return self
 
     def with_request_info(
         self,
@@ -223,19 +216,6 @@ class SequentialBuilder:
         self._request_info_enabled = True
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
 
-        return self
-
-    def with_intermediate_outputs(self) -> "SequentialBuilder":
-        """Enable intermediate outputs from agent participants.
-
-        When enabled, the workflow returns each agent participant's response or yields
-        streaming updates as they become available. The output of the last participant
-        will always be available as the final output of the workflow.
-
-        Returns:
-            Self for fluent chaining
-        """
-        self._intermediate_outputs = True
         return self
 
     def _resolve_participants(self) -> list[Executor]:
@@ -281,8 +261,11 @@ class SequentialBuilder:
         # Resolve participants and participant factories to executors
         participants: list[Executor] = self._resolve_participants()
 
-        builder = WorkflowBuilder()
-        builder.set_start_executor(input_conv)
+        builder = WorkflowBuilder(
+            start_executor=input_conv,
+            checkpoint_storage=self._checkpoint_storage,
+            output_executors=[end] if not self._intermediate_outputs else None,
+        )
 
         # Start of the chain is the input normalizer
         prior: Executor | SupportsAgentRun = input_conv
@@ -291,12 +274,5 @@ class SequentialBuilder:
             prior = p
         # Terminate with the final conversation
         builder.add_edge(prior, end)
-
-        if not self._intermediate_outputs:
-            # Constrain output to end only
-            builder = builder.with_output_from([end])
-
-        if self._checkpoint_storage is not None:
-            builder = builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()

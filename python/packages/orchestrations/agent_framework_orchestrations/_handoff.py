@@ -574,6 +574,8 @@ class HandoffBuilder:
         name: str | None = None,
         participants: Sequence[SupportsAgentRun] | None = None,
         description: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        termination_condition: TerminationCondition | None = None,
     ) -> None:
         r"""Initialize a HandoffBuilder for creating conversational handoff workflows.
 
@@ -592,6 +594,9 @@ class HandoffBuilder:
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
             description: Optional human-readable description explaining the workflow's
                          purpose. Useful for documentation and observability.
+            checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
+            termination_condition: Optional callable that receives the full conversation and returns True
+                (or awaitable True) if the workflow should terminate.
         """
         self._name = name
         self._description = description
@@ -607,7 +612,7 @@ class HandoffBuilder:
         self._handoff_config: dict[str, set[HandoffConfiguration]] = {}
 
         # Checkpoint related members
-        self._checkpoint_storage: CheckpointStorage | None = None
+        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
 
         # Autonomous mode related
         self._autonomous_mode: bool = False
@@ -616,7 +621,7 @@ class HandoffBuilder:
         self._autonomous_mode_enabled_agents: list[str] = []
 
         # Termination related members
-        self._termination_condition: Callable[[list[Message]], bool | Awaitable[bool]] | None = None
+        self._termination_condition: Callable[[list[Message]], bool | Awaitable[bool]] | None = termination_condition
 
     def participants(self, participants: Sequence[SupportsAgentRun]) -> "HandoffBuilder":
         """Register the agents that will participate in the handoff workflow.
@@ -920,7 +925,9 @@ class HandoffBuilder:
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
-        ).set_start_executor(start_executor)
+            start_executor=start_executor,
+            checkpoint_storage=self._checkpoint_storage,
+        )
 
         # Add the appropriate edges
         # In handoff workflows, all executors are connected, making a fully connected graph.
@@ -935,10 +942,6 @@ class HandoffBuilder:
                 builder = builder.add_fan_out_edges(executor, targets)
             elif len(targets) == 1:
                 builder = builder.add_edge(executor, targets[0])
-
-        # Configure checkpointing if enabled
-        if self._checkpoint_storage:
-            builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()
 

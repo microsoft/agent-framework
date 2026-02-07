@@ -11,7 +11,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
-    WorkflowMessage,
     executor,
     handler,
     response_handler,
@@ -98,9 +97,9 @@ def test_executor_with_valid_handlers():
     executor = MockExecutorWithValidHandlers(id="test")
     assert executor.id is not None
     assert len(executor._handlers) == 2  # type: ignore
-    assert executor.can_handle(WorkflowMessage(data="text", source_id="mock")) is True
-    assert executor.can_handle(WorkflowMessage(data=42, source_id="mock")) is True
-    assert executor.can_handle(WorkflowMessage(data=3.14, source_id="mock")) is False
+    assert executor.can_handle(Message(data="text", source_id="mock")) is True
+    assert executor.can_handle(Message(data=42, source_id="mock")) is True
+    assert executor.can_handle(Message(data=3.14, source_id="mock")) is False
 
 
 def test_executor_handlers_with_output_types():
@@ -581,9 +580,9 @@ class TestHandlerExplicitTypes:
         assert len(exec_instance._handlers) == 1
 
         # Can handle str messages
-        assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
         # Cannot handle int messages (since explicit type is str)
-        assert not exec_instance.can_handle(WorkflowMessage(data=42, source_id="mock"))
+        assert not exec_instance.can_handle(Message(data=42, source_id="mock"))
 
     def test_handler_with_explicit_output_type(self):
         """Test that explicit output works when input is also specified."""
@@ -623,8 +622,8 @@ class TestHandlerExplicitTypes:
         assert handler_func._handler_spec["output_types"] == [list]
 
         # Verify can_handle
-        assert exec_instance.can_handle(WorkflowMessage(data={"key": "value"}, source_id="mock"))
-        assert not exec_instance.can_handle(WorkflowMessage(data="string", source_id="mock"))
+        assert exec_instance.can_handle(Message(data={"key": "value"}, source_id="mock"))
+        assert not exec_instance.can_handle(Message(data="string", source_id="mock"))
 
     def test_handler_with_explicit_union_input_type(self):
         """Test that explicit union input_type is handled correctly."""
@@ -642,10 +641,10 @@ class TestHandlerExplicitTypes:
         assert len(exec_instance._handlers) == 1
 
         # Can handle both str and int messages
-        assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
-        assert exec_instance.can_handle(WorkflowMessage(data=42, source_id="mock"))
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
+        assert exec_instance.can_handle(Message(data=42, source_id="mock"))
         # Cannot handle float
-        assert not exec_instance.can_handle(WorkflowMessage(data=3.14, source_id="mock"))
+        assert not exec_instance.can_handle(Message(data=3.14, source_id="mock"))
 
     def test_handler_with_explicit_union_output_type(self):
         """Test that explicit union output is normalized to a list."""
@@ -736,7 +735,7 @@ class TestHandlerExplicitTypes:
 
         # Should work with explicit input_type
         assert str in exec_instance._handlers
-        assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
 
     def test_handler_multiple_handlers_mixed_explicit_and_introspected(self):
         """Test executor with multiple handlers, some with explicit types and some introspected."""
@@ -773,7 +772,7 @@ class TestHandlerExplicitTypes:
 
         # Should resolve the string to the actual type
         assert ForwardRefMessage in exec_instance._handlers
-        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefMessage("hello"), source_id="mock"))
+        assert exec_instance.can_handle(Message(data=ForwardRefMessage("hello"), source_id="mock"))
 
     def test_handler_with_string_forward_reference_union(self):
         """Test that string forward references work with union types."""
@@ -786,8 +785,8 @@ class TestHandlerExplicitTypes:
         exec_instance = StringUnionExecutor(id="string_union")
 
         # Should handle both types
-        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefTypeA("hello"), source_id="mock"))
-        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefTypeB(42), source_id="mock"))
+        assert exec_instance.can_handle(Message(data=ForwardRefTypeA("hello"), source_id="mock"))
+        assert exec_instance.can_handle(Message(data=ForwardRefTypeB(42), source_id="mock"))
 
     def test_handler_with_string_forward_reference_output_type(self):
         """Test that string forward references work for output_type."""
@@ -851,7 +850,7 @@ class TestHandlerExplicitTypes:
 
         # Check input type
         assert str in exec_instance._handlers
-        assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert exec_instance.can_handle(Message(data="hello", source_id="mock"))
 
         # Check output_type
         assert int in exec_instance.output_types
