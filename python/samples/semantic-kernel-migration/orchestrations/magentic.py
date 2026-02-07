@@ -133,14 +133,14 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
     coder = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         tools=HostedCodeInterpreterTool(),
     )
 
@@ -149,7 +149,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
     )
 
     workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()

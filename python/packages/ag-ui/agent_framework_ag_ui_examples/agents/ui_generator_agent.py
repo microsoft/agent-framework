@@ -168,11 +168,11 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
 OptionsT = TypeVar("OptionsT", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
 
-def ui_generator_agent(chat_client: SupportsChatGetResponse[TOptions]) -> AgentFrameworkAgent:
+def ui_generator_agent(client: SupportsChatGetResponse[TOptions]) -> AgentFrameworkAgent:
     """Create a UI generator agent with custom React component rendering.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with UI generation capabilities
@@ -180,7 +180,7 @@ def ui_generator_agent(chat_client: SupportsChatGetResponse[TOptions]) -> AgentF
     agent = Agent(
         name="ui_generator",
         instructions=_UI_GENERATOR_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_haiku, create_chart, display_timeline, show_comparison_table],
         # Force tool usage - the LLM MUST call a tool, cannot respond with plain text
         default_options={"tool_choice": "required"},  # type: ignore

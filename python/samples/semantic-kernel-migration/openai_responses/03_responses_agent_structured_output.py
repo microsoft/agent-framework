@@ -51,7 +51,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIResponsesClient
 
     chat_agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",
     )

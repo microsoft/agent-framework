@@ -21,7 +21,7 @@ async def main() -> None:
     print("=== OpenAI Responses Agent with Code Interpreter Example ===")
 
     agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     )

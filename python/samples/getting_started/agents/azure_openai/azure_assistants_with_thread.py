@@ -34,7 +34,7 @@ async def example_with_automatic_thread_creation() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -60,7 +60,7 @@ async def example_with_thread_persistence() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -98,7 +98,7 @@ async def example_with_existing_thread_id() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     ) as agent:
@@ -118,7 +118,7 @@ async def example_with_existing_thread_id() -> None:
 
         # Create a new agent instance but use the existing thread ID
         async with Agent(
-            chat_client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+            client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent:

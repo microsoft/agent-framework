@@ -381,12 +381,12 @@ def create_client(
 Use Google-style docstrings for all public APIs:
 
 ```python
-def create_agent(name: str, chat_client: SupportsChatGetResponse) -> Agent:
+def create_agent(name: str, client: SupportsChatGetResponse) -> Agent:
     """Create a new agent with the specified configuration.
 
     Args:
         name: The name of the agent.
-        chat_client: The chat client to use for communication.
+        client: The chat client to use for communication.
 
     Returns:
         True if the strings are the same, False otherwise.

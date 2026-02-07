@@ -39,7 +39,7 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
-        my_agent = Agent(chat_client=client, name="assistant")
+        my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 
         # Start the worker

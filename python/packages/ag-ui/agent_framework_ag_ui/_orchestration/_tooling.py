@@ -71,18 +71,18 @@ def register_additional_client_tools(agent: SupportsAgentRun, client_tools: list
 
     Args:
         agent: Agent instance to register tools on. Works with Agent
-            or any agent with a chat_client attribute.
+            or any agent with a client attribute.
         client_tools: List of client tools to register.
     """
     if not client_tools:
         return
 
-    chat_client = getattr(agent, "chat_client", None)
-    if chat_client is None:
+    client = getattr(agent, "client", None)
+    if client is None:
         return
 
-    if isinstance(chat_client, BaseChatClient) and chat_client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
-        chat_client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
+    if isinstance(client, BaseChatClient) and client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
+        client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
         logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 

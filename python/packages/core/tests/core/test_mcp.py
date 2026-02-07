@@ -1391,7 +1391,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_chat_client = AsyncMock()
     mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -1434,7 +1434,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_response.model_id = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()

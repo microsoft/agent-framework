@@ -41,7 +41,7 @@ async def test_structured_output_with_recipe(streaming_chat_client_stub, stream_
             contents=[Content.from_text(text='{"recipe": {"name": "Pasta"}, "message": "Here is your recipe"}')]
         )
 
-    agent = Agent(name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test", instructions="Test", client=streaming_chat_client_stub(stream_fn))
     agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -83,7 +83,7 @@ async def test_structured_output_with_steps(streaming_chat_client_stub, stream_f
         }
         yield ChatResponseUpdate(contents=[Content.from_text(text=json.dumps(steps_data))])
 
-    agent = Agent(name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test", instructions="Test", client=streaming_chat_client_stub(stream_fn))
     agent.default_options = ChatOptions(response_format=StepsOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -117,7 +117,7 @@ async def test_structured_output_with_no_schema_match(streaming_chat_client_stub
     ]
 
     agent = Agent(
-        name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_from_updates_fixture(updates))
+        name="test", instructions="Test", client=streaming_chat_client_stub(stream_from_updates_fixture(updates))
     )
     agent.default_options = ChatOptions(response_format=GenericOutput)
 
@@ -153,7 +153,7 @@ async def test_structured_output_without_schema(streaming_chat_client_stub, stre
     ) -> AsyncIterator[ChatResponseUpdate]:
         yield ChatResponseUpdate(contents=[Content.from_text(text='{"data": {"key": "value"}, "info": "processed"}')])
 
-    agent = Agent(name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test", instructions="Test", client=streaming_chat_client_stub(stream_fn))
     agent.default_options = ChatOptions(response_format=DataOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -185,7 +185,7 @@ async def test_no_structured_output_when_no_response_format(streaming_chat_clien
     agent = Agent(
         name="test",
         instructions="Test",
-        chat_client=streaming_chat_client_stub(stream_from_updates_fixture(updates)),
+        client=streaming_chat_client_stub(stream_from_updates_fixture(updates)),
     )
     # No response_format set
 
@@ -213,7 +213,7 @@ async def test_structured_output_with_message_field(streaming_chat_client_stub, 
         output_data = {"recipe": {"name": "Salad"}, "message": "Fresh salad recipe ready"}
         yield ChatResponseUpdate(contents=[Content.from_text(text=json.dumps(output_data))])
 
-    agent = Agent(name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test", instructions="Test", client=streaming_chat_client_stub(stream_fn))
     agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -248,7 +248,7 @@ async def test_empty_updates_no_structured_processing(streaming_chat_client_stub
         if False:
             yield ChatResponseUpdate(contents=[])
 
-    agent = Agent(name="test", instructions="Test", chat_client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test", instructions="Test", client=streaming_chat_client_stub(stream_fn))
     agent.default_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(agent=agent)

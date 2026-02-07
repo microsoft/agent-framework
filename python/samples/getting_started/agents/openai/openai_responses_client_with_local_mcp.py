@@ -23,7 +23,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=MCPStreamableHTTPTool(  # Tools defined at agent creation
@@ -61,7 +61,7 @@ async def run_with_mcp() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=MCPStreamableHTTPTool(  # Tools defined at agent creation

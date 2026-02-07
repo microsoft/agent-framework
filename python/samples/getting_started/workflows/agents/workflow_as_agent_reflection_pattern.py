@@ -6,9 +6,9 @@ from uuid import uuid4
 
 from agent_framework import (
     AgentResponse,
-    SupportsChatGetResponse,
-    Message,
     Executor,
+    Message,
+    SupportsChatGetResponse,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -60,9 +60,9 @@ class ReviewResponse:
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
-    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
+    def __init__(self, id: str, client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
-        self._chat_client = chat_client
+        self._chat_client = client
 
     @handler
     async def review(self, request: ReviewRequest, ctx: WorkflowContext[ReviewResponse]) -> None:
@@ -112,9 +112,9 @@ class Reviewer(Executor):
 class Worker(Executor):
     """Executor that generates responses and incorporates feedback when necessary."""
 
-    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
+    def __init__(self, id: str, client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
-        self._chat_client = chat_client
+        self._chat_client = client
         self._pending_requests: dict[str, tuple[ReviewRequest, list[Message]]] = {}
 
     @handler

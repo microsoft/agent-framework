@@ -95,12 +95,12 @@ async def temporary_chat_client(agent_name: str) -> AsyncIterator[AzureAIClient]
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
     ):
-        chat_client = AzureAIClient(
+        client = AzureAIClient(
             project_client=project_client,
             agent_name=agent_name,
         )
         try:
-            yield chat_client
+            yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
 
@@ -1622,7 +1622,7 @@ async def test_integration_agent_existing_thread():
     async with (
         temporary_chat_client(agent_name="af-int-test-existing-thread") as client,
         Agent(
-            chat_client=client,
+            client=client,
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent,
     ):
@@ -1641,7 +1641,7 @@ async def test_integration_agent_existing_thread():
         async with (
             temporary_chat_client(agent_name="af-int-test-existing-thread-2") as client,
             Agent(
-                chat_client=client,
+                client=client,
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent,
         ):

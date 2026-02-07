@@ -766,7 +766,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureOpenAIChatClient."""
     async with Agent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
@@ -782,7 +782,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureOpenAIChatClient."""
     async with Agent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test streaming run
         full_text = ""
@@ -800,7 +800,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 async def test_azure_openai_chat_client_agent_thread_persistence():
     """Test Azure OpenAI chat client agent thread persistence across runs with AzureOpenAIChatClient."""
     async with Agent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -828,7 +828,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     preserved_thread = None
 
     async with Agent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -844,7 +844,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with Agent(
-            chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+            client=AzureOpenAIChatClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
@@ -861,7 +861,7 @@ async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
 
     async with Agent(
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:

@@ -23,7 +23,7 @@ async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     )

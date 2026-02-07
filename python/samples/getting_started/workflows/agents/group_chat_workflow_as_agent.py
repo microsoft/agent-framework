@@ -23,14 +23,14 @@ async def main() -> None:
         name="Researcher",
         description="Collects relevant background information.",
         instructions="Gather concise facts that help a teammate answer the question.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
+        client=OpenAIChatClient(model_id="gpt-4o-mini"),
     )
 
     writer = Agent(
         name="Writer",
         description="Synthesizes a polished answer using the gathered notes.",
         instructions="Compose clear and structured answers using any notes provided.",
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
     )
 
     # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds

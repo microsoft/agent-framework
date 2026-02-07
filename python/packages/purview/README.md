@@ -59,7 +59,7 @@ from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import InteractiveBrowserCredential
 
 async def main():
-	chat_client = AzureOpenAIChatClient()  # uses environment for endpoint + deployment
+	client = AzureOpenAIChatClient()  # uses environment for endpoint + deployment
 
 	purview_middleware = PurviewPolicyMiddleware(
 		credential=InteractiveBrowserCredential(),
@@ -67,7 +67,7 @@ async def main():
 	)
 
 	agent = Agent(
-		chat_client=chat_client,
+		client=client,
 		instructions="You are a helpful assistant.",
 		middleware=[purview_middleware]
 	)
@@ -227,7 +227,7 @@ credential = DefaultAzureCredential()
 client = AzureOpenAIChatClient()
 
 agent = Agent(
-	chat_client=client,
+	client=client,
 	instructions="You are helpful.",
 	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
 )
@@ -244,7 +244,7 @@ from azure.identity import DefaultAzureCredential
 
 credential = DefaultAzureCredential()
 
-chat_client = AzureOpenAIChatClient(
+client = AzureOpenAIChatClient(
 	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
 	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
@@ -253,7 +253,7 @@ chat_client = AzureOpenAIChatClient(
 	],
 )
 
-agent = Agent(chat_client=chat_client, instructions="You are helpful.")
+agent = Agent(client=client, instructions="You are helpful.")
 ```
 
 The policy logic is identical; the difference is only the hook point in the pipeline.

@@ -16,13 +16,13 @@ class UserInfo(BaseModel):
 
 
 class UserInfoMemory(ContextProvider):
-    def __init__(self, chat_client: SupportsChatGetResponse, user_info: UserInfo | None = None, **kwargs: Any):
+    def __init__(self, client: SupportsChatGetResponse, user_info: UserInfo | None = None, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
         """
 
-        self._chat_client = chat_client
+        self._chat_client = client
         if user_info:
             self.user_info = user_info
         elif kwargs:
@@ -92,14 +92,14 @@ class UserInfoMemory(ContextProvider):
 
 async def main():
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIClient(credential=credential)
+        client = AzureAIClient(credential=credential)
 
         # Create the memory provider
-        memory_provider = UserInfoMemory(chat_client)
+        memory_provider = UserInfoMemory(client)
 
         # Create the agent with memory
         async with Agent(
-            chat_client=chat_client,
+            client=client,
             instructions="You are a friendly assistant. Always address the user by their name.",
             context_provider=memory_provider,
         ) as agent:

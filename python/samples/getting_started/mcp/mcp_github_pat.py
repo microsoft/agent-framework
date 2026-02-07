@@ -55,7 +55,7 @@ async def github_mcp_example() -> None:
 
     # 5. Create agent with the GitHub MCP tool
     async with Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         name="GitHubAgent",
         instructions=(
             "You are a helpful assistant that can help users interact with GitHub. "

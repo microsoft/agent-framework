@@ -542,7 +542,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A configured Agent instance.
         """
         # Create the chat client with the assistant
-        chat_client = OpenAIAssistantsClient(
+        client = OpenAIAssistantsClient(
             model_id=assistant.model,
             assistant_id=assistant.id,
             assistant_name=assistant.name,
@@ -555,7 +555,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
         # Create and return Agent
         return Agent(
-            chat_client=chat_client,
+            client=client,
             id=assistant.id,
             name=assistant.name,
             description=assistant.description,

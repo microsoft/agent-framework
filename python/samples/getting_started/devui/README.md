@@ -106,7 +106,7 @@ from agent_framework.openai import OpenAIChatClient
 agent = Agent(
     name="MyAgent",
     description="My custom agent",
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     # ... your configuration
 )
 ```

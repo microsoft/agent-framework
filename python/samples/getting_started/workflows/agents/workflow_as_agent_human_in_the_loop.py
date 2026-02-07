@@ -16,9 +16,9 @@ if str(_SAMPLES_ROOT) not in sys.path:
     sys.path.insert(0, str(_SAMPLES_ROOT))
 
 from agent_framework import (  # noqa: E402
-    Message,
     Content,
     Executor,
+    Message,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,

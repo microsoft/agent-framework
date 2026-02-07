@@ -263,7 +263,7 @@ class ChatContext:
     about the chat request.
 
     Attributes:
-        chat_client: The chat client being invoked.
+        client: The chat client being invoked.
         messages: The messages being sent to the chat client.
         options: The options for the chat request as a dict.
         stream: Whether this is a streaming invocation.
@@ -302,7 +302,7 @@ class ChatContext:
 
     def __init__(
         self,
-        chat_client: SupportsChatGetResponse,
+        client: SupportsChatGetResponse,
         messages: Sequence[Message],
         options: Mapping[str, Any] | None,
         stream: bool = False,
@@ -319,7 +319,7 @@ class ChatContext:
         """Initialize the ChatContext.
 
         Args:
-            chat_client: The chat client being invoked.
+            client: The chat client being invoked.
             messages: The messages being sent to the chat client.
             options: The options for the chat request as a dict.
             stream: Whether this is a streaming invocation.
@@ -330,7 +330,7 @@ class ChatContext:
             stream_result_hooks: Result hooks to apply to the finalized streaming response.
             stream_cleanup_hooks: Cleanup hooks to run after streaming completes.
         """
-        self.chat_client = chat_client
+        self.client = client
         self.messages = messages
         self.options = options
         self.stream = stream
@@ -372,7 +372,7 @@ class AgentMiddleware(ABC):
 
 
             # Use with an agent
-            agent = Agent(chat_client=client, name="assistant", middleware=[RetryMiddleware()])
+            agent = Agent(client=client, name="assistant", middleware=[RetryMiddleware()])
     """
 
     @abstractmethod
@@ -439,7 +439,7 @@ class FunctionMiddleware(ABC):
 
 
             # Use with an agent
-            agent = Agent(chat_client=client, name="assistant", middleware=[CachingMiddleware()])
+            agent = Agent(client=client, name="assistant", middleware=[CachingMiddleware()])
     """
 
     @abstractmethod
@@ -498,7 +498,7 @@ class ChatMiddleware(ABC):
 
             # Use with an agent
             agent = Agent(
-                chat_client=client,
+                client=client,
                 name="assistant",
                 middleware=[SystemPromptMiddleware("You are a helpful assistant.")],
             )
@@ -583,7 +583,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
 
 
             # Use with an agent
-            agent = Agent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as agent middleware
     func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
@@ -616,7 +616,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
 
 
             # Use with an agent
-            agent = Agent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as function middleware
     func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
@@ -649,7 +649,7 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
 
 
             # Use with an agent
-            agent = Agent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as chat middleware
     func._middleware_type: MiddlewareType = MiddlewareType.CHAT  # type: ignore
@@ -1035,7 +1035,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             )
 
         context = ChatContext(
-            chat_client=self,  # type: ignore[arg-type]
+            client=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),
             options=options,
             stream=stream,
@@ -1090,7 +1090,7 @@ class AgentMiddlewareLayer:
         self.agent_middleware = middleware_list["agent"]
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
         super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
-        # Note: We intentionally don't extend chat_client's middleware lists here.
+        # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
 

@@ -11,18 +11,18 @@ from agent_framework import (
 )
 
 
-def test_chat_client_type(chat_client: SupportsChatGetResponse):
-    assert isinstance(chat_client, SupportsChatGetResponse)
+def test_chat_client_type(client: SupportsChatGetResponse):
+    assert isinstance(client, SupportsChatGetResponse)
 
 
-async def test_chat_client_get_response(chat_client: SupportsChatGetResponse):
-    response = await chat_client.get_response(Message(role="user", text="Hello"))
+async def test_chat_client_get_response(client: SupportsChatGetResponse):
+    response = await client.get_response(Message(role="user", text="Hello"))
     assert response.text == "test response"
     assert response.messages[0].role == "assistant"
 
 
-async def test_chat_client_get_response_streaming(chat_client: SupportsChatGetResponse):
-    async for update in chat_client.get_response(Message(role="user", text="Hello"), stream=True):
+async def test_chat_client_get_response_streaming(client: SupportsChatGetResponse):
+    async for update in client.get_response(Message(role="user", text="Hello"), stream=True):
         assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == "assistant"
 

@@ -216,8 +216,8 @@ class AgentExecutor(Executor):
         """
         # Check if using AzureAIAgentClient with server-side thread and warn about checkpointing limitations
         if is_chat_agent(self._agent) and self._agent_thread.service_thread_id is not None:
-            client_class_name = self._agent.chat_client.__class__.__name__
-            client_module = self._agent.chat_client.__class__.__module__
+            client_class_name = self._agent.client.__class__.__name__
+            client_module = self._agent.client.__class__.__module__
 
             if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
                 logger.warning(

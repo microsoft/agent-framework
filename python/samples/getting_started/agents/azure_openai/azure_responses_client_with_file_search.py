@@ -54,7 +54,7 @@ async def main() -> None:
     file_id, vector_store = await create_vector_store(client)
 
     agent = Agent(
-        chat_client=client,
+        client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
         tools=[HostedFileSearchTool(inputs=vector_store)],
     )

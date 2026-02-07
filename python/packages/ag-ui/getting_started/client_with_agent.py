@@ -63,7 +63,7 @@ async def main():
     - RunStreamingAsync(messages, thread)
 
     Python equivalent:
-    - agent = Agent(chat_client=AGUIChatClient(...), tools=[...])
+    - agent = Agent(client=AGUIChatClient(...), tools=[...])
     - thread = agent.get_new_thread()  # Creates thread with message_store
     - agent.run(message, stream=True, thread=thread)  # Thread accumulates history
     """
@@ -86,7 +86,7 @@ async def main():
             agent = Agent(
                 name="remote_assistant",
                 instructions="You are a helpful assistant. Remember user information across the conversation.",
-                chat_client=remote_client,
+                client=remote_client,
                 tools=[get_weather],
             )
 

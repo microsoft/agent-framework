@@ -57,7 +57,7 @@ async def main():
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
             agent = Agent(
-                chat_client=client,
+                client=client,
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",

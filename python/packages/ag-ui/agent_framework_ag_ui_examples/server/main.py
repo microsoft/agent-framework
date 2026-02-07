@@ -67,7 +67,7 @@ app.add_middleware(
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
 # Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
-chat_client: SupportsChatGetResponse[ChatOptions] = cast(
+client: SupportsChatGetResponse[ChatOptions] = cast(
     SupportsChatGetResponse[ChatOptions],
     AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient(),
 )
@@ -75,35 +75,35 @@ chat_client: SupportsChatGetResponse[ChatOptions] = cast(
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=simple_agent(chat_client),
+    agent=simple_agent(client),
     path="/agentic_chat",
 )
 
 # Backend Tool Rendering - agent with tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=weather_agent(chat_client),
+    agent=weather_agent(client),
     path="/backend_tool_rendering",
 )
 
 # Shared State - recipe agent with structured output
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=recipe_agent(chat_client),
+    agent=recipe_agent(client),
     path="/shared_state",
 )
 
 # Predictive State Updates - document writer with predictive state
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=document_writer_agent(chat_client),
+    agent=document_writer_agent(client),
     path="/predictive_state_updates",
 )
 
 # Human in the Loop - human-in-the-loop agent with step customization
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=human_in_the_loop_agent(chat_client),
+    agent=human_in_the_loop_agent(client),
     path="/human_in_the_loop",
     state_schema={"steps": {"type": "array"}},
     predict_state_config={"steps": {"tool": "generate_task_steps", "tool_argument": "steps"}},
@@ -112,14 +112,14 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent_wrapped(chat_client),  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(client),  # type: ignore[arg-type]
     path="/agentic_generative_ui",
 )
 
 # Tool-based Generative UI - UI generator with frontend-rendered tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=ui_generator_agent(chat_client),
+    agent=ui_generator_agent(client),
     path="/tool_based_generative_ui",
 )
 

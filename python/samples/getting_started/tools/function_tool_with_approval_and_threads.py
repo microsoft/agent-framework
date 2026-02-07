@@ -29,7 +29,7 @@ async def approval_example() -> None:
     print("=== Tool Approval with Thread ===\n")
 
     agent = Agent(
-        chat_client=AzureOpenAIChatClient(),
+        client=AzureOpenAIChatClient(),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -65,7 +65,7 @@ async def rejection_example() -> None:
     print("=== Tool Rejection with Thread ===\n")
 
     agent = Agent(
-        chat_client=AzureOpenAIChatClient(),
+        client=AzureOpenAIChatClient(),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],

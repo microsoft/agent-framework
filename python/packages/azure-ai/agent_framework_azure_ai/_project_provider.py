@@ -401,7 +401,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
 
         return Agent(  # type: ignore[return-value]
-            chat_client=client,
+            client=client,
             id=details.id,
             name=details.name,
             description=details.description,

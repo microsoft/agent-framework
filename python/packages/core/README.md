@@ -45,7 +45,7 @@ You can also override environment variables by explicitly passing configuration 
 ```python
 from agent_framework.azure import AzureOpenAIChatClient
 
-chat_client = AzureOpenAIChatClient(
+client = AzureOpenAIChatClient(
     api_key="",
     endpoint="",
     deployment_name="",
@@ -66,7 +66,7 @@ from agent_framework.openai import OpenAIChatClient
 
 async def main():
     agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="""
         1) A robot may not injure a human being...
         2) A robot must obey orders given it by human beings...
@@ -146,7 +146,7 @@ def get_menu_specials() -> str:
 
 async def main():
     agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="You are a helpful assistant that can provide weather and restaurant information.",
         tools=[get_weather, get_menu_specials]
     )
@@ -176,13 +176,13 @@ from agent_framework.openai import OpenAIChatClient
 async def main():
     # Create specialized agents
     writer = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         name="Writer",
         instructions="You are a creative content writer. Generate and refine slogans based on feedback."
     )
 
     reviewer = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         name="Reviewer",
         instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."
     )
@@ -218,7 +218,7 @@ if __name__ == "__main__":
 ## More Examples & Samples
 
 - [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
+- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
 - [.NET Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Workflows): Advanced multi-agent patterns (.NET)
 

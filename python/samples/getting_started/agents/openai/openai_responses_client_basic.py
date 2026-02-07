@@ -73,7 +73,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -89,7 +89,7 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = Agent(
-        chat_client=OpenAIResponsesClient(
+        client=OpenAIResponsesClient(
             middleware=[security_and_override_middleware],
         ),
         instructions="You are a helpful weather agent.",

@@ -180,10 +180,10 @@ class TestChatMiddleware:
             await call_next(context)
             execution_order.append("agent_chat_middleware_after")
 
-        chat_client = MockBaseChatClient()
+        client = MockBaseChatClient()
 
         # Create Agent with chat middleware
-        agent = Agent(chat_client=chat_client, middleware=[agent_level_chat_middleware])
+        agent = Agent(client=client, middleware=[agent_level_chat_middleware])
 
         # Execute the agent
         messages = [Message(role="user", text="test message")]
@@ -217,7 +217,7 @@ class TestChatMiddleware:
             execution_order.append("second_after")
 
         # Create Agent with multiple chat middleware
-        agent = Agent(chat_client=chat_client_base, middleware=[first_middleware, second_middleware])
+        agent = Agent(client=chat_client_base, middleware=[first_middleware, second_middleware])
 
         # Execute the agent
         messages = [Message(role="user", text="test message")]
@@ -375,10 +375,10 @@ class TestChatMiddleware:
         )
 
         # Create function-invocation enabled chat client (MockBaseChatClient already includes FunctionInvocationLayer)
-        chat_client = MockBaseChatClient()
+        client = MockBaseChatClient()
 
         # Set function middleware directly on the chat client
-        chat_client.function_middleware = [test_function_middleware]
+        client.function_middleware = [test_function_middleware]
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(
@@ -399,15 +399,15 @@ class TestChatMiddleware:
             messages=[Message(role="assistant", text="Based on the weather data, it's sunny!")]
         )
 
-        chat_client.run_responses = [function_call_response, final_response]
+        client.run_responses = [function_call_response, final_response]
         # Execute the chat client directly with tools - this should trigger function invocation and middleware
         messages = [Message(role="user", text="What's the weather in San Francisco?")]
-        response = await chat_client.get_response(messages, options={"tools": [sample_tool_wrapped]})
+        response = await client.get_response(messages, options={"tools": [sample_tool_wrapped]})
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert chat_client.call_count == 2  # Two calls: function call + final response
+        assert client.call_count == 2  # Two calls: function call + final response
 
         # Verify function middleware was executed
         assert execution_order == [
@@ -440,7 +440,7 @@ class TestChatMiddleware:
         )
 
         # Create function-invocation enabled chat client (MockBaseChatClient already includes FunctionInvocationLayer)
-        chat_client = MockBaseChatClient()
+        client = MockBaseChatClient()
 
         # Prepare responses that will trigger function invocation
         function_call_response = ChatResponse(
@@ -457,18 +457,18 @@ class TestChatMiddleware:
                 )
             ]
         )
-        chat_client.run_responses = [function_call_response]
+        client.run_responses = [function_call_response]
 
         # Execute the chat client directly with run-level middleware and tools
         messages = [Message(role="user", text="What's the weather in New York?")]
-        response = await chat_client.get_response(
+        response = await client.get_response(
             messages, options={"tools": [sample_tool_wrapped]}, middleware=[run_level_function_middleware]
         )
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
-        assert chat_client.call_count == 2  # Two calls: function call + final response
+        assert client.call_count == 2  # Two calls: function call + final response
 
         # Verify run-level function middleware was executed once (during function invocation)
         assert execution_order == [

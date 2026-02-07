@@ -59,11 +59,11 @@ def get_forecast(location: str, days: int = 3) -> str:
     return f"{days}-day forecast for {location}:\n" + "\n".join(forecast)
 
 
-def weather_agent(chat_client: SupportsChatGetResponse[Any]) -> Agent[Any]:
+def weather_agent(client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     """Create a weather agent with get_weather and get_forecast tools.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured Agent instance with weather tools
@@ -76,6 +76,6 @@ def weather_agent(chat_client: SupportsChatGetResponse[Any]) -> Agent[Any]:
             "Always provide friendly and informative responses. "
             "First return the weather result, and then return details about the forecast."
         ),
-        chat_client=chat_client,
+        client=client,
         tools=[get_weather, get_forecast],
     )

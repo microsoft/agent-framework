@@ -75,7 +75,7 @@ from your_store import YourStore  # type: ignore[import-not-found]  # Replace wi
 
 # Define your agent with tools
 agent = Agent(
-    chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+    client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     instructions="You are a helpful assistant.",
     tools=[],  # Add your tools here
 )

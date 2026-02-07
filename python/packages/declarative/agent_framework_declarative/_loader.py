@@ -150,7 +150,7 @@ class AgentFactory:
 
             # With pre-configured chat client
             client = AzureOpenAIChatClient()
-            factory = AgentFactory(chat_client=client)
+            factory = AgentFactory(client=client)
             agent = factory.create_agent_from_yaml_path("agent.yaml")
 
         .. code-block:: python
@@ -174,7 +174,7 @@ class AgentFactory:
     def __init__(
         self,
         *,
-        chat_client: SupportsChatGetResponse | None = None,
+        client: SupportsChatGetResponse | None = None,
         bindings: Mapping[str, Any] | None = None,
         connections: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
@@ -187,7 +187,7 @@ class AgentFactory:
         """Create the agent factory.
 
         Args:
-            chat_client: An optional SupportsChatGetResponse instance to use as a dependency.
+            client: An optional SupportsChatGetResponse instance to use as a dependency.
                 This will be passed to the Agent that gets created.
                 If you need to create multiple agents with different chat clients,
                 do not pass this and instead provide the chat client in the YAML definition.
@@ -241,7 +241,7 @@ class AgentFactory:
                 # With shared chat client
                 client = AzureOpenAIChatClient()
                 factory = AgentFactory(
-                    chat_client=client,
+                    client=client,
                     env_file_path=".env",
                 )
 
@@ -260,7 +260,7 @@ class AgentFactory:
                     },
                 )
         """
-        self.chat_client = chat_client
+        self.client = client
         self.bindings = bindings
         self.connections = connections
         self.client_kwargs = client_kwargs or {}
@@ -455,7 +455,7 @@ class AgentFactory:
             chat_options["response_format"] = _create_model_from_json_schema("agent", output_schema.to_json_schema())
         # Step 3: Create the agent instance
         return Agent(
-            chat_client=client,
+            client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
@@ -572,7 +572,7 @@ class AgentFactory:
         if output_schema := prompt_agent.outputSchema:
             chat_options["response_format"] = _create_model_from_json_schema("agent", output_schema.to_json_schema())
         return Agent(
-            chat_client=client,
+            client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
@@ -634,9 +634,9 @@ class AgentFactory:
     def _get_client(self, prompt_agent: PromptAgent) -> SupportsChatGetResponse:
         """Create the SupportsChatGetResponse instance based on the PromptAgent model."""
         if not prompt_agent.model:
-            # if no model is defined, use the supplied chat_client
-            if self.chat_client:
-                return self.chat_client
+            # if no model is defined, use the supplied client
+            if self.client:
+                return self.client
             raise DeclarativeLoaderError(
                 "ChatClient must be provided to create agent from PromptAgent, "
                 "alternatively define a model in the PromptAgent."
@@ -670,9 +670,9 @@ class AgentFactory:
 
         # Any client we create, needs a model.id
         if not prompt_agent.model.id:
-            # if prompt_agent.model is defined, but no id, use the supplied chat_client
-            if self.chat_client:
-                return self.chat_client
+            # if prompt_agent.model is defined, but no id, use the supplied client
+            if self.client:
+                return self.client
             # or raise, since we cannot create a client without model id
             raise DeclarativeLoaderError(
                 "ChatClient must be provided to create agent from PromptAgent, or define model.id in the PromptAgent."

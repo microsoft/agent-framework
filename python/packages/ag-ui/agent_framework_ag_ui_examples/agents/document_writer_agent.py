@@ -40,11 +40,11 @@ _DOCUMENT_WRITER_INSTRUCTIONS = (
 )
 
 
-def document_writer_agent(chat_client: SupportsChatGetResponse) -> AgentFrameworkAgent:
+def document_writer_agent(client: SupportsChatGetResponse) -> AgentFrameworkAgent:
     """Create a document writer agent with predictive state updates.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with document writing capabilities
@@ -52,7 +52,7 @@ def document_writer_agent(chat_client: SupportsChatGetResponse) -> AgentFramewor
     agent = Agent(
         name="document_writer",
         instructions=_DOCUMENT_WRITER_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[write_document],
     )
 

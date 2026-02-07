@@ -230,14 +230,14 @@ async def run_agent_framework_example(task: str) -> str:
             "Gather concise facts or considerations that help plan a community hackathon. "
             "Keep your responses factual and scannable."
         ),
-        chat_client=AzureOpenAIChatClient(credential=credential),
+        client=AzureOpenAIChatClient(credential=credential),
     )
 
     planner = Agent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        client=AzureOpenAIResponsesClient(credential=credential),
     )
 
     workflow = (

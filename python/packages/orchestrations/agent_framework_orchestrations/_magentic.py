@@ -1796,7 +1796,7 @@ class MagenticBuilder:
             # Configure manager agent with specific options and instructions
             manager_agent = Agent(
                 name="Coordinator",
-                chat_client=OpenAIChatClient(model_id="gpt-4o"),
+                client=OpenAIChatClient(model_id="gpt-4o"),
                 options=ChatOptions(temperature=0.3, seed=42),
                 instructions="Be concise and focus on accuracy",
             )

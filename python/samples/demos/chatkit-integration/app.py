@@ -218,7 +218,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # For authentication, run `az login` command in terminal
         try:
             self.weather_agent = Agent(
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
@@ -301,7 +301,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             ]
 
             # Use the chat client directly for a quick, lightweight call
-            response = await self.weather_agent.chat_client.get_response(
+            response = await self.weather_agent.client.get_response(
                 messages=title_prompt,
                 options={
                     "temperature": 0.3,

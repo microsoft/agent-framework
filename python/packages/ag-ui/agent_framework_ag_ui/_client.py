@@ -69,10 +69,10 @@ AGUIChatOptionsT = TypeVar(
 )
 
 
-def _apply_server_function_call_unwrap(chat_client: BaseChatClientT) -> BaseChatClientT:
+def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
-    original_get_response = chat_client.get_response
+    original_get_response = client.get_response
 
     @wraps(original_get_response)
     def response_wrapper(
@@ -105,8 +105,8 @@ def _apply_server_function_call_unwrap(chat_client: BaseChatClientT) -> BaseChat
         _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
         return update
 
-    chat_client.get_response = response_wrapper  # type: ignore[assignment]
-    return chat_client
+    client.get_response = response_wrapper  # type: ignore[assignment]
+    return client
 
 
 @_apply_server_function_call_unwrap

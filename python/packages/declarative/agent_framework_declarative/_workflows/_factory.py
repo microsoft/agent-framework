@@ -73,8 +73,8 @@ class WorkflowFactory:
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            chat_client = AzureOpenAIChatClient()
-            agent = chat_client.as_agent(name="MyAgent", instructions="You are helpful.")
+            client = AzureOpenAIChatClient()
+            agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")

@@ -58,8 +58,8 @@ class Summarizer(Executor):
 
 async def main() -> None:
     # 1) Create a content agent
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    content = chat_client.as_agent(
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    content = client.as_agent(
         instructions="Produce a concise paragraph answering the user's request.",
         name="content",
     )

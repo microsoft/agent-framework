@@ -119,7 +119,7 @@ def get_time_zone(location: str) -> str:
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint=endpoint,
         deployment_name=deployment_name,
     ),

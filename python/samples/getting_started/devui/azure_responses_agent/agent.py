@@ -85,7 +85,7 @@ agent = Agent(
     For PDFs, you can read and understand the text, tables, and structure.
     For images, you can describe what you see and extract any text.
     """,
-    chat_client=AzureOpenAIResponsesClient(
+    client=AzureOpenAIResponsesClient(
         deployment_name=_deployment_name,
         endpoint=_endpoint,
         api_version="2025-03-01-preview",  # Required for Responses API

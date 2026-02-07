@@ -121,7 +121,7 @@ class MockHandoffAgent(Agent):
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(chat_client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
+        super().__init__(client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
@@ -290,7 +290,7 @@ async def test_tool_choice_preserved_from_agent_config():
 
     # Create agent with specific tool_choice configuration via default_options
     agent = Agent(
-        chat_client=mock_client,
+        client=mock_client,
         name="test_agent",
         default_options={"tool_choice": {"mode": "required"}},  # type: ignore
     )
@@ -325,7 +325,7 @@ async def test_context_provider_preserved_during_handoff():
 
     # Create agent with context provider using proper constructor
     agent = Agent(
-        chat_client=mock_client,
+        client=mock_client,
         name="test_agent",
         id="test_agent",
         context_provider=context_provider,

@@ -167,7 +167,7 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
     async with (
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
         Agent(
-            chat_client=OpenAIChatClient(
+            client=OpenAIChatClient(
                 model_id=llm.model,  # This is the model being trained
                 api_key=os.getenv("OPENAI_API_KEY") or "dummy",  # Can be dummy when connecting to training LLM
                 base_url=llm.endpoint,  # vLLM server endpoint provided by agent-lightning

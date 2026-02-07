@@ -543,11 +543,11 @@ class StubAssistantsClient:
 
 
 class StubAssistantsAgent(BaseAgent):
-    chat_client: object | None = None  # allow assignment via Pydantic field
+    client: object | None = None  # allow assignment via Pydantic field
 
     def __init__(self) -> None:
         super().__init__(name="agentA")
-        self.chat_client = StubAssistantsClient()  # type name contains 'AssistantsClient'
+        self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
     def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
         if stream:

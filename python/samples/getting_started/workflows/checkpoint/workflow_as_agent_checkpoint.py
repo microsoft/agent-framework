@@ -40,14 +40,14 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    assistant = chat_client.as_agent(
+    assistant = client.as_agent(
         name="assistant",
         instructions="You are a helpful assistant. Keep responses brief.",
     )
 
-    reviewer = chat_client.as_agent(
+    reviewer = client.as_agent(
         name="reviewer",
         instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
     )
@@ -81,9 +81,9 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    assistant = chat_client.as_agent(
+    assistant = client.as_agent(
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
     )
@@ -124,9 +124,9 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    assistant = chat_client.as_agent(
+    assistant = client.as_agent(
         name="streaming_assistant",
         instructions="You are a helpful assistant.",
     )

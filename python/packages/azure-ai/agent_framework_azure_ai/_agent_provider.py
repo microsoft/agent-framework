@@ -407,7 +407,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         merged_tools = self._merge_tools(agent.tools, provided_tools)
 
         return Agent(  # type: ignore[return-value]
-            chat_client=client,
+            client=client,
             id=agent.id,
             name=agent.name,
             description=agent.description,

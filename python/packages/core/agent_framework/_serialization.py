@@ -443,7 +443,7 @@ class SerializationMixin:
                 dependencies = {"open_ai_chat_client": {"client": openai_client}}
 
                 # The chat client is reconstructed with the OpenAI client injected
-                chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
+                client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
             **Function Injection for Tools** - FunctionTool runtime dependency:

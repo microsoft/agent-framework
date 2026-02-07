@@ -251,7 +251,7 @@ def max_iterations(request: Any) -> int:
 
 
 @fixture
-def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
+def client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
             return type("FunctionInvokingMockChatClient", (FunctionInvocationLayer, MockChatClient), {})()
@@ -261,10 +261,10 @@ def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatC
 @fixture
 def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
     with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-        chat_client = MockBaseChatClient()
+        client = MockBaseChatClient()
     if not enable_function_calling:
-        chat_client.function_invocation_configuration["enabled"] = False
-    return chat_client
+        client.function_invocation_configuration["enabled"] = False
+    return client
 
 
 # region Agents

@@ -22,7 +22,7 @@ from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint="https://your-resource.openai.azure.com/",
         deployment_name="gpt-4o-mini",
         api_key="your-api-key",
@@ -104,7 +104,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Create agent and app
-agent = Agent(name="my_agent", instructions="...", chat_client=...)
+agent = Agent(name="my_agent", instructions="...", client=...)
 app = FastAPI()
 
 # Register endpoint WITH authentication

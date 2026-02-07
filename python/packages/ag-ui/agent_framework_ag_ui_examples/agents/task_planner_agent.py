@@ -61,11 +61,11 @@ _TASK_PLANNER_INSTRUCTIONS = (
 )
 
 
-def task_planner_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
+def task_planner_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a task planner agent with user approval for actions.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with task planning capabilities
@@ -73,7 +73,7 @@ def task_planner_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFramew
     agent = Agent(
         name="task_planner",
         instructions=_TASK_PLANNER_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[create_calendar_event, send_email, book_meeting_room],
     )
 

@@ -71,7 +71,7 @@ class MockChatClient:
 
 class StubManagerAgent(Agent):
     def __init__(self) -> None:
-        super().__init__(chat_client=MockChatClient(), name="manager_agent", description="Stub manager")
+        super().__init__(client=MockChatClient(), name="manager_agent", description="Stub manager")
         self._call_count = 0
 
     async def run(
@@ -899,7 +899,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
         """Manager agent that dynamically selects from available participants."""
 
         def __init__(self) -> None:
-            super().__init__(chat_client=MockChatClient(), name="dynamic_manager", description="Dynamic manager")
+            super().__init__(client=MockChatClient(), name="dynamic_manager", description="Dynamic manager")
             self._call_count = 0
 
         async def run(

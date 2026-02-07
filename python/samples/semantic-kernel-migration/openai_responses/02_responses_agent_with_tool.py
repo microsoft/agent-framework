@@ -51,7 +51,7 @@ async def run_agent_framework() -> None:
         return a + b
 
     chat_agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="Use the add tool when math is required.",
         name="MathExpert",
         # AF registers the async function as a tool at construction.

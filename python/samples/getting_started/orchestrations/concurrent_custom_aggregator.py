@@ -20,7 +20,7 @@ The workflow completes when all participants become idle.
 Demonstrates:
 - ConcurrentBuilder(participants=[...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
-- Aggregation implemented via an LLM call (chat_client.get_response)
+- Aggregation implemented via an LLM call (client.get_response)
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
@@ -29,23 +29,23 @@ Prerequisites:
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = chat_client.as_agent(
+    researcher = client.as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = chat_client.as_agent(
+    marketer = client.as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = chat_client.as_agent(
+    legal = client.as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -75,7 +75,7 @@ async def main() -> None:
         )
         user_msg = Message("user", text="\n\n".join(expert_sections))
 
-        response = await chat_client.get_response([system_msg, user_msg])
+        response = await client.get_response([system_msg, user_msg])
         # Return the model's final assistant text as the completion result
         return response.messages[-1].text if response.messages else ""
 

@@ -592,7 +592,7 @@ async def _resolve_approval_responses(
     Args:
         messages: List of messages (will be modified in place)
         tools: List of available tools
-        agent: The agent instance (to get chat_client and config)
+        agent: The agent instance (to get client and config)
         run_kwargs: Kwargs for tool execution
     """
     fcc_todo = _collect_approval_responses(messages)
@@ -605,12 +605,12 @@ async def _resolve_approval_responses(
 
     # Execute approved tool calls
     if approved_responses and tools:
-        chat_client = getattr(agent, "chat_client", None)
+        client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(
-            getattr(chat_client, "function_invocation_configuration", None)
+            getattr(client, "function_invocation_configuration", None)
         )
         middleware_pipeline = FunctionMiddlewarePipeline(
-            *getattr(chat_client, "function_middleware", ()),
+            *getattr(client, "function_middleware", ()),
             *run_kwargs.get("middleware", ()),
         )
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution

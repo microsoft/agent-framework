@@ -142,7 +142,7 @@ search_provider = AzureAISearchContextProvider(
 # Create agent with search context
 async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
     async with Agent(
-        chat_client=client,
+        client=client,
         model=model_deployment,
         context_provider=search_provider,
     ) as agent:
@@ -167,7 +167,7 @@ search_provider = AzureAISearchContextProvider(
 
 # Use with agent (same as semantic mode)
 async with Agent(
-    chat_client=client,
+    client=client,
     model=model_deployment,
     context_provider=search_provider,
 ) as agent:

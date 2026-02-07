@@ -19,10 +19,10 @@ def register_backend_tool_rendering(app: FastAPI) -> None:
         app: The FastAPI application.
     """
     # Create a chat client and call the factory function
-    chat_client = cast(SupportsChatGetResponse[Any], AzureOpenAIChatClient())
+    client = cast(SupportsChatGetResponse[Any], AzureOpenAIChatClient())
 
     add_agent_framework_fastapi_endpoint(
         app,
-        weather_agent(chat_client),
+        weather_agent(client),
         "/backend_tool_rendering",
     )

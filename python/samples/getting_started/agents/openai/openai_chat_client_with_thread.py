@@ -31,7 +31,7 @@ async def example_with_automatic_thread_creation() -> None:
     print("=== Automatic Thread Creation Example ===")
 
     agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -56,7 +56,7 @@ async def example_with_thread_persistence() -> None:
     print("Using the same thread across multiple conversations to maintain context.\n")
 
     agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -89,7 +89,7 @@ async def example_with_existing_thread_messages() -> None:
     print("=== Existing Thread Messages Example ===")
 
     agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -111,7 +111,7 @@ async def example_with_existing_thread_messages() -> None:
 
     # Create a new agent instance but use the existing thread with its message history
     new_agent = Agent(
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

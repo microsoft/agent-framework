@@ -96,7 +96,7 @@ class ContextProvider(ABC):
 
             # Use with a chat agent
             async with CustomContextProvider() as provider:
-                agent = Agent(chat_client=client, name="assistant", context_provider=provider)
+                agent = Agent(client=client, name="assistant", context_provider=provider)
     """
 
     # Default prompt to be used by all context providers when assembling memories/instructions

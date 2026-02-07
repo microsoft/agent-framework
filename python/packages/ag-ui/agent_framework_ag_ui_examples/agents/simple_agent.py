@@ -7,11 +7,11 @@ from typing import Any
 from agent_framework import Agent, SupportsChatGetResponse
 
 
-def simple_agent(chat_client: SupportsChatGetResponse[Any]) -> Agent[Any]:
+def simple_agent(client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     """Create a simple chat agent.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured Agent instance
@@ -19,5 +19,5 @@ def simple_agent(chat_client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     return Agent[Any](
         name="simple_chat_agent",
         instructions="You are a helpful assistant. Be concise and friendly.",
-        chat_client=chat_client,
+        client=client,
     )

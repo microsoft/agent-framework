@@ -104,11 +104,11 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     """
 
 
-def recipe_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
+def recipe_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a recipe agent with streaming state updates.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with recipe management
@@ -116,7 +116,7 @@ def recipe_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAge
     agent = Agent(
         name="recipe_agent",
         instructions=_RECIPE_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[update_recipe],
     )
 

@@ -40,7 +40,7 @@ async def run_agent_framework() -> None:
 
     # AF Agent can swap in an OpenAIResponsesClient directly.
     chat_agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="Answer in one concise sentence.",
         name="Expert",
     )

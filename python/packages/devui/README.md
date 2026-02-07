@@ -28,7 +28,7 @@ def get_weather(location: str) -> str:
 # Create your agent
 agent = Agent(
     name="WeatherAgent",
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     tools=[get_weather]
 )
 
@@ -55,7 +55,7 @@ When DevUI starts with no discovered entities, it displays a **sample entity gal
 
 ```python
 # ✅ Correct - DevUI handles cleanup automatically
-mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", chat_client=chat_client)
+mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", client=client)
 agent = Agent(tools=mcp_tool)
 serve(entities=[agent])
 ```
@@ -74,7 +74,7 @@ from agent_framework_devui import register_cleanup, serve
 
 credential = DefaultAzureCredential()
 client = AzureOpenAIChatClient()
-agent = Agent(name="MyAgent", chat_client=client)
+agent = Agent(name="MyAgent", client=client)
 
 # Register cleanup hook - credential will be closed on shutdown
 register_cleanup(agent, credential.close)

@@ -497,7 +497,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         from ._agents import Agent
 
         return Agent(
-            chat_client=self,
+            client=self,
             id=id,
             name=name,
             description=description,

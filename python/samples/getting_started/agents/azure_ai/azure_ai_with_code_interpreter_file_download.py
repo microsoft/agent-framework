@@ -63,7 +63,7 @@ async def download_container_files(
     print(f"\nDownloading {len(file_contents)} container file(s) to {output_dir.absolute()}...")
 
     # Access the OpenAI client from AzureAIClient
-    openai_client = agent.chat_client.client
+    openai_client = agent.client.client
 
     downloaded_files: list[Path] = []
 

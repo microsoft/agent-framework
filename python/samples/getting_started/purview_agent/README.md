@@ -100,7 +100,7 @@ Prompt blocks set a system-level message: `Prompt blocked by policy` and termina
 
 ```python
 agent = Agent(
-	chat_client=chat_client,
+	client=client,
 	instructions="You are good at telling jokes.",
 	name="Joker",
 	middleware=[
