@@ -755,7 +755,8 @@ def run_workflow_orchestrator(
                         pending_messages,
                     )
                 else:
-                    # Timeout occurred
+                    # Timeout occurred — cancel the dangling external event listener
+                    approval_task.cancel()
                     logger.warning("HITL request %s timed out after %s hours", request_id, hitl_timeout_hours)
                     raise TimeoutError(
                         f"Human-in-the-loop request '{request_id}' timed out after {hitl_timeout_hours} hours."
