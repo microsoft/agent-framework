@@ -399,7 +399,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
-        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
+        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages, options, **kwargs)
         run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
 
         # WORKAROUND: Azure AI Projects 'create responses' API has schema divergence from OpenAI's
@@ -487,17 +487,46 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
-        """Prepare input from messages and convert system/developer messages to instructions."""
+    def _prepare_messages_for_azure_ai(
+        self, messages: Sequence[ChatMessage], options: Mapping[str, Any], **kwargs: Any
+    ) -> tuple[list[ChatMessage], str | None]:
+        """Prepare input from messages and convert system/developer messages to instructions.
+
+        When using previous_response_id (response chaining), filters out old function results
+        and assistant messages since they're already in the server-side conversation history.
+        Only NEW user messages should be sent.
+        """
+        # Check if we're using previous_response_id (response chaining pattern)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        use_response_chaining = conversation_id is not None and conversation_id.startswith("resp_")
+
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
         instructions: str | None = None
 
+        # When using response chaining, find the index of the last assistant message
+        # Messages after that are "new" and should be included
+        last_assistant_idx = -1
+        if use_response_chaining:
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].role == "assistant":
+                    last_assistant_idx = i
+                    break
+
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
-        for message in messages:
+        for idx, message in enumerate(messages):
             if message.role in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]
+            elif use_response_chaining:
+                # When using response chaining, only include messages after the last assistant message
+                # These are the "new" messages from the current turn
+                if idx > last_assistant_idx:
+                    # Also filter out function result messages
+                    has_function_result = any(content.type == "function_result" for content in message.contents)
+                    if not has_function_result:
+                        result.append(message)
+                # Skip all messages at or before the last assistant message (already in server history)
             else:
                 result.append(message)
 
