@@ -47,6 +47,12 @@
     <Project Path="samples/Durable/Agents/ConsoleApps/06_LongRunningTools/06_LongRunningTools.csproj" />
     <Project Path="samples/Durable/Agents/ConsoleApps/07_ReliableStreaming/07_ReliableStreaming.csproj" />
   </Folder>
+  <Folder Name="/Samples/Durable/Workflows/">
+    <Project Path="samples/Durable/Workflow/ConsoleApps/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
+    <Project Path="samples/Durable/Workflow/ConsoleApps/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/Durable/Workflow/ConsoleApps/03_ConditionalEdges/03_ConditionalEdges.csproj" />
+    <Project Path="samples/Durable/Workflow/ConsoleApps/04_WorkflowAndAgents/04_WorkflowAndAgents.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
