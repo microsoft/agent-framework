@@ -159,7 +159,7 @@ class StubAgent(SupportsAgentRun):
         agent_id: str = "stub-agent",
         agent_name: str | None = "stub-agent",
         default_options: Any | None = None,
-        chat_client: Any | None = None,
+        client: Any | None = None,
     ) -> None:
         self.id = agent_id
         self.name = agent_name
@@ -168,7 +168,7 @@ class StubAgent(SupportsAgentRun):
         self.default_options: dict[str, Any] = (
             default_options if isinstance(default_options, dict) else {"tools": None, "response_format": None}
         )
-        self.chat_client = chat_client or SimpleNamespace(function_invocation_configuration=None)
+        self.client = client or SimpleNamespace(function_invocation_configuration=None)
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
 

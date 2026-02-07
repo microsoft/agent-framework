@@ -60,9 +60,9 @@ class ReviewResponse:
 class Reviewer(Executor):
     """Executor that reviews agent responses and provides structured feedback."""
 
-    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
+    def __init__(self, id: str, client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
-        self._chat_client = chat_client
+        self._chat_client = client
 
     @handler
     async def review(self, request: ReviewRequest, ctx: WorkflowContext[ReviewResponse]) -> None:
@@ -112,9 +112,9 @@ class Reviewer(Executor):
 class Worker(Executor):
     """Executor that generates responses and incorporates feedback when necessary."""
 
-    def __init__(self, id: str, chat_client: SupportsChatGetResponse) -> None:
+    def __init__(self, id: str, client: SupportsChatGetResponse) -> None:
         super().__init__(id=id)
-        self._chat_client = chat_client
+        self._chat_client = client
         self._pending_requests: dict[str, tuple[ReviewRequest, list[Message]]] = {}
 
     @handler
@@ -189,11 +189,11 @@ async def main() -> None:
     agent = (
         WorkflowBuilder(start_executor="worker")
         .register_executor(
-            lambda: Worker(id="worker", chat_client=OpenAIChatClient(model_id="gpt-4.1-nano")),
+            lambda: Worker(id="worker", client=OpenAIChatClient(model_id="gpt-4.1-nano")),
             name="worker",
         )
         .register_executor(
-            lambda: Reviewer(id="reviewer", chat_client=OpenAIChatClient(model_id="gpt-4.1")),
+            lambda: Reviewer(id="reviewer", client=OpenAIChatClient(model_id="gpt-4.1")),
             name="reviewer",
         )
         .add_edge("worker", "reviewer")  # Worker sends responses to Reviewer

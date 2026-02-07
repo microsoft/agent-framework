@@ -88,15 +88,15 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents for a sequential document review workflow
-    drafter = chat_client.as_agent(
+    drafter = client.as_agent(
         name="drafter",
         instructions=("You are a document drafter. When given a topic, create a brief draft (2-3 sentences)."),
     )
 
-    editor = chat_client.as_agent(
+    editor = client.as_agent(
         name="editor",
         instructions=(
             "You are an editor. Review the draft and make improvements. "
@@ -104,7 +104,7 @@ async def main() -> None:
         ),
     )
 
-    finalizer = chat_client.as_agent(
+    finalizer = client.as_agent(
         name="finalizer",
         instructions=(
             "You are a finalizer. Take the edited content and create a polished final version. "

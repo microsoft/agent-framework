@@ -445,7 +445,7 @@ async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockB
         id="test_chat_agent",
         name="Test Chat Agent",
         description="A real Agent for testing execution flow",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a helpful test assistant.",
     )
 
@@ -477,14 +477,14 @@ async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         id="writer",
         name="Writer",
         description="Content writer agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a content writer. Create clear, engaging content.",
     )
     reviewer = Agent(
         id="reviewer",
         name="Reviewer",
         description="Content reviewer agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a reviewer. Provide constructive feedback.",
     )
 
@@ -522,21 +522,21 @@ async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         id="researcher",
         name="Researcher",
         description="Research agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a researcher. Find key data and insights.",
     )
     analyst = Agent(
         id="analyst",
         name="Analyst",
         description="Analysis agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are an analyst. Identify trends and patterns.",
     )
     summarizer = Agent(
         id="summarizer",
         name="Summarizer",
         description="Summary agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a summarizer. Provide concise summaries.",
     )
 

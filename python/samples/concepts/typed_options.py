@@ -56,7 +56,7 @@ async def demo_anthropic_agent() -> None:
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
     agent = Agent(
-        chat_client=client,
+        client=client,
         name="claude-assistant",
         instructions="You are a helpful assistant powered by Claude. Be concise.",
         default_options={
@@ -140,7 +140,7 @@ async def demo_openai_agent() -> None:
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
     agent = Agent[OpenAIReasoningChatOptions](
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time

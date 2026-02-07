@@ -243,7 +243,7 @@ async def test_agent_executor_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles tool calls requiring approval."""
     # Arrange
     agent = Agent(
-        chat_client=MockChatClient(),
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -277,7 +277,7 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles tool calls requiring approval in streaming mode."""
     # Arrange
     agent = Agent(
-        chat_client=MockChatClient(),
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -314,7 +314,7 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval."""
     # Arrange
     agent = Agent(
-        chat_client=MockChatClient(parallel_request=True),
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -350,7 +350,7 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
     """Test that AgentExecutor handles parallel tool calls requiring approval in streaming mode."""
     # Arrange
     agent = Agent(
-        chat_client=MockChatClient(parallel_request=True),
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )

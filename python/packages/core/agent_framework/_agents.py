@@ -460,13 +460,13 @@ class BaseAgent(SerializationMixin):
                 from agent_framework import Agent
 
                 # Create an agent
-                agent = Agent(chat_client=client, name="research-agent", description="Performs research tasks")
+                agent = Agent(client=client, name="research-agent", description="Performs research tasks")
 
                 # Convert the agent to a tool
                 research_tool = agent.as_tool()
 
                 # Use the tool with another agent
-                coordinator = Agent(chat_client=client, name="coordinator", tools=research_tool)
+                coordinator = Agent(client=client, name="coordinator", tools=research_tool)
         """
         # Verify that self implements SupportsAgentRun
         if not isinstance(self, SupportsAgentRun):
@@ -547,7 +547,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
             # Create a basic chat agent
             client = OpenAIChatClient(model_id="gpt-4")
-            agent = Agent(chat_client=client, name="assistant", description="A helpful assistant")
+            agent = Agent(client=client, name="assistant", description="A helpful assistant")
 
             # Run the agent with a simple message
             response = await agent.run("Hello, how are you?")
@@ -563,7 +563,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
 
             agent = Agent(
-                chat_client=client,
+                client=client,
                 name="weather-agent",
                 instructions="You are a weather assistant.",
                 tools=get_weather,
@@ -586,7 +586,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
             client = OpenAIChatClient(model_id="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
-                chat_client=client,
+                client=client,
                 name="reasoning-agent",
                 instructions="You are a reasoning assistant.",
                 options={
@@ -607,7 +607,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
     def __init__(
         self,
-        chat_client: SupportsChatGetResponse[TOptions_co],
+        client: SupportsChatGetResponse[TOptions_co],
         instructions: str | None = None,
         *,
         id: str | None = None,
@@ -626,7 +626,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         """Initialize a Agent instance.
 
         Args:
-            chat_client: The chat client to use for the agent.
+            client: The chat client to use for the agent.
             instructions: Optional instructions for the agent.
                 These will be put into the messages sent to the chat client service as a system message.
 
@@ -661,7 +661,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 "Use conversation_id for service-managed threads or chat_message_store_factory for local storage."
             )
 
-        if not isinstance(chat_client, FunctionInvocationLayer) and isinstance(chat_client, BaseChatClient):
+        if not isinstance(client, FunctionInvocationLayer) and isinstance(client, BaseChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
             )
@@ -673,7 +673,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
             context_provider=context_provider,
             **kwargs,
         )
-        self.chat_client = chat_client
+        self.client = client
         self.chat_message_store_factory = chat_message_store_factory
 
         # Get tools from options or named parameter (named param takes precedence)
@@ -700,7 +700,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
         # Build chat options dict
         self.default_options: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None) or (getattr(self.chat_client, "model_id", None)),
+            "model_id": opts.pop("model_id", None) or (getattr(self.client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "conversation_id": conversation_id,
             "frequency_penalty": opts.pop("frequency_penalty", None),
@@ -728,7 +728,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
     async def __aenter__(self) -> "Self":
         """Enter the async context manager.
 
-        If any of the chat_client or local_mcp_tools are context managers,
+        If any of the client or local_mcp_tools are context managers,
         they will be entered into the async exit stack to ensure proper cleanup.
 
         Note:
@@ -737,7 +737,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         Returns:
             The Agent instance.
         """
-        for context_manager in chain([self.chat_client], self.mcp_tools):
+        for context_manager in chain([self.client], self.mcp_tools):
             if isinstance(context_manager, AbstractAsyncContextManager):
                 await self._async_exit_stack.enter_async_context(context_manager)
         return self
@@ -766,10 +766,10 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         should check if there is already an agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "_update_agent_name_and_description") and callable(
-            self.chat_client._update_agent_name_and_description
+        if hasattr(self.client, "_update_agent_name_and_description") and callable(
+            self.client._update_agent_name_and_description
         ):  # type: ignore[reportAttributeAccessIssue, attr-defined]
-            self.chat_client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
+            self.client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     @overload
     def run(
@@ -870,7 +870,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                     options=options,
                     kwargs=kwargs,
                 )
-                response = await self.chat_client.get_response(  # type: ignore[call-overload]
+                response = await self.client.get_response(  # type: ignore[call-overload]
                     messages=ctx["thread_messages"],
                     stream=False,
                     options=ctx["chat_options"],
@@ -941,7 +941,7 @@ class RawAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 kwargs=kwargs,
             )
             ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
-            return self.chat_client.get_response(  # type: ignore[call-overload, no-any-return]
+            return self.client.get_response(  # type: ignore[call-overload, no-any-return]
                 messages=ctx["thread_messages"],
                 stream=True,
                 options=ctx["chat_options"],
@@ -1383,7 +1383,7 @@ class Agent(
 
     def __init__(
         self,
-        chat_client: SupportsChatGetResponse[TOptions_co],
+        client: SupportsChatGetResponse[TOptions_co],
         instructions: str | None = None,
         *,
         id: str | None = None,
@@ -1402,7 +1402,7 @@ class Agent(
     ) -> None:
         """Initialize a Agent instance."""
         super().__init__(
-            chat_client=chat_client,
+            client=client,
             instructions=instructions,
             id=id,
             name=name,

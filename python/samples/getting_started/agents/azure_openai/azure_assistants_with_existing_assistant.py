@@ -47,7 +47,7 @@ async def main() -> None:
 
     try:
         async with Agent(
-            chat_client=AzureOpenAIAssistantsClient(async_client=client, assistant_id=created_assistant.id),
+            client=AzureOpenAIAssistantsClient(async_client=client, assistant_id=created_assistant.id),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent:

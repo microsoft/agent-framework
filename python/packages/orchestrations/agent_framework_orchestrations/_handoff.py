@@ -302,7 +302,7 @@ class HandoffAgentExecutor(AgentExecutor):
         }
 
         return Agent(
-            chat_client=agent.chat_client,
+            client=agent.client,
             id=agent.id,
             name=agent.name,
             description=agent.description,

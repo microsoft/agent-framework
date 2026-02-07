@@ -68,7 +68,7 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    chat_client = AzureOpenAIChatClient(
+    client = AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
         azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
         api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
@@ -83,7 +83,7 @@ def main():
             "You are a helpful weather and time assistant. Use the available tools to "
             "provide accurate weather information and current time for any location."
         ),
-        chat_client=chat_client,
+        client=client,
         tools=[get_weather, get_time],
     )
 
@@ -91,7 +91,7 @@ def main():
         name="general-assistant",
         description="A simple conversational agent",
         instructions="You are a helpful assistant.",
-        chat_client=chat_client,
+        client=client,
     )
 
     # Create a basic workflow: Input -> UpperCase -> AddExclamation -> Output

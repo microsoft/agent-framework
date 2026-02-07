@@ -23,7 +23,7 @@ async def main() -> None:
     }
 
     agent = Agent(
-        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
         instructions="You are a helpful assistant that can search the web for current information.",
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
     )

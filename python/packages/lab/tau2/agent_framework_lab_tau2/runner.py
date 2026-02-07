@@ -195,7 +195,7 @@ class TaskRunner:
         # - Sliding window memory to handle long conversations within token limits
         # - Temperature-controlled response generation
         return Agent(
-            chat_client=assistant_chat_client,
+            client=assistant_chat_client,
             instructions=assistant_system_prompt,
             tools=tools,
             temperature=self.assistant_sampling_temperature,
@@ -229,7 +229,7 @@ class TaskRunner:
 </scenario>"""
 
         return Agent(
-            chat_client=user_simuator_chat_client,
+            client=user_simuator_chat_client,
             instructions=user_sim_system_prompt,
             temperature=0.0,
             # No sliding window for user simulator to maintain full conversation context

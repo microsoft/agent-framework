@@ -96,21 +96,21 @@ async def main() -> None:
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions="You are a Researcher. You find information and gather facts.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
     analyst_agent = Agent(
         name="AnalystAgent",
         description="Data analyst who processes and summarizes research findings",
         instructions="You are an Analyst. You analyze findings and create summaries.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
     manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the workflow",
         instructions="You coordinate a team to complete tasks efficiently.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")

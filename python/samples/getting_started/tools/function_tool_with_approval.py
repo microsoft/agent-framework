@@ -128,7 +128,7 @@ async def run_weather_agent_with_approval(stream: bool) -> None:
     print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
     async with Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         name="WeatherAgent",
         instructions=("You are a helpful weather assistant. Use the get_weather tool to provide weather information."),
         tools=[get_weather, get_weather_detail],

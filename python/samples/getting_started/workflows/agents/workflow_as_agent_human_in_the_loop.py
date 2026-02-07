@@ -103,7 +103,7 @@ async def main() -> None:
         .register_executor(
             lambda: Worker(
                 id="sub-worker",
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
             ),
             name="worker",
         )

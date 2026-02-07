@@ -483,7 +483,7 @@ class TestAgentFactoryCreateFromDict:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_dict(agent_def)
 
         assert agent is not None
@@ -512,7 +512,7 @@ instructions: You are a helpful assistant.
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
 
         # Create from YAML string
         agent_from_yaml = factory.create_agent_from_yaml(yaml_content)
@@ -540,7 +540,7 @@ instructions: You are a helpful assistant.
             factory.create_agent_from_dict(agent_def)
 
     def test_create_agent_from_dict_without_model_or_client_raises(self):
-        """Test that missing both model and chat_client raises DeclarativeLoaderError."""
+        """Test that missing both model and client raises DeclarativeLoaderError."""
         from agent_framework_declarative import AgentFactory
         from agent_framework_declarative._loader import DeclarativeLoaderError
 
@@ -592,7 +592,7 @@ instructions: Hello world
         monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
 
         # With safe_mode=True (default), Env access should fail and return original value
-        factory = AgentFactory(chat_client=mock_client, safe_mode=True)
+        factory = AgentFactory(client=mock_client, safe_mode=True)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # The description should NOT be resolved from env (PowerFx fails, returns original)
@@ -618,7 +618,7 @@ instructions: Hello world
 """
 
         # With safe_mode=False, Env access should work
-        factory = AgentFactory(chat_client=mock_client, safe_mode=False)
+        factory = AgentFactory(client=mock_client, safe_mode=False)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # The description should be resolved from env
@@ -726,7 +726,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -761,7 +761,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -800,7 +800,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -836,7 +836,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -868,7 +868,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -907,7 +907,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools

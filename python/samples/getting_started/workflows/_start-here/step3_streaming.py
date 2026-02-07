@@ -26,15 +26,15 @@ Prerequisites:
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    writer_agent = chat_client.as_agent(
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    writer_agent = client.as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = chat_client.as_agent(
+    reviewer_agent = client.as_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."

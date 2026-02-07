@@ -72,8 +72,8 @@ Session Complete
 
 ```python
 # Create the agent with tools
-chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-menu_agent = chat_client.as_agent(
+client = AzureOpenAIChatClient(credential=AzureCliCredential())
+menu_agent = client.as_agent(
     name="MenuAgent",
     instructions="You are a helpful restaurant menu assistant...",
     tools=[get_menu, get_specials, get_item_price],

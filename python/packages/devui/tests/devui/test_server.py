@@ -155,7 +155,7 @@ async def test_credential_cleanup() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = Agent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -188,7 +188,7 @@ async def test_credential_cleanup_error_handling() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = Agent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -223,7 +223,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = Agent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()

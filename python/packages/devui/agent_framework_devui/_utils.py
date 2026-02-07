@@ -45,7 +45,7 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         elif hasattr(chat_opts, "instructions"):
             metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both default_options and chat_client
+    # Try to get model - check both default_options and client
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
         if isinstance(chat_opts, dict):
@@ -55,14 +55,14 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
             metadata["model"] = chat_opts.model_id
     if (
         metadata["model"] is None
-        and hasattr(entity_object, "chat_client")
-        and hasattr(entity_object.chat_client, "model_id")
+        and hasattr(entity_object, "client")
+        and hasattr(entity_object.client, "model_id")
     ):
-        metadata["model"] = entity_object.chat_client.model_id
+        metadata["model"] = entity_object.client.model_id
 
     # Try to get chat client type
-    if hasattr(entity_object, "chat_client"):
-        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+    if hasattr(entity_object, "client"):
+        metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
     # Try to get context providers
     if (

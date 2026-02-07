@@ -77,7 +77,7 @@ async def main() -> None:
 
     # Create agent using Azure OpenAI Responses client
     agent = Agent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        client=AzureOpenAIResponsesClient(credential=credential),
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=HostedCodeInterpreterTool(inputs=[{"file_id": file_id}]),
     )

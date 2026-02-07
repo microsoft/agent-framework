@@ -95,7 +95,7 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 agent = Agent(
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     instructions="You are helpful.",
     tools=[my_function],
 )

@@ -45,14 +45,14 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    spam_agent = chat_client.as_agent(
+    spam_agent = client.as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = chat_client.as_agent(
+    email_agent = client.as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

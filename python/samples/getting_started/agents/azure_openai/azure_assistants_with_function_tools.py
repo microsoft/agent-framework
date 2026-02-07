@@ -44,7 +44,7 @@ async def tools_on_agent_level() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can provide weather and time information.",
         tools=[get_weather, get_time],  # Tools defined at agent creation
     ) as agent:
@@ -75,7 +75,7 @@ async def tools_on_run_level() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         # No tools defined here
     ) as agent:
@@ -106,7 +106,7 @@ async def mixed_tools_example() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with Agent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a comprehensive assistant that can help with various information requests.",
         tools=[get_weather],  # Base tool available for all queries
     ) as agent:

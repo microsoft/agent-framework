@@ -70,7 +70,7 @@ async def main() -> None:
             credential=AzureCliCredential(),
         ) as client,
         Agent(
-            chat_client=client,
+            client=client,
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant. Use the provided context from the "

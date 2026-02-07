@@ -36,7 +36,7 @@ Guidelines:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.
@@ -46,7 +46,7 @@ async def main() -> None:
         name="Orchestrator",
         description="Coordinates multi-agent collaboration by selecting speakers",
         instructions=ORCHESTRATOR_AGENT_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
     )
 
     # Participant agents
@@ -54,14 +54,14 @@ async def main() -> None:
         name="Researcher",
         description="Collects relevant background information",
         instructions="Gather concise facts that help a teammate answer the question.",
-        chat_client=chat_client,
+        client=client,
     )
 
     writer = Agent(
         name="Writer",
         description="Synthesizes polished answers from gathered information",
         instructions="Compose clear and structured answers using any notes provided.",
-        chat_client=chat_client,
+        client=client,
     )
 
     # Build the group chat workflow

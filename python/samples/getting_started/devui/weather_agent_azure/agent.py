@@ -145,7 +145,7 @@ agent = Agent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],

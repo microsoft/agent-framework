@@ -141,7 +141,7 @@ async def run_with_agent_middleware() -> None:
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    chat_client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
     purview_agent_middleware = PurviewPolicyMiddleware(
         build_credential(),
@@ -151,7 +151,7 @@ async def run_with_agent_middleware() -> None:
     )
 
     agent = Agent(
-        chat_client=chat_client,
+        client=client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
         middleware=[purview_agent_middleware],
@@ -180,7 +180,7 @@ async def run_with_chat_middleware() -> None:
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
 
-    chat_client = AzureOpenAIChatClient(
+    client = AzureOpenAIChatClient(
         deployment_name=deployment,
         endpoint=endpoint,
         credential=AzureCliCredential(),
@@ -195,7 +195,7 @@ async def run_with_chat_middleware() -> None:
     )
 
     agent = Agent(
-        chat_client=chat_client,
+        client=client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
     )
@@ -229,7 +229,7 @@ async def run_with_custom_cache_provider() -> None:
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    chat_client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
     custom_cache = SimpleDictCacheProvider()
 
@@ -242,7 +242,7 @@ async def run_with_custom_cache_provider() -> None:
     )
 
     agent = Agent(
-        chat_client=chat_client,
+        client=client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
         middleware=[purview_agent_middleware],
@@ -271,7 +271,7 @@ async def run_with_custom_cache_provider() -> None:
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    chat_client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
     # No cache_provider specified - uses default InMemoryCacheProvider
     purview_agent_middleware = PurviewPolicyMiddleware(
@@ -284,7 +284,7 @@ async def run_with_custom_cache_provider() -> None:
     )
 
     agent = Agent(
-        chat_client=chat_client,
+        client=client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
         middleware=[purview_agent_middleware],

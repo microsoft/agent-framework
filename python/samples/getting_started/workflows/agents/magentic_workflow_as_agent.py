@@ -29,14 +29,14 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
     coder_agent = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         tools=HostedCodeInterpreterTool(),
     )
 
@@ -45,7 +45,7 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
     )
 
     print("\nBuilding Magentic Workflow...")

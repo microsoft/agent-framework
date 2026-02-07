@@ -144,7 +144,7 @@ class CustomTaskRunner(TaskRunner):
     def assistant_agent(self, assistant_chat_client):
         # Override to customize the assistant agent
         return Agent(
-            chat_client=assistant_chat_client,
+            client=assistant_chat_client,
             instructions="Your custom system prompt here",
             # Add custom tools, temperature, etc.
         )
@@ -152,7 +152,7 @@ class CustomTaskRunner(TaskRunner):
     def user_simulator(self, user_chat_client, task):
         # Override to customize the user simulator
         return Agent(
-            chat_client=user_chat_client,
+            client=user_chat_client,
             instructions="Custom user simulator prompt",
         )
 ```

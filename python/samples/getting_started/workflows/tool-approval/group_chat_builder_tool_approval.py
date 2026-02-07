@@ -126,9 +126,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create specialized agents
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    qa_engineer = chat_client.as_agent(
+    qa_engineer = client.as_agent(
         name="QAEngineer",
         instructions=(
             "You are a QA engineer responsible for running tests before deployment. "
@@ -137,7 +137,7 @@ async def main() -> None:
         tools=[run_tests],
     )
 
-    devops_engineer = chat_client.as_agent(
+    devops_engineer = client.as_agent(
         name="DevOpsEngineer",
         instructions=(
             "You are a DevOps engineer responsible for deployments. First check staging "

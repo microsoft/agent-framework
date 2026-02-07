@@ -23,7 +23,7 @@ async def main() -> None:
     }
 
     agent = Agent(
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can search the web for current information.",
         tools=[HostedWebSearchTool(additional_properties=additional_properties)],
     )

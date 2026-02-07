@@ -124,7 +124,7 @@ stream is wrapped/mapped.
 
 ```python
 # Agent does something like this internally:
-chat_stream = chat_client.get_response(messages, stream=True)
+chat_stream = client.get_response(messages, stream=True)
 agent_stream = (
     chat_stream
     .map(_to_agent_update, _to_agent_response)

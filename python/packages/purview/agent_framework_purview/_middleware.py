@@ -31,7 +31,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         credential = ...  # TokenCredential or AsyncTokenCredential
         settings = PurviewSettings(app_name="My App")
         agent = Agent(
-            chat_client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)]
+            client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)]
         )
     """
 

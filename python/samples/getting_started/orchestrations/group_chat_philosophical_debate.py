@@ -75,7 +75,7 @@ Finish when:
 
 In your final_message, provide a brief synthesis highlighting key themes that emerged.
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     farmer = Agent(
@@ -91,7 +91,7 @@ Share your perspective authentically. Feel free to:
 - Use concrete examples from your experience
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     developer = Agent(
@@ -107,7 +107,7 @@ Share your perspective authentically. Feel free to:
 - Use concrete examples from your experience
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     teacher = Agent(
@@ -124,7 +124,7 @@ Share your perspective authentically. Feel free to:
 - Use concrete examples from history or your teaching experience
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     activist = Agent(
@@ -140,7 +140,7 @@ Share your perspective authentically. Feel free to:
 - Use concrete examples from your activism
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     spiritual_leader = Agent(
@@ -156,7 +156,7 @@ Share your perspective authentically. Feel free to:
 - Use examples from spiritual teachings or community work
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     artist = Agent(
@@ -172,7 +172,7 @@ Share your perspective authentically. Feel free to:
 - Use examples from your art or cultural traditions
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     immigrant = Agent(
@@ -188,7 +188,7 @@ Share your perspective authentically. Feel free to:
 - Use examples from your immigrant and entrepreneurial journey
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     doctor = Agent(
@@ -204,7 +204,7 @@ Share your perspective authentically. Feel free to:
 - Use examples from healthcare and societal systems
 - Keep responses thoughtful but concise (2-4 sentences)
 """,
-        chat_client=_get_chat_client(),
+        client=_get_chat_client(),
     )
 
     # termination_condition: stop after 10 assistant messages

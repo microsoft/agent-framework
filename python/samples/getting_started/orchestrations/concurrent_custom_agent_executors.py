@@ -39,8 +39,8 @@ Prerequisites:
 class ResearcherExec(Executor):
     agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "researcher"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "researcher"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
@@ -59,8 +59,8 @@ class ResearcherExec(Executor):
 class MarketerExec(Executor):
     agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "marketer"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "marketer"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
@@ -79,8 +79,8 @@ class MarketerExec(Executor):
 class LegalExec(Executor):
     agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "legal"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "legal"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."
@@ -97,11 +97,11 @@ class LegalExec(Executor):
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = ResearcherExec(chat_client)
-    marketer = MarketerExec(chat_client)
-    legal = LegalExec(chat_client)
+    researcher = ResearcherExec(client)
+    marketer = MarketerExec(client)
+    legal = LegalExec(client)
 
     workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
 

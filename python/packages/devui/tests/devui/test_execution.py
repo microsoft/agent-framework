@@ -308,7 +308,7 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
         id="serialization_test_agent",
         name="Serialization Test Agent",
         description="Agent for testing serialization",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a test assistant.",
     )
 

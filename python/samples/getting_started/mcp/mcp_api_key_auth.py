@@ -44,7 +44,7 @@ async def api_key_auth_example() -> None:
             http_client=http_client,  # Pass HTTP client with authentication headers
         ) as mcp_tool,
         Agent(
-            chat_client=OpenAIResponsesClient(),
+            client=OpenAIResponsesClient(),
             name="Agent",
             instructions="You are a helpful assistant.",
             tools=mcp_tool,

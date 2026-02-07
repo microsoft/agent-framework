@@ -427,7 +427,7 @@ async def test_integration_client_agent_existing_thread():
     preserved_thread = None
 
     async with Agent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -443,7 +443,7 @@ async def test_integration_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with Agent(
-            chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread

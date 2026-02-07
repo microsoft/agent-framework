@@ -36,7 +36,7 @@ requests or tasks in parallel with stateful participants.
 Demonstrates:
 - ConcurrentBuilder(participant_factories=[...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
-- Aggregation implemented via an LLM call (chat_client.get_response)
+- Aggregation implemented via an LLM call (client.get_response)
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
@@ -82,7 +82,7 @@ class SummarizationExecutor(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="summarization_executor")
-        self.chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+        self.client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     @handler
     async def summarize_results(self, results: list[Any], ctx: WorkflowContext[Never, str]) -> None:
@@ -105,7 +105,7 @@ class SummarizationExecutor(Executor):
         )
         user_msg = Message("user", text="\n\n".join(expert_sections))
 
-        response = await self.chat_client.get_response([system_msg, user_msg])
+        response = await self.client.get_response([system_msg, user_msg])
 
         await ctx.yield_output(response.messages[-1].text if response.messages else "")
 

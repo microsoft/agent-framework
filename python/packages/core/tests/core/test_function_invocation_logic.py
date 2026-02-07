@@ -165,7 +165,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: Suppo
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    agent = Agent(chat_client=chat_client_base, tools=[ai_func])
+    agent = Agent(client=chat_client_base, tools=[ai_func])
 
     async def handler(request: web.Request) -> web.Response:
         thread = agent.get_new_thread()
@@ -222,7 +222,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Sup
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    agent = Agent(chat_client=chat_client_base, tools=[ai_func])
+    agent = Agent(client=chat_client_base, tools=[ai_func])
 
     ready_event = threading.Event()
     port_queue: Queue[int] = Queue()

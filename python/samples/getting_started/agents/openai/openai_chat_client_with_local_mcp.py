@@ -30,7 +30,7 @@ async def mcp_tools_on_run_level() -> None:
             url="https://learn.microsoft.com/api/mcp",
         ) as mcp_server,
         Agent(
-            chat_client=OpenAIChatClient(),
+            client=OpenAIChatClient(),
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         ) as agent,

@@ -205,7 +205,7 @@ if not api_key:
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint=endpoint,
         deployment_name=deployment_name,
         api_key=api_key,
@@ -239,7 +239,7 @@ if __name__ == "__main__":
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(),  # Reads from environment automatically
+    client=AzureOpenAIChatClient(),  # Reads from environment automatically
 )
 ```
 

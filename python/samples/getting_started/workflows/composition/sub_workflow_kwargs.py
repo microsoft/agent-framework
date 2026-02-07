@@ -74,10 +74,10 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     # Create an agent with tools that use kwargs
-    inner_agent = chat_client.as_agent(
+    inner_agent = client.as_agent(
         name="data_agent",
         instructions=(
             "You are a data access agent. Use the available tools to help users. "

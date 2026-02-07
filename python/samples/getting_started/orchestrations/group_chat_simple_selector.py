@@ -33,7 +33,7 @@ def round_robin_selector(state: GroupChatState) -> str:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Participant agents
     expert = Agent(
@@ -43,7 +43,7 @@ async def main() -> None:
             "Your job is to answer Python related questions and refine your answer "
             "based on feedback from all the other participants."
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
     verifier = Agent(
@@ -54,7 +54,7 @@ async def main() -> None:
             "out statements that are technically true but practically dangerous."
             "If there is nothing woth pointing out, respond with 'The answer looks good to me.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
     clarifier = Agent(
@@ -65,7 +65,7 @@ async def main() -> None:
             "out jargons or complex terms that may be difficult for a beginner to understand."
             "If there is nothing worth pointing out, respond with 'The answer looks clear to me.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
     skeptic = Agent(
@@ -76,7 +76,7 @@ async def main() -> None:
             "out caveats, exceptions, and alternative perspectives."
             "If there is nothing worth pointing out, respond with 'I have no further questions.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
     # Build the group chat workflow

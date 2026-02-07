@@ -58,7 +58,7 @@ class AggregateContextProvider(ContextProvider):
             aggregate = AggregateContextProvider([provider1, provider2, provider3])
 
             # Pass the aggregate to the agent
-            agent = Agent(chat_client=client, name="assistant", context_provider=aggregate)
+            agent = Agent(client=client, name="assistant", context_provider=aggregate)
 
             # You can also add more providers later
             provider4 = CustomContextProvider4()
@@ -230,7 +230,7 @@ class PreferencesContextProvider(ContextProvider):
 async def main():
     """Demonstrate using AggregateContextProvider to combine multiple providers."""
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIClient(credential=credential)
+        client = AzureAIClient(credential=credential)
 
         # Create individual context providers
         time_provider = TimeContextProvider()
@@ -246,7 +246,7 @@ async def main():
 
         # Create the agent with the aggregate provider
         async with Agent(
-            chat_client=chat_client,
+            client=client,
             instructions="You are a helpful assistant.",
             context_provider=aggregate_provider,
         ) as agent:

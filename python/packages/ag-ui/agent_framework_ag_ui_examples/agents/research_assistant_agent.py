@@ -88,11 +88,11 @@ _RESEARCH_ASSISTANT_INSTRUCTIONS = (
 )
 
 
-def research_assistant_agent(chat_client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
+def research_assistant_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a research assistant agent.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with research capabilities
@@ -100,7 +100,7 @@ def research_assistant_agent(chat_client: SupportsChatGetResponse[Any]) -> Agent
     agent = Agent(
         name="research_assistant",
         instructions=_RESEARCH_ASSISTANT_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[research_topic, create_presentation, analyze_data],
     )
 
