@@ -100,7 +100,7 @@ def main() -> None:
     parser.add_argument("files", nargs="*", help="Changed files to determine which packages to run")
     args = parser.parse_args()
 
-    pyproject_file = Path(__file__).parent / "pyproject.toml"
+    pyproject_file = Path(__file__).parent.parent / "pyproject.toml"
     workspace_root = pyproject_file.parent
     projects = discover_projects(pyproject_file)
 

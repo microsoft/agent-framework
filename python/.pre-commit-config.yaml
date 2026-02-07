@@ -1,4 +1,5 @@
 fail_fast: true
+exclude: ^scripts/
 repos:
   - repo: builtin
     hooks:
