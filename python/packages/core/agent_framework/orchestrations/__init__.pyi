@@ -36,6 +36,8 @@ from agent_framework_orchestrations import (
     SequentialBuilder,
     StandardMagenticManager,
     __version__,
+    create_handoff_tools,
+    get_handoff_tool_name,
 )
 
 __all__ = [
@@ -74,4 +76,6 @@ __all__ = [
     "SequentialBuilder",
     "StandardMagenticManager",
     "__version__",
+    "create_handoff_tools",
+    "get_handoff_tool_name",
 ]

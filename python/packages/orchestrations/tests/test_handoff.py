@@ -779,3 +779,83 @@ def test_handoff_participant_factories_invalid_handoff_target():
 
 
 # endregion Participant Factory Tests
+
+
+# region Azure AI Agent Service Compatibility Tests
+
+
+def test_create_handoff_tools_basic():
+    """Test that create_handoff_tools creates tools with correct names and descriptions."""
+    from agent_framework.orchestrations import create_handoff_tools, get_handoff_tool_name
+
+    target_ids = ["specialist", "escalation"]
+    tools = create_handoff_tools(target_ids)
+
+    assert len(tools) == 2
+    assert tools[0].name == get_handoff_tool_name("specialist")
+    assert tools[1].name == get_handoff_tool_name("escalation")
+    assert "specialist" in tools[0].description.lower()
+    assert "escalation" in tools[1].description.lower()
+
+
+def test_create_handoff_tools_with_custom_descriptions():
+    """Test that create_handoff_tools accepts custom descriptions."""
+    from agent_framework.orchestrations import create_handoff_tools
+
+    target_ids = ["specialist", "escalation"]
+    descriptions = {
+        "specialist": "Route to technical specialist for complex issues",
+        "escalation": "Escalate to supervisor for urgent matters",
+    }
+    tools = create_handoff_tools(target_ids, descriptions=descriptions)
+
+    assert len(tools) == 2
+    assert tools[0].description == descriptions["specialist"]
+    assert tools[1].description == descriptions["escalation"]
+
+
+def test_get_handoff_tool_name():
+    """Test that get_handoff_tool_name returns consistent naming."""
+    from agent_framework.orchestrations import get_handoff_tool_name
+
+    assert get_handoff_tool_name("specialist") == "handoff_to_specialist"
+    assert get_handoff_tool_name("my_agent") == "handoff_to_my_agent"
+
+
+def test_handoff_builder_skips_duplicate_tools():
+    """Test that HandoffBuilder skips adding duplicate handoff tools.
+
+    This is crucial for Azure AI Agent Service compatibility where users
+    pre-create handoff tools using create_handoff_tools() and register
+    them at agent creation time.
+    """
+    from agent_framework.orchestrations import create_handoff_tools
+
+    # Pre-create handoff tools (simulating Azure AI Agent Service pattern)
+    pre_created_tools = create_handoff_tools(["specialist"])
+
+    # Create agent with pre-created tools
+    triage_client = MockChatClient(name="triage", handoff_to="specialist")
+    triage = ChatAgent(
+        chat_client=triage_client,
+        name="triage",
+        default_options={"tools": pre_created_tools},
+    )
+
+    specialist_client = MockChatClient(name="specialist")
+    specialist = ChatAgent(chat_client=specialist_client, name="specialist")
+
+    # Build workflow - should NOT raise ValueError for duplicate tools
+    workflow = (
+        HandoffBuilder()
+        .participants([triage, specialist])
+        .with_start_agent(triage)
+        .add_handoff(triage, [specialist])
+        .build()
+    )
+
+    # Verify workflow was built successfully
+    assert workflow is not None
+
+
+# endregion Azure AI Agent Service Compatibility Tests

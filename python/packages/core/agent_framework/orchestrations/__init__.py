@@ -17,6 +17,8 @@ _IMPORTS = [
     "HandoffBuilder",
     "HandoffConfiguration",
     "HandoffSentEvent",
+    "create_handoff_tools",
+    "get_handoff_tool_name",
     # Base orchestrator
     "BaseGroupChatOrchestrator",
     "GroupChatRequestMessage",
