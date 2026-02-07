@@ -117,11 +117,10 @@ agent = OpenAIChatClient().as_agent(
 from agent_framework import ChatAgent, AgentMiddleware, AgentContext
 
 class LoggingMiddleware(AgentMiddleware):
-    async def process(self, context: AgentContext, next) -> AgentResponse:
+    async def process(self, context: AgentContext, call_next) -> None:
         print(f"Input: {context.messages}")
-        response = await next(context)
-        print(f"Output: {response}")
-        return response
+        await call_next(context)
+        print(f"Output: {context.result}")
 
 agent = ChatAgent(..., middleware=[LoggingMiddleware()])
 ```

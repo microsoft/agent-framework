@@ -19,10 +19,12 @@ class TestAsToolKwargsPropagation:
         captured_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             # Capture kwargs passed to the sub-agent
             captured_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock response
         chat_client.responses = [
@@ -60,9 +62,11 @@ class TestAsToolKwargsPropagation:
         captured_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             captured_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock response
         chat_client.responses = [
@@ -95,10 +99,12 @@ class TestAsToolKwargsPropagation:
         captured_kwargs_list: list[dict[str, Any]] = []
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             # Capture kwargs at each level
             captured_kwargs_list.append(dict(context.kwargs))
-            await next(context)
+            await call_next(context)
 
         # Setup mock responses to trigger nested tool invocation: B calls tool C, then completes.
         chat_client.responses = [
@@ -156,9 +162,11 @@ class TestAsToolKwargsPropagation:
         captured_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             captured_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock streaming responses
         from agent_framework import ChatResponseUpdate
@@ -216,9 +224,11 @@ class TestAsToolKwargsPropagation:
         captured_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             captured_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock response
         chat_client.responses = [
@@ -256,14 +266,16 @@ class TestAsToolKwargsPropagation:
         call_count = 0
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 first_call_kwargs.update(context.kwargs)
             elif call_count == 2:
                 second_call_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock responses for both calls
         chat_client.responses = [
@@ -306,9 +318,11 @@ class TestAsToolKwargsPropagation:
         captured_kwargs: dict[str, Any] = {}
 
         @agent_middleware
-        async def capture_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def capture_middleware(
+            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
+        ) -> None:
             captured_kwargs.update(context.kwargs)
-            await next(context)
+            await call_next(context)
 
         # Setup mock response
         chat_client.responses = [

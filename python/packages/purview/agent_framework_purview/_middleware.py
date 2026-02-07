@@ -48,7 +48,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
         try:
@@ -74,7 +74,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if not self._settings.ignore_exceptions:
                 raise
 
-        await next(context)
+        await call_next(context)
 
         try:
             # Post (response) check only if we have a normal AgentResponse
@@ -140,7 +140,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
     async def process(
         self,
         context: ChatContext,
-        next: Callable[[ChatContext], Awaitable[None]],
+        call_next: Callable[[ChatContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
         try:
@@ -164,7 +164,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
             if not self._settings.ignore_exceptions:
                 raise
 
-        await next(context)
+        await call_next(context)
 
         try:
             # Post (response) evaluation only if non-streaming and we have messages result shape

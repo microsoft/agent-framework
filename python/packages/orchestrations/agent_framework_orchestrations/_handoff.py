@@ -129,11 +129,11 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
     ) -> None:
         """Intercept matching handoff tool calls and inject synthetic results."""
         if context.function.name not in self._handoff_functions:
-            await next(context)
+            await call_next(context)
             return
 
         from agent_framework._middleware import MiddlewareTermination
