@@ -45,6 +45,25 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         self._processor = ScopedContentProcessor(self._client, settings, cache_provider)
         self._settings = settings
 
+    @staticmethod
+    def _get_agent_session_id(context: AgentContext) -> str | None:
+        """Resolve a session/conversation id from the agent run context.
+
+        Resolution order:
+          1. thread.service_thread_id
+          2. First message whose additional_properties contains 'conversation_id'
+          3. None: the downstream processor will generate a new UUID
+        """
+        if context.thread and context.thread.service_thread_id:
+            return context.thread.service_thread_id
+
+        for message in context.messages:
+            conversation_id = message.additional_properties.get("conversation_id")
+            if conversation_id is not None:
+                return str(conversation_id)
+
+        return None
+
     async def process(
         self,
         context: AgentContext,
@@ -53,8 +72,9 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         resolved_user_id: str | None = None
         try:
             # Pre (prompt) check
+            session_id = self._get_agent_session_id(context)
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
-                context.messages, Activity.UPLOAD_TEXT
+                context.messages, Activity.UPLOAD_TEXT, session_id=session_id
             )
             if should_block_prompt:
                 from agent_framework import AgentResponse, ChatMessage
@@ -79,10 +99,14 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         try:
             # Post (response) check only if we have a normal AgentResponse
             # Use the same user_id from the request for the response evaluation
+            session_id_response = self._get_agent_session_id(context)
+            if session_id_response is None:
+                session_id_response = session_id
             if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
                     Activity.UPLOAD_TEXT,
+                    session_id=session_id,
                     user_id=resolved_user_id,
                 )
                 if should_block_response:
@@ -144,8 +168,9 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
         try:
+            session_id = context.options.get("conversation_id") if context.options else None
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
-                context.messages, Activity.UPLOAD_TEXT
+                context.messages, Activity.UPLOAD_TEXT, session_id=session_id
             )
             if should_block_prompt:
                 from agent_framework import ChatMessage, ChatResponse
@@ -169,12 +194,15 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         try:
             # Post (response) evaluation only if non-streaming and we have messages result shape
             # Use the same user_id from the request for the response evaluation
+            session_id_response = context.options.get("conversation_id") if context.options else None
+            if session_id_response is None:
+                session_id_response = session_id
             if context.result and not context.stream:
                 result_obj = context.result
                 messages = getattr(result_obj, "messages", None)
                 if messages:
                     should_block_response, _ = await self._processor.process_messages(
-                        messages, Activity.UPLOAD_TEXT, user_id=resolved_user_id
+                        messages, Activity.UPLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
                     )
                     if should_block_response:
                         from agent_framework import ChatMessage, ChatResponse
