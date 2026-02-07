@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/03_assistant_agent_thread_and_stream.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen vs Agent Framework: Thread management and streaming responses.
 

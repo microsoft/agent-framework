@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/azure_ai_agent/01_basic_azure_ai_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Create an Azure AI agent using both Semantic Kernel and Agent Framework.
 

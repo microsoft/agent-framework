@@ -30,12 +30,10 @@ dependencies = [
 dev = [
     "uv>=0.9,<1.0.0",
     "flit>=3.12.0",
-    "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
-    "pytest-env>=1.1.5",
     "pytest-xdist[psutil]>=3.8.0",
     "pytest-timeout>=2.3.1",
     "pytest-retry>=1",
@@ -45,10 +43,7 @@ dev = [
     "poethepoet>=0.36.0",
     "rich",
     "tomli",
-    "tomli-w",
-    # AutoGen migration samples
-    "autogen-agentchat",
-    "autogen-ext[openai]",
+    "prek>=0.3.2",
 ]
 docs = [
     # Documentation
@@ -219,7 +214,7 @@ executor.type = "uv"
 
 [tool.poe.tasks]
 markdown-code-lint = "uv run python check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
-pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
+prek-install = "prek install --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
 test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
@@ -285,15 +280,15 @@ args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 sequence = [
     { ref = "venv --python $python"},
     { ref = "install" },
-    { ref = "pre-commit-install" }
+    { ref = "prek-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
-[tool.poe.tasks.pre-commit-markdown-code-lint]
+[tool.poe.tasks.prek-markdown-code-lint]
 cmd = "uv run python check_md_code_blocks.py ${files} --no-glob --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
-[tool.poe.tasks.pre-commit-pyright]
+[tool.poe.tasks.prek-pyright]
 cmd = "uv run python run_tasks_in_changed_packages.py pyright ${files}"
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
@@ -320,12 +315,12 @@ uv run python run_tasks_in_changed_packages.py mypy $CHANGED_FILES
 """
 interpreter = "bash"
 
-[tool.poe.tasks.pre-commit-check]
+[tool.poe.tasks.prek-check]
 sequence = [
     { ref = "fmt" },
     { ref = "lint" },
-    { ref = "pre-commit-pyright ${files}" },
-    { ref = "pre-commit-markdown-code-lint ${files}" },
+    { ref = "prek-pyright ${files}" },
+    { ref = "prek-markdown-code-lint ${files}" },
     { ref = "samples-lint" },
     { ref = "samples-syntax" }
 ]

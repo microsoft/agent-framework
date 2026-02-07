@@ -12,7 +12,7 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  pre-commit:
+  prek:
     name: Checks
     if: "!cancelled()"
     strategy:
@@ -41,12 +41,12 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - uses: actions/cache@v5
         with:
-          path: ~/.cache/pre-commit
-          key: pre-commit|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
-      - uses: pre-commit/action@v3.0.1
-        name: Run Pre-Commit Hooks
+          path: ~/.cache/prek
+          key: prek|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
+      - uses: j178/prek-action@v1
+        name: Run Prek Hooks
         with:
-          extra_args: --config python/.pre-commit-config.yaml --all-files
+          extra-args: --config python/.pre-commit-config.yaml --all-files
       - name: Run Mypy
         env:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}

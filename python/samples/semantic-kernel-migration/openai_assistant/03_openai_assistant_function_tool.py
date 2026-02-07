@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_assistant/03_openai_assistant_function_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Implement a function tool for OpenAI Assistants in SK and AF."""
 

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "microsoft-agents",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/demos/m365-agent/m365_agent_demo/app.py
+
 # Copyright (c) Microsoft. All rights reserved.
 # /// script
 # requires-python = ">=3.11"
@@ -10,6 +19,8 @@
 #   "aiohttp"
 # ]
 # ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/demos/m365-agent/m365_agent_demo/app.py
 
 import os
 from dataclasses import dataclass
