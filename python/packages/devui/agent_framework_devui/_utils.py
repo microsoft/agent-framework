@@ -53,11 +53,7 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
                 metadata["model"] = chat_opts.get("model_id")
         elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
             metadata["model"] = chat_opts.model_id
-    if (
-        metadata["model"] is None
-        and hasattr(entity_object, "client")
-        and hasattr(entity_object.client, "model_id")
-    ):
+    if metadata["model"] is None and hasattr(entity_object, "client") and hasattr(entity_object.client, "model_id"):
         metadata["model"] = entity_object.client.model_id
 
     # Try to get chat client type

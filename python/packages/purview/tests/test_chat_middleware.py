@@ -186,9 +186,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         async def mock_process_messages(*args, **kwargs):
             raise PurviewPaymentRequiredError("Payment required")
@@ -212,9 +210,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         call_count = 0
 
@@ -245,9 +241,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         async def mock_process_messages(*args, **kwargs):
             raise PurviewPaymentRequiredError("Payment required")
@@ -287,9 +281,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         async def mock_process_messages(*args, **kwargs):
             raise ValueError("Some error")
@@ -316,9 +308,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         with patch.object(middleware._processor, "process_messages", side_effect=ValueError("boom")):
 
@@ -338,9 +328,7 @@ class TestPurviewChatPolicyMiddleware:
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        context = ChatContext(
-            client=client, messages=[Message(role="user", text="Hello")], options=chat_options
-        )
+        context = ChatContext(client=client, messages=[Message(role="user", text="Hello")], options=chat_options)
 
         call_count = 0
 

@@ -9,8 +9,8 @@ import pytest
 from agent_framework import (
     Executor,
     InProcRunnerContext,
-    WorkflowMessage,
     WorkflowContext,
+    WorkflowMessage,
     handler,
 )
 from agent_framework._workflows._edge import (
@@ -318,7 +318,9 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = WorkflowMessage(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
@@ -791,7 +793,9 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = WorkflowMessage(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
@@ -1017,7 +1021,9 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
 
     # Send first message (should be buffered)
     success = await edge_runner.send_message(
-        WorkflowMessage(data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1),
+        WorkflowMessage(
+            data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1
+        ),
         state,
         ctx,
     )
@@ -1049,7 +1055,9 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     span_exporter.clear()
 
     success = await edge_runner.send_message(
-        WorkflowMessage(data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2),
+        WorkflowMessage(
+            data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2
+        ),
         state,
         ctx,
     )
