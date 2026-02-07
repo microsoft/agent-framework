@@ -7,9 +7,9 @@ from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    Agent,
     Message,
     WorkflowBuilder,
     WorkflowContext,

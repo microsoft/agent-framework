@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass
 
 from agent_framework import (
+    Agent,  # Tracing event for agent execution steps
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
-    Agent,  # Tracing event for agent execution steps
-    Message,  # Chat message structure
     Executor,  # Base class for custom Python executors
+    Message,  # Chat message structure
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowContext,  # Per run context and event bus
     handler,  # Decorator to mark an Executor method as invokable
