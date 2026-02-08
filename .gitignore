@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!python/packages/devui/frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -198,8 +199,31 @@ temp*/
 .tmp/
 .temp/
 
-agents.md
-
 # AI
 .claude/
 WARP.md
+**/memory-bank/
+**/projectBrief.md
+**/tmpclaude*
+
+# Azurite storage emulator files
+*/__azurite_db_blob__.json*
+*/__azurite_db_blob_extent__.json*
+*/__azurite_db_queue__.json*
+*/__azurite_db_queue_extent__.json*
+*/__azurite_db_table__.json*
+*/__blobstorage__/
+*/__queuestorage__/
+*/AzuriteConfig
+
+# Azure Functions local settings
+local.settings.json
+
+# Frontend
+**/frontend/node_modules/
+**/frontend/.vite/
+**/frontend/dist/
+
+# Database files
+*.db
+python/dotnet-ref

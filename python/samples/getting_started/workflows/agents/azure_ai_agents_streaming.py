@@ -1,27 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from contextlib import AsyncExitStack
-from typing import Any
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentResponseUpdate, WorkflowBuilder
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 """
-Sample: Agents in a workflow with streaming
+Sample: Azure AI Agents in a Workflow with Streaming
 
-A Writer agent generates content, then a Reviewer agent critiques it.
-The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
-
-Purpose:
-Show how to wire chat agents directly into a WorkflowBuilder pipeline where agents are auto wrapped as executors.
-
-Demonstrate:
-- Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- A simple console aggregator that groups updates by executor id and prints them as they arrive.
-- The workflow completes when idle and outputs are available in events.get_outputs().
+This sample shows how to create Azure AI Agents and use them in a workflow with streaming.
 
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
@@ -30,35 +18,17 @@ Prerequisites:
 """
 
 
-async def create_azure_ai_agent() -> tuple[Callable[..., Awaitable[Any]], Callable[[], Awaitable[None]]]:
-    """Helper method to create a Azure AI agent factory and a close function.
-
-    This makes sure the async context managers are properly handled.
-    """
-    stack = AsyncExitStack()
-    cred = await stack.enter_async_context(AzureCliCredential())
-
-    client = await stack.enter_async_context(AzureAIAgentClient(async_credential=cred))
-
-    async def agent(**kwargs: Any) -> Any:
-        return await stack.enter_async_context(client.create_agent(**kwargs))
-
-    async def close() -> None:
-        await stack.aclose()
-
-    return agent, close
-
-
 async def main() -> None:
-    agent, close = await create_azure_ai_agent()
-    try:
-        writer = await agent(
+    async with AzureCliCredential() as cred, AzureAIAgentClient(credential=cred) as client:
+        # Create two agents: a Writer and a Reviewer.
+        writer_agent = client.as_agent(
             name="Writer",
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
         )
-        reviewer = await agent(
+
+        reviewer_agent = client.as_agent(
             name="Reviewer",
             instructions=(
                 "You are an excellent content reviewer. "
@@ -67,25 +37,29 @@ async def main() -> None:
             ),
         )
 
-        workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
+        # Build the workflow by adding agents directly as edges.
+        # Agents adapt to workflow mode: run(stream=True) for incremental updates, run() for complete responses.
+        workflow = WorkflowBuilder(start_executor=writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
-        last_executor_id: str | None = None
+        # Track the last author to format streaming output.
+        last_author: str | None = None
 
-        events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        events = workflow.run(
+            "Create a slogan for a new electric SUV that is affordable and fun to drive.", stream=True
+        )
         async for event in events:
-            if isinstance(event, AgentRunUpdateEvent):
-                eid = event.executor_id
-                if eid != last_executor_id:
-                    if last_executor_id is not None:
-                        print()
-                    print(f"{eid}:", end=" ", flush=True)
-                    last_executor_id = eid
-                print(event.data, end="", flush=True)
-            elif isinstance(event, WorkflowOutputEvent):
-                print("\n===== Final output =====")
-                print(event.data)
-    finally:
-        await close()
+            # The outputs of the workflow are whatever the agents produce. So the events are expected to
+            # contain `AgentResponseUpdate` from the agents in the workflow.
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+                update = event.data
+                author = update.author_name
+                if author != last_author:
+                    if last_author is not None:
+                        print()  # Newline between different authors
+                    print(f"{author}: {update.text}", end="", flush=True)
+                    last_author = author
+                else:
+                    print(update.text, end="", flush=True)
 
 
 if __name__ == "__main__":

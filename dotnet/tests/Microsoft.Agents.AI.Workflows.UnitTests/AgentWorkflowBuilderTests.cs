@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -20,7 +21,7 @@ public class AgentWorkflowBuilderTests
     [Fact]
     public void BuildSequential_InvalidArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(workflowName: null!, null!));
         Assert.Throws<ArgumentException>("agents", () => AgentWorkflowBuilder.BuildSequential());
     }
 
@@ -56,24 +57,24 @@ public class AgentWorkflowBuilderTests
     {
         Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
 
-        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]));
+        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]));
         Assert.NotNull(groupChat);
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(null!));
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants([null!]));
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(new DoubleEchoAgent("a1"), null!));
 
-        Assert.Throws<ArgumentNullException>("agents", () => new AgentWorkflowBuilder.RoundRobinGroupChatManager(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => new RoundRobinGroupChatManager(null!));
     }
 
     [Fact]
     public void GroupChatManager_MaximumIterationCount_Invalid_Throws()
     {
-        var manager = new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]);
+        var manager = new RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]);
 
         const int DefaultMaxIterations = 40;
         Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
-        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = 0);
-        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = -1);
+        Assert.Throws<ArgumentOutOfRangeException>("value", void () => manager.MaximumIterationCount = 0);
+        Assert.Throws<ArgumentOutOfRangeException>("value", void () => manager.MaximumIterationCount = -1);
         Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
 
         manager.MaximumIterationCount = 30;
@@ -134,32 +135,35 @@ public class AgentWorkflowBuilderTests
     {
         public override string Name => name;
 
-        public override AgentThread GetNewThread()
-            => new DoubleEchoAgentThread();
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentSession());
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => new DoubleEchoAgentThread();
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentSession());
 
-        public override Task<AgentRunResponse> RunAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
             var contents = messages.SelectMany(m => m.Contents).ToList();
             string id = Guid.NewGuid().ToString("N");
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
         }
     }
 
-    private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
+    private sealed class DoubleEchoAgentSession() : InMemoryAgentSession();
 
-    [Fact(Skip = "issue #1109")]
+    [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()
     {
         StrongBox<TaskCompletionSource<bool>> barrier = new();
@@ -182,10 +186,10 @@ public class AgentWorkflowBuilderTests
 
             // TODO: https://github.com/microsoft/agent-framework/issues/784
             // These asserts are flaky until we guarantee message delivery order.
-            //Assert.Single(Regex.Matches(updateText, "agent1"));
-            //Assert.Single(Regex.Matches(updateText, "agent2"));
-            //Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
-            //Assert.Equal(2, result.Count);
+            Assert.Single(Regex.Matches(updateText, "agent1"));
+            Assert.Single(Regex.Matches(updateText, "agent2"));
+            Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
+            Assert.Equal(2, result.Count);
         }
     }
 
@@ -343,7 +347,7 @@ public class AgentWorkflowBuilderTests
     public async Task BuildGroupChat_AgentsRunInOrderAsync(int maxIterations)
     {
         const int NumAgents = 3;
-        var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
+        var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
             .AddParticipants(new DoubleEchoAgent("agent1"), new DoubleEchoAgent("agent2"))
             .AddParticipants(new DoubleEchoAgent("agent3"))
             .Build();
@@ -381,41 +385,35 @@ public class AgentWorkflowBuilderTests
     }
 
     private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
-        Workflow workflow, List<ChatMessage> input)
+        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
     {
         StringBuilder sb = new();
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
-        try
-        {
-            await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        IWorkflowExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
+        await using StreamingRun run = await environment.StreamAsync(workflow, input);
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
-            WorkflowOutputEvent? output = null;
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        WorkflowOutputEvent? output = null;
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        {
+            if (evt is AgentResponseUpdateEvent executorComplete)
             {
-                if (evt is AgentRunUpdateEvent executorComplete)
-                {
-                    sb.Append(executorComplete.Data);
-                }
-                else if (evt is WorkflowOutputEvent e)
-                {
-                    output = e;
-                    break;
-                }
+                sb.Append(executorComplete.Data);
             }
+            else if (evt is WorkflowOutputEvent e)
+            {
+                output = e;
+                break;
+            }
+        }
 
-            return (sb.ToString(), output?.As<List<ChatMessage>>());
-        }
-        finally
-        {
-            await run.EndRunAsync();
-        }
+        return (sb.ToString(), output?.As<List<ChatMessage>>());
     }
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (Interlocked.Decrement(ref remaining.Value) == 0)
             {
@@ -424,7 +422,7 @@ public class AgentWorkflowBuilderTests
 
             await barrier.Value!.Task.ConfigureAwait(false);
 
-            await foreach (var update in base.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken))
             {
                 await Task.Yield();
                 yield return update;

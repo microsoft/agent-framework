@@ -1,9 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
+using System.Threading.Tasks;
+using Azure.Identity;
+using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Xunit.Abstractions;
 
@@ -14,11 +19,19 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 /// </summary>
 public abstract class IntegrationTest : IDisposable
 {
+    protected IConfigurationRoot Configuration => field ??= InitializeConfig();
+
+    public Uri TestEndpoint { get; }
+
     public TestOutputAdapter Output { get; }
 
     protected IntegrationTest(ITestOutputHelper output)
     {
         this.Output = new TestOutputAdapter(output);
+        this.TestEndpoint =
+            new Uri(
+                this.Configuration?[AgentProvider.Settings.FoundryEndpoint] ??
+                throw new InvalidOperationException($"Undefined configuration setting: {AgentProvider.Settings.FoundryEndpoint}"));
         Console.SetOut(this.Output);
         SetProduct();
     }
@@ -47,9 +60,30 @@ public abstract class IntegrationTest : IDisposable
 
     internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 
-    protected static IConfigurationRoot InitializeConfig() =>
+    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation = false, params IEnumerable<AIFunction> functionTools)
+    {
+        AzureAgentProvider agentProvider =
+            new(this.TestEndpoint, new AzureCliCredential())
+            {
+                Functions = functionTools,
+            };
+
+        string? conversationId = null;
+        if (externalConversation)
+        {
+            conversationId = await agentProvider.CreateConversationAsync().ConfigureAwait(false);
+        }
+
+        return
+            new DeclarativeWorkflowOptions(agentProvider)
+            {
+                ConversationId = conversationId,
+                LoggerFactory = this.Output
+            };
+    }
+
+    private static IConfigurationRoot InitializeConfig() =>
         new ConfigurationBuilder()
-            .AddJsonFile("appsettings.Development.json", true)
             .AddEnvironmentVariables()
             .AddUserSecrets(Assembly.GetExecutingAssembly())
             .Build();

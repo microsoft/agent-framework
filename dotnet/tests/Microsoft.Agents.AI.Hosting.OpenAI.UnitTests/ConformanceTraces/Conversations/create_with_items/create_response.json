@@ -1,0 +1,8 @@
+{
+  "id": "conv_68fb980bccfc8195a9ba32b164e8a69408e61fbaa91b0a18",
+  "object": "conversation",
+  "created_at": 1761318923,
+  "metadata": {
+    "test_type": "create_with_initial_items"
+  }
+}

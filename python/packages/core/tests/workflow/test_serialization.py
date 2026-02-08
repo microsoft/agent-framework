@@ -6,12 +6,14 @@ from typing import Any
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework._workflows._const import INTERNAL_SOURCE_ID
 from agent_framework._workflows._edge import (
     Case,
     Default,
     Edge,
     FanInEdgeGroup,
     FanOutEdgeGroup,
+    InternalEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
     SwitchCaseEdgeGroupCase,
@@ -411,16 +413,14 @@ class TestSerializationWorkflowClasses:
         """
         # Create innermost workflow
         inner_executor = SampleExecutor(id="inner-exec")
-        inner_workflow = WorkflowBuilder().set_start_executor(inner_executor).set_max_iterations(10).build()
+        inner_workflow = WorkflowBuilder(max_iterations=10, start_executor=inner_executor).build()
 
         # Create middle workflow with WorkflowExecutor
         inner_workflow_executor = WorkflowExecutor(workflow=inner_workflow, id="inner-workflow-exec")
         middle_executor = SampleExecutor(id="middle-exec")
         middle_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(middle_executor)
+            WorkflowBuilder(max_iterations=20, start_executor=middle_executor)
             .add_edge(middle_executor, inner_workflow_executor)
-            .set_max_iterations(20)
             .build()
         )
 
@@ -428,10 +428,8 @@ class TestSerializationWorkflowClasses:
         middle_workflow_executor = WorkflowExecutor(workflow=middle_workflow, id="middle-workflow-exec")
         outer_executor = SampleExecutor(id="outer-exec")
         outer_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(outer_executor)
+            WorkflowBuilder(max_iterations=30, start_executor=outer_executor)
             .add_edge(outer_executor, middle_workflow_executor)
-            .set_max_iterations(30)
             .build()
         )
 
@@ -541,7 +539,7 @@ class TestSerializationWorkflowClasses:
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump
         data = workflow.to_dict()
@@ -557,16 +555,32 @@ class TestSerializationWorkflowClasses:
 
         # Verify edge groups contain edges
         edge_groups = data["edge_groups"]
-        assert len(edge_groups) == 1, "Should have exactly one edge group"
-        edge_group = edge_groups[0]
-        assert "edges" in edge_group, "Edge group should contain 'edges' field"
-        assert len(edge_group["edges"]) == 1, "Should have exactly one edge"
 
-        edge = edge_group["edges"][0]
-        assert "source_id" in edge, "Edge should have source_id"
-        assert "target_id" in edge, "Edge should have target_id"
-        assert edge["source_id"] == "executor1", f"Expected source_id 'executor1', got {edge['source_id']}"
-        assert edge["target_id"] == "executor2", f"Expected target_id 'executor2', got {edge['target_id']}"
+        single_edge_groups = [SingleEdgeGroup.from_dict(eg) for eg in edge_groups if eg["type"] == "SingleEdgeGroup"]
+        internal_edge_groups = [
+            InternalEdgeGroup.from_dict(eg) for eg in edge_groups if eg["type"] == "InternalEdgeGroup"
+        ]
+
+        assert len(single_edge_groups) == 1, "Should have exactly one SingleEdgeGroup for the added edge"
+        assert len(internal_edge_groups) == 2, (
+            "Should have exactly two (one per executor) InternalEdgeGroups for request/response handling"
+        )
+
+        for edge_group in single_edge_groups:
+            assert len(edge_group.edges) == 1, "Should have exactly one edge"
+
+            edge = edge_group.edges[0]
+
+            assert edge.source_id == "executor1", f"Expected source_id 'executor1', got {edge.source_id}"
+            assert edge.target_id == "executor2", f"Expected target_id 'executor2', got {edge.target_id}"
+
+        for edge_group in internal_edge_groups:
+            assert len(edge_group.edges) == 1, "Each InternalEdgeGroup should have exactly one edge"
+
+            edge = edge_group.edges[0]
+
+            assert edge.source_id == INTERNAL_SOURCE_ID(edge.target_id)
+            assert edge.target_id in [executor1.id, executor2.id]
 
         # Test model_dump_json
         json_str = workflow.to_json()
@@ -577,36 +591,45 @@ class TestSerializationWorkflowClasses:
 
         # Verify edges are preserved in JSON serialization
         json_edge_groups = parsed["edge_groups"]
-        assert len(json_edge_groups) == 1, "JSON should have exactly one edge group"
-        json_edge_group = json_edge_groups[0]
-        assert "edges" in json_edge_group, "JSON edge group should contain 'edges' field"
-        json_edge = json_edge_group["edges"][0]
-        assert json_edge["source_id"] == "executor1", "JSON should preserve edge source_id"
-        assert json_edge["target_id"] == "executor2", "JSON should preserve edge target_id"
+        assert len(json_edge_groups) == 1 + 2, "JSON should have exactly one SingleEdgeGroup and two InternalEdgeGroups"
+
+        for json_edge_group in json_edge_groups:
+            assert "edges" in json_edge_group, "JSON edge group should contain 'edges' field"
+            assert len(json_edge_group["edges"]) == 1, "Each JSON edge group should have exactly one edge"
+            if json_edge_group["type"] == "SingleEdgeGroup":
+                json_edge = json_edge_group["edges"][0]
+                assert json_edge["source_id"] == "executor1", "JSON should preserve edge source_id"
+                assert json_edge["target_id"] == "executor2", "JSON should preserve edge target_id"
+            elif json_edge_group["type"] == "InternalEdgeGroup":
+                json_edge = json_edge_group["edges"][0]
+                assert json_edge["source_id"] == INTERNAL_SOURCE_ID(json_edge["target_id"])
+                assert json_edge["target_id"] in [executor1.id, executor2.id]
+            else:
+                pytest.fail(f"Unexpected edge group type: {json_edge_group['type']}")
 
     def test_workflow_serialization_excludes_non_serializable_fields(self) -> None:
         """Test that non-serializable fields are excluded from serialization."""
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump - should not include private runtime objects
         data = workflow.to_dict()
 
         # These private runtime fields should not be in the serialized data
         assert "_runner_context" not in data
-        assert "_shared_state" not in data
+        assert "_state" not in data
         assert "_runner" not in data
 
     def test_workflow_name_description_serialization(self) -> None:
         """Test that workflow name and description are serialized correctly."""
         # Test 1: With name and description
-        workflow1 = (
-            WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
-            .set_start_executor(SampleExecutor(id="e1"))
-            .build()
-        )
+        workflow1 = WorkflowBuilder(
+            name="Test Pipeline",
+            description="Test workflow description",
+            start_executor=SampleExecutor(id="e1"),
+        ).build()
 
         assert workflow1.name == "Test Pipeline"
         assert workflow1.description == "Test workflow description"
@@ -622,7 +645,7 @@ class TestSerializationWorkflowClasses:
         assert parsed1["description"] == "Test workflow description"
 
         # Test 2: Without name and description (defaults)
-        workflow2 = WorkflowBuilder().set_start_executor(SampleExecutor(id="e2")).build()
+        workflow2 = WorkflowBuilder(start_executor=SampleExecutor(id="e2")).build()
 
         assert workflow2.name is None
         assert workflow2.description is None
@@ -632,7 +655,7 @@ class TestSerializationWorkflowClasses:
         assert "description" not in data2
 
         # Test 3: With only name (no description)
-        workflow3 = WorkflowBuilder(name="Named Only").set_start_executor(SampleExecutor(id="e3")).build()
+        workflow3 = WorkflowBuilder(name="Named Only", start_executor=SampleExecutor(id="e3")).build()
 
         assert workflow3.name == "Named Only"
         assert workflow3.description is None
@@ -679,8 +702,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Build workflow with all three edge group types
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(router)
+        WorkflowBuilder(start_executor=router)
         # 1. SwitchCaseEdgeGroup: Conditional routing
         .add_switch_case_edge_group(
             router,
@@ -733,7 +755,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Verify that serialization excludes non-serializable fields
     assert "_runner_context" not in data
-    assert "_shared_state" not in data
+    assert "_state" not in data
     assert "_runner" not in data
 
     # Test that we can identify each edge group type by examining their structure

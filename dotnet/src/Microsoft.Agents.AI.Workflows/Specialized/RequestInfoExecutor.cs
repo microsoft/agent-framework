@@ -3,19 +3,18 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-internal sealed class RequestPortOptions
-{
-}
+internal sealed class RequestPortOptions;
 
 internal sealed class RequestInfoExecutor : Executor
 {
-    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = new();
+    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = [];
     private RequestPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }
 
@@ -55,7 +54,7 @@ internal sealed class RequestInfoExecutor : Executor
 
     internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);
 
-    public async ValueTask<ExternalRequest?> HandleCatchAllAsync(PortableValue message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest?> HandleCatchAllAsync(PortableValue message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         Throw.IfNull(message);
 
@@ -70,13 +69,13 @@ internal sealed class RequestInfoExecutor : Executor
         }
         else if (message.Is(out ExternalRequest? request))
         {
-            return await this.HandleAsync(request, context).ConfigureAwait(false);
+            return await this.HandleAsync(request, context, cancellationToken).ConfigureAwait(false);
         }
 
         return null;
     }
 
-    public async ValueTask<ExternalRequest> HandleAsync(ExternalRequest message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest> HandleAsync(ExternalRequest message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
@@ -100,7 +99,7 @@ internal sealed class RequestInfoExecutor : Executor
         return request;
     }
 
-    public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(message);
         Debug.Assert(this.Port.Request.IsInstanceOfType(message));
@@ -111,30 +110,28 @@ internal sealed class RequestInfoExecutor : Executor
         return request;
     }
 
-    public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context)
+    public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(message);
-        Throw.IfNull(message.Data);
-
-        if (message.PortInfo.PortId != this.Port.Id)
+        if (!this.Port.IsResponsePort(message))
         {
             return null;
         }
 
-        object data = message.DataAs(this.Port.Response) ??
-            throw new InvalidOperationException(
-                $"Message type {message.Data.TypeId} is not assignable to the response type {this.Port.Response.Name} of input port {this.Port.Id}.");
-
         if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
         {
-            await context.SendMessageAsync(originalRequest.RewrapResponse(message)).ConfigureAwait(false);
+            await context.SendMessageAsync(originalRequest.RewrapResponse(message), cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await context.SendMessageAsync(message).ConfigureAwait(false);
+            await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        await context.SendMessageAsync(data).ConfigureAwait(false);
+        if (!message.Data.IsType(this.Port.Response, out object? data))
+        {
+            throw this.Port.CreateExceptionForType(message);
+        }
+
+        await context.SendMessageAsync(data, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return message;
     }

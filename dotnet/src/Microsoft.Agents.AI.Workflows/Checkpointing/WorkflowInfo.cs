@@ -14,7 +14,6 @@ internal sealed class WorkflowInfo
         Dictionary<string, ExecutorInfo> executors,
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<RequestPortInfo> requestPorts,
-        TypeId? inputType,
         string startExecutorId,
         HashSet<string>? outputExecutorIds)
     {
@@ -22,7 +21,6 @@ internal sealed class WorkflowInfo
         this.Edges = Throw.IfNull(edges);
         this.RequestPorts = Throw.IfNull(requestPorts);
 
-        this.InputType = inputType;
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
         this.OutputExecutorIds = outputExecutorIds ?? [];
     }
@@ -49,10 +47,10 @@ internal sealed class WorkflowInfo
         }
 
         // Validate the executors
-        if (workflow.Registrations.Count != this.Executors.Count ||
+        if (workflow.ExecutorBindings.Count != this.Executors.Count ||
             this.Executors.Keys.Any(
-            executorId => workflow.Registrations.TryGetValue(executorId, out ExecutorRegistration? registration)
-                       && !this.Executors[executorId].IsMatch(registration)))
+            executorId => workflow.ExecutorBindings.TryGetValue(executorId, out ExecutorBinding? binding)
+                       && !this.Executors[executorId].IsMatch(binding)))
         {
             return false;
         }
@@ -91,7 +89,4 @@ internal sealed class WorkflowInfo
 
         return true;
     }
-
-    public bool IsMatch<TInput>(Workflow<TInput> workflow) =>
-        this.IsMatch(workflow as Workflow) && this.InputType?.IsMatch<TInput>() == true;
 }

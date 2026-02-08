@@ -8,7 +8,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
@@ -52,7 +52,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.Build(builder);
 
         // Build final workflow
-        return builder.WorkflowBuilder.Build();
+        return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
 
     protected override void Visit(ActionScope item)
@@ -137,16 +137,21 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             conditionItem.Accept(this);
         }
 
+        if (lastConditionItemId is not null)
+        {
+            // Create clean start for else action from prior conditions
+            this.RestartAfter(lastConditionItemId, action.Id);
+        }
+
         if (item.ElseActions?.Actions.Length > 0)
         {
-            if (lastConditionItemId is not null)
-            {
-                // Create clean start for else action from prior conditions
-                this.RestartAfter(lastConditionItemId, action.Id);
-            }
-
             // Create conditional link for else action
             string stepId = ConditionGroupExecutor.Steps.Else(item);
+            this._workflowModel.AddLink(action.Id, stepId, action.IsElse);
+        }
+        else
+        {
+            string stepId = Steps.Post(action.Id);
             this._workflowModel.AddLink(action.Id, stepId, action.IsElse);
         }
     }
@@ -236,34 +241,50 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = GetParentId(item);
-        string actionId = item.GetId();
-        string postId = Steps.Post(actionId);
-
         // Entry point for question
-        QuestionExecutor action = new(item, this._workflowState);
+        QuestionExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
         this.ContinueWith(action);
+
         // Transition to post action if complete
-        this._workflowModel.AddLink(actionId, postId, QuestionExecutor.IsComplete);
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, QuestionExecutor.IsComplete);
 
         // Perpare for input request if not complete
-        string prepareId = QuestionExecutor.Steps.Prepare(actionId);
-        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, action.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
+        string prepareId = QuestionExecutor.Steps.Prepare(action.Id);
+        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, action.PrepareResponseAsync, emitResult: false), action.ParentId, message => !QuestionExecutor.IsComplete(message));
 
         // Define input action
-        string inputId = QuestionExecutor.Steps.Input(actionId);
-        RequestPortAction inputPort = new(RequestPort.Create<InputRequest, InputResponse>(inputId));
-        this._workflowModel.AddNode(inputPort, parentId);
-        this._workflowModel.AddLinkFromPeer(parentId, inputId);
+        string inputId = QuestionExecutor.Steps.Input(action.Id);
+        RequestPortAction inputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
 
         // Capture input response
-        string captureId = QuestionExecutor.Steps.Capture(actionId);
-        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), parentId);
+        string captureId = QuestionExecutor.Steps.Capture(action.Id);
+        this.ContinueWith(new DelegateActionExecutor<ExternalInputResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
 
         // Transition to post action if complete
-        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), parentId, QuestionExecutor.IsComplete);
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId, QuestionExecutor.IsComplete);
         // Transition to prepare action if not complete
         this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
+    }
+
+    protected override void Visit(RequestExternalInput item)
+    {
+        this.Trace(item);
+
+        RequestExternalInputExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Define input action
+        string inputId = RequestExternalInputExecutor.Steps.Input(action.Id);
+        RequestPortAction inputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
+
+        // Capture input response
+        string captureId = RequestExternalInputExecutor.Steps.Capture(action.Id);
+        this.ContinueWith(new DelegateActionExecutor<ExternalInputResponse>(captureId, this._workflowState, action.CaptureResponseAsync), action.ParentId);
     }
 
     protected override void Visit(EndDialog item)
@@ -278,6 +299,28 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     protected override void Visit(EndConversation item)
+    {
+        this.Trace(item);
+
+        // Represent action with default executor
+        DefaultActionExecutor action = new(item, this._workflowState);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(action.Id, action.ParentId);
+    }
+
+    protected override void Visit(CancelAllDialogs item)
+    {
+        this.Trace(item);
+
+        // Represent action with default executor
+        DefaultActionExecutor action = new(item, this._workflowState);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(item.Id.Value, action.ParentId);
+    }
+
+    protected override void Visit(CancelDialog item)
     {
         this.Trace(item);
 
@@ -313,7 +356,35 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new InvokeAzureAgentExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
+        // Entry point to invoke agent
+        InvokeAzureAgentExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+        // Transition to post action if complete
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, InvokeAzureAgentExecutor.RequiresNothing);
+
+        // Define request-port for function calling action
+        string externalInputPortId = InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, externalInputPortId, InvokeAzureAgentExecutor.RequiresInput);
+
+        // Request ports always transitions to resume
+        string resumeId = InvokeAzureAgentExecutor.Steps.Resume(action.Id);
+        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.ResumeAsync, emitResult: false), action.ParentId);
+        this._workflowModel.AddLink(externalInputPortId, resumeId);
+        // Transition to post action if complete
+        this._workflowModel.AddLink(resumeId, postId, InvokeAzureAgentExecutor.RequiresNothing);
+        // Transition to request port if more input is required
+        this._workflowModel.AddLink(resumeId, externalInputPortId, InvokeAzureAgentExecutor.RequiresInput);
+
+        // Define post action
+        this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
+    }
+
+    protected override void Visit(InvokeAzureResponse item)
+    {
+        this.NotSupported(item);
     }
 
     protected override void Visit(RetrieveConversationMessage item)
@@ -432,10 +503,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 
     protected override void Visit(ReplaceDialog item) => this.NotSupported(item);
-
-    protected override void Visit(CancelAllDialogs item) => this.NotSupported(item);
-
-    protected override void Visit(CancelDialog item) => this.NotSupported(item);
 
     protected override void Visit(EmitEvent item) => this.NotSupported(item);
 

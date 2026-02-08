@@ -2,7 +2,7 @@
 
 using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
@@ -16,7 +16,7 @@ public class RetrieveConversationMessagesTemplateTest(ITestOutputHelper output) 
         this.ExecuteTest(
             nameof(DefaultQuery),
             "TestVariable",
-            StringExpression.Literal("#cid_3"));
+            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")));
     }
 
     [Fact]

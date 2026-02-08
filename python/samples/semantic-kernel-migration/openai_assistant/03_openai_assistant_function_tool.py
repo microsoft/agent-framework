@@ -55,10 +55,10 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework._tools import ai_function
+    from agent_framework._tools import tool
     from agent_framework.openai import OpenAIAssistantsClient
 
-    @ai_function(
+    @tool(
         name="get_forecast",
         description="Look up the forecast for a city and day.",
     )
@@ -67,7 +67,7 @@ async def run_agent_framework() -> None:
 
     assistants_client = OpenAIAssistantsClient()
     # AF converts the decorated function into an assistant-compatible tool.
-    async with assistants_client.create_agent(
+    async with assistants_client.as_agent(
         name="WeatherHelper",
         instructions="Call get_forecast to fetch weather details.",
         model=ASSISTANT_MODEL,

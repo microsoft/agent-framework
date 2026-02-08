@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import AgentResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from openai.types.beta.threads.runs import (
@@ -21,7 +21,7 @@ for Python code execution and mathematical problem solving.
 """
 
 
-def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
+def get_code_interpreter_chunk(chunk: AgentResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""
     if (
         isinstance(chunk.raw_representation, ChatResponseUpdate)
@@ -55,7 +55,7 @@ async def main() -> None:
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         generated_code = ""
-        async for chunk in agent.run_stream(query):
+        async for chunk in agent.run(query, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
             code_interpreter_chunk = get_code_interpreter_chunk(chunk)

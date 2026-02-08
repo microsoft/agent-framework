@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -23,13 +24,14 @@ namespace Microsoft.Agents.AI.A2A;
 /// Support for tasks will be added later as part of the long-running
 /// executions work.
 /// </remarks>
-internal sealed class A2AAgent : AIAgent
+public sealed class A2AAgent : AIAgent
 {
+    private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
+
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
     private readonly string? _name;
     private readonly string? _description;
-    private readonly string? _displayName;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -39,9 +41,8 @@ internal sealed class A2AAgent : AIAgent
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    /// <param name="displayName">The display name of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
 
@@ -49,163 +50,313 @@ internal sealed class A2AAgent : AIAgent
         this._id = id;
         this._name = name;
         this._description = description;
-        this._displayName = displayName;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new A2AAgentThread();
+    protected sealed override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        => new(new A2AAgentSession());
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.
+    /// Get a new <see cref="AgentSession"/> instance using an existing context id, to continue that conversation.
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
-    public AgentThread GetNewThread(string contextId)
-        => new A2AAgentThread() { ContextId = contextId };
+    /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId)
+        => new(new A2AAgentSession() { ContextId = contextId });
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new A2AAgentThread(serializedThread, jsonSerializerOptions);
-
-    /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        ValidateInputMessages(messages);
+        _ = Throw.IfNull(session);
 
-        var a2aMessage = messages.ToA2AMessage();
-
-        thread ??= this.GetNewThread();
-        if (thread is not A2AAgentThread typedThread)
+        if (session is not A2AAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
         }
 
-        // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = typedThread.ContextId;
+        return typedSession.Serialize(jsonSerializerOptions);
+    }
+
+    /// <inheritdoc/>
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new A2AAgentSession(serializedState, jsonSerializerOptions));
+
+    /// <inheritdoc/>
+    protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(messages);
+
+        A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        var a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        A2AResponse? a2aResponse = null;
+
+        if (GetContinuationToken(messages, options) is { } token)
+        {
+            a2aResponse = await this._a2aClient.GetTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            MessageSendParams sendParams = new()
+            {
+                Message = CreateA2AMessage(typedSession, messages),
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+            };
+
+            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
+        }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
         if (a2aResponse is AgentMessage message)
         {
-            UpdateThreadConversationId(typedThread, message.ContextId);
+            UpdateSession(typedSession, message.ContextId);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
                 RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
-                AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+                AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
             };
         }
+
         if (a2aResponse is AgentTask agentTask)
         {
-            UpdateThreadConversationId(typedThread, agentTask.ContextId);
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
 
-            return new AgentRunResponse
+            var response = new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
                 RawRepresentation = agentTask,
-                Messages = agentTask.ToChatMessages(),
-                AdditionalProperties = agentTask.Metadata.ToAdditionalProperties(),
+                Messages = agentTask.ToChatMessages() ?? [],
+                ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
+                AdditionalProperties = agentTask.Metadata?.ToAdditionalProperties(),
             };
+
+            if (agentTask.ToChatMessages() is { Count: > 0 } taskMessages)
+            {
+                response.Messages = taskMessages;
+            }
+
+            return response;
         }
 
         throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        ValidateInputMessages(messages);
-
-        var a2aMessage = messages.ToA2AMessage();
-
-        thread ??= this.GetNewThread();
-        if (thread is not A2AAgentThread typedThread)
-        {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
-        }
-
-        // Linking the message to the existing conversation, if any.
-        a2aMessage.ContextId = typedThread.ContextId;
-
-        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
-
-        var a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
-
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
-
-        await foreach (var sseEvent in a2aSseEvents)
-        {
-            if (sseEvent.Data is not AgentMessage message)
-            {
-                throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
-            }
-
-            UpdateThreadConversationId(typedThread, message.ContextId);
-
-            yield return new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                ResponseId = message.MessageId,
-                RawRepresentation = message,
-                Role = ChatRole.Assistant,
-                MessageId = message.MessageId,
-                Contents = [.. message.Parts.Select(part => part.ToAIContent())],
-                AdditionalProperties = message.Metadata.ToAdditionalProperties(),
-            };
-        }
-    }
-
-    /// <inheritdoc/>
-    public override string Id => this._id ?? base.Id;
-
-    /// <inheritdoc/>
-    public override string? Name => this._name ?? base.Name;
-
-    /// <inheritdoc/>
-    public override string DisplayName => this._displayName ?? base.DisplayName;
-
-    /// <inheritdoc/>
-    public override string? Description => this._description ?? base.Description;
-
-    private static void ValidateInputMessages(IEnumerable<ChatMessage> messages)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
-        foreach (var message in messages)
+        A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
+
+        this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+
+        ConfiguredCancelableAsyncEnumerable<SseItem<A2AEvent>> a2aSseEvents;
+
+        if (options?.ContinuationToken is not null)
         {
-            if (message.Role != ChatRole.User)
+            // Task stream resumption is not well defined in the A2A v2.* specification, leaving it to the agent implementations.  
+            // The v3.0 specification improves this by defining task stream reconnection that allows obtaining the same stream  
+            // from the beginning, but it does not define stream resumption from a specific point in the stream.  
+            // Therefore, the code should be updated once the A2A .NET library supports the A2A v3.0 specification,  
+            // and AF has the necessary model to allow consumers to know whether they need to resume the stream and add new updates to  
+            // the existing ones or reconnect the stream and obtain all updates again.  
+            // For more details, see the following issue: https://github.com/microsoft/agent-framework/issues/1764  
+            throw new InvalidOperationException("Reconnecting to task streams using continuation tokens is not supported yet.");
+            // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
+        }
+
+        MessageSendParams sendParams = new()
+        {
+            Message = CreateA2AMessage(typedSession, messages),
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
+        };
+
+        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
+
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
+
+        string? contextId = null;
+        string? taskId = null;
+
+        await foreach (var sseEvent in a2aSseEvents)
+        {
+            if (sseEvent.Data is AgentMessage message)
             {
-                throw new ArgumentException($"All input messages for A2A agents must have the role '{ChatRole.User}'. Found '{message.Role}'.", nameof(messages));
+                contextId = message.ContextId;
+
+                yield return this.ConvertToAgentResponseUpdate(message);
+            }
+            else if (sseEvent.Data is AgentTask task)
+            {
+                contextId = task.ContextId;
+                taskId = task.Id;
+
+                yield return this.ConvertToAgentResponseUpdate(task);
+            }
+            else if (sseEvent.Data is TaskUpdateEvent taskUpdateEvent)
+            {
+                contextId = taskUpdateEvent.ContextId;
+                taskId = taskUpdateEvent.TaskId;
+
+                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent);
+            }
+            else
+            {
+                throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {sseEvent.Data.GetType().FullName ?? "null"}");
             }
         }
+
+        UpdateSession(typedSession, contextId, taskId);
     }
 
-    private static void UpdateThreadConversationId(A2AAgentThread? thread, string? contextId)
+    /// <inheritdoc/>
+    protected override string? IdCore => this._id;
+
+    /// <inheritdoc/>
+    public override string? Name => this._name;
+
+    /// <inheritdoc/>
+    public override string? Description => this._description;
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => base.GetService(serviceType, serviceKey)
+           ?? (serviceType == typeof(A2AClient) ? this._a2aClient
+            : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
+            : null);
+
+    private async ValueTask<A2AAgentSession> GetA2ASessionAsync(AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken)
     {
-        if (thread is null)
+        // Aligning with other agent implementations that support background responses, where
+        // a session is required for background responses to prevent inconsistent experience
+        // for callers if they forget to provide the session for initial or follow-up runs.
+        if (options?.AllowBackgroundResponses is true && session is null)
+        {
+            throw new InvalidOperationException("A session must be provided when AllowBackgroundResponses is enabled.");
+        }
+
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        if (session is not A2AAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type {session.GetType()} is not compatible with the agent. Only A2A agent created sessions are supported.");
+        }
+
+        return typedSession;
+    }
+
+    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null)
+    {
+        if (session is null)
         {
             return;
         }
 
         // Surface cases where the A2A agent responds with a response that
-        // has a different context Id than the thread's conversation Id.
-        if (thread.ContextId is not null && contextId is not null && thread.ContextId != contextId)
+        // has a different context Id than the session's conversation Id.
+        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
         {
             throw new InvalidOperationException(
-                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentThread)}.");
+                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
         }
 
-        // Assign a server-generated context Id to the thread if it's not already set.
-        thread.ContextId ??= contextId;
+        // Assign a server-generated context Id to the session if it's not already set.
+        session.ContextId ??= contextId;
+        session.TaskId = taskId;
+    }
+
+    private static AgentMessage CreateA2AMessage(A2AAgentSession typedSession, IEnumerable<ChatMessage> messages)
+    {
+        var a2aMessage = messages.ToA2AMessage();
+
+        // Linking the message to the existing conversation, if any.
+        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
+        a2aMessage.ContextId = typedSession.ContextId;
+
+        // Link the message as a follow-up to an existing task, if any.
+        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
+        a2aMessage.ReferenceTaskIds = typedSession.TaskId is null ? null : [typedSession.TaskId];
+
+        return a2aMessage;
+    }
+
+    private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, AgentRunOptions? options = null)
+    {
+        if (options?.ContinuationToken is ResponseContinuationToken token)
+        {
+            if (messages.Any())
+            {
+                throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
+            }
+
+            return A2AContinuationToken.FromToken(token);
+        }
+
+        return null;
+    }
+
+    private static A2AContinuationToken? CreateContinuationToken(string taskId, TaskState state)
+    {
+        if (state is TaskState.Submitted or TaskState.Working)
+        {
+            return new A2AContinuationToken(taskId);
+        }
+
+        return null;
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
+    {
+        return new AgentResponseUpdate
+        {
+            AgentId = this.Id,
+            ResponseId = message.MessageId,
+            RawRepresentation = message,
+            Role = ChatRole.Assistant,
+            MessageId = message.MessageId,
+            Contents = message.Parts.ConvertAll(part => part.ToAIContent()),
+            AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
+    {
+        return new AgentResponseUpdate
+        {
+            AgentId = this.Id,
+            ResponseId = task.Id,
+            RawRepresentation = task,
+            Role = ChatRole.Assistant,
+            Contents = task.ToAIContents(),
+            AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    {
+        AgentResponseUpdate responseUpdate = new()
+        {
+            AgentId = this.Id,
+            ResponseId = taskUpdateEvent.TaskId,
+            RawRepresentation = taskUpdateEvent,
+            Role = ChatRole.Assistant,
+            AdditionalProperties = taskUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+        };
+
+        if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)
+        {
+            responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
+            responseUpdate.RawRepresentation = artifactUpdateEvent;
+        }
+
+        return responseUpdate;
     }
 }

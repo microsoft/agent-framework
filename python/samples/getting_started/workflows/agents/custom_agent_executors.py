@@ -14,15 +14,17 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 """
-Step 2: Agents in a Workflow non-streaming
+Sample: Custom Agent Executors in a Workflow
 
 This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler pattern
-with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder, and finish
-by yielding outputs from the terminal node.
+Show how to wrap chat agents created by AzureOpenAIChatClient inside workflow executors. Demonstrate the @handler
+pattern with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder,
+and finish by yielding outputs from the terminal node.
+
+Note: When an agent is passed to a workflow, the workflow essenatially wrap the agent in a more sophisticated executor.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -41,9 +43,9 @@ class Writer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
+    def __init__(self, id: str = "writer"):
         # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        self.agent = chat_client.create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -83,9 +85,9 @@ class Reviewer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
+    def __init__(self, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = chat_client.create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),
@@ -105,21 +107,18 @@ class Reviewer(Executor):
 
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
-    # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Instantiate the two agent backed executors.
-    writer = Writer(chat_client)
-    reviewer = Reviewer(chat_client)
+    # Create the executors
+    writer = Writer()
+    reviewer = Reviewer()
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
+    workflow = WorkflowBuilder(start_executor=writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the workflow output.
     events = await workflow.run(
-        ChatMessage(role="user", text="Create a slogan for a new electric SUV that is affordable and fun to drive.")
+        ChatMessage("user", ["Create a slogan for a new electric SUV that is affordable and fun to drive."])
     )
     # The terminal node yields output; print its contents.
     outputs = events.get_outputs()

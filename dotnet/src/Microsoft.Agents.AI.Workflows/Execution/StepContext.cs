@@ -11,7 +11,7 @@ internal sealed class StepContext
 {
     public ConcurrentDictionary<string, ConcurrentQueue<MessageEnvelope>> QueuedMessages { get; } = [];
 
-    public bool HasMessages => this.QueuedMessages.Values.Any(messageQueue => !messageQueue.IsEmpty);
+    public bool HasMessages => !this.QueuedMessages.IsEmpty && this.QueuedMessages.Values.Any(messageQueue => !messageQueue.IsEmpty);
 
     public ConcurrentQueue<MessageEnvelope> MessagesFor(string target)
     {

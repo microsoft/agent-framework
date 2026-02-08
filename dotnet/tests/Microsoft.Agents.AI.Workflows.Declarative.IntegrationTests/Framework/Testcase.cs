@@ -8,10 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 public sealed class Testcase
 {
     [JsonConstructor]
-    public Testcase(
-        string description,
-        TestcaseSetup setup,
-        TestcaseValidation validation)
+    public Testcase(string description, TestcaseSetup setup, TestcaseValidation validation)
     {
         this.Description = description;
         this.Setup = setup;
@@ -28,13 +25,12 @@ public sealed class Testcase
 public sealed class TestcaseSetup
 {
     [JsonConstructor]
-    public TestcaseSetup(TestcaseInput input, IList<TestcaseInput>? responses = null)
+    public TestcaseSetup(TestcaseInput input)
     {
         this.Input = input;
-        this.Responses = responses ?? [];
     }
     public TestcaseInput Input { get; }
-    public IList<TestcaseInput>? Responses { get; }
+    public IList<TestcaseInput> Responses { get; init; } = [];
 }
 
 public sealed class TestcaseInput
@@ -53,36 +49,43 @@ public sealed class TestcaseInput
 public sealed class TestcaseValidation
 {
     [JsonConstructor]
-    public TestcaseValidation(int conversationCount, int minActionCount, int? maxActionCount = null, TestcaseValidationActions? actions = null)
+    public TestcaseValidation(int conversationCount, int minActionCount, int minResponseCount)
     {
         this.ConversationCount = conversationCount;
         this.MinActionCount = minActionCount;
-        this.MaxActionCount = maxActionCount;
-        this.Actions = actions ?? new TestcaseValidationActions([]);
+        this.MinResponseCount = minResponseCount;
     }
 
-    public TestcaseValidationActions Actions { get; }
+    public TestcaseValidationActions Actions { get; init; } = TestcaseValidationActions.Empty;
     public int ConversationCount { get; }
     public int MinActionCount { get; }
-    public int? MaxActionCount { get; }
+    // Default expectation is MinActionCount when not defined
+    public int? MaxActionCount { get; init; }
+    // Default expectation is MinResponseCount when not defined
+    public int? MinMessageCount { get; init; }
+    // Default expectation is MaxResponseCount when not defined
+    public int? MaxMessageCount { get; init; }
+    public int MinResponseCount { get; }
+    // Default expectation is MinResponseCount when not defined
+    public int? MaxResponseCount { get; init; }
 }
 
 public sealed class TestcaseValidationActions
 {
+    public static TestcaseValidationActions Empty { get; } = new([]);
+
     [JsonConstructor]
-    public TestcaseValidationActions(IList<string> start, IList<string>? repeat = null, IList<string>? final = null)
+    public TestcaseValidationActions(IList<string> start)
     {
         this.Start = start;
-        this.Repeat = repeat ?? [];
-        this.Final = final ?? [];
     }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public IList<string> Start { get; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public IList<string> Repeat { get; }
+    public IList<string> Repeat { get; init; } = [];
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public IList<string> Final { get; }
+    public IList<string> Final { get; init; } = [];
 }

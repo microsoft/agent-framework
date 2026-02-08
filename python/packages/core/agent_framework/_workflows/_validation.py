@@ -1,21 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import inspect
 import logging
+import types
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
-from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any
 
-from ._edge import Edge, EdgeGroup, FanInEdgeGroup
-from ._executor import Executor, RequestInfoExecutor
+from ._edge import Edge, EdgeGroup, FanInEdgeGroup, InternalEdgeGroup
+from ._executor import Executor
+from ._typing_utils import is_type_compatible
 
 logger = logging.getLogger(__name__)
-
-# Track cycle signatures we've already reported to avoid spamming logs when workflows
-# with intentional feedback loops are constructed multiple times in the same process.
-_LOGGED_CYCLE_SIGNATURES: set[tuple[str, ...]] = set()
 
 
 # region Enums and Base Classes
@@ -27,7 +23,7 @@ class ValidationTypeEnum(Enum):
     TYPE_COMPATIBILITY = "TYPE_COMPATIBILITY"
     GRAPH_CONNECTIVITY = "GRAPH_CONNECTIVITY"
     HANDLER_OUTPUT_ANNOTATION = "HANDLER_OUTPUT_ANNOTATION"
-    INTERCEPTOR_CONFLICT = "INTERCEPTOR_CONFLICT"
+    OUTPUT_VALIDATION = "OUTPUT_VALIDATION"
 
 
 class WorkflowValidationError(Exception):
@@ -53,20 +49,6 @@ class EdgeDuplicationError(WorkflowValidationError):
         self.edge_id = edge_id
 
 
-class ExecutorDuplicationError(WorkflowValidationError):
-    """Exception raised when duplicate executor identifiers are detected."""
-
-    def __init__(self, executor_id: str):
-        super().__init__(
-            message=(
-                f"Duplicate executor id detected: '{executor_id}'. Executor ids must be globally unique within a "
-                "workflow."
-            ),
-            validation_type=ValidationTypeEnum.EXECUTOR_DUPLICATION,
-        )
-        self.executor_id = executor_id
-
-
 class TypeCompatibilityError(WorkflowValidationError):
     """Exception raised when type incompatibility is detected between connected executors."""
 
@@ -74,8 +56,8 @@ class TypeCompatibilityError(WorkflowValidationError):
         self,
         source_executor_id: str,
         target_executor_id: str,
-        source_types: list[type[Any]],
-        target_types: list[type[Any]],
+        source_types: list[type[Any] | types.UnionType],
+        target_types: list[type[Any] | types.UnionType],
     ):
         # Use a placeholder for incompatible types - will be computed in WorkflowGraphValidator
         super().__init__(
@@ -97,13 +79,6 @@ class GraphConnectivityError(WorkflowValidationError):
         super().__init__(message, validation_type=ValidationTypeEnum.GRAPH_CONNECTIVITY)
 
 
-class InterceptorConflictError(WorkflowValidationError):
-    """Exception raised when multiple executors intercept the same request type from the same sub-workflow."""
-
-    def __init__(self, message: str):
-        super().__init__(message, validation_type=ValidationTypeEnum.INTERCEPTOR_CONFLICT)
-
-
 # endregion
 
 
@@ -120,25 +95,22 @@ class WorkflowGraphValidator:
     def __init__(self) -> None:
         self._edges: list[Edge] = []
         self._executors: dict[str, Executor] = {}
-        self._duplicate_executor_ids: set[str] = set()
-        self._start_executor_ref: Executor | str | None = None
 
     # region Core Validation Methods
     def validate_workflow(
         self,
         edge_groups: Sequence[EdgeGroup],
         executors: dict[str, Executor],
-        start_executor: Executor | str,
-        *,
-        duplicate_executor_ids: Sequence[str] | None = None,
+        start_executor: Executor,
+        output_executors: list[str],
     ) -> None:
         """Validate the entire workflow graph.
 
         Args:
             edge_groups: list of edge groups in the workflow
             executors: Map of executor IDs to executor instances
-            start_executor: The starting executor (can be instance or ID)
-            duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
+            start_executor: The starting executor
+            output_executors: List of output executor IDs
 
         Raises:
             WorkflowValidationError: If any validation fails
@@ -146,23 +118,20 @@ class WorkflowGraphValidator:
         self._executors = executors
         self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
-        self._duplicate_executor_ids = set(duplicate_executor_ids or [])
-        self._start_executor_ref = start_executor
 
         # If only the start executor exists, add it to the executor map
         # Handle the special case where the workflow consists of only a single executor and no edges.
         # In this scenario, the executor map will be empty because there are no edge groups to reference executors.
         # Adding the start executor to the map ensures that single-executor workflows (without any edges) are supported,
         # allowing validation and execution to proceed for workflows that do not require inter-executor communication.
-        if not self._executors and start_executor and isinstance(start_executor, Executor):
+        if not self._executors:
             self._executors[start_executor.id] = start_executor
 
         # Validate that start_executor exists in the graph
         # It should because we check for it in the WorkflowBuilder
         # but we do it here for completeness.
-        start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
-        if start_executor_id not in self._executors:
-            raise GraphConnectivityError(f"Start executor '{start_executor_id}' is not present in the workflow graph")
+        if start_executor.id not in self._executors:
+            raise GraphConnectivityError(f"Start executor '{start_executor.id}' is not present in the workflow graph")
 
         # Additional presence verification:
         # A start executor that is only injected via the builder (present in the executors map)
@@ -173,23 +142,22 @@ class WorkflowGraphValidator:
         # check only when there is at least one edge group defined.
         if self._edges:  # Only evaluate when the workflow defines edges
             edge_executor_ids: set[str] = set()
-            for _e in self._edges:
-                edge_executor_ids.add(_e.source_id)
-                edge_executor_ids.add(_e.target_id)
-            if start_executor_id not in edge_executor_ids:
+            for e in self._edges:
+                edge_executor_ids.add(e.source_id)
+                edge_executor_ids.add(e.target_id)
+            if start_executor.id not in edge_executor_ids:
                 raise GraphConnectivityError(
-                    f"Start executor '{start_executor_id}' is not present in the workflow graph"
+                    f"Start executor '{start_executor.id}' is not present in the workflow graph"
                 )
 
         # Run all checks
-        self._validate_executor_id_uniqueness(start_executor_id)
         self._validate_edge_duplication()
         self._validate_handler_output_annotations()
         self._validate_type_compatibility()
-        self._validate_graph_connectivity(start_executor_id)
+        self._validate_graph_connectivity(start_executor.id)
         self._validate_self_loops()
         self._validate_dead_ends()
-        self._validate_cycles()
+        self._output_validation(output_executors)
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -199,8 +167,8 @@ class WorkflowGraphValidator:
         decorator is applied. This method is kept minimal for any edge cases.
         """
         # The comprehensive validation is already done during handler registration:
-        # 1. @handler decorator calls validate_function_signature()
-        # 2. FunctionExecutor constructor calls validate_function_signature()
+        # 1. @handler and @response_handler decorators already have validation logic
+        # 2. FunctionExecutor constructor also has validation logic
         # 3. Both use validate_workflow_context_annotation() for WorkflowContext validation
         #
         # All executors in the workflow must have gone through one of these paths,
@@ -208,26 +176,6 @@ class WorkflowGraphValidator:
         pass
 
     # endregion
-
-    def _validate_executor_id_uniqueness(self, start_executor_id: str) -> None:
-        """Ensure executor identifiers are unique throughout the workflow graph."""
-        duplicates: set[str] = set(self._duplicate_executor_ids)
-
-        id_counts: defaultdict[str, int] = defaultdict(int)
-        for key, executor in self._executors.items():
-            id_counts[executor.id] += 1
-            if key != executor.id:
-                duplicates.add(executor.id)
-
-        duplicates.update({executor_id for executor_id, count in id_counts.items() if count > 1})
-
-        if isinstance(self._start_executor_ref, Executor):
-            mapped = self._executors.get(start_executor_id)
-            if mapped is not None and mapped is not self._start_executor_ref:
-                duplicates.add(start_executor_id)
-
-        if duplicates:
-            raise ExecutorDuplicationError(sorted(duplicates)[0])
 
     # region Edge and Type Validation
     def _validate_edge_duplication(self) -> None:
@@ -270,6 +218,10 @@ class WorkflowGraphValidator:
         Raises:
             TypeCompatibilityError: If type incompatibility is detected
         """
+        if isinstance(edge_group, InternalEdgeGroup):
+            # Skip type compatibility validation for internal edges
+            return
+
         source_executor = self._executors[edge.source_id]
         target_executor = self._executors[edge.target_id]
 
@@ -282,14 +234,13 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            # Suppress warnings for RequestInfoExecutor where dynamic typing is expected
-            if not source_output_types and not isinstance(source_executor, RequestInfoExecutor):
+            if not source_output_types:
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types and not isinstance(target_executor, RequestInfoExecutor):
+            if not target_input_types:
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
@@ -299,17 +250,17 @@ class WorkflowGraphValidator:
 
         # Check if any source output type is compatible with any target input type
         compatible = False
-        compatible_pairs: list[tuple[type[Any], type[Any]]] = []
+        compatible_pairs: list[tuple[type[Any] | types.UnionType, type[Any] | types.UnionType]] = []
 
         for source_type in source_output_types:
             for target_type in target_input_types:
                 if isinstance(edge_group, FanInEdgeGroup):
                     # If the edge is part of an edge group, the target expects a list of data types
-                    if self._is_type_compatible(list[source_type], target_type):  # type: ignore[valid-type]
+                    if is_type_compatible(list[source_type], target_type):  # type: ignore[valid-type]
                         compatible = True
                         compatible_pairs.append((list[source_type], target_type))  # type: ignore[valid-type]
                 else:
-                    if self._is_type_compatible(source_type, target_type):
+                    if is_type_compatible(source_type, target_type):
                         compatible = True
                         compatible_pairs.append((source_type, target_type))
 
@@ -402,6 +353,26 @@ class WorkflowGraphValidator:
 
     # endregion
 
+    # region Output Validation
+
+    def _output_validation(self, output_executors: list[str]) -> None:
+        """Validate that output executors exist in the workflow and have the correct workflow context annotations."""
+        for output_id in output_executors:
+            if output_id not in self._executors:
+                raise WorkflowValidationError(
+                    f"Output executor '{output_id}' is not present in the workflow graph",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+            output_executor = self._executors[output_id]
+            if not output_executor.workflow_output_types:
+                raise WorkflowValidationError(
+                    f"Output executor '{output_id}' must have output type annotations defined.",
+                    validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+                )
+
+    # endregion
+
     # region Additional Validation Scenarios
     def _validate_self_loops(self) -> None:
         """Detect and log self-loops (edges from executor to itself).
@@ -432,143 +403,6 @@ class WorkflowGraphValidator:
                 f"Verify these are intended as final nodes in the workflow."
             )
 
-    def _validate_cycles(self) -> None:
-        """Detect cycles in the workflow graph.
-
-        Cycles might be intentional for iterative processing but should be flagged
-        for review to ensure proper termination conditions exist. We surface each
-        distinct cycle group only once per process to avoid noisy, repeated warnings
-        when rebuilding the same workflow.
-        """
-        # Build adjacency list (ensure every executor appears even if it has no outgoing edges)
-        graph: dict[str, list[str]] = defaultdict(list)
-        for edge in self._edges:
-            graph[edge.source_id].append(edge.target_id)
-            graph.setdefault(edge.target_id, [])
-        for executor_id in self._executors:
-            graph.setdefault(executor_id, [])
-
-        # Tarjan's algorithm to locate strongly-connected components that form cycles
-        index: dict[str, int] = {}
-        lowlink: dict[str, int] = {}
-        on_stack: set[str] = set()
-        stack: list[str] = []
-        current_index = 0
-        cycle_components: list[list[str]] = []
-
-        def strongconnect(node: str) -> None:
-            nonlocal current_index
-
-            index[node] = current_index
-            lowlink[node] = current_index
-            current_index += 1
-            stack.append(node)
-            on_stack.add(node)
-
-            for neighbor in graph[node]:
-                if neighbor not in index:
-                    strongconnect(neighbor)
-                    lowlink[node] = min(lowlink[node], lowlink[neighbor])
-                elif neighbor in on_stack:
-                    lowlink[node] = min(lowlink[node], index[neighbor])
-
-            if lowlink[node] == index[node]:
-                component: list[str] = []
-                while True:
-                    member = stack.pop()
-                    on_stack.discard(member)
-                    component.append(member)
-                    if member == node:
-                        break
-
-                # A strongly connected component represents a cycle if it has more than one
-                # node or if a single node references itself directly.
-                if len(component) > 1 or any(member in graph[member] for member in component):
-                    cycle_components.append(component)
-
-        for executor_id in graph:
-            if executor_id not in index:
-                strongconnect(executor_id)
-
-        if not cycle_components:
-            return
-
-        unseen_components: list[list[str]] = []
-        for component in cycle_components:
-            signature = tuple(sorted(component))
-            if signature in _LOGGED_CYCLE_SIGNATURES:
-                continue
-            _LOGGED_CYCLE_SIGNATURES.add(signature)
-            unseen_components.append(component)
-
-        if not unseen_components:
-            # All cycles already reported in this process; keep noise low but retain traceability.
-            logger.debug(
-                "Cycle detected in workflow graph but previously reported. Components: %s",
-                [sorted(component) for component in cycle_components],
-            )
-            return
-
-        def _format_cycle(component: list[str]) -> str:
-            if not component:
-                return ""
-            ordered = list(component)
-            ordered.append(component[0])
-            return " -> ".join(ordered)
-
-        formatted_cycles = ", ".join(_format_cycle(component) for component in unseen_components)
-        logger.warning(
-            "Cycle detected in the workflow graph involving: %s. Ensure termination or iteration limits exist.",
-            formatted_cycles,
-        )
-
-    # endregion
-
-    # region Type Compatibility Utilities
-    @staticmethod
-    def _is_type_compatible(source_type: type[Any], target_type: type[Any]) -> bool:
-        """Check if source_type is compatible with target_type."""
-        # Handle Any type
-        if source_type is Any or target_type is Any:
-            return True
-
-        # Handle exact match
-        if source_type == target_type:
-            return True
-
-        # Handle inheritance
-        try:
-            if inspect.isclass(source_type) and inspect.isclass(target_type):
-                return issubclass(source_type, target_type)
-        except TypeError:
-            # Handle generic types that can't be used with issubclass
-            pass
-
-        # Handle Union types
-        source_origin = get_origin(source_type)
-        target_origin = get_origin(target_type)
-
-        if target_origin in (Union, UnionType):
-            target_args = get_args(target_type)
-            return any(WorkflowGraphValidator._is_type_compatible(source_type, arg) for arg in target_args)
-
-        if source_origin in (Union, UnionType):
-            source_args = get_args(source_type)
-            return all(WorkflowGraphValidator._is_type_compatible(arg, target_type) for arg in source_args)
-
-        # Handle generic types
-        if source_origin is not None and target_origin is not None and source_origin == target_origin:
-            source_args = get_args(source_type)
-            target_args = get_args(target_type)
-            if len(source_args) == len(target_args):
-                return all(
-                    WorkflowGraphValidator._is_type_compatible(s_arg, t_arg)
-                    for s_arg, t_arg in zip(source_args, target_args, strict=True)
-                )
-
-        # No other special compatibility cases
-        return False
-
     # endregion
 
 
@@ -578,17 +412,16 @@ class WorkflowGraphValidator:
 def validate_workflow_graph(
     edge_groups: Sequence[EdgeGroup],
     executors: dict[str, Executor],
-    start_executor: Executor | str,
-    *,
-    duplicate_executor_ids: Sequence[str] | None = None,
+    start_executor: Executor,
+    output_executors: list[str],
 ) -> None:
     """Convenience function to validate a workflow graph.
 
     Args:
         edge_groups: list of edge groups in the workflow
         executors: Map of executor IDs to executor instances
-        start_executor: The starting executor (can be instance or ID)
-        duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
+        start_executor: The starting executor instance
+        output_executors: List of output executor IDs
 
     Raises:
         WorkflowValidationError: If any validation fails
@@ -598,5 +431,5 @@ def validate_workflow_graph(
         edge_groups,
         executors,
         start_executor,
-        duplicate_executor_ids=duplicate_executor_ids,
+        output_executors,
     )

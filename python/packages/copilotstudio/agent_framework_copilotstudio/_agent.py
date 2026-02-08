@@ -1,19 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
-from typing import Any, ClassVar
+from collections.abc import AsyncIterable, Awaitable, Sequence
+from typing import Any, ClassVar, Literal, overload
 
 from agent_framework import (
-    AgentMiddlewares,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentMiddlewareTypes,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
-    AggregateContextProvider,
     BaseAgent,
     ChatMessage,
+    Content,
     ContextProvider,
-    Role,
-    TextContent,
+    ResponseStream,
+    normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
@@ -31,18 +31,33 @@ class CopilotStudioSettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Attributes:
-        environmentid: Environment ID of environment with the Copilot Studio App..
-            (Env var COPILOTSTUDIOAGENT__ENVIRONMENTID)
+    Keyword Args:
+        environmentid: Environment ID of environment with the Copilot Studio App.
+            Can be set via environment variable COPILOTSTUDIOAGENT__ENVIRONMENTID.
         schemaname: The agent identifier or schema name of the Copilot to use.
-            (Env var COPILOTSTUDIOAGENT__SCHEMANAME)
+            Can be set via environment variable COPILOTSTUDIOAGENT__SCHEMANAME.
         agentappid: The app ID of the App Registration used to login.
-            (Env var COPILOTSTUDIOAGENT__AGENTAPPID)
+            Can be set via environment variable COPILOTSTUDIOAGENT__AGENTAPPID.
         tenantid: The tenant ID of the App Registration used to login.
-            (Env var COPILOTSTUDIOAGENT__TENANTID)
-    Parameters:
+            Can be set via environment variable COPILOTSTUDIOAGENT__TENANTID.
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_copilotstudio import CopilotStudioSettings
+
+            # Using environment variables
+            # Set COPILOTSTUDIOAGENT__ENVIRONMENTID=env-123
+            # Set COPILOTSTUDIOAGENT__SCHEMANAME=my-agent
+            settings = CopilotStudioSettings()
+
+            # Or passing parameters directly
+            settings = CopilotStudioSettings(environmentid="env-123", schemaname="my-agent")
+
+            # Or loading from a .env file
+            settings = CopilotStudioSettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "COPILOTSTUDIOAGENT__"
@@ -64,8 +79,8 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: AgentMiddlewares | list[AgentMiddlewares] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: list[AgentMiddlewareTypes] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
@@ -87,11 +102,13 @@ class CopilotStudioAgent(BaseAgent):
                 a new client will be created using the other parameters.
             settings: Optional pre-configured ConnectionSettings. If not provided,
                 settings will be created from the other parameters.
+
+        Keyword Args:
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
-            context_providers: Context Providers, to be used by the copilot agent.
-            middleware: Agent middlewares used by the agent.
+            context_provider: Context Provider, to be used by the copilot agent.
+            middleware: Agent middleware used by the agent, should be a list of AgentMiddlewareTypes.
             environment_id: Environment ID of the Power Platform environment containing
                 the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
                 environment variable.
@@ -121,7 +138,7 @@ class CopilotStudioAgent(BaseAgent):
             id=id,
             name=name,
             description=description,
-            context_providers=context_providers,
+            context_provider=context_provider,
             middleware=middleware,
         )
         if not client:
@@ -188,38 +205,69 @@ class CopilotStudioAgent(BaseAgent):
         self.token_cache = token_cache
         self.scopes = scopes
 
-    async def run(
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> "Awaitable[AgentResponse]": ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> "Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]":
+        """Get a response from the agent.
+
+        This method returns the final result of the agent's execution
+        as a single AgentResponse object. When stream=True, it returns
+        a ResponseStream that yields AgentResponseUpdate objects.
+
+        Args:
+            messages: The message(s) to send to the agent.
+
+        Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
+            thread: The conversation thread associated with the message(s).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
+        """
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, **kwargs)
+
+    async def _run_impl(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Get a response from the agent.
-
-        This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
-        the final result is available.
-
-        Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentRunResponseUpdate
-        objects. Streaming only the final result is not feasible because the timing of
-        the final result's availability is unknown, and blocking the caller until then
-        is undesirable in streaming scenarios.
-
-        Args:
-            messages: The message(s) to send to the agent.
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            An agent response item.
-        """
+    ) -> AgentResponse:
+        """Non-streaming implementation of run."""
         if not thread:
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
 
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
@@ -230,49 +278,43 @@ class CopilotStudioAgent(BaseAgent):
         response_messages = [message async for message in self._process_activities(activities, streaming=False)]
         response_id = response_messages[0].message_id if response_messages else None
 
-        return AgentRunResponse(messages=response_messages, response_id=response_id)
+        return AgentResponse(messages=response_messages, response_id=response_id)
 
-    async def run_stream(
+    def _run_stream_impl(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Run the agent as a stream.
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        """Streaming implementation of run."""
 
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            nonlocal thread
+            if not thread:
+                thread = self.get_new_thread()
+            thread.service_thread_id = await self._start_new_conversation()
 
-        Note: An AgentRunResponseUpdate object contains a chunk of a message.
+            input_messages = normalize_messages(messages)
 
-        Args:
-            messages: The message(s) to send to the agent.
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
+            question = "\n".join([message.text for message in input_messages])
 
-        Yields:
-            An agent response item.
-        """
-        if not thread:
-            thread = self.get_new_thread()
-        thread.service_thread_id = await self._start_new_conversation()
+            activities = self.client.ask_question(question, thread.service_thread_id)
 
-        input_messages = self._normalize_messages(messages)
+            async for message in self._process_activities(activities, streaming=True):
+                yield AgentResponseUpdate(
+                    role=message.role,
+                    contents=message.contents,
+                    author_name=message.author_name,
+                    raw_representation=message.raw_representation,
+                    response_id=message.message_id,
+                    message_id=message.message_id,
+                )
 
-        question = "\n".join([message.text for message in input_messages])
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[None]:
+            return AgentResponse.from_updates(updates)
 
-        activities = self.client.ask_question(question, thread.service_thread_id)
-
-        async for message in self._process_activities(activities, streaming=True):
-            yield AgentRunResponseUpdate(
-                role=message.role,
-                contents=message.contents,
-                author_name=message.author_name,
-                raw_representation=message.raw_representation,
-                response_id=message.message_id,
-                message_id=message.message_id,
-            )
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     async def _start_new_conversation(self) -> str:
         """Start a new conversation with the Copilot Studio agent.
@@ -310,8 +352,8 @@ class CopilotStudioAgent(BaseAgent):
                 (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
             ):
                 yield ChatMessage(
-                    role=Role.ASSISTANT,
-                    contents=[TextContent(activity.text)],
+                    role="assistant",
+                    contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,
                     raw_representation=activity,

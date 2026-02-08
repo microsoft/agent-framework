@@ -43,12 +43,12 @@ public class InProcessStateTests
                 return
                     async (turn, context, cancellation) =>
                     {
-                        TState? state = await context.ReadStateAsync<TState>(stateKey.Key, stateKey.ScopeId.ScopeName)
+                        TState? state = await context.ReadStateAsync<TState>(stateKey.Key, stateKey.ScopeId.ScopeName, cancellation)
                                                      .ConfigureAwait(false);
 
                         state = action(state);
 
-                        await context.QueueStateUpdateAsync(stateKey.Key, state, stateKey.ScopeId.ScopeName);
+                        await context.QueueStateUpdateAsync(stateKey.Key, state, stateKey.ScopeId.ScopeName, cancellation);
 
                         return turn.Next;
                     };
@@ -145,7 +145,7 @@ public class InProcessStateTests
     [Fact]
     public async Task InProcessRun_StateShouldError_TwoExecutorsAsync()
     {
-        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<TurnToken>));
+        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<>));
         using StateTestExecutor<int?> testExecutor = new(
                 new ScopeKey("StateTestExecutor", "TestScope", "TestKey"),
                 loop: false,
@@ -163,9 +163,25 @@ public class InProcessStateTests
                 .AddFanOutEdge(forward, targets: [testExecutor, testExecutor2])
                 .Build();
 
-        var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
+        Run runWithFailure = await InProcessExecution.RunAsync(workflow, new TurnToken());
 
-        var result = await act.Should()
-                              .ThrowAsync("multiple writers to the same shared scope key");
+        bool hadFailure = false;
+        foreach (WorkflowEvent evt in runWithFailure.NewEvents)
+        {
+            if (evt is WorkflowErrorEvent errorEvent)
+            {
+                hadFailure.Should().BeFalse("There can be only one!");
+                hadFailure = true;
+
+                errorEvent.Data.Should().BeOfType<InvalidOperationException>()
+                                        .Subject.Message.Should().Contain("TestKey");
+            }
+        }
+
+        hadFailure.Should().BeTrue();
+
+        //var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
+        //var result = await act.Should()
+        //                      .ThrowAsync("multiple writers to the same shared scope key");
     }
 }

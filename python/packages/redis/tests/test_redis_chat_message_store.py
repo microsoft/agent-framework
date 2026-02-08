@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Role, TextContent
+from agent_framework import ChatMessage, Content
 
 from agent_framework_redis import RedisChatMessageStore
 
@@ -19,9 +19,9 @@ class TestRedisChatMessageStore:
     def sample_messages(self):
         """Sample chat messages for testing."""
         return [
-            ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-            ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
-            ChatMessage(role=Role.USER, text="How are you?", message_id="msg3"),
+            ChatMessage(role="user", text="Hello", message_id="msg1"),
+            ChatMessage(role="assistant", text="Hi there!", message_id="msg2"),
+            ChatMessage(role="user", text="How are you?", message_id="msg3"),
         ]
 
     @pytest.fixture
@@ -93,10 +93,117 @@ class TestRedisChatMessageStore:
         assert store.max_messages == 100
 
     def test_init_with_redis_url_required(self):
-        """Test that redis_url is required for initialization."""
-        with pytest.raises(ValueError, match="redis_url is required for Redis connection"):
-            # Should raise an exception since redis_url is required
+        """Test that either redis_url or credential_provider is required."""
+        with pytest.raises(ValueError, match="Either redis_url or credential_provider must be provided"):
             RedisChatMessageStore(thread_id="test123")
+
+    def test_init_with_credential_provider(self):
+        """Test initialization with credential_provider."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+            )
+
+            # Verify Redis.Redis was called with correct parameters
+            mock_redis_class.assert_called_once_with(
+                host="myredis.redis.cache.windows.net",
+                port=6380,
+                ssl=True,
+                username=None,
+                credential_provider=mock_credential_provider,
+                decode_responses=True,
+            )
+            # Verify store instance is properly initialized
+            assert store.thread_id == "test123"
+            assert store.redis_url is None  # Should be None for credential provider auth
+            assert store.key_prefix == "chat_messages"
+            assert store.max_messages is None
+
+    def test_init_with_credential_provider_custom_port(self):
+        """Test initialization with credential_provider and custom port."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                port=6379,
+                ssl=False,
+                username="admin",
+                thread_id="test123",
+            )
+
+            # Verify custom parameters were passed
+            mock_redis_class.assert_called_once_with(
+                host="myredis.redis.cache.windows.net",
+                port=6379,
+                ssl=False,
+                username="admin",
+                credential_provider=mock_credential_provider,
+                decode_responses=True,
+            )
+            # Verify store instance is properly initialized
+            assert store.thread_id == "test123"
+            assert store.redis_url is None  # Should be None for credential provider auth
+            assert store.key_prefix == "chat_messages"
+
+    def test_init_credential_provider_requires_host(self):
+        """Test that credential_provider requires host parameter."""
+        mock_credential_provider = MagicMock()
+
+        with pytest.raises(ValueError, match="host is required when using credential_provider"):
+            RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                thread_id="test123",
+            )
+
+    def test_init_mutually_exclusive_params(self):
+        """Test that redis_url and credential_provider are mutually exclusive."""
+        mock_credential_provider = MagicMock()
+
+        with pytest.raises(ValueError, match="redis_url and credential_provider are mutually exclusive"):
+            RedisChatMessageStore(
+                redis_url="redis://localhost:6379",
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+            )
+
+    async def test_serialize_with_credential_provider(self):
+        """Test that serialization works correctly with credential provider authentication."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+                key_prefix="custom_prefix",
+                max_messages=100,
+            )
+
+            # Serialize the store state
+            state = await store.serialize()
+
+            # Verify serialization includes correct values
+            assert state["thread_id"] == "test123"
+            assert state["redis_url"] is None  # Should be None for credential provider auth
+            assert state["key_prefix"] == "custom_prefix"
+            assert state["max_messages"] == 100
+            assert state["type"] == "redis_store_state"
 
     def test_init_with_initial_messages(self, sample_messages):
         """Test initialization with initial messages."""
@@ -143,7 +250,7 @@ class TestRedisChatMessageStore:
             store = RedisChatMessageStore(redis_url="redis://localhost:6379", thread_id="test123", max_messages=3)
             store._redis_client = mock_redis_client
 
-            message = ChatMessage(role=Role.USER, text="Test")
+            message = ChatMessage(role="user", text="Test")
             await store.add_messages([message])
 
             # Should trim after adding to keep only last 3 messages
@@ -162,8 +269,8 @@ class TestRedisChatMessageStore:
         """Test listing messages with data in Redis."""
         # Create proper serialized messages using the actual serialization method
         test_messages = [
-            ChatMessage(role=Role.USER, text="Hello", message_id="msg1"),
-            ChatMessage(role=Role.ASSISTANT, text="Hi there!", message_id="msg2"),
+            ChatMessage(role="user", text="Hello", message_id="msg1"),
+            ChatMessage(role="assistant", text="Hi there!", message_id="msg2"),
         ]
         serialized_messages = [redis_store._serialize_message(msg) for msg in test_messages]
         mock_redis_client.lrange.return_value = serialized_messages
@@ -171,9 +278,9 @@ class TestRedisChatMessageStore:
         messages = await redis_store.list_messages()
 
         assert len(messages) == 2
-        assert messages[0].role == Role.USER
+        assert messages[0].role == "user"
         assert messages[0].text == "Hello"
-        assert messages[1].role == Role.ASSISTANT
+        assert messages[1].role == "assistant"
         assert messages[1].text == "Hi there!"
 
     async def test_list_messages_with_initial_messages(self, sample_messages):
@@ -242,6 +349,7 @@ class TestRedisChatMessageStore:
         state = await redis_store.serialize()
 
         expected_state = {
+            "type": "redis_store_state",
             "thread_id": "test_thread_123",
             "redis_url": "redis://localhost:6379",
             "key_prefix": "chat_messages",
@@ -304,8 +412,8 @@ class TestRedisChatMessageStore:
 
         # Message with multiple content types
         message = ChatMessage(
-            role=Role.ASSISTANT,
-            contents=[TextContent(text="Hello"), TextContent(text="World")],
+            role="assistant",
+            contents=[Content.from_text(text="Hello"), Content.from_text(text="World")],
             author_name="TestBot",
             message_id="complex_msg",
             additional_properties={"metadata": "test"},
@@ -314,7 +422,7 @@ class TestRedisChatMessageStore:
         serialized = store._serialize_message(message)
         deserialized = store._deserialize_message(serialized)
 
-        assert deserialized.role == Role.ASSISTANT
+        assert deserialized.role == "assistant"
         assert deserialized.text == "Hello World"
         assert deserialized.author_name == "TestBot"
         assert deserialized.message_id == "complex_msg"
@@ -336,7 +444,7 @@ class TestRedisChatMessageStore:
             store = RedisChatMessageStore(redis_url="redis://localhost:6379", thread_id="test123")
             store._redis_client = mock_client
 
-            message = ChatMessage(role=Role.USER, text="Test")
+            message = ChatMessage(role="user", text="Test")
 
             # Should propagate Redis connection errors
             with pytest.raises(Exception, match="Connection failed"):
@@ -377,7 +485,7 @@ class TestRedisChatMessageStore:
         mock_redis_client.llen.return_value = 2
         mock_redis_client.lset = AsyncMock()
 
-        new_message = ChatMessage(role=Role.USER, text="Updated message")
+        new_message = ChatMessage(role="user", text="Updated message")
         await redis_store.setitem(0, new_message)
 
         mock_redis_client.lset.assert_called_once()
@@ -389,13 +497,13 @@ class TestRedisChatMessageStore:
         """Test setitem raises IndexError for invalid index."""
         mock_redis_client.llen.return_value = 0
 
-        new_message = ChatMessage(role=Role.USER, text="Test")
+        new_message = ChatMessage(role="user", text="Test")
         with pytest.raises(IndexError):
             await redis_store.setitem(0, new_message)
 
     async def test_append(self, redis_store, mock_redis_client):
         """Test append method delegates to add_messages."""
-        message = ChatMessage(role=Role.USER, text="Appended message")
+        message = ChatMessage(role="user", text="Appended message")
         await redis_store.append(message)
 
         # Should call pipeline operations via add_messages
@@ -494,3 +602,20 @@ class TestRedisChatMessageStore:
         # Verify rpush was called for each message
         pipeline_mock = mock_redis_client.pipeline.return_value.__aenter__.return_value
         assert pipeline_mock.rpush.call_count >= 2
+
+    async def test_serialize_with_agent_thread(self, redis_store, sample_messages):
+        """Test that RedisChatMessageStore can be serialized within an AgentThread.
+
+        This test verifies the fix for issue #1991 where calling thread.serialize()
+        with a RedisChatMessageStore would fail with "Messages should be a list" error.
+        """
+        from agent_framework import AgentThread
+
+        thread = AgentThread(message_store=redis_store)
+        await thread.on_new_messages(sample_messages)
+
+        serialized = await thread.serialize()
+
+        assert serialized is not None
+        assert "chat_message_store_state" in serialized
+        assert serialized["chat_message_store_state"] is not None

@@ -6,10 +6,9 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import configure_otel_providers, get_tracer
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from typing_extensions import Never
@@ -17,10 +16,25 @@ from typing_extensions import Never
 """
 This sample shows the telemetry collected when running a Agent Framework workflow.
 
+This simple workflow consists of two executors arranged sequentially:
+1. An executor that converts input text to uppercase.
+2. An executor that reverses the uppercase text.
+
+The workflow receives an initial string message, processes it through the two executors,
+and yields the final result.
+
 Telemetry data that the workflow system emits includes:
 - Overall workflow build & execution spans
+  - workflow.build (events: build.started, build.validation_completed, build.completed, edge_group.process)
+  - workflow.run (events: workflow.started, workflow.completed or workflow.error)
 - Individual executor processing spans
+  - executor.process (for each executor invocation)
 - Message publishing between executors
+  - message.send (for each outbound message)
+
+Prerequisites:
+- Basic understanding of workflow executors, edges, and messages.
+- Basic understanding of OpenTelemetry concepts like spans and traces.
 """
 
 
@@ -66,9 +80,8 @@ async def run_sequential_workflow() -> None:
 
     # Step 2: Build the workflow with the defined edges.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=upper_case_executor)
         .add_edge(upper_case_executor, reverse_text_executor)
-        .set_start_executor(upper_case_executor)
         .build()
     )
 
@@ -77,8 +90,8 @@ async def run_sequential_workflow() -> None:
     print(f"Starting workflow with input: '{input_text}'")
 
     output_event = None
-    async for event in workflow.run_stream(input_text):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run("Hello world", stream=True):
+        if event.type == "output":
             # The WorkflowOutputEvent contains the final result.
             output_event = event
 
@@ -90,7 +103,7 @@ async def main():
     """Run the telemetry sample with a simple sequential workflow."""
     # This will enable tracing and create the necessary tracing, logging and metrics providers
     # based on environment variables. See the .env.example file for the available configuration options.
-    setup_observability()
+    configure_otel_providers()
 
     with get_tracer().start_as_current_span("Sequential Workflow Scenario", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")

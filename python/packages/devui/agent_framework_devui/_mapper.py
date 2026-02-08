@@ -4,19 +4,40 @@
 
 import json
 import logging
+import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Union
+from uuid import uuid4
+
+from agent_framework import ChatMessage, Content
+from openai.types.responses import (
+    Response,
+    ResponseContentPartAddedEvent,
+    ResponseCreatedEvent,
+    ResponseError,
+    ResponseFailedEvent,
+    ResponseInProgressEvent,
+)
 
 from .models import (
     AgentFrameworkRequest,
+    CustomResponseOutputItemAddedEvent,
+    CustomResponseOutputItemDoneEvent,
+    ExecutorActionItem,
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
+    ResponseFunctionToolCall,
+    ResponseOutputData,
+    ResponseOutputFile,
+    ResponseOutputImage,
+    ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseReasoningTextDeltaEvent,
@@ -24,7 +45,6 @@ from .models import (
     ResponseTextDeltaEvent,
     ResponseTraceEventComplete,
     ResponseUsage,
-    ResponseUsageEventComplete,
     ResponseWorkflowEventComplete,
 )
 
@@ -34,41 +54,98 @@ logger = logging.getLogger(__name__)
 EventType = Union[
     ResponseStreamEvent,
     ResponseWorkflowEventComplete,
-    ResponseFunctionResultComplete,
+    ResponseOutputItemAddedEvent,
     ResponseTraceEventComplete,
-    ResponseUsageEventComplete,
 ]
+
+
+def _serialize_content_recursive(value: Any) -> Any:
+    """Recursively serialize Agent Framework Content objects to JSON-compatible values.
+
+    This handles nested Content objects (like TextContent inside FunctionResultContent.result)
+    that can't be directly serialized by json.dumps().
+
+    Args:
+        value: Value to serialize (can be Content object, dict, list, primitive, etc.)
+
+    Returns:
+        JSON-serializable version with all Content objects converted to dicts/primitives
+    """
+    # Handle None and basic JSON-serializable types
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    # Check if it's a SerializationMixin (includes all Content types)
+    # Content objects have to_dict() method
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
+        try:
+            return value.to_dict()
+        except Exception as e:
+            # If to_dict() fails, fall through to other methods
+            logger.debug(f"Failed to serialize with to_dict(): {e}")
+
+    # Handle dictionaries - recursively process values
+    if isinstance(value, dict):
+        return {key: _serialize_content_recursive(val) for key, val in value.items()}
+
+    # Handle lists and tuples - recursively process elements
+    if isinstance(value, (list, tuple)):
+        serialized = [_serialize_content_recursive(item) for item in value]
+        # For single-item lists containing text Content, extract just the text
+        # This handles the MCP case where result = [Content.from_text(text="Hello")]
+        # and we want output = "Hello" not output = '[{"type": "text", "text": "Hello"}]'
+        if len(serialized) == 1 and isinstance(serialized[0], dict) and serialized[0].get("type") == "text":
+            return serialized[0].get("text", "")
+        return serialized
+
+    # For other objects with model_dump(), try that
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump", None)):
+        try:
+            return value.model_dump()
+        except Exception as e:
+            logger.debug(f"Failed to serialize with model_dump(): {e}")
+
+    # Return as-is and let json.dumps handle it (may raise TypeError for non-serializable types)
+    return value
 
 
 class MessageMapper:
     """Maps Agent Framework messages/responses to OpenAI format."""
 
-    def __init__(self) -> None:
-        """Initialize Agent Framework message mapper."""
+    def __init__(self, max_contexts: int = 1000) -> None:
+        """Initialize Agent Framework message mapper.
+
+        Args:
+            max_contexts: Maximum number of contexts to keep in memory (default: 1000)
+        """
         self.sequence_counter = 0
-        self._conversion_contexts: dict[int, dict[str, Any]] = {}
+        self._conversion_contexts: OrderedDict[int, dict[str, Any]] = OrderedDict()
+        self._max_contexts = max_contexts
+
+        # Track usage per request for final Response.usage (OpenAI standard)
+        self._usage_accumulator: dict[str, dict[str, int]] = {}
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
-            "TextContent": self._map_text_content,
-            "TextReasoningContent": self._map_reasoning_content,
-            "FunctionCallContent": self._map_function_call_content,
-            "FunctionResultContent": self._map_function_result_content,
-            "ErrorContent": self._map_error_content,
-            "UsageContent": self._map_usage_content,
-            "DataContent": self._map_data_content,
-            "UriContent": self._map_uri_content,
-            "HostedFileContent": self._map_hosted_file_content,
-            "HostedVectorStoreContent": self._map_hosted_vector_store_content,
-            "FunctionApprovalRequestContent": self._map_approval_request_content,
-            "FunctionApprovalResponseContent": self._map_approval_response_content,
+            "text": self._map_text_content,
+            "text_reasoning": self._map_reasoning_content,
+            "function_call": self._map_function_call_content,
+            "function_result": self._map_function_result_content,
+            "error": self._map_error_content,
+            "usage": self._map_usage_content,
+            "data": self._map_data_content,
+            "uri": self._map_uri_content,
+            "hosted_file": self._map_hosted_file_content,
+            "hosted_vector_store": self._map_hosted_vector_store_content,
+            "function_approval_request": self._map_approval_request_content,
+            "function_approval_response": self._map_approval_response_content,
         }
 
     async def convert_event(self, raw_event: Any, request: AgentFrameworkRequest) -> Sequence[Any]:
         """Convert a single Agent Framework event to OpenAI events.
 
         Args:
-            raw_event: Agent Framework event (AgentRunResponseUpdate, WorkflowEvent, etc.)
+            raw_event: Agent Framework event (AgentResponseUpdate, WorkflowEvent, etc.)
             request: Original request for context
 
         Returns:
@@ -86,29 +163,42 @@ class MessageMapper:
         if isinstance(raw_event, ResponseTraceEvent):
             return [
                 ResponseTraceEventComplete(
-                    type="response.trace.complete",
+                    type="response.trace.completed",
                     data=raw_event.data,
                     item_id=context["item_id"],
                     sequence_number=self._next_sequence(context),
                 )
             ]
 
+        # Handle Agent lifecycle events first
+        from .models._openai_custom import AgentCompletedEvent, AgentFailedEvent, AgentStartedEvent
+
+        if isinstance(raw_event, (AgentStartedEvent, AgentCompletedEvent, AgentFailedEvent)):
+            return await self._convert_agent_lifecycle_event(raw_event, context)
+
         # Import Agent Framework types for proper isinstance checks
         try:
-            from agent_framework import AgentRunResponseUpdate, WorkflowEvent
-            from agent_framework._workflows._events import AgentRunUpdateEvent
+            from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
 
-            # Handle AgentRunUpdateEvent - workflow event wrapping AgentRunResponseUpdate
+            # Handle WorkflowEvent with type='output' or 'data' wrapping AgentResponseUpdate
             # This must be checked BEFORE generic WorkflowEvent check
-            if isinstance(raw_event, AgentRunUpdateEvent):
-                # Extract the AgentRunResponseUpdate from the event's data attribute
-                if raw_event.data and isinstance(raw_event.data, AgentRunResponseUpdate):
-                    return await self._convert_agent_update(raw_event.data, context)
-                # If no data, treat as generic workflow event
-                return await self._convert_workflow_event(raw_event, context)
+            # Note: AgentExecutor uses type='output' for streaming updates
+            if (
+                isinstance(raw_event, WorkflowEvent)
+                and raw_event.type in ("output", "data")
+                and raw_event.data
+                and isinstance(raw_event.data, AgentResponseUpdate)
+            ):
+                # Preserve executor_id in context for proper output routing
+                context["current_executor_id"] = raw_event.executor_id
+                return await self._convert_agent_update(raw_event.data, context)
 
-            # Handle agent updates (AgentRunResponseUpdate) - for direct agent execution
-            if isinstance(raw_event, AgentRunResponseUpdate):
+            # Handle complete agent response (AgentResponse) - for non-streaming agent execution
+            if isinstance(raw_event, AgentResponse):
+                return await self._convert_agent_response(raw_event, context)
+
+            # Handle agent updates (AgentResponseUpdate) - for direct agent execution
+            if isinstance(raw_event, AgentResponseUpdate):
                 return await self._convert_agent_update(raw_event, context)
 
             # Handle workflow events (any class that inherits from WorkflowEvent)
@@ -137,46 +227,161 @@ class MessageMapper:
             Final aggregated OpenAI response
         """
         try:
-            # Extract text content from events
-            content_parts = []
+            # Collect output items in order
+            output_items: list[Any] = []
+
+            # Track text content parts per message (keyed by item_id)
+            text_parts_by_message: dict[str, list[str]] = {}
+
+            # Track function calls (keyed by call_id) to accumulate arguments
+            function_calls: dict[str, dict[str, Any]] = {}
+
+            # Track function results (keyed by call_id)
+            function_results: dict[str, dict[str, Any]] = {}
 
             for event in events:
-                # Extract delta text from ResponseTextDeltaEvent
-                if hasattr(event, "delta") and hasattr(event, "type") and event.type == "response.output_text.delta":
-                    content_parts.append(event.delta)
+                event_type = getattr(event, "type", None)
 
-            # Combine content
-            full_content = "".join(content_parts)
+                # Handle text deltas - accumulate text per message
+                if event_type == "response.output_text.delta":
+                    item_id = getattr(event, "item_id", "default")
+                    if item_id not in text_parts_by_message:
+                        text_parts_by_message[item_id] = []
+                    text_parts_by_message[item_id].append(event.delta)
 
-            # Create proper OpenAI Response
-            response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
+                # Handle output_item.added events (function_call, message, etc.)
+                elif event_type == "response.output_item.added":
+                    item = getattr(event, "item", None)
+                    if item:
+                        # Handle both object and dict formats
+                        item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
 
-            response_output_message = ResponseOutputMessage(
-                type="message",
-                role="assistant",
-                content=[response_output_text],
-                id=f"msg_{uuid.uuid4().hex[:8]}",
-                status="completed",
-            )
+                        # Track function calls to accumulate their arguments
+                        if item_type == "function_call":
+                            # Handle both object and dict formats
+                            if isinstance(item, dict):
+                                call_id = item.get("call_id") or item.get("id")
+                                if call_id:
+                                    function_calls[call_id] = {
+                                        "id": item.get("id", call_id),
+                                        "call_id": call_id,
+                                        "name": item.get("name", ""),
+                                        "arguments": item.get("arguments", ""),
+                                        "type": "function_call",
+                                        "status": item.get("status", "completed"),
+                                    }
+                            else:
+                                call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
+                                if call_id:
+                                    function_calls[call_id] = {
+                                        "id": getattr(item, "id", call_id),
+                                        "call_id": call_id,
+                                        "name": getattr(item, "name", ""),
+                                        "arguments": getattr(item, "arguments", ""),
+                                        "type": "function_call",
+                                        "status": getattr(item, "status", "completed"),
+                                    }
 
-            # Create usage object
-            input_token_count = len(str(request.input)) // 4 if request.input else 0
-            output_token_count = len(full_content) // 4
+                        # Other output items (message, etc.) - track for later
+                        elif item_type == "message":
+                            # Messages will be built from text_parts_by_message
+                            pass
 
-            usage = ResponseUsage(
-                input_tokens=input_token_count,
-                output_tokens=output_token_count,
-                total_tokens=input_token_count + output_token_count,
-                input_tokens_details=InputTokensDetails(cached_tokens=0),
-                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-            )
+                # Handle function call arguments delta - accumulate arguments
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = getattr(event, "item_id", None)
+                    delta = getattr(event, "delta", "")
+                    # item_id for function calls is the call_id
+                    if item_id and item_id in function_calls:
+                        function_calls[item_id]["arguments"] += delta
+
+                # Handle function result complete events
+                elif event_type == "response.function_result.complete":
+                    call_id = getattr(event, "call_id", None)
+                    if call_id:
+                        function_results[call_id] = {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": getattr(event, "output", ""),
+                            "status": getattr(event, "status", "completed"),
+                        }
+
+            # Build output array in order: function_calls, then final message
+
+            # Add function call items
+            for _call_id, fc_data in function_calls.items():
+                output_items.append(ResponseFunctionToolCall(**fc_data))
+
+            # Note: function_call_output items are NOT added to output array
+            # In OpenAI's Responses API, function results are user inputs, not assistant outputs
+            # The function_results dict is kept for potential future use or debugging
+            # but we don't include them in the Response output
+            _ = function_results  # Acknowledge but don't use
+
+            # Build final text message from accumulated deltas
+            # Combine all text parts (usually there's just one message)
+            all_text_parts = []
+            for _item_id, parts in text_parts_by_message.items():
+                all_text_parts.extend(parts)
+
+            full_content = "".join(all_text_parts)
+
+            # Only add message if there's text content
+            if full_content:
+                response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
+                response_output_message = ResponseOutputMessage(
+                    type="message",
+                    role="assistant",
+                    content=[response_output_text],
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    status="completed",
+                )
+                output_items.append(response_output_message)
+
+            # If no output items at all, create an empty message
+            if not output_items:
+                response_output_text = ResponseOutputText(type="output_text", text="", annotations=[])
+                response_output_message = ResponseOutputMessage(
+                    type="message",
+                    role="assistant",
+                    content=[response_output_text],
+                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    status="completed",
+                )
+                output_items.append(response_output_message)
+
+            # Get usage from accumulator (OpenAI standard)
+            request_id = str(id(request))
+            usage_data = self._usage_accumulator.get(request_id)
+
+            if usage_data:
+                usage = ResponseUsage(
+                    input_tokens=usage_data["input_tokens"],
+                    output_tokens=usage_data["output_tokens"],
+                    total_tokens=usage_data["total_tokens"],
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                )
+                # Cleanup accumulator
+                del self._usage_accumulator[request_id]
+            else:
+                # Fallback: estimate if no usage was tracked
+                input_token_count = len(str(request.input)) // 4 if request.input else 0
+                output_token_count = len(full_content) // 4
+                usage = ResponseUsage(
+                    input_tokens=input_token_count,
+                    output_tokens=output_token_count,
+                    total_tokens=input_token_count + output_token_count,
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                )
 
             return OpenAIResponse(
                 id=f"resp_{uuid.uuid4().hex[:12]}",
                 object="response",
                 created_at=datetime.now().timestamp(),
-                model=request.model,
-                output=[response_output_message],
+                model=request.model or "devui",
+                output=output_items,
                 usage=usage,
                 parallel_tool_calls=False,
                 tool_choice="none",
@@ -186,9 +391,17 @@ class MessageMapper:
         except Exception as e:
             logger.exception(f"Error aggregating response: {e}")
             return await self._create_error_response(str(e), request)
+        finally:
+            # Cleanup: Remove context after aggregation to prevent memory leak
+            # This handles the common case where streaming completes successfully
+            request_key = id(request)
+            if self._conversion_contexts.pop(request_key, None):
+                logger.debug(f"Cleaned up context for request {request_key} after aggregation")
 
     def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
         """Get or create conversion context for this request.
+
+        Uses LRU eviction when max_contexts is reached to prevent unbounded memory growth.
 
         Args:
             request: Request to get context for
@@ -197,13 +410,27 @@ class MessageMapper:
             Conversion context dictionary
         """
         request_key = id(request)
+
         if request_key not in self._conversion_contexts:
+            # Evict oldest context if at capacity (LRU eviction)
+            if len(self._conversion_contexts) >= self._max_contexts:
+                evicted_key, _ = self._conversion_contexts.popitem(last=False)
+                logger.debug(f"Evicted oldest context (key={evicted_key}) - at max capacity ({self._max_contexts})")
+
             self._conversion_contexts[request_key] = {
                 "sequence_counter": 0,
                 "item_id": f"msg_{uuid.uuid4().hex[:8]}",
                 "content_index": 0,
                 "output_index": 0,
+                "request_id": str(request_key),  # For usage accumulation
+                "request": request,  # Store the request for model name access
+                # Track active function calls: {call_id: {name, item_id, args_chunks}}
+                "active_function_calls": {},
             }
+        else:
+            # Move to end (mark as recently used for LRU)
+            self._conversion_contexts.move_to_end(request_key)
+
         return self._conversion_contexts[request_key]
 
     def _next_sequence(self, context: dict[str, Any]) -> int:
@@ -218,8 +445,149 @@ class MessageMapper:
         context["sequence_counter"] += 1
         return int(context["sequence_counter"])
 
+    def _serialize_value(self, value: Any) -> Any:
+        """Recursively serialize a value, handling complex nested objects.
+
+        Handles:
+        - Primitives (str, int, float, bool, None)
+        - Collections (list, tuple, set, dict)
+        - SerializationMixin objects (ChatMessage, etc.) - calls to_dict()
+        - Pydantic models - calls model_dump()
+        - Dataclasses - recursively serializes with asdict()
+        - Enums - extracts value
+        - datetime/date/UUID - converts to ISO string
+
+        Args:
+            value: Value to serialize
+
+        Returns:
+            JSON-serializable representation
+        """
+        from dataclasses import is_dataclass
+        from datetime import date, datetime
+        from enum import Enum
+        from uuid import UUID
+
+        # Handle None
+        if value is None:
+            return None
+
+        # Handle primitives
+        if isinstance(value, (str, int, float, bool)):
+            return value
+
+        # Handle datetime/date - convert to ISO format
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+
+        # Handle UUID - convert to string
+        if isinstance(value, UUID):
+            return str(value)
+
+        # Handle Enums - extract value
+        if isinstance(value, Enum):
+            return value.value
+
+        # Handle lists/tuples/sets - recursively serialize elements
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_value(item) for item in value]
+        if isinstance(value, set):
+            return [self._serialize_value(item) for item in value]
+
+        # Handle dicts - recursively serialize values
+        if isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+
+        # Handle SerializationMixin (like ChatMessage) - call to_dict()
+        if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
+            try:
+                return value.to_dict()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize with to_dict(): {e}")
+                return str(value)
+
+        # Handle Pydantic models - call model_dump()
+        if hasattr(value, "model_dump") and callable(getattr(value, "model_dump", None)):
+            try:
+                return value.model_dump()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize Pydantic model: {e}")
+                return str(value)
+
+        # Handle dataclasses - recursively serialize with asdict
+        if is_dataclass(value) and not isinstance(value, type):
+            try:
+                from dataclasses import asdict
+
+                # Use our custom serializer as dict_factory
+                return asdict(value, dict_factory=lambda items: {k: self._serialize_value(v) for k, v in items})
+            except Exception as e:
+                logger.debug(f"Failed to serialize nested dataclass: {e}")
+                return str(value)
+
+        # Fallback: convert to string (for unknown types)
+        logger.debug(f"Serializing unknown type {type(value).__name__} as string")
+        return str(value)
+
+    def _serialize_request_data(self, request_data: Any) -> dict[str, Any]:
+        """Serialize RequestInfoMessage to dict for JSON transmission.
+
+        Handles nested SerializationMixin objects (like ChatMessage) within dataclasses.
+
+        Args:
+            request_data: The RequestInfoMessage instance
+
+        Returns:
+            Serialized dict representation
+        """
+        from dataclasses import asdict, fields, is_dataclass
+
+        if request_data is None:
+            return {}
+
+        # Handle dict first (most common)
+        if isinstance(request_data, dict):
+            return {k: self._serialize_value(v) for k, v in request_data.items()}
+
+        # Handle dataclasses with nested SerializationMixin objects
+        # We can't use asdict() directly because it doesn't handle ChatMessage
+        if is_dataclass(request_data) and not isinstance(request_data, type):
+            try:
+                # Manually serialize each field to handle nested SerializationMixin
+                result = {}
+                for field in fields(request_data):
+                    field_value = getattr(request_data, field.name)
+                    result[field.name] = self._serialize_value(field_value)
+                return result
+            except Exception as e:
+                logger.debug(f"Failed to serialize dataclass fields: {e}")
+                # Fallback to asdict() if our custom serialization fails
+                try:
+                    return asdict(request_data)  # type: ignore[arg-type]
+                except Exception as e2:
+                    logger.debug(f"Failed to serialize dataclass with asdict(): {e2}")
+
+        # Handle Pydantic models (have model_dump method)
+        if hasattr(request_data, "model_dump") and callable(getattr(request_data, "model_dump", None)):
+            try:
+                return request_data.model_dump()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize Pydantic model: {e}")
+
+        # Handle SerializationMixin (have to_dict method)
+        if hasattr(request_data, "to_dict") and callable(getattr(request_data, "to_dict", None)):
+            try:
+                return request_data.to_dict()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize with to_dict(): {e}")
+
+        # Fallback: string representation
+        return {"raw": str(request_data)}
+
     async def _convert_agent_update(self, update: Any, context: dict[str, Any]) -> Sequence[Any]:
-        """Convert AgentRunResponseUpdate to OpenAI events using comprehensive content mapping.
+        """Convert agent text updates to proper content part events.
 
         Args:
             update: Agent run response update
@@ -235,20 +603,80 @@ class MessageMapper:
             if not hasattr(update, "contents") or not update.contents:
                 return events
 
-            for content in update.contents:
-                content_type = content.__class__.__name__
+            # Check if we're streaming text content
+            has_text_content = any(content.type == "text" for content in update.contents)
 
-                if content_type in self.content_mappers:
-                    mapped_events = await self.content_mappers[content_type](content, context)
-                    if isinstance(mapped_events, list):
-                        events.extend(mapped_events)
-                    else:
-                        events.append(mapped_events)
+            # Check if we're in an executor context with an existing item
+            executor_id = context.get("current_executor_id")
+            executor_item_key = f"exec_item_{executor_id}" if executor_id else None
+
+            # If we have an executor item, use it for deltas instead of creating a message
+            if has_text_content and executor_item_key and executor_item_key in context:
+                # Use the executor's item ID for this agent's output
+                context["current_message_id"] = context[executor_item_key]
+                # Note: We don't create a new message item here since the executor item already exists
+            # Otherwise, create a message item if we haven't yet (for non-executor contexts)
+            elif has_text_content and "current_message_id" not in context:
+                message_id = f"msg_{uuid4().hex[:8]}"
+                context["current_message_id"] = message_id
+                context["output_index"] = context.get("output_index", -1) + 1
+
+                # Add message output item
+                events.append(
+                    ResponseOutputItemAddedEvent(
+                        type="response.output_item.added",
+                        output_index=context["output_index"],
+                        sequence_number=self._next_sequence(context),
+                        item=ResponseOutputMessage(
+                            type="message", id=message_id, role="assistant", content=[], status="in_progress"
+                        ),
+                    )
+                )
+
+                # Add content part for text
+                context["content_index"] = 0
+                events.append(
+                    ResponseContentPartAddedEvent(
+                        type="response.content_part.added",
+                        output_index=context["output_index"],
+                        content_index=context["content_index"],
+                        item_id=message_id,
+                        sequence_number=self._next_sequence(context),
+                        part=ResponseOutputText(type="output_text", text="", annotations=[]),
+                    )
+                )
+
+            # Process each content item
+            for content in update.contents:
+                # Special handling for TextContent to use proper delta events
+                if content.type == "text" and "current_message_id" in context:
+                    # Stream text content via proper delta events
+                    events.append(
+                        ResponseTextDeltaEvent(
+                            type="response.output_text.delta",
+                            output_index=context["output_index"],
+                            content_index=context.get("content_index", 0),
+                            item_id=context["current_message_id"],
+                            delta=content.text,
+                            logprobs=[],  # We don't have logprobs from Agent Framework
+                            sequence_number=self._next_sequence(context),
+                        )
+                    )
+                elif content.type in self.content_mappers:
+                    # Use existing mappers for other content types
+                    mapped_events = await self.content_mappers[content.type](content, context)
+                    if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
+                        if isinstance(mapped_events, list):
+                            events.extend(mapped_events)
+                        else:
+                            events.append(mapped_events)
                 else:
                     # Graceful fallback for unknown content types
                     events.append(await self._create_unknown_content_event(content, context))
 
-                context["content_index"] += 1
+                # Don't increment content_index for text deltas within the same part
+                if content.type != "text":
+                    context["content_index"] = context.get("content_index", 0) + 1
 
         except Exception as e:
             logger.warning(f"Error converting agent update: {e}")
@@ -256,8 +684,139 @@ class MessageMapper:
 
         return events
 
+    async def _convert_agent_response(self, response: Any, context: dict[str, Any]) -> Sequence[Any]:
+        """Convert complete AgentResponse to OpenAI events.
+
+        This handles non-streaming agent execution where agent.run() returns
+        a complete AgentResponse instead of streaming AgentResponseUpdate objects.
+
+        Args:
+            response: Agent run response (AgentResponse)
+            context: Conversion context
+
+        Returns:
+            List of OpenAI response stream events
+        """
+        events: list[Any] = []
+
+        try:
+            # Extract all messages from the response
+            messages = getattr(response, "messages", [])
+
+            # Convert each message's contents to streaming events
+            for message in messages:
+                if hasattr(message, "contents") and message.contents:
+                    for content in message.contents:
+                        if content.type in self.content_mappers:
+                            mapped_events = await self.content_mappers[content.type](content, context)
+                            if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
+                                if isinstance(mapped_events, list):
+                                    events.extend(mapped_events)
+                                else:
+                                    events.append(mapped_events)
+                        else:
+                            # Graceful fallback for unknown content types
+                            events.append(await self._create_unknown_content_event(content, context))
+
+                        context["content_index"] += 1
+
+            # Add usage information if present
+            usage_details = getattr(response, "usage_details", None)
+            if usage_details:
+                usage_content = Content.from_usage(usage_details=usage_details)
+                await self._map_usage_content(usage_content, context)
+                # Note: _map_usage_content returns None - it accumulates usage for final Response.usage
+
+        except Exception as e:
+            logger.warning(f"Error converting agent response: {e}")
+            events.append(await self._create_error_event(str(e), context))
+
+        return events
+
+    async def _convert_agent_lifecycle_event(self, event: Any, context: dict[str, Any]) -> Sequence[Any]:
+        """Convert agent lifecycle events to OpenAI response events.
+
+        Args:
+            event: AgentStartedEvent, AgentCompletedEvent, or AgentFailedEvent
+            context: Conversion context
+
+        Returns:
+            List of OpenAI response stream events
+        """
+        from .models._openai_custom import AgentCompletedEvent, AgentFailedEvent, AgentStartedEvent
+
+        try:
+            # Get model name from request or use 'devui' as default
+            request_obj = context.get("request")
+            model_name = request_obj.model if request_obj and request_obj.model else "devui"
+
+            if isinstance(event, AgentStartedEvent):
+                execution_id = f"agent_{uuid4().hex[:12]}"
+                context["execution_id"] = execution_id
+
+                # Create Response object
+                response_obj = Response(
+                    id=f"resp_{execution_id}",
+                    object="response",
+                    created_at=float(time.time()),
+                    model=model_name,
+                    output=[],
+                    status="in_progress",
+                    parallel_tool_calls=False,
+                    tool_choice="none",
+                    tools=[],
+                )
+
+                # Emit both created and in_progress events
+                return [
+                    ResponseCreatedEvent(
+                        type="response.created", sequence_number=self._next_sequence(context), response=response_obj
+                    ),
+                    ResponseInProgressEvent(
+                        type="response.in_progress", sequence_number=self._next_sequence(context), response=response_obj
+                    ),
+                ]
+
+            if isinstance(event, AgentCompletedEvent):
+                # Don't emit response.completed here - the server will emit a proper one
+                # with usage data after aggregating all events
+                return []
+
+            if isinstance(event, AgentFailedEvent):
+                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
+
+                # Create error object
+                response_error = ResponseError(
+                    message=str(event.error) if event.error else "Unknown error", code="server_error"
+                )
+
+                response_obj = Response(
+                    id=f"resp_{execution_id}",
+                    object="response",
+                    created_at=float(time.time()),
+                    model=model_name,
+                    output=[],
+                    status="failed",
+                    error=response_error,
+                    parallel_tool_calls=False,
+                    tool_choice="none",
+                    tools=[],
+                )
+
+                return [
+                    ResponseFailedEvent(
+                        type="response.failed", sequence_number=self._next_sequence(context), response=response_obj
+                    )
+                ]
+
+            return []
+
+        except Exception as e:
+            logger.warning(f"Error converting agent lifecycle event: {e}")
+            return [await self._create_error_event(str(e), context)]
+
     async def _convert_workflow_event(self, event: Any, context: dict[str, Any]) -> Sequence[Any]:
-        """Convert workflow event to structured OpenAI events.
+        """Convert workflow events to standard OpenAI event objects.
 
         Args:
             event: Workflow event
@@ -267,22 +826,395 @@ class MessageMapper:
             List of OpenAI response stream events
         """
         try:
+            # Use event.type for discriminated union pattern (similar to Content class)
+            event_type = getattr(event, "type", None)
+            event_class = event.__class__.__name__  # Fallback for non-workflow events
+
+            # Response-level events - construct proper OpenAI objects
+            if event_type == "started":
+                workflow_id = getattr(event, "workflow_id", str(uuid4()))
+                context["workflow_id"] = workflow_id
+
+                # Import Response type for proper construction
+                from openai.types.responses import Response
+
+                # Return proper OpenAI event objects
+                events: list[Any] = []
+
+                # Get model name from request or use 'devui' as default
+                request_obj = context.get("request")
+                model_name = request_obj.model if request_obj and request_obj.model else "devui"
+
+                # Create a full Response object with all required fields
+                response_obj = Response(
+                    id=f"resp_{workflow_id}",
+                    object="response",
+                    created_at=float(time.time()),
+                    model=model_name,
+                    output=[],  # Empty output list initially
+                    status="in_progress",
+                    # Required fields with safe defaults
+                    parallel_tool_calls=False,
+                    tool_choice="none",
+                    tools=[],
+                )
+
+                # First emit response.created
+                events.append(
+                    ResponseCreatedEvent(
+                        type="response.created", sequence_number=self._next_sequence(context), response=response_obj
+                    )
+                )
+
+                # Then emit response.in_progress (reuse same response object)
+                events.append(
+                    ResponseInProgressEvent(
+                        type="response.in_progress", sequence_number=self._next_sequence(context), response=response_obj
+                    )
+                )
+
+                return events
+
+            # Handle output events separately to preserve output data
+            if event_type == "output":
+                output_data = getattr(event, "data", None)
+                executor_id = getattr(event, "executor_id", "unknown")
+
+                if output_data is not None:
+                    # Import required types
+                    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+                    from openai.types.responses.response_output_item_added_event import ResponseOutputItemAddedEvent
+
+                    # Increment output index for each yield_output
+                    context["output_index"] = context.get("output_index", -1) + 1
+
+                    # Extract text from output data based on type
+                    text = None
+                    if isinstance(output_data, ChatMessage):
+                        # Handle ChatMessage (from Magentic and AgentExecutor with output_response=True)
+                        text = getattr(output_data, "text", None)
+                        if not text:
+                            # Fallback to string representation
+                            text = str(output_data)
+                    elif isinstance(output_data, list):
+                        # Handle list of ChatMessage objects (from Magentic yield_output([final_answer]))
+                        text_parts = []
+                        for item in output_data:
+                            if isinstance(item, ChatMessage):
+                                item_text = getattr(item, "text", None)
+                                if item_text:
+                                    text_parts.append(item_text)
+                                else:
+                                    text_parts.append(str(item))
+                            elif isinstance(item, str):
+                                text_parts.append(item)
+                            else:
+                                try:
+                                    text_parts.append(json.dumps(item, indent=2))
+                                except (TypeError, ValueError):
+                                    text_parts.append(str(item))
+                        text = "\n".join(text_parts) if text_parts else str(output_data)
+                    elif isinstance(output_data, str):
+                        # String output
+                        text = output_data
+                    else:
+                        # Object/dict → JSON string
+                        try:
+                            text = json.dumps(output_data, indent=2)
+                        except (TypeError, ValueError):
+                            # Fallback to string representation if not JSON serializable
+                            text = str(output_data)
+
+                    # Create output message with text content
+                    text_content = ResponseOutputText(type="output_text", text=text, annotations=[])
+
+                    output_message = ResponseOutputMessage(
+                        type="message",
+                        id=f"msg_{uuid4().hex[:8]}",
+                        role="assistant",
+                        content=[text_content],
+                        status="completed",
+                    )
+
+                    # Emit output_item.added for each yield_output
+                    logger.debug(
+                        f"output event (type='output') converted to output_item.added "
+                        f"(executor: {executor_id}, length: {len(text)})"
+                    )
+                    return [
+                        ResponseOutputItemAddedEvent(
+                            type="response.output_item.added",
+                            item=output_message,
+                            output_index=context["output_index"],
+                            sequence_number=self._next_sequence(context),
+                        )
+                    ]
+
+            # Handle completed event - Don't emit response.completed here
+            # The server will emit a proper one with usage data after aggregating all events
+            if event_type == "completed":
+                return []
+
+            if event_type == "failed":
+                workflow_id = context.get("workflow_id", str(uuid4()))
+                # failed event (type='failed') uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches executor_failed event which also uses 'details'
+                details = getattr(event, "details", None)
+
+                # Import Response and ResponseError types
+                from openai.types.responses import Response, ResponseError
+
+                # Get model name from request or use 'devui' as default
+                request_obj = context.get("request")
+                model_name = request_obj.model if request_obj and request_obj.model else "devui"
+
+                # Extract error message from WorkflowErrorDetails
+                if details:
+                    error_message = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        error_message = f"{error_message} (extra: {extra})"
+                else:
+                    error_message = "Unknown error"
+
+                # Create ResponseError object (code must be one of the allowed values)
+                response_error = ResponseError(
+                    message=error_message,
+                    code="server_error",  # Use generic server_error code for workflow failures
+                )
+
+                # Create a full Response object for failed state
+                response_obj = Response(
+                    id=f"resp_{workflow_id}",
+                    object="response",
+                    created_at=float(time.time()),
+                    model=model_name,
+                    output=[],
+                    status="failed",
+                    error=response_error,
+                    parallel_tool_calls=False,
+                    tool_choice="none",
+                    tools=[],
+                )
+
+                return [
+                    ResponseFailedEvent(
+                        type="response.failed", sequence_number=self._next_sequence(context), response=response_obj
+                    )
+                ]
+
+            # Executor-level events (output items)
+            # Check for executor lifecycle events via event.type
+            if event_type == "executor_invoked":
+                executor_id = getattr(event, "executor_id", "unknown")
+                item_id = f"exec_{executor_id}_{uuid4().hex[:8]}"
+                context[f"exec_item_{executor_id}"] = item_id
+                context["output_index"] = context.get("output_index", -1) + 1
+
+                # Track current executor for routing Magentic agent events
+                # This allows MagenticAgentDeltaEvent to route to the executor's item
+                context["current_executor_id"] = executor_id
+
+                # Create ExecutorActionItem with proper type
+                executor_item = ExecutorActionItem(
+                    type="executor_action",
+                    id=item_id,
+                    executor_id=executor_id,
+                    status="in_progress",
+                    metadata=getattr(event, "metadata", {}),
+                )
+
+                # Use our custom event type that accepts ExecutorActionItem
+                return [
+                    CustomResponseOutputItemAddedEvent(
+                        type="response.output_item.added",
+                        output_index=context["output_index"],
+                        sequence_number=self._next_sequence(context),
+                        item=executor_item,
+                    )
+                ]
+
+            if event_type == "executor_completed":
+                executor_id = getattr(event, "executor_id", "unknown")
+                item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
+
+                # Clear current executor tracking when executor completes
+                if context.get("current_executor_id") == executor_id:
+                    context.pop("current_executor_id", None)
+
+                # Create ExecutorActionItem with completed status
+                # executor_completed event (type='executor_completed') uses 'data' field, not 'result'
+                # Serialize the result data to ensure it's JSON-serializable
+                # (AgentExecutorResponse contains AgentResponse/ChatMessage which are SerializationMixin)
+                raw_result = getattr(event, "data", None)
+                serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
+                executor_item = ExecutorActionItem(
+                    type="executor_action",
+                    id=item_id,
+                    executor_id=executor_id,
+                    status="completed",
+                    result=serialized_result,
+                )
+
+                # Use our custom event type
+                return [
+                    CustomResponseOutputItemDoneEvent(
+                        type="response.output_item.done",
+                        output_index=context.get("output_index", 0),
+                        sequence_number=self._next_sequence(context),
+                        item=executor_item,
+                    )
+                ]
+
+            if event_type == "executor_failed":
+                executor_id = getattr(event, "executor_id", "unknown")
+                item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
+                # executor_failed event (type='executor_failed') uses 'details' property (WorkflowErrorDetails)
+                # not 'error'. This matches WorkflowEvent.details which returns self.data for executor_failed type
+                details = getattr(event, "details", None)
+                if details:
+                    err_msg = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        err_msg = f"{err_msg} (extra: {extra})"
+                else:
+                    err_msg = None
+
+                # Create ExecutorActionItem with failed status
+                executor_item = ExecutorActionItem(
+                    type="executor_action",
+                    id=item_id,
+                    executor_id=executor_id,
+                    status="failed",
+                    error={"message": err_msg} if err_msg else None,
+                )
+
+                # Use our custom event type
+                return [
+                    CustomResponseOutputItemDoneEvent(
+                        type="response.output_item.done",
+                        output_index=context.get("output_index", 0),
+                        sequence_number=self._next_sequence(context),
+                        item=executor_item,
+                    )
+                ]
+
+            # Handle request_info events specially - emit as HIL event with schema
+            if event_type == "request_info":
+                from .models._openai_custom import ResponseRequestInfoEvent
+
+                request_id = getattr(event, "request_id", "")
+                source_executor_id = getattr(event, "source_executor_id", "")
+                request_type_class = getattr(event, "request_type", None)
+                request_data = getattr(event, "data", None)
+
+                logger.info("📨 [MAPPER] Processing request_info event (type='request_info')")
+                logger.info(f"   request_id: {request_id}")
+                logger.info(f"   source_executor_id: {source_executor_id}")
+                logger.info(f"   request_type_class: {request_type_class}")
+                logger.info(f"   request_data: {request_data}")
+
+                # Serialize request data
+                serialized_data = self._serialize_request_data(request_data)
+                logger.info(f"   serialized_data: {serialized_data}")
+
+                # Get request type name for debugging
+                request_type_name = "Unknown"
+                if request_type_class:
+                    request_type_name = f"{request_type_class.__module__}:{request_type_class.__name__}"
+
+                # Get response schema that was attached by executor
+                # This tells the UI what format to collect from the user
+                response_schema = getattr(event, "_response_schema", None)
+                if not response_schema:
+                    # Fallback to string if somehow not set (shouldn't happen with current executor enrichment)
+                    logger.warning(f"⚠️  Response schema not found for {request_type_name}, using default")
+                    response_schema = {"type": "string"}
+                else:
+                    logger.info(f"   response_schema: {response_schema}")
+
+                # Wrap primitive schemas in object for form rendering
+                # The UI's SchemaFormRenderer expects an object with properties
+                if response_schema.get("type") in ["string", "integer", "number", "boolean"]:
+                    # Wrap primitive type in object with "response" field
+                    wrapped_schema = {
+                        "type": "object",
+                        "properties": {"response": response_schema},
+                        "required": ["response"],
+                    }
+                    logger.info("   wrapped primitive schema in object")
+                else:
+                    wrapped_schema = response_schema
+
+                # Create HIL request event with response schema
+                hil_event = ResponseRequestInfoEvent(
+                    type="response.request_info.requested",
+                    request_id=request_id,
+                    source_executor_id=source_executor_id,
+                    request_type=request_type_name,
+                    request_data=serialized_data,
+                    request_schema=wrapped_schema,  # Send wrapped schema for form rendering
+                    response_schema=response_schema,  # Keep original for reference
+                    item_id=context["item_id"],
+                    output_index=context.get("output_index", 0),
+                    sequence_number=self._next_sequence(context),
+                    timestamp=datetime.now().isoformat(),
+                )
+
+                logger.info("✅ [MAPPER] Created ResponseRequestInfoEvent:")
+                logger.info(f"   type: {hil_event.type}")
+                logger.info(f"   request_id: {hil_event.request_id}")
+                logger.info(f"   sequence_number: {hil_event.sequence_number}")
+
+                return [hil_event]
+
+            # Handle other informational workflow events (status, warnings, errors)
+            if event_type in ["status", "warning", "error"]:
+                # These are informational events that don't map to OpenAI lifecycle events
+                # Convert them to trace events for debugging visibility
+                event_data: dict[str, Any] = {}
+
+                # Extract relevant data based on event type
+                if event_type == "status":
+                    event_data["state"] = str(getattr(event, "state", "unknown"))
+                elif event_type == "warning" or event_type == "error":
+                    event_data["message"] = str(getattr(event, "data", ""))
+
+                # Create a trace event for debugging
+                trace_event = ResponseTraceEventComplete(
+                    type="response.trace.completed",
+                    data={
+                        "trace_type": "workflow_info",
+                        "event_type": event_type,
+                        "data": event_data,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                    span_id=f"workflow_info_{uuid4().hex[:8]}",
+                    item_id=context["item_id"],
+                    output_index=context.get("output_index", 0),
+                    sequence_number=self._next_sequence(context),
+                )
+
+                return [trace_event]
+
+            # For unknown/legacy events, still emit as workflow event for backward compatibility
             # Get event data and serialize if it's a SerializationMixin
-            event_data = getattr(event, "data", None)
-            if event_data is not None and hasattr(event_data, "to_dict"):
+            raw_event_data = getattr(event, "data", None)
+            serialized_event_data: dict[str, Any] | str | None = raw_event_data
+            if raw_event_data is not None and hasattr(raw_event_data, "to_dict"):
                 # SerializationMixin objects - convert to dict for JSON serialization
                 try:
-                    event_data = event_data.to_dict()
+                    serialized_event_data = raw_event_data.to_dict()
                 except Exception as e:
                     logger.debug(f"Failed to serialize event data with to_dict(): {e}")
-                    event_data = str(event_data)
+                    serialized_event_data = str(raw_event_data)
 
-            # Create structured workflow event
+            # Create structured workflow event (keeping for backward compatibility)
             workflow_event = ResponseWorkflowEventComplete(
-                type="response.workflow_event.complete",
+                type="response.workflow_event.completed",
                 data={
                     "event_type": event.__class__.__name__,
-                    "data": event_data,
+                    "data": serialized_event_data,
                     "executor_id": getattr(event, "executor_id", None),
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -292,6 +1224,7 @@ class MessageMapper:
                 sequence_number=self._next_sequence(context),
             )
 
+            logger.debug(f"Unhandled workflow event type: {event_class}, emitting as legacy workflow event")
             return [workflow_event]
 
         except Exception as e:
@@ -317,44 +1250,152 @@ class MessageMapper:
 
     async def _map_function_call_content(
         self, content: Any, context: dict[str, Any]
-    ) -> list[ResponseFunctionCallArgumentsDeltaEvent]:
-        """Map FunctionCallContent to ResponseFunctionCallArgumentsDeltaEvent(s)."""
-        events = []
+    ) -> list[ResponseFunctionCallArgumentsDeltaEvent | ResponseOutputItemAddedEvent]:
+        """Map FunctionCallContent to OpenAI events following Responses API spec.
 
-        # For streaming, need to chunk the arguments JSON
-        args_str = json.dumps(content.arguments) if hasattr(content, "arguments") and content.arguments else "{}"
+        Agent Framework emits FunctionCallContent in two patterns:
+        1. First event: call_id + name + empty/no arguments
+        2. Subsequent events: empty call_id/name + argument chunks
 
-        # Chunk the JSON string for streaming
-        for chunk in self._chunk_json_string(args_str):
+        We emit:
+        1. response.output_item.added (with full metadata) for the first event
+        2. response.function_call_arguments.delta (referencing item_id) for chunks
+        """
+        events: list[ResponseFunctionCallArgumentsDeltaEvent | ResponseOutputItemAddedEvent] = []
+
+        # CASE 1: New function call (has call_id and name)
+        # This is the first event that establishes the function call
+        if content.call_id and content.name:
+            # Use call_id as item_id (simpler, and call_id uniquely identifies the call)
+            item_id = content.call_id
+
+            # Track this function call for later argument deltas
+            context["active_function_calls"][content.call_id] = {
+                "item_id": item_id,
+                "name": content.name,
+                "arguments_chunks": [],
+            }
+
+            logger.debug(f"New function call: {content.name} (call_id={content.call_id})")
+
+            # Emit response.output_item.added event per OpenAI spec
             events.append(
-                ResponseFunctionCallArgumentsDeltaEvent(
-                    type="response.function_call_arguments.delta",
-                    delta=chunk,
-                    item_id=context["item_id"],
+                ResponseOutputItemAddedEvent(
+                    type="response.output_item.added",
+                    item=ResponseFunctionToolCall(
+                        id=content.call_id,  # Use call_id as the item id
+                        call_id=content.call_id,
+                        name=content.name,
+                        arguments="",  # Empty initially, will be filled by deltas
+                        type="function_call",
+                        status="in_progress",
+                    ),
                     output_index=context["output_index"],
                     sequence_number=self._next_sequence(context),
                 )
             )
 
+        # CASE 2: Argument deltas (content has arguments, possibly without call_id/name)
+        if content.arguments:
+            # Find the active function call for these arguments
+            active_call = self._get_active_function_call(content, context)
+
+            if active_call:
+                item_id = active_call["item_id"]
+
+                # Convert arguments to string if it's a dict (Agent Framework may send either)
+                delta_str = content.arguments if isinstance(content.arguments, str) else json.dumps(content.arguments)
+
+                # Emit argument delta referencing the item_id
+                events.append(
+                    ResponseFunctionCallArgumentsDeltaEvent(
+                        type="response.function_call_arguments.delta",
+                        delta=delta_str,
+                        item_id=item_id,
+                        output_index=context["output_index"],
+                        sequence_number=self._next_sequence(context),
+                    )
+                )
+
+                # Track chunk for debugging
+                active_call["arguments_chunks"].append(delta_str)
+            else:
+                logger.warning(f"Received function call arguments without active call: {content.arguments[:50]}...")
+
         return events
+
+    def _get_active_function_call(self, content: Any, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Find the active function call for this content.
+
+        Uses call_id if present, otherwise falls back to most recent call.
+        Necessary because Agent Framework may send argument chunks without call_id.
+
+        Args:
+            content: FunctionCallContent with possible call_id
+            context: Conversion context with active_function_calls
+
+        Returns:
+            Active call dict or None
+        """
+        active_calls: dict[str, dict[str, Any]] = context["active_function_calls"]
+
+        # If content has call_id, use it to find the exact call
+        if hasattr(content, "call_id") and content.call_id:
+            result = active_calls.get(content.call_id)
+            return result if result is not None else None
+
+        # Otherwise, use the most recent call (last one added)
+        # This handles the case where Agent Framework sends argument chunks
+        # without call_id in subsequent events
+        if active_calls:
+            return list(active_calls.values())[-1]
+
+        return None
 
     async def _map_function_result_content(
         self, content: Any, context: dict[str, Any]
     ) -> ResponseFunctionResultComplete:
-        """Map FunctionResultContent to structured event."""
+        """Map FunctionResultContent to DevUI custom event.
+
+        DevUI extension: The OpenAI Responses API doesn't stream function execution results
+        (in OpenAI's model, the application executes functions, not the API).
+        """
+        # Get call_id from content
+        call_id = getattr(content, "call_id", None)
+        if not call_id:
+            call_id = f"call_{uuid.uuid4().hex[:8]}"
+
+        # Extract result
+        result = getattr(content, "result", None)
+        exception = getattr(content, "exception", None)
+
+        # Convert result to string, handling nested Content objects from MCP tools
+        if isinstance(result, str):
+            output = result
+        elif result is not None:
+            # Recursively serialize any nested Content objects (e.g., from MCP tools)
+            serialized = _serialize_content_recursive(result)
+            # Convert to JSON string if still not a string
+            output = serialized if isinstance(serialized, str) else json.dumps(serialized)
+        else:
+            output = ""
+
+        # Determine status based on exception
+        status = "incomplete" if exception else "completed"
+
+        # Generate item_id
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+
+        # Return DevUI custom event
         return ResponseFunctionResultComplete(
             type="response.function_result.complete",
-            data={
-                "call_id": getattr(content, "call_id", f"call_{uuid.uuid4().hex[:8]}"),
-                "result": getattr(content, "result", None),
-                "status": "completed" if not getattr(content, "exception", None) else "failed",
-                "exception": str(getattr(content, "exception", None)) if getattr(content, "exception", None) else None,
-                "timestamp": datetime.now().isoformat(),
-            },
-            call_id=getattr(content, "call_id", f"call_{uuid.uuid4().hex[:8]}"),
-            item_id=context["item_id"],
+            call_id=call_id,
+            output=output,
+            status=status,
+            item_id=item_id,
             output_index=context["output_index"],
             sequence_number=self._next_sequence(context),
+            timestamp=datetime.now().isoformat(),
         )
 
     async def _map_error_content(self, content: Any, context: dict[str, Any]) -> ResponseErrorEvent:
@@ -367,62 +1408,256 @@ class MessageMapper:
             sequence_number=self._next_sequence(context),
         )
 
-    async def _map_usage_content(self, content: Any, context: dict[str, Any]) -> ResponseUsageEventComplete:
-        """Map UsageContent to structured usage event."""
-        # Store usage data in context for aggregation
-        if "usage_data" not in context:
-            context["usage_data"] = []
-        context["usage_data"].append(content)
+    async def _map_usage_content(self, content: Any, context: dict[str, Any]) -> None:
+        """Accumulate usage data for final Response.usage field.
 
-        # Extract usage from UsageContent.details (UsageDetails object)
-        details = getattr(content, "details", None)
-        total_tokens = 0
-        prompt_tokens = 0
-        completion_tokens = 0
+        OpenAI does NOT stream usage events. Usage appears only in final Response.
+        This method accumulates usage data per request for later inclusion in Response.usage.
 
-        if details:
-            total_tokens = getattr(details, "total_token_count", 0) or 0
-            prompt_tokens = getattr(details, "input_token_count", 0) or 0
-            completion_tokens = getattr(details, "output_token_count", 0) or 0
+        Returns:
+            None - no event emitted (usage goes in final Response.usage)
+        """
+        # Extract usage from UsageContent.usage_details (UsageDetails object)
+        details = content.usage_details or {}
+        total_tokens = details.get("total_token_count", 0)
+        prompt_tokens = details.get("input_token_count", 0)
+        completion_tokens = details.get("output_token_count", 0)
 
-        return ResponseUsageEventComplete(
-            type="response.usage.complete",
-            data={
-                "usage_data": details.to_dict() if details and hasattr(details, "to_dict") else {},
-                "total_tokens": total_tokens,
-                "completion_tokens": completion_tokens,
-                "prompt_tokens": prompt_tokens,
-                "timestamp": datetime.now().isoformat(),
-            },
-            item_id=context["item_id"],
+        # Accumulate for final Response.usage
+        request_id = context.get("request_id", "default")
+        if request_id not in self._usage_accumulator:
+            self._usage_accumulator[request_id] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+        self._usage_accumulator[request_id]["input_tokens"] += prompt_tokens
+        self._usage_accumulator[request_id]["output_tokens"] += completion_tokens
+        self._usage_accumulator[request_id]["total_tokens"] += total_tokens
+
+        logger.debug(f"Accumulated usage for {request_id}: {self._usage_accumulator[request_id]}")
+
+        # NO EVENT RETURNED - usage goes in final Response only
+        return
+
+    async def _map_data_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+        """Map DataContent to proper output item (image/file/data) or fallback to trace.
+
+        Maps Agent Framework DataContent to appropriate output types:
+        - Images (image/*) → ResponseOutputImage
+        - Common files (pdf, audio, video) → ResponseOutputFile
+        - Generic data → ResponseOutputData
+        - Unknown/debugging content → ResponseTraceEventComplete (fallback)
+        """
+        mime_type = getattr(content, "mime_type", "application/octet-stream")
+        item_id = f"item_{uuid.uuid4().hex[:16]}"
+
+        # Extract data/uri
+        data_value = getattr(content, "data", None)
+        uri_value = getattr(content, "uri", None)
+
+        # Handle images
+        if mime_type.startswith("image/"):
+            # Prefer URI, but create data URI from data if needed
+            if uri_value:
+                image_url = uri_value
+            elif data_value:
+                # Convert bytes to base64 data URI
+                import base64
+
+                if isinstance(data_value, bytes):
+                    b64_data = base64.b64encode(data_value).decode("utf-8")
+                else:
+                    b64_data = str(data_value)
+                image_url = f"data:{mime_type};base64,{b64_data}"
+            else:
+                # No data available, fallback to trace
+                logger.warning(f"DataContent with {mime_type} has no data or uri, falling back to trace")
+                return ResponseTraceEventComplete(
+                    type="response.trace.completed",
+                    data={"content_type": "data", "mime_type": mime_type, "error": "No data or uri"},
+                    item_id=context["item_id"],
+                    output_index=context["output_index"],
+                    sequence_number=self._next_sequence(context),
+                )
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputImage(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_image",
+                    image_url=image_url,
+                    mime_type=mime_type,
+                    alt_text=None,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle common file types
+        if mime_type in [
+            "application/pdf",
+            "audio/mp3",
+            "audio/wav",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/flac",
+            "audio/aac",
+            "audio/mpeg",
+            "video/mp4",
+            "video/webm",
+        ]:
+            # Determine filename from mime type
+            ext = mime_type.split("/")[-1]
+            if ext == "mpeg":
+                ext = "mp3"  # audio/mpeg → .mp3
+            filename = f"output.{ext}"
+
+            # Prefer URI
+            if uri_value:
+                file_url = uri_value
+                file_data = None
+            elif data_value:
+                # Convert bytes to base64
+                import base64
+
+                if isinstance(data_value, bytes):
+                    b64_data = base64.b64encode(data_value).decode("utf-8")
+                else:
+                    b64_data = str(data_value)
+                file_url = f"data:{mime_type};base64,{b64_data}"
+                file_data = b64_data
+            else:
+                # No data available, fallback to trace
+                logger.warning(f"DataContent with {mime_type} has no data or uri, falling back to trace")
+                return ResponseTraceEventComplete(
+                    type="response.trace.completed",
+                    data={"content_type": "data", "mime_type": mime_type, "error": "No data or uri"},
+                    item_id=context["item_id"],
+                    output_index=context["output_index"],
+                    sequence_number=self._next_sequence(context),
+                )
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputFile(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_file",
+                    filename=filename,
+                    file_url=file_url,
+                    file_data=file_data,
+                    mime_type=mime_type,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle generic data (structured data, JSON, etc.)
+        data_str = ""
+        if uri_value:
+            data_str = uri_value
+        elif data_value:
+            if isinstance(data_value, bytes):
+                try:
+                    data_str = data_value.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Binary data, encode as base64 for display
+                    import base64
+
+                    data_str = base64.b64encode(data_value).decode("utf-8")
+            else:
+                data_str = str(data_value)
+
+        return ResponseOutputItemAddedEvent(
+            type="response.output_item.added",
+            item=ResponseOutputData(  # type: ignore[arg-type]
+                id=item_id,
+                type="output_data",
+                data=data_str,
+                mime_type=mime_type,
+                description=None,
+            ),
             output_index=context["output_index"],
             sequence_number=self._next_sequence(context),
         )
 
-    async def _map_data_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map DataContent to structured trace event."""
-        return ResponseTraceEventComplete(
-            type="response.trace.complete",
-            data={
-                "content_type": "data",
-                "data": getattr(content, "data", None),
-                "mime_type": getattr(content, "mime_type", "application/octet-stream"),
-                "size_bytes": len(str(getattr(content, "data", ""))) if getattr(content, "data", None) else 0,
-                "timestamp": datetime.now().isoformat(),
-            },
-            item_id=context["item_id"],
-            output_index=context["output_index"],
-            sequence_number=self._next_sequence(context),
-        )
+    async def _map_uri_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+        """Map UriContent to proper output item (image/file) based on MIME type.
 
-    async def _map_uri_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map UriContent to structured trace event."""
+        UriContent has a URI and MIME type, so we can create appropriate output items:
+        - Images → ResponseOutputImage
+        - Common files → ResponseOutputFile
+        - Other URIs → ResponseTraceEventComplete (fallback for debugging)
+        """
+        mime_type = getattr(content, "mime_type", "text/plain")
+        uri = getattr(content, "uri", "")
+        item_id = f"item_{uuid.uuid4().hex[:16]}"
+
+        if not uri:
+            # No URI available, fallback to trace
+            logger.warning("UriContent has no uri, falling back to trace")
+            return ResponseTraceEventComplete(
+                type="response.trace.completed",
+                data={"content_type": "uri", "mime_type": mime_type, "error": "No uri"},
+                item_id=context["item_id"],
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle images
+        if mime_type.startswith("image/"):
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputImage(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_image",
+                    image_url=uri,
+                    mime_type=mime_type,
+                    alt_text=None,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle common file types
+        if mime_type in [
+            "application/pdf",
+            "audio/mp3",
+            "audio/wav",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/flac",
+            "audio/aac",
+            "audio/mpeg",
+            "video/mp4",
+            "video/webm",
+        ]:
+            # Extract filename from URI or use generic name
+            filename = uri.split("/")[-1] if "/" in uri else f"output.{mime_type.split('/')[-1]}"
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputFile(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_file",
+                    filename=filename,
+                    file_url=uri,
+                    file_data=None,
+                    mime_type=mime_type,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # For other URI types (text/plain, application/json, etc.), use trace for now
+        logger.debug(f"UriContent with unsupported MIME type {mime_type}, using trace event")
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "uri",
-                "uri": getattr(content, "uri", ""),
-                "mime_type": getattr(content, "mime_type", "text/plain"),
+                "uri": uri,
+                "mime_type": mime_type,
                 "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
@@ -431,9 +1666,15 @@ class MessageMapper:
         )
 
     async def _map_hosted_file_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map HostedFileContent to structured trace event."""
+        """Map HostedFileContent to trace event.
+
+        HostedFileContent references external file IDs (like OpenAI file IDs).
+        These remain as traces since they're metadata about hosted resources,
+        not direct content to display. To display them, agents should return
+        DataContent or UriContent with the actual file data/URL.
+        """
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "hosted_file",
                 "file_id": getattr(content, "file_id", "unknown"),
@@ -447,9 +1688,14 @@ class MessageMapper:
     async def _map_hosted_vector_store_content(
         self, content: Any, context: dict[str, Any]
     ) -> ResponseTraceEventComplete:
-        """Map HostedVectorStoreContent to structured trace event."""
+        """Map HostedVectorStoreContent to trace event.
+
+        HostedVectorStoreContent references external vector store IDs.
+        These remain as traces since they're metadata about hosted resources,
+        not direct content to display.
+        """
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "hosted_vector_store",
                 "vector_store_id": getattr(content, "vector_store_id", "unknown"),
@@ -462,15 +1708,24 @@ class MessageMapper:
 
     async def _map_approval_request_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalRequestContent to custom event."""
+        # Parse arguments to ensure they're always a dict, not a JSON string
+        # This prevents double-escaping when the frontend calls JSON.stringify()
+        arguments: dict[str, Any] = {}
+        if hasattr(content, "function_call"):
+            if hasattr(content.function_call, "parse_arguments"):
+                # Use parse_arguments() to convert string arguments to dict
+                arguments = content.function_call.parse_arguments() or {}
+            else:
+                # Fallback to direct access if parse_arguments doesn't exist
+                arguments = getattr(content.function_call, "arguments", {})
+
         return {
             "type": "response.function_approval.requested",
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
-                "arguments": getattr(content.function_call, "arguments", {})
-                if hasattr(content, "function_call")
-                else {},
+                "arguments": arguments,
             },
             "item_id": context["item_id"],
             "output_index": context["output_index"],
@@ -510,18 +1765,14 @@ class MessageMapper:
 
     async def _create_unknown_event(self, event_data: Any, context: dict[str, Any]) -> ResponseStreamEvent:
         """Create event for unknown event types."""
-        text = f"Unknown event: {event_data!s}\\n"
+        text = f"Unknown event: {event_data!s}\n"
         return self._create_text_delta_event(text, context)
 
     async def _create_unknown_content_event(self, content: Any, context: dict[str, Any]) -> ResponseStreamEvent:
         """Create event for unknown content types."""
         content_type = content.__class__.__name__
-        text = f"⚠️ Unknown content type: {content_type}\\n"
+        text = f"Warning: Unknown content type: {content_type}\n"
         return self._create_text_delta_event(text, context)
-
-    def _chunk_json_string(self, json_str: str, chunk_size: int = 50) -> list[str]:
-        """Chunk JSON string for streaming."""
-        return [json_str[i : i + chunk_size] for i in range(0, len(json_str), chunk_size)]
 
     async def _create_error_response(self, error_message: str, request: AgentFrameworkRequest) -> OpenAIResponse:
         """Create error response."""
@@ -549,7 +1800,7 @@ class MessageMapper:
             id=f"resp_{uuid.uuid4().hex[:12]}",
             object="response",
             created_at=datetime.now().timestamp(),
-            model=request.model,
+            model=request.model or "devui",
             output=[response_output_message],
             usage=usage,
             parallel_tool_calls=False,

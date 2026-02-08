@@ -3,8 +3,8 @@
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
+from typing import Any, Generic
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -12,22 +12,23 @@ from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework import (
-    AgentProtocol,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
+    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
-    Role,
-    TextContent,
+    Content,
+    FunctionInvocationLayer,
+    ResponseStream,
+    SupportsAgentRun,
     ToolProtocol,
-    ai_function,
-    use_chat_middleware,
-    use_function_invocation,
+    tool,
 )
+from agent_framework._clients import TOptions_co
+from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -65,10 +66,10 @@ def ai_tool() -> ToolProtocol:
 
 
 @fixture
-def ai_function_tool() -> ToolProtocol:
+def tool_tool() -> ToolProtocol:
     """Returns a executable ToolProtocol."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def simple_function(x: int, y: int) -> int:
         """A simple function that adds two numbers."""
         return x + y
@@ -80,74 +81,118 @@ def ai_function_tool() -> ToolProtocol:
 class MockChatClient:
     """Simple implementation of a chat client."""
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.additional_properties: dict[str, Any] = {}
         self.call_count: int = 0
         self.responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
+        super().__init__(**kwargs)
 
-    async def get_response(
+    def get_response(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
-        self.call_count += 1
-        if self.responses:
-            return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        options = options or {}
+        if stream:
+            return self._get_streaming_response(messages=messages, options=options, **kwargs)
 
-    async def get_streaming_response(
+        async def _get() -> ChatResponse:
+            logger.debug(f"Running custom chat client, with: {messages=}, {kwargs=}")
+            self.call_count += 1
+            if self.responses:
+                return self.responses.pop(0)
+            return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+
+        return _get()
+
+    def _get_streaming_response(
         self,
+        *,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
+        options: dict[str, Any],
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
-        self.call_count += 1
-        if self.streaming_responses:
-            for update in self.streaming_responses.pop(0):
-                yield update
-        else:
-            yield ChatResponseUpdate(text=TextContent(text="test streaming response "), role="assistant")
-            yield ChatResponseUpdate(contents=[TextContent(text="another update")], role="assistant")
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            logger.debug(f"Running custom chat client stream, with: {messages=}, {kwargs=}")
+            self.call_count += 1
+            if self.streaming_responses:
+                for update in self.streaming_responses.pop(0):
+                    yield update
+            else:
+                yield ChatResponseUpdate(contents=[Content.from_text("test streaming response ")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
 
-@use_chat_middleware
-class MockBaseChatClient(BaseChatClient):
-    """Mock implementation of the BaseChatClient."""
+class MockBaseChatClient(
+    ChatMiddlewareLayer[TOptions_co],
+    FunctionInvocationLayer[TOptions_co],
+    ChatTelemetryLayer[TOptions_co],
+    BaseChatClient[TOptions_co],
+    Generic[TOptions_co],
+):
+    """Mock implementation of a full-featured ChatClient."""
 
     def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
+        super().__init__(function_middleware=[], **kwargs)
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        stream: bool,
+        options: dict[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
 
         Args:
             messages: The chat messages to send.
-            chat_options: The options for the request.
+            stream: Whether to stream the response.
+            options: The options dict for the request.
             kwargs: Any additional keyword arguments.
 
         Returns:
-            The chat response contents representing the response(s).
+            The chat response or ResponseStream.
         """
-        logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
+        if stream:
+            return self._get_streaming_response(messages=messages, options=options, **kwargs)
+
+        async def _get() -> ChatResponse:
+            return await self._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        return _get()
+
+    async def _get_non_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Get a non-streaming response."""
+        logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
 
         response = self.run_responses.pop(0)
 
-        if chat_options.tool_choice == "none":
+        if options.get("tool_choice") == "none":
             return ChatResponse(
                 messages=ChatMessage(
                     role="assistant",
@@ -158,25 +203,41 @@ class MockBaseChatClient(BaseChatClient):
 
         return response
 
-    @override
-    async def _inner_get_streaming_response(
+    def _get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        logger.debug(f"Running base chat client inner stream, with: {messages=}, {chat_options=}, {kwargs=}")
-        if not self.streaming_responses:
-            yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
-            return
-        if chat_options.tool_choice == "none":
-            yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
-            return
-        response = self.streaming_responses.pop(0)
-        for update in response:
-            yield update
-        await asyncio.sleep(0)
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Get a streaming response."""
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
+            self.call_count += 1
+            if not self.streaming_responses:
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text(f"update - {messages[0].text}")], role="assistant", finish_reason="stop"
+                )
+                return
+            if options.get("tool_choice") == "none":
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text("I broke out of the function invocation loop...")],
+                    role="assistant",
+                    finish_reason="stop",
+                )
+                return
+            response = self.streaming_responses.pop(0)
+            for update in response:
+                yield update
+            await asyncio.sleep(0)
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            response_format = options.get("response_format")
+            output_format_type = response_format if isinstance(response_format, type) else None
+            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
 
 @fixture
@@ -193,16 +254,17 @@ def max_iterations(request: Any) -> int:
 def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-            return use_function_invocation(MockChatClient)()
+            return type("FunctionInvokingMockChatClient", (FunctionInvocationLayer, MockChatClient), {})()
     return MockChatClient()
 
 
 @fixture
 def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
-    if enable_function_calling:
-        with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-            return use_function_invocation(MockBaseChatClient)()
-    return MockBaseChatClient()
+    with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
+        chat_client = MockBaseChatClient()
+    if not enable_function_calling:
+        chat_client.function_invocation_configuration["enabled"] = False
+    return chat_client
 
 
 # region Agents
@@ -211,7 +273,7 @@ class MockAgentThread(AgentThread):
 
 
 # Mock Agent implementation for testing
-class MockAgent(AgentProtocol):
+class MockAgent(SupportsAgentRun):
     @property
     def id(self) -> str:
         return str(uuid4())
@@ -222,33 +284,40 @@ class MockAgent(AgentProtocol):
         return "Name"
 
     @property
-    def display_name(self) -> str:
-        """Returns the name of the agent."""
-        return "Display Name"
-
-    @property
     def description(self) -> str | None:
         return "Description"
 
-    async def run(
+    def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        stream: bool = False,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("Response")])])
+    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, **kwargs)
 
-    async def run_stream(
+    async def _run_impl(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
+    ) -> AgentResponse:
+        logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
+        return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text("Response")])])
+
+    async def _run_stream_impl(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]:
         logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
-        yield AgentRunResponseUpdate(contents=[TextContent("Response")])
+        yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
     def get_new_thread(self) -> AgentThread:
         return MockAgentThread()
@@ -260,5 +329,5 @@ def agent_thread() -> AgentThread:
 
 
 @fixture
-def agent() -> AgentProtocol:
+def agent() -> SupportsAgentRun:
     return MockAgent()

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import tiktoken
-from agent_framework import ChatMessage, ChatMessageStore, Role
+from agent_framework import ChatMessage, ChatMessageStore
 from loguru import logger
 
 
@@ -51,16 +51,15 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
             logger.warning("Messages exceed max tokens. Truncating oldest message.")
             self.truncated_messages.pop(0)
         # Remove leading tool messages
-        while len(self.truncated_messages) > 0 and self.truncated_messages[0].role == Role.TOOL:
+        while len(self.truncated_messages) > 0:
+            if self.truncated_messages[0].role != "tool":
+                break
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
             self.truncated_messages.pop(0)
 
     def get_token_count(self) -> int:
         """Estimate token count for a list of messages using tiktoken.
 
-        Args:
-            messages: List of ChatMessage objects
-            system_message: Optional system message to include in count
         Returns:
             Estimated token count
         """
@@ -80,7 +79,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
                 for content in msg.contents:
                     if hasattr(content, "type"):
                         if content.type == "text":
-                            total_tokens += len(self.encoding.encode(content.text))
+                            total_tokens += len(self.encoding.encode(content.text))  # type: ignore[arg-type]
                         elif content.type == "function_call":
                             total_tokens += 4
                             # Serialize function call and count tokens

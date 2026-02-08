@@ -6,8 +6,9 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, MagenticBuilder, WorkflowOutputEvent
+from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
     Agent,
     ChatCompletionAgent,
@@ -136,16 +137,19 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    workflow = (
-        MagenticBuilder()
-        .participants(researcher=researcher, coder=coder)
-        .with_standard_manager(chat_client=OpenAIChatClient())
-        .build()
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
     )
 
+    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
+
     final_text: str | None = None
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
             final_text = cast(str, event.data)
 
     return final_text

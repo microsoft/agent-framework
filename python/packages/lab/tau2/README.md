@@ -23,12 +23,16 @@ _Note: Currently only the airline domain is fully supported._
 
 ## Installation
 
-Install from source with TAU2 dependencies:
+Install the agent-framework-lab package with TAU2 dependencies:
 
 ```bash
-git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/packages/lab
-pip install -e ".[tau2]"
+pip install "agent-framework-lab[tau2]"
+```
+
+**Important:** You must also install the tau2-bench package from source:
+
+```bash
+pip install "tau2 @ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619"
 ```
 
 Download data from [Tau2-Bench](https://github.com/sierra-research/tau2-bench):
@@ -161,15 +165,12 @@ from agent_framework.lab.tau2 import TaskRunner
 
 class WorkflowTaskRunner(TaskRunner):
     def build_conversation_workflow(self, assistant_agent, user_simulator_agent):
-        # Build a custom workflow
-        builder = WorkflowBuilder()
-
         # Create agent executors
         assistant_executor = AgentExecutor(assistant_agent, id="assistant_agent")
         user_executor = AgentExecutor(user_simulator_agent, id="user_simulator")
 
-        # Add workflow edges and conditions
-        builder.set_start_executor(assistant_executor)
+        # Build a custom workflow with start executor
+        builder = WorkflowBuilder(start_executor=assistant_executor)
         builder.add_edge(assistant_executor, user_executor)
         builder.add_edge(user_executor, assistant_executor, condition=self.should_not_stop)
 

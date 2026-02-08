@@ -17,7 +17,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    WorkflowOutputEvent,
+    
     handler,
 )
 from pydantic import BaseModel, Field
@@ -49,6 +49,7 @@ class ProcessEvents(Enum):
     START_INNER_PROCESS = "StartInnerProcess"
     OUTPUT_READY_PUBLIC = "OutputReadyPublic"
     OUTPUT_READY_INTERNAL = "OutputReadyInternal"
+
 
 ######################################################################
 # region Semantic Kernel nested process path
@@ -135,7 +136,7 @@ async def run_semantic_kernel_nested_process() -> None:
         initial_event=ProcessEvents.START_PROCESS.value,
         data="Test",
     )
-    process_info = await process_handle.get_state()
+    process_info = await process_handle.get_executor_state()
 
     inner_process: KernelProcess | None = next(
         (s for s in process_info.steps if s.state.name == "Inner"),
@@ -151,6 +152,7 @@ async def run_semantic_kernel_nested_process() -> None:
     if repeat_state is None or repeat_state.state is None:
         raise RuntimeError("RepeatStep state missing")
     assert repeat_state.state.last_message == "Test Test Test Test"  # nosec
+
 
 ######################################################################
 # region Agent Framework nested workflow path
@@ -230,7 +232,7 @@ def _build_inner_workflow() -> WorkflowExecutor:
     inner_echo = InnerEchoExecutor()
     inner_repeat = InnerRepeatExecutor()
 
-    inner_workflow = WorkflowBuilder().set_start_executor(inner_echo).add_edge(inner_echo, inner_repeat).build()
+    inner_workflow = WorkflowBuilder(start_executor=inner_echo).add_edge(inner_echo, inner_repeat).build()
 
     return WorkflowExecutor(inner_workflow, id="inner_workflow")
 
@@ -244,8 +246,7 @@ async def run_agent_framework_nested_workflow(initial_message: str) -> Sequence[
     collector = CollectResultExecutor()
 
     outer_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(kickoff)
+        WorkflowBuilder(start_executor=kickoff)
         .add_edge(kickoff, outer_echo)
         .add_edge(outer_echo, outer_repeat)
         .add_edge(outer_repeat, inner_executor)
@@ -254,11 +255,12 @@ async def run_agent_framework_nested_workflow(initial_message: str) -> Sequence[
     )
 
     results: list[str] = []
-    async for event in outer_workflow.run_stream(initial_message):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in outer_workflow.run(initial_message, stream=True):
+        if event.type == "output":
             results.append(cast(str, event.data))
 
     return results
+
 
 ######################################################################
 # endregion

@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,7 +18,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// A component that processes messages in a <see cref="Workflow"/>.
 /// </summary>
-[DebuggerDisplay("{GetType().Name}{Id}")]
+[DebuggerDisplay("{GetType().Name}[{Id}]")]
 public abstract class Executor : IIdentified
 {
     /// <summary>
@@ -27,16 +29,31 @@ public abstract class Executor : IIdentified
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
+    // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
-    protected Executor(string id, ExecutorOptions? options = null)
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+    protected Executor(string id, ExecutorOptions? options = null, bool declareCrossRunShareable = false)
     {
         this.Id = id;
         this.Options = options ?? ExecutorOptions.Default;
+
+        //if (declareCrossRunShareable && this is IResettableExecutor)
+        //{
+        //    // We need a way to be able to let the user override this at the workflow level too, because knowing the fine
+        //    // details of when to use which of these paths seems like it could be tricky, and we should not force users
+        //    // to do this; instead container agents should set this when they intiate the run (via WorkflowHostAgent).
+        //    throw new ArgumentException("An executor that is declared as cross-run shareable cannot also be resettable.");
+        //}
+
+        this.IsCrossRunShareable = declareCrossRunShareable;
     }
+
+    internal bool IsCrossRunShareable { get; }
 
     /// <summary>
     /// Gets the configuration options for the executor.
@@ -47,6 +64,34 @@ public abstract class Executor : IIdentified
     /// Override this method to register handlers for the executor.
     /// </summary>
     protected abstract RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder);
+
+    internal void Configure(IExternalRequestContext externalRequestContext)
+    {
+        // TODO: This is an unfortunate pattern (pending the ability to rework the Configure APIs a bit):
+        // new()
+        // >>> will throw InvalidOperationException if Configure() is not invoked when using PortHandlers
+        //   .Configure()
+        // >>> only usable now
+        // The fix would be to change the API surface of Executor to have Configure return the contract that the workflow
+        // will use to invoke the executor (currently the MessageRouter). (Ideally we would rename Executor to Node or similar,
+        // and the actual Executor class will represent that Contract object)
+        // Not a terrible issue right now because only InProcessExecution exists right now, and the InProccessRunContext centralizes
+        // executor instantiation in EnsureExecutorAsync.
+        this.Router = this.CreateRouter(externalRequestContext);
+    }
+
+    private MessageRouter CreateRouter(IExternalRequestContext? externalRequestContext = null)
+        => this.ConfigureRoutes(new RouteBuilder(externalRequestContext)).Build();
+
+    /// <summary>
+    /// Perform any asynchronous initialization required by the executor. This method is called once per executor instance,
+    /// </summary>
+    /// <param name="context">The workflow context in which the executor executes.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    protected internal virtual ValueTask InitializeAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        => default;
 
     /// <summary>
     /// Override this method to declare the types of messages this executor can send.
@@ -68,18 +113,20 @@ public abstract class Executor : IIdentified
         return new HashSet<Type>();
     }
 
-    private MessageRouter? _router;
     internal MessageRouter Router
     {
         get
         {
-            if (this._router is null)
+            if (field is null)
             {
-                RouteBuilder routeBuilder = this.ConfigureRoutes(new RouteBuilder());
-                this._router = routeBuilder.Build();
+                field = this.CreateRouter();
             }
 
-            return this._router;
+            return field;
+        }
+        private set
+        {
+            field = value;
         }
     }
 
@@ -90,10 +137,12 @@ public abstract class Executor : IIdentified
     /// <param name="messageType">The "declared" type of the message (captured when it was being sent). This is
     /// used to enable routing messages as their base types, in absence of true polymorphic type routing.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
         activity?.SetTag(Tags.ExecutorId, this.Id)
@@ -101,9 +150,9 @@ public abstract class Executor : IIdentified
             .SetTag(Tags.MessageType, messageType.TypeName)
             .CreateSourceLinks(context.TraceContext);
 
-        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
+        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
 
-        CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
+        CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true, cancellationToken)
                                               .ConfigureAwait(false);
 
         ExecutorEvent executionResult;
@@ -116,7 +165,7 @@ public abstract class Executor : IIdentified
             executionResult = new ExecutorFailedEvent(this.Id, result.Exception);
         }
 
-        await context.AddEventAsync(executionResult).ConfigureAwait(false);
+        await context.AddEventAsync(executionResult, cancellationToken).ConfigureAwait(false);
 
         if (result is null)
         {
@@ -137,11 +186,11 @@ public abstract class Executor : IIdentified
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
         {
-            await context.SendMessageAsync(result.Result).ConfigureAwait(false);
+            await context.SendMessageAsync(result.Result, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         if (result.Result is not null && this.Options.AutoYieldOutputHandlerResultObject)
         {
-            await context.YieldOutputAsync(result.Result).ConfigureAwait(false);
+            await context.YieldOutputAsync(result.Result, cancellationToken).ConfigureAwait(false);
         }
 
         return result.Result;
@@ -152,7 +201,8 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
@@ -160,7 +210,8 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
@@ -172,6 +223,18 @@ public abstract class Executor : IIdentified
     /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
     public ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
+
+    /// <summary>
+    /// Describes the protocol for communication with this <see cref="Executor"/>.
+    /// </summary>
+    /// <returns></returns>
+    public ProtocolDescriptor DescribeProtocol()
+    {
+        // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
+        // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
+        // types to the ProtocolDescriptor.
+        return new(this.InputTypes, this.Router.HasCatchAll);
+    }
 
     /// <summary>
     /// Checks if the executor can handle a specific message type.
@@ -202,15 +265,16 @@ public abstract class Executor : IIdentified
 /// <typeparam name="TInput">The type of input message.</typeparam>
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
-public abstract class Executor<TInput>(string id, ExecutorOptions? options = null)
-    : Executor(id, options), IMessageHandler<TInput>
+/// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+public abstract class Executor<TInput>(string id, ExecutorOptions? options = null, bool declareCrossRunShareable = false)
+    : Executor(id, options, declareCrossRunShareable), IMessageHandler<TInput>
 {
     /// <inheritdoc/>
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
         routeBuilder.AddHandler<TInput>(this.HandleAsync);
 
     /// <inheritdoc/>
-    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context);
+    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -220,8 +284,9 @@ public abstract class Executor<TInput>(string id, ExecutorOptions? options = nul
 /// <typeparam name="TOutput">The type of output message.</typeparam>
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
-public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? options = null)
-    : Executor(id, options ?? ExecutorOptions.Default),
+/// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? options = null, bool declareCrossRunShareable = false)
+    : Executor(id, options ?? ExecutorOptions.Default, declareCrossRunShareable),
       IMessageHandler<TInput, TOutput>
 {
     /// <inheritdoc/>
@@ -229,5 +294,5 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
         routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
 
     /// <inheritdoc/>
-    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context);
+    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }

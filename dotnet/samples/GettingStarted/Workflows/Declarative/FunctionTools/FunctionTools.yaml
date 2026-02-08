@@ -1,0 +1,22 @@
+#
+# This workflow demonstrates an agent that requires tool approval
+# in a loop responding to user input.
+#
+# Example input: 
+# What is the soup of the day?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_search
+      conversationId: =System.ConversationId
+      agent:
+        name: MenuAgent
+      input:
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"

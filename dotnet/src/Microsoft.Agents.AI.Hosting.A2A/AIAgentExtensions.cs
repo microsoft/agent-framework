@@ -20,35 +20,48 @@ public static class AIAgentExtensions
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
+    /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager MapA2A(
+    public static ITaskManager MapA2A(
         this AIAgent agent,
-        TaskManager? taskManager = null,
-        ILoggerFactory? loggerFactory = null)
+        ITaskManager? taskManager = null,
+        ILoggerFactory? loggerFactory = null,
+        AgentSessionStore? agentSessionStore = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
-        taskManager ??= new();
+        var hostAgent = new AIHostAgent(
+            innerAgent: agent,
+            sessionStore: agentSessionStore ?? new NoopAgentSessionStore());
 
+        taskManager ??= new TaskManager();
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
-
         return taskManager;
 
         async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(
-                messageSendParams.ToChatMessages(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
-            var parts = response.Messages.ToParts();
+            var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var options = messageSendParams.Metadata is not { Count: > 0 }
+                ? null
+                : new AgentRunOptions { AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
+            var response = await hostAgent.RunAsync(
+                messageSendParams.ToChatMessages(),
+                session: session,
+                options: options,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+            var parts = response.Messages.ToParts();
             return new AgentMessage
             {
                 MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
                 Role = MessageRole.Agent,
-                Parts = parts
+                Parts = parts,
+                Metadata = response.AdditionalProperties?.ToA2AMetadata()
             };
         }
     }
@@ -60,20 +73,25 @@ public static class AIAgentExtensions
     /// <param name="agentCard">The agent card to return on query.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
+    /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager MapA2A(
+    public static ITaskManager MapA2A(
         this AIAgent agent,
         AgentCard agentCard,
-        TaskManager? taskManager = null,
-        ILoggerFactory? loggerFactory = null)
+        ITaskManager? taskManager = null,
+        ILoggerFactory? loggerFactory = null,
+        AgentSessionStore? agentSessionStore = null)
     {
-        taskManager = agent.MapA2A(taskManager, loggerFactory);
+        taskManager = agent.MapA2A(taskManager, loggerFactory, agentSessionStore);
 
         taskManager.OnAgentCardQuery += (context, query) =>
         {
             // A2A SDK assigns the url on its own
             // we can help user if they did not set Url explicitly.
-            agentCard.Url ??= context;
+            if (string.IsNullOrEmpty(agentCard.Url))
+            {
+                agentCard.Url = context.TrimEnd('/');
+            }
 
             return Task.FromResult(agentCard);
         };

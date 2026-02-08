@@ -11,7 +11,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
-using OpenAI;
+using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -50,7 +50,7 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
+     .AsAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Get current weather alerts for New York?"));

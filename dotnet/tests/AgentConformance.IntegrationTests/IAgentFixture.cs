@@ -15,7 +15,7 @@ public interface IAgentFixture : IAsyncLifetime
 {
     AIAgent Agent { get; }
 
-    Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread);
+    Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session);
 
-    Task DeleteThreadAsync(AgentThread thread);
+    Task DeleteSessionAsync(AgentSession session);
 }

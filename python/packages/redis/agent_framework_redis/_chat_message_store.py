@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
 import redis.asyncio as redis
 from agent_framework import ChatMessage
-from pydantic import BaseModel
+from agent_framework._serialization import SerializationMixin
+from redis.credentials import CredentialProvider
 
 
-class RedisStoreState(BaseModel):
+class RedisStoreState(SerializationMixin):
     """State model for serializing and deserializing Redis chat message store data."""
 
-    thread_id: str
-    redis_url: str | None = None
-    key_prefix: str = "chat_messages"
-    max_messages: int | None = None
+    def __init__(
+        self,
+        thread_id: str,
+        redis_url: str | None = None,
+        key_prefix: str = "chat_messages",
+        max_messages: int | None = None,
+    ) -> None:
+        """State model for serializing and deserializing Redis chat message store data."""
+        self.thread_id = thread_id
+        self.redis_url = redis_url
+        self.key_prefix = key_prefix
+        self.max_messages = max_messages
 
 
 class RedisChatMessageStore:
@@ -48,6 +56,11 @@ class RedisChatMessageStore:
     def __init__(
         self,
         redis_url: str | None = None,
+        credential_provider: CredentialProvider | None = None,
+        host: str | None = None,
+        port: int = 6380,
+        ssl: bool = True,
+        username: str | None = None,
         thread_id: str | None = None,
         key_prefix: str = "chat_messages",
         max_messages: int | None = None,
@@ -56,12 +69,19 @@ class RedisChatMessageStore:
         """Initialize the Redis chat message store.
 
         Creates a Redis-backed chat message store for a specific conversation thread.
-        The store will automatically create a Redis connection and manage message
-        persistence using Redis List operations.
+        Supports both traditional URL-based authentication and Azure Managed Redis
+        with credential provider.
 
         Args:
             redis_url: Redis connection URL (e.g., "redis://localhost:6379").
-                      Required for establishing Redis connection.
+                      Used for traditional authentication. Mutually exclusive with credential_provider.
+            credential_provider: Redis credential provider (redis.credentials.CredentialProvider) for
+                                Azure AD authentication. Requires host parameter. Mutually exclusive with redis_url.
+            host: Redis host name (e.g., "myredis.redis.cache.windows.net").
+                 Required when using credential_provider.
+            port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
+            ssl: Enable SSL/TLS connection. Defaults to True.
+            username: Redis username. Defaults to None.
             thread_id: Unique identifier for this conversation thread.
                       If not provided, a UUID will be auto-generated.
                       This becomes part of the Redis key: {key_prefix}:{thread_id}
@@ -75,23 +95,58 @@ class RedisChatMessageStore:
                      Useful for resuming conversations or seeding with context.
 
         Raises:
-            ValueError: If redis_url is None (Redis connection is required).
-            redis.ConnectionError: If unable to connect to Redis server.
+            ValueError: If neither redis_url nor credential_provider is provided.
+            ValueError: If both redis_url and credential_provider are provided.
+            ValueError: If credential_provider is used without host parameter.
 
+        Examples:
+            Traditional connection:
+                store = RedisChatMessageStore(
+                    redis_url="redis://localhost:6379",
+                    thread_id="conversation_123"
+                )
 
+            Azure Managed Redis with credential provider:
+                from redis.credentials import CredentialProvider
+                from azure.identity.aio import DefaultAzureCredential
+
+                store = RedisChatMessageStore(
+                    credential_provider=CredentialProvider(DefaultAzureCredential()),
+                    host="myredis.redis.cache.windows.net",
+                    thread_id="conversation_123"
+                )
         """
-        # Validate required parameters
-        if redis_url is None:
-            raise ValueError("redis_url is required for Redis connection")
+        # Validate connection parameters
+        if redis_url is None and credential_provider is None:
+            raise ValueError("Either redis_url or credential_provider must be provided")
+
+        if redis_url is not None and credential_provider is not None:
+            raise ValueError("redis_url and credential_provider are mutually exclusive")
+
+        if credential_provider is not None and host is None:
+            raise ValueError("host is required when using credential_provider")
 
         # Store configuration
-        self.redis_url = redis_url
         self.thread_id = thread_id or f"thread_{uuid4()}"
         self.key_prefix = key_prefix
         self.max_messages = max_messages
 
-        # Initialize Redis client with connection pooling and async support
-        self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
+        # Initialize Redis client based on authentication method
+        if credential_provider is not None and host is not None:
+            # Azure AD authentication with credential provider
+            self.redis_url = None  # Not using URL-based auth
+            self._redis_client = redis.Redis(
+                host=host,
+                port=port,
+                ssl=ssl,
+                username=username,
+                credential_provider=credential_provider,
+                decode_responses=True,
+            )
+        else:
+            # Traditional URL-based authentication
+            self.redis_url = redis_url
+            self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
         # Handle initial messages (will be moved to Redis on first access)
         self._initial_messages = list(messages) if messages else []
@@ -227,7 +282,7 @@ class RedisChatMessageStore:
         Captures the Redis connection configuration and thread information needed to
         reconstruct the store and reconnect to the same conversation data.
 
-        Args:
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model_dump() for serialization.
                      Common options: exclude_none=True, by_alias=True
 
@@ -241,7 +296,7 @@ class RedisChatMessageStore:
             key_prefix=self.key_prefix,
             max_messages=self.max_messages,
         )
-        return state.model_dump(**kwargs)
+        return state.to_dict(exclude_none=False, **kwargs)
 
     @classmethod
     async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> RedisChatMessageStore:
@@ -254,6 +309,8 @@ class RedisChatMessageStore:
         Args:
             serialized_store_state: Previously serialized state data from serialize_state().
                                    Should be a dictionary with thread_id, redis_url, etc.
+
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model validation.
 
         Returns:
@@ -266,7 +323,7 @@ class RedisChatMessageStore:
             raise ValueError("serialized_store_state is required for deserialization")
 
         # Validate and parse the serialized state using Pydantic
-        state = RedisStoreState.model_validate(serialized_store_state, **kwargs)
+        state = RedisStoreState.from_dict(serialized_store_state, **kwargs)
 
         # Create and return a new store instance with the deserialized configuration
         return cls(
@@ -286,13 +343,15 @@ class RedisChatMessageStore:
         Args:
             serialized_store_state: Previously serialized state data from serialize_state().
                                    Should be a dictionary with thread_id, redis_url, etc.
+
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model validation.
         """
         if not serialized_store_state:
             return
 
         # Validate and parse the serialized state using Pydantic
-        state = RedisStoreState.model_validate(serialized_store_state, **kwargs)
+        state = RedisStoreState.from_dict(serialized_store_state, **kwargs)
 
         # Update store configuration from deserialized state
         self.thread_id = state.thread_id
@@ -340,10 +399,8 @@ class RedisChatMessageStore:
         Returns:
             JSON string representation of the message.
         """
-        # Convert ChatMessage to dictionary using custom serialization
-        message_dict = message.to_dict()
         # Serialize to compact JSON (no extra whitespace for Redis efficiency)
-        return json.dumps(message_dict, separators=(",", ":"))
+        return message.to_json(separators=(",", ":"))
 
     def _deserialize_message(self, serialized_message: str) -> ChatMessage:
         """Deserialize a JSON string to ChatMessage.
@@ -354,10 +411,8 @@ class RedisChatMessageStore:
         Returns:
             ChatMessage object.
         """
-        # Parse JSON string back to dictionary
-        message_dict = json.loads(serialized_message)
         # Reconstruct ChatMessage using custom deserialization
-        return ChatMessage.from_dict(message_dict)
+        return ChatMessage.from_json(serialized_message)
 
     # ============================================================================
     # List-like Convenience Methods (Redis-optimized async versions)

@@ -6,8 +6,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
-using static Microsoft.Agents.AI.Workflows.WorkflowMessageStore;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -50,8 +50,11 @@ internal static partial class WorkflowsJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions and Microsoft.Agents.AI.Abstractions.
+        // Chain in the resolvers from both AgentAbstractionsJsonUtilities and our source generated context.
+        // We want AgentAbstractionsJsonUtilities first to ensure any M.E.AI types are handled via its resolver.
+        options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
 
         options.MakeReadOnly();
         return options;
@@ -80,7 +83,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(EdgeConnection))]
 
     // Workflow-as-Agent
-    [JsonSerializable(typeof(StoreState))]
+    [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]
+    [JsonSerializable(typeof(WorkflowSession.SessionState))]
 
     // Message Types
     [JsonSerializable(typeof(ChatMessage))]
@@ -88,10 +92,13 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ExternalResponse))]
     [JsonSerializable(typeof(TurnToken))]
 
+    // Built-in Executor State Types
+    [JsonSerializable(typeof(AIAgentHostState))]
+
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]
     //   Currently cannot be serialized because it includes Exceptions.
-    //   We'll need a way to marshal this correct in the AgentRuntime case.
+    //   We'll need a way to marshal this correctly in the AgentRuntime case.
     //   For now this is okay, because we never serialize WorkflowEvents into
     //   checkpoints.
     [JsonSerializable(typeof(JsonElement))]

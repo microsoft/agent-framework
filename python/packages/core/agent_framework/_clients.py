@@ -1,38 +1,63 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
+import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    TypedDict,
+    cast,
+    overload,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._mcp import MCPTool
-from ._memory import AggregateContextProvider, ContextProvider
-from ._middleware import (
-    ChatMiddleware,
-    ChatMiddlewareCallable,
-    FunctionMiddleware,
-    FunctionMiddlewareCallable,
-    Middleware,
-)
+from ._memory import ContextProvider
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import ToolProtocol
+from ._tools import (
+    FunctionInvocationConfiguration,
+    ToolProtocol,
+)
 from ._types import (
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ToolMode,
+    ResponseStream,
+    prepare_messages,
+    validate_chat_options,
 )
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
+    from ._middleware import (
+        MiddlewareTypes,
+    )
+    from ._types import ChatOptions
 
 
 TInput = TypeVar("TInput", contravariant=True)
+
 TEmbedding = TypeVar("TEmbedding")
 TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
 
@@ -46,13 +71,28 @@ __all__ = [
 
 # region ChatClientProtocol Protocol
 
+# Contravariant for the Protocol
+TOptions_contra = TypeVar(
+    "TOptions_contra",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+    contravariant=True,
+)
+
+# Used for the overloads that capture the response model type from options
+TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+
 
 @runtime_checkable
-class ChatClientProtocol(Protocol):
+class ChatClientProtocol(Protocol[TOptions_contra]):
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
     including methods for generating both streaming and non-streaming responses.
+
+    The generic type parameter TOptions specifies which options TypedDict this
+    client accepts, enabling IDE autocomplete and type checking for provider-specific
+    options.
 
     Note:
         Protocols use structural subtyping (duck typing). Classes don't need
@@ -66,21 +106,22 @@ class ChatClientProtocol(Protocol):
 
             # Any class implementing the required methods is compatible
             class CustomChatClient:
-                @property
-                def additional_properties(self) -> dict[str, Any]:
-                    return {}
+                additional_properties: dict = {}
 
-                async def get_response(self, messages, **kwargs):
-                    # Your custom implementation
-                    return ChatResponse(messages=[], response_id="custom")
+                def get_response(self, messages, *, stream=False, **kwargs):
+                    if stream:
+                        from agent_framework import ChatResponseUpdate, ResponseStream
 
-                def get_streaming_response(self, messages, **kwargs):
-                    async def _stream():
-                        from agent_framework import ChatResponseUpdate
+                        async def _stream():
+                            yield ChatResponseUpdate()
 
-                        yield ChatResponseUpdate()
+                        return ResponseStream(_stream())
+                    else:
 
-                    return _stream()
+                        async def _response():
+                            return ChatResponse(messages=[], response_id="custom")
+
+                        return _response()
 
 
             # Verify the instance satisfies the protocol
@@ -88,267 +129,97 @@ class ChatClientProtocol(Protocol):
             assert isinstance(client, ChatClientProtocol)
     """
 
-    @property
-    def additional_properties(self) -> dict[str, Any]:
-        """Get additional properties associated with the client."""
-        ...
+    additional_properties: dict[str, Any]
 
-    async def get_response(
+    @overload
+    def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        stream: Literal[False] = ...,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: "TOptions_contra | ChatOptions[None] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
 
         Args:
             messages: The sequence of input messages to send.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
-            kwargs: Any additional keyword arguments.
-                Will only be passed to functions that are called.
+            stream: Whether to stream the response. Defaults to False.
+            options: Chat options as a TypedDict.
+            **kwargs: Additional chat options.
 
         Returns:
-            The response messages generated by the client.
+            When stream=False: An awaitable ChatResponse from the client.
+            When stream=True: A ResponseStream yielding partial updates.
 
         Raises:
             ValueError: If the input message sequence is ``None``.
         """
         ...
 
-    def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Send input messages and stream the response.
 
-        Args:
-            messages: The sequence of input messages to send.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
-            kwargs: Any additional keyword arguments.
-                Will only be passed to functions that are called.
-
-        Yields:
-            ChatResponseUpdate: An async iterable of chat response updates containing
-                the content of the response messages generated by the client.
-
-        Raises:
-            ValueError: If the input message sequence is ``None``.
-        """
-        ...
+# endregion
 
 
 # region ChatClientBase
 
-
-def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
-    """Convert various message input formats into a list of ChatMessage objects.
-
-    Args:
-        messages: The input messages in various supported formats.
-
-    Returns:
-        A list of ChatMessage objects.
-    """
-    if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
-    if isinstance(messages, ChatMessage):
-        return [messages]
-    return_messages: list[ChatMessage] = []
-    for msg in messages:
-        if isinstance(msg, str):
-            msg = ChatMessage(role="user", text=msg)
-        return_messages.append(msg)
-    return return_messages
+# Covariant for the BaseChatClient
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+    covariant=True,
+)
 
 
-def merge_chat_options(
-    *,
-    base_chat_options: ChatOptions | Any | None,
-    model: str | None = None,
-    frequency_penalty: float | None = None,
-    logit_bias: dict[str | int, float] | None = None,
-    max_tokens: int | None = None,
-    metadata: dict[str, Any] | None = None,
-    presence_penalty: float | None = None,
-    response_format: type[BaseModel] | None = None,
-    seed: int | None = None,
-    stop: str | Sequence[str] | None = None,
-    store: bool | None = None,
-    temperature: float | None = None,
-    tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-    tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] | None = None,
-    top_p: float | None = None,
-    user: str | None = None,
-    additional_properties: dict[str, Any] | None = None,
-) -> ChatOptions:
-    """Merge base chat options with direct parameters to create a new ChatOptions instance.
-
-    When both base_chat_options and individual parameters are provided, the individual
-    parameters take precedence and override the corresponding values in base_chat_options.
-    Tools from both sources are combined into a single list.
-
-    Args:
-        base_chat_options: Optional base ChatOptions to merge with direct parameters.
-        model: The model to use for the agent.
-        frequency_penalty: The frequency penalty to use.
-        logit_bias: The logit bias to use.
-        max_tokens: The maximum number of tokens to generate.
-        metadata: Additional metadata to include in the request.
-        presence_penalty: The presence penalty to use.
-        response_format: The format of the response.
-        seed: The random seed to use.
-        stop: The stop sequence(s) for the request.
-        store: Whether to store the response.
-        temperature: The sampling temperature to use.
-        tool_choice: The tool choice for the request.
-        tools: The normalized tools to use for the request.
-        top_p: The nucleus sampling probability to use.
-        user: The user to associate with the request.
-        additional_properties: Additional properties to include in the request.
-
-    Returns:
-        A new ChatOptions instance with merged values.
-
-    Raises:
-        TypeError: If base_chat_options is not None and not an instance of ChatOptions.
-    """
-    # Validate base_chat_options type if provided
-    if base_chat_options is not None and not isinstance(base_chat_options, ChatOptions):
-        raise TypeError("chat_options must be an instance of ChatOptions")
-
-    if base_chat_options is not None:
-        # Combine tools from both sources
-        base_tools = base_chat_options.tools or []
-        combined_tools = [*base_tools, *(tools or [])] if tools else base_tools
-
-        # Create new chat_options, using direct parameters when provided, otherwise fall back to base
-        return ChatOptions(
-            model_id=model if model is not None else base_chat_options.model_id,
-            frequency_penalty=(
-                frequency_penalty if frequency_penalty is not None else base_chat_options.frequency_penalty
-            ),
-            logit_bias=logit_bias if logit_bias is not None else base_chat_options.logit_bias,
-            max_tokens=max_tokens if max_tokens is not None else base_chat_options.max_tokens,
-            metadata=metadata if metadata is not None else base_chat_options.metadata,
-            presence_penalty=(presence_penalty if presence_penalty is not None else base_chat_options.presence_penalty),
-            response_format=(response_format if response_format is not None else base_chat_options.response_format),
-            seed=seed if seed is not None else base_chat_options.seed,
-            stop=stop if stop is not None else base_chat_options.stop,
-            store=store if store is not None else base_chat_options.store,
-            temperature=temperature if temperature is not None else base_chat_options.temperature,
-            top_p=top_p if top_p is not None else base_chat_options.top_p,
-            tool_choice=(
-                tool_choice if (tool_choice is not None and tool_choice != "auto") else base_chat_options.tool_choice  # type: ignore[arg-type]
-            ),
-            tools=combined_tools or None,
-            user=user if user is not None else base_chat_options.user,
-            additional_properties=(
-                additional_properties if additional_properties is not None else base_chat_options.additional_properties
-            ),
-            conversation_id=base_chat_options.conversation_id,
-        )
-    # No base options, create from direct parameters only
-    return ChatOptions(
-        model_id=model,
-        frequency_penalty=frequency_penalty,
-        logit_bias=logit_bias,
-        max_tokens=max_tokens,
-        metadata=metadata,
-        presence_penalty=presence_penalty,
-        response_format=response_format,
-        seed=seed,
-        stop=stop,
-        store=store,
-        temperature=temperature,
-        top_p=top_p,
-        tool_choice=tool_choice,
-        tools=tools,
-        user=user,
-        additional_properties=additional_properties or {},
-    )
-
-
-class BaseChatClient(SerializationMixin, ABC):
-    """Base class for chat clients.
+class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
+    """Abstract base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
-    including middleware support, message preparation, and tool normalization.
+    including message preparation and tool normalization, but without middleware,
+    telemetry, or function invocation support.
+
+    The generic type parameter TOptions specifies which options TypedDict this client
+    accepts. This enables IDE autocomplete and type checking for provider-specific options
+    when using the typed overloads of get_response.
 
     Note:
         BaseChatClient cannot be instantiated directly as it's an abstract base class.
-        Subclasses must implement ``_inner_get_response()`` and ``_inner_get_streaming_response()``.
+        Subclasses must implement ``_inner_get_response()`` with a stream parameter to handle both
+        streaming and non-streaming responses.
+
+        For full-featured clients with middleware, telemetry, and function invocation support,
+        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
+        which compose these layers correctly.
 
     Examples:
         .. code-block:: python
@@ -358,17 +229,20 @@ class BaseChatClient(SerializationMixin, ABC):
 
 
             class CustomChatClient(BaseChatClient):
-                async def _inner_get_response(self, *, messages, chat_options, **kwargs):
-                    # Your custom implementation
-                    return ChatResponse(
-                        messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
-                    )
+                async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                    if stream:
+                        # Streaming implementation
+                        from agent_framework import ChatResponseUpdate
 
-                async def _inner_get_streaming_response(self, *, messages, chat_options, **kwargs):
-                    # Your custom streaming implementation
-                    from agent_framework import ChatResponseUpdate
+                        async def _stream():
+                            yield ChatResponseUpdate(role="assistant", contents=[{"type": "text", "text": "Hello!"}])
 
-                    yield ChatResponseUpdate(role="assistant", contents=[{"type": "text", "text": "Hello!"}])
+                        return _stream()
+                    else:
+                        # Non-streaming implementation
+                        return ChatResponse(
+                            messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
+                        )
 
 
             # Create an instance of your custom client
@@ -376,6 +250,9 @@ class BaseChatClient(SerializationMixin, ABC):
 
             # Use the client to get responses
             response = await client.get_response("Hello, how are you?")
+            # Or stream responses
+            async for update in client.get_response("Hello!", stream=True):
+                print(update)
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
@@ -385,36 +262,24 @@ class BaseChatClient(SerializationMixin, ABC):
     def __init__(
         self,
         *,
-        middleware: (
-            ChatMiddleware
-            | ChatMiddlewareCallable
-            | FunctionMiddleware
-            | FunctionMiddlewareCallable
-            | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
-            | None
-        ) = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a BaseChatClient instance.
 
-        Args:
-            middleware: Middleware for the client.
+        Keyword Args:
             additional_properties: Additional properties for the client.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
-        # Merge kwargs into additional_properties
         self.additional_properties = additional_properties or {}
-        self.additional_properties.update(kwargs)
-
-        self.middleware = middleware
+        super().__init__(**kwargs)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.
 
         Extracts additional_properties fields to the root level.
 
-        Args:
+        Keyword Args:
             exclude: Set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -430,329 +295,127 @@ class BaseChatClient(SerializationMixin, ABC):
 
         return result
 
-    def prepare_messages(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions
-    ) -> MutableSequence[ChatMessage]:
-        """Convert various message input formats into a list of ChatMessage objects.
+    async def _validate_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate and normalize chat options.
 
-        Prepends system instructions if present in chat_options.
+        Subclasses should call this at the start of _inner_get_response to validate options.
 
         Args:
-            messages: The input messages in various supported formats.
-            chat_options: The chat options containing instructions and other settings.
+            options: The raw options dict.
 
         Returns:
-            A mutable sequence of ChatMessage objects.
+            The validated and normalized options dict.
         """
-        if chat_options.instructions:
-            system_msg = ChatMessage(role="system", text=chat_options.instructions)
-            return [system_msg, *prepare_messages(messages)]
-        return prepare_messages(messages)
+        return await validate_chat_options(dict(options))
 
-    def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
+    def _finalize_response_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
+        """Finalize response updates into a single ChatResponse."""
+        output_format_type = response_format if isinstance(response_format, type) else None
+        return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
-        Args:
-            kwargs: The original kwargs dictionary.
-
-        Returns:
-            A filtered kwargs dictionary without internal parameters.
-        """
-        return {k: v for k, v in kwargs.items() if not k.startswith("_")}
-
-    @staticmethod
-    async def _normalize_tools(
-        tools: ToolProtocol
-        | MutableMapping[str, Any]
-        | Callable[..., Any]
-        | Sequence[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]]
-        | None = None,
-    ) -> list[ToolProtocol | dict[str, Any] | Callable[..., Any]]:
-        """Normalize tools input to a consistent list format.
-
-        Expands MCP tools to their constituent functions, connecting them if needed.
-
-        Args:
-            tools: The tools in various supported formats.
-
-        Returns:
-            A normalized list of tools.
-        """
-        from typing import cast
-
-        final_tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] = []
-        if not tools:
-            return final_tools
-        # Use cast when a sequence is passed (likely already a list)
-        tools_list = (
-            cast(list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]], tools)
-            if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes))
-            else [tools]
+    def _build_response_stream(
+        self,
+        stream: AsyncIterable[ChatResponseUpdate] | Awaitable[AsyncIterable[ChatResponseUpdate]],
+        *,
+        response_format: Any | None = None,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Create a ResponseStream with the standard finalizer."""
+        return ResponseStream(
+            stream,
+            finalizer=lambda updates: self._finalize_response_updates(updates, response_format=response_format),
         )
-        for tool in tools_list:  # type: ignore[reportUnknownType]
-            if isinstance(tool, MCPTool):
-                if not tool.is_connected:
-                    await tool.connect()
-                final_tools.extend(tool.functions)  # type: ignore
-                continue
-            final_tools.append(tool)  # type: ignore
-        return final_tools
 
-    # region Internal methods to be implemented by the derived classes
+    # region Internal method to be implemented by derived classes
 
     @abstractmethod
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
 
-        Args:
-            messages: The chat messages to send.
-            chat_options: The options for the request.
+        Subclasses must implement this method to handle both streaming and non-streaming
+        responses based on the stream parameter. Implementations should call
+        ``await self._validate_options(options)`` at the start to validate options.
+
+        Keyword Args:
+            messages: The prepared chat messages to send.
+            stream: Whether to stream the response.
+            options: The options dict for the request (call _validate_options first).
             kwargs: Any additional keyword arguments.
 
         Returns:
-            The chat response contents representing the response(s).
+            When stream=False: An Awaitable ChatResponse from the model.
+            When stream=True: A ResponseStream of ChatResponseUpdate instances.
         """
-
-    @abstractmethod
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Send a streaming chat request to the AI service.
-
-        Args:
-            messages: The chat messages to send.
-            chat_options: The chat_options for the request.
-            kwargs: Any additional keyword arguments.
-
-        Yields:
-            ChatResponseUpdate: The streaming chat message contents.
-        """
-        # Below is needed for mypy: https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators
-        if False:
-            yield
-        await asyncio.sleep(0)  # pragma: no cover
-        # This is a no-op, but it allows the method to be async and return an AsyncIterable.
-        # The actual implementation should yield ChatResponseUpdate instances as needed.
-
-    # endregion
 
     # region Public method
 
-    async def get_response(
+    @overload
+    def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        stream: Literal[False] = ...,
+        options: "ChatOptions[TResponseModelT]",
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: "TOptions_co | ChatOptions[None] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
 
-        When both ``chat_options`` (in kwargs) and individual parameters are provided,
-        the individual parameters take precedence and override the corresponding values
-        in ``chat_options``. Tools from both sources are combined into a single list.
-
         Args:
             messages: The message or messages to send to the model.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
-            kwargs: Any additional keyword arguments.
-                May include ``chat_options`` which provides base values that can be overridden by direct parameters.
+            stream: Whether to stream the response. Defaults to False.
+            options: Chat options as a TypedDict.
+            **kwargs: Other keyword arguments, can be used to pass function specific parameters.
 
         Returns:
-            A chat response from the model.
+            When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        # Normalize tools and merge with base chat_options
-        normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
-            base_chat_options=kwargs.pop("chat_options", None),
-            model=model,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=normalized_tools,
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
+        prepared_messages = prepare_messages(messages)
+        return self._inner_get_response(
+            messages=prepared_messages,
+            stream=stream,
+            options=options or {},  # type: ignore[arg-type]
+            **kwargs,
         )
-
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
-            chat_options.store = True
-
-        prepped_messages = self.prepare_messages(messages, chat_options)
-        self._prepare_tool_choice(chat_options=chat_options)
-
-        filtered_kwargs = self._filter_internal_kwargs(kwargs)
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
-
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        *,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a streaming response from a chat client.
-
-        When both ``chat_options`` (in kwargs) and individual parameters are provided,
-        the individual parameters take precedence and override the corresponding values
-        in ``chat_options``. Tools from both sources are combined into a single list.
-
-        Args:
-            messages: The message or messages to send to the model.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
-            kwargs: Any additional keyword arguments.
-                May include ``chat_options`` which provides base values that can be overridden by direct parameters.
-
-        Yields:
-            ChatResponseUpdate: A stream representing the response(s) from the LLM.
-        """
-        # Normalize tools and merge with base chat_options
-        normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
-            base_chat_options=kwargs.pop("chat_options", None),
-            model=model,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            tools=normalized_tools,
-            top_p=top_p,
-            user=user,
-            additional_properties=additional_properties,
-        )
-
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
-            chat_options.store = True
-
-        prepped_messages = self.prepare_messages(messages, chat_options)
-        self._prepare_tool_choice(chat_options=chat_options)
-
-        filtered_kwargs = self._filter_internal_kwargs(kwargs)
-        async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
-        ):
-            yield update
-
-    def _prepare_tool_choice(self, chat_options: ChatOptions) -> None:
-        """Prepare the tools and tool choice for the chat options.
-
-        This function should be overridden by subclasses to customize tool handling,
-        as it currently parses only AIFunctions.
-
-        Args:
-            chat_options: The chat options to prepare.
-        """
-        chat_tool_mode = chat_options.tool_choice
-        if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
-            chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE.mode
-            return
-        if not chat_options.tools:
-            chat_options.tool_choice = ToolMode.NONE.mode
-        else:
-            chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
 
     def service_url(self) -> str:
         """Get the URL of the service.
@@ -765,70 +428,47 @@ class BaseChatClient(SerializationMixin, ABC):
         """
         return "Unknown"
 
-    def create_agent(
+    def as_agent(
         self,
         *,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
-        middleware: Middleware | list[Middleware] | None = None,
-        frequency_penalty: float | None = None,
-        logit_bias: dict[str | int, float] | None = None,
-        max_tokens: int | None = None,
-        metadata: dict[str, Any] | None = None,
-        model: str | None = None,
-        presence_penalty: float | None = None,
-        response_format: type[BaseModel] | None = None,
-        seed: int | None = None,
-        stop: str | Sequence[str] | None = None,
-        store: bool | None = None,
-        temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        top_p: float | None = None,
-        user: str | None = None,
-        request_kwargs: dict[str, Any] | None = None,
+        default_options: TOptions_co | Mapping[str, Any] | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        context_provider: ContextProvider | None = None,
+        middleware: Sequence["MiddlewareTypes"] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent":
+    ) -> "ChatAgent[TOptions_co]":
         """Create a ChatAgent with this client.
 
         This is a convenience method that creates a ChatAgent instance with this
         chat client already configured.
 
-        Args:
+        Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.
             instructions: Optional instructions for the agent.
                 These will be put into the messages sent to the chat client service as a system message.
+            tools: The tools to use for the request.
+            default_options: A TypedDict containing chat options. When using a typed client like
+                ``OpenAIChatClient``, this enables IDE autocomplete for provider-specific options
+                including temperature, max_tokens, model_id, tool_choice, and more.
+                Note: response_format typing does not flow into run outputs when set via default_options,
+                and dict literals are accepted without specialized option typing.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            context_providers: Context providers to include during agent invocation.
+            context_provider: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            frequency_penalty: The frequency penalty to use.
-            logit_bias: The logit bias to use.
-            max_tokens: The maximum number of tokens to generate.
-            metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
-            presence_penalty: The presence penalty to use.
-            response_format: The format of the response.
-            seed: The random seed to use.
-            stop: The stop sequence(s) for the request.
-            store: Whether to store the response.
-            temperature: The sampling temperature to use.
-            tool_choice: The tool choice for the request.
-            tools: The tools to use for the request.
-            top_p: The nucleus sampling probability to use.
-            user: The user to associate with the request.
-            request_kwargs: A dictionary of other values that will be passed through
-                to the chat_client ``get_response`` and ``get_streaming_response`` methods.
+            function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
@@ -837,14 +477,16 @@ class BaseChatClient(SerializationMixin, ABC):
         Examples:
             .. code-block:: python
 
-                from agent_framework.clients import OpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
 
                 # Create a client
-                client = OpenAIChatClient(model="gpt-4")
+                client = OpenAIChatClient(model_id="gpt-4")
 
                 # Create an agent using the convenience method
-                agent = client.create_agent(
-                    name="assistant", instructions="You are a helpful assistant.", temperature=0.7
+                agent = client.as_agent(
+                    name="assistant",
+                    instructions="You are a helpful assistant.",
+                    default_options={"temperature": 0.7, "max_tokens": 500},
                 )
 
                 # Run the agent
@@ -858,24 +500,11 @@ class BaseChatClient(SerializationMixin, ABC):
             name=name,
             description=description,
             instructions=instructions,
-            chat_message_store_factory=chat_message_store_factory,
-            context_providers=context_providers,
-            middleware=middleware,
-            frequency_penalty=frequency_penalty,
-            logit_bias=logit_bias,
-            max_tokens=max_tokens,
-            metadata=metadata,
-            model=model,
-            presence_penalty=presence_penalty,
-            response_format=response_format,
-            seed=seed,
-            stop=stop,
-            store=store,
-            temperature=temperature,
-            tool_choice=tool_choice,
             tools=tools,
-            top_p=top_p,
-            user=user,
-            request_kwargs=request_kwargs,
+            default_options=cast(Any, default_options),
+            chat_message_store_factory=chat_message_store_factory,
+            context_provider=context_provider,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )

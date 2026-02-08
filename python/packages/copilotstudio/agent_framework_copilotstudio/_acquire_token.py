@@ -16,6 +16,7 @@ DEFAULT_SCOPES = ["https://api.powerplatform.com/.default"]
 
 
 def acquire_token(
+    *,
     client_id: str,
     tenant_id: str,
     username: str | None = None,
@@ -27,7 +28,7 @@ def acquire_token(
     This function attempts to acquire a token silently first (using cached tokens),
     and falls back to interactive authentication if needed.
 
-    Args:
+    Keyword Args:
         client_id: The client ID of the application.
         tenant_id: The tenant ID for authentication.
         username: Optional username to filter accounts.

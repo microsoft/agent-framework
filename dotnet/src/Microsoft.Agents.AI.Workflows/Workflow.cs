@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -19,7 +20,7 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = [];
+    internal Dictionary<string, ExecutorBinding> ExecutorBindings { get; init; } = [];
 
     internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
     internal HashSet<string> OutputExecutors { get; init; } = [];
@@ -41,7 +42,7 @@ public class Workflow
     /// Gets the collection of external request ports, keyed by their ID.
     /// </summary>
     /// <remarks>
-    /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
+    /// Each port has a corresponding entry in the <see cref="ExecutorBindings"/> dictionary.
     /// </remarks>
     public Dictionary<string, RequestPortInfo> ReflectPorts()
     {
@@ -49,6 +50,15 @@ public class Workflow
             keySelector: key => key,
             elementSelector: key => this.Ports[key].ToPortInfo()
         );
+    }
+
+    /// <summary>
+    /// Gets the collection of executor bindings, keyed by their ID.
+    /// </summary>
+    /// <returns>A copy of the executor bindings dictionary. Modifications do not affect the workflow.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
+    {
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
     }
 
     /// <summary>
@@ -66,6 +76,11 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
+    internal bool AllowConcurrent => this.ExecutorBindings.Values.All(registration => registration.SupportsConcurrentSharedExecution);
+
+    internal IEnumerable<string> NonConcurrentExecutorIds =>
+        this.ExecutorBindings.Values.Where(r => !r.SupportsConcurrentSharedExecution).Select(r => r.Id);
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
     /// and input type.
@@ -80,51 +95,17 @@ public class Workflow
         this.Description = description;
     }
 
-    /// <summary>
-    /// Attempts to promote the current workflow to a type pre-checked instance that can handle input of type <typeparamref name="TInput"/>.
-    /// </summary>
-    /// <typeparam name="TInput">The desired input type.</typeparam>
-    /// <returns>A type-parametrized workflow definitely able to process input of type <typeparamref name="TInput"/> or
-    /// <see langword="null" /> if the workflow does not accept that type of input.</returns>
-    /// <exception cref="InvalidOperationException"></exception>
-    internal async ValueTask<Workflow<TInput>?> TryPromoteAsync<TInput>()
-    {
-        // Grab the start node, and make sure it has the right type?
-        if (!this.Registrations.TryGetValue(this.StartExecutorId, out ExecutorRegistration? startRegistration))
-        {
-            // TODO: This should never be able to be hit
-            throw new InvalidOperationException($"Start executor with ID '{this.StartExecutorId}' is not bound.");
-        }
-
-        // TODO: Can we cache this somehow to avoid having to instantiate a new one when running?
-        // Does that break some user expectations?
-        Executor startExecutor = await startRegistration.CreateInstanceAsync(string.Empty).ConfigureAwait(false);
-
-        if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(TInput))))
-        {
-            // We have no handlers for the input type T, which means the built workflow will not be able to
-            // process messages of the desired type
-            return null;
-        }
-
-        return new Workflow<TInput>(this.StartExecutorId)
-        {
-            Registrations = this.Registrations,
-            Edges = this.Edges,
-            Ports = this.Ports,
-            OutputExecutors = this.OutputExecutors
-        };
-    }
-
     private bool _needsReset;
-    private bool IsResettable => this.Registrations.Values.All(registration => !registration.IsUnresettableSharedInstance);
+    private bool HasResettableExecutors =>
+        this.ExecutorBindings.Values.Any(registration => registration.SupportsResetting);
 
     private async ValueTask<bool> TryResetExecutorRegistrationsAsync()
     {
-        if (this.IsResettable)
+        if (this.HasResettableExecutors)
         {
-            foreach (ExecutorRegistration registration in this.Registrations.Values)
+            foreach (ExecutorBinding registration in this.ExecutorBindings.Values)
             {
+                // TryResetAsync returns true if the executor does not need resetting
                 if (!await registration.TryResetAsync().ConfigureAwait(false))
                 {
                     return false;
@@ -140,6 +121,23 @@ public class Workflow
 
     private object? _ownerToken;
     private bool _ownedAsSubworkflow;
+
+    internal void CheckOwnership(object? existingOwnershipSignoff = null)
+    {
+        object? maybeOwned = Volatile.Read(ref this._ownerToken);
+        if (!ReferenceEquals(maybeOwned, existingOwnershipSignoff))
+        {
+            throw new InvalidOperationException($"Existing ownership does not match check value. {Summarize(maybeOwned)} vs. {Summarize(existingOwnershipSignoff)}");
+        }
+
+        static string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
+        {
+            string s => $"'{s}'",
+            null => "<null>",
+            _ => $"{maybeOwnerToken.GetType().Name}@{maybeOwnerToken.GetHashCode()}",
+        };
+    }
+
     internal void TakeOwnership(object ownerToken, bool subworkflow = false, object? existingOwnershipSignoff = null)
     {
         object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, existingOwnershipSignoff);
@@ -172,50 +170,48 @@ public class Workflow
                 });
         }
 
-        this._needsReset = true;
+        this._needsReset = this.HasResettableExecutors;
         this._ownedAsSubworkflow = subworkflow;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
             Justification = "Does not exist in NetFx 4.7.2")]
-    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken, object? targetOwnerToken)
     {
-        if (this._ownerToken == null)
-        {
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, targetOwnerToken, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
-        }
 
-        if (!ReferenceEquals(this._ownerToken, this._ownerToken))
+        if (!ReferenceEquals(originalToken, ownerToken))
         {
             throw new InvalidOperationException("Attempt to release ownership of a Workflow by non-owner.");
         }
 
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
-
-        Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
-        this._ownerToken = null;
     }
-}
 
-/// <summary>
-/// Represents a workflow that operates on data of type <typeparamref name="T"/>.
-/// </summary>
-/// <typeparam name="T">The type of input to the workflow.</typeparam>
-public class Workflow<T> : Workflow
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="Workflow{T}"/> class with the specified starting executor identifier
-    /// </summary>
-    /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    /// <param name="name">Optional human-readable name for the workflow.</param>
-    /// <param name="description">Optional description of what the workflow does.</param>
-    public Workflow(string startExecutorId, string? name = null, string? description = null)
-        : base(startExecutorId, name, description)
+    private sealed class NoOpExternalRequestContext : IExternalRequestContext, IExternalRequestSink
     {
+        public ValueTask PostAsync(ExternalRequest request) => default;
+
+        IExternalRequestSink IExternalRequestContext.RegisterPort(RequestPort port)
+        {
+            return this;
+        }
     }
 
     /// <summary>
-    /// Gets the type of input expected by the starting executor of the workflow.
+    /// Retrieves a <see cref="ProtocolDescriptor"/> defining how to interact with this workflow.
     /// </summary>
-    public Type InputType => typeof(T);
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{ProtocolDescriptor}"/> that represents that asynchronous operation. The result contains
+    /// a <see cref="ProtocolDescriptor"/> the protocol this <see cref="Workflow"/> follows.</returns>
+    public async ValueTask<ProtocolDescriptor> DescribeProtocolAsync(CancellationToken cancellationToken = default)
+    {
+        ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
+        Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
+                                                                .ConfigureAwait(false);
+        startExecutor.Configure(new NoOpExternalRequestContext());
+
+        return startExecutor.DescribeProtocol();
+    }
 }

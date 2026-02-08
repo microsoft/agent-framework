@@ -10,7 +10,8 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Chat;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -25,42 +26,40 @@ static string GetWeather([Description("The location to get the weather for.")] s
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
+    .GetChatClient(deploymentName)
+    .AsAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
-// Call the agent and check if there are any user input requests to handle.
-AgentThread thread = agent.GetNewThread();
-var response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
-var userInputRequests = response.UserInputRequests.ToList();
+// Call the agent and check if there are any function approval requests to handle.
+// For simplicity, we are assuming here that only function approvals are pending.
+AgentSession session = await agent.CreateSessionAsync();
+AgentResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", session);
+List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 
 // For streaming use:
-// var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread).ToListAsync();
-// userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
+// var updates = await agent.RunStreamingAsync("What is the weather like in Amsterdam?", session).ToListAsync();
+// approvalRequests = updates.SelectMany(x => x.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 
-while (userInputRequests.Count > 0)
+while (approvalRequests.Count > 0)
 {
     // Ask the user to approve each function call request.
-    // For simplicity, we are assuming here that only function approval requests are being made.
-    var userInputResponses = userInputRequests
-        .OfType<FunctionApprovalRequestContent>()
-        .Select(functionApprovalRequest =>
+    List<ChatMessage> userInputResponses = approvalRequests
+        .ConvertAll(functionApprovalRequest =>
         {
             Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
             return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
-        })
-        .ToList();
+        });
 
     // Pass the user input responses back to the agent for further processing.
-    response = await agent.RunAsync(userInputResponses, thread);
+    response = await agent.RunAsync(userInputResponses, session);
 
-    userInputRequests = response.UserInputRequests.ToList();
+    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 
     // For streaming use:
-    // updates = await agent.RunStreamingAsync(userInputResponses, thread).ToListAsync();
-    // userInputRequests = updates.SelectMany(x => x.UserInputRequests).ToList();
+    // updates = await agent.RunStreamingAsync(userInputResponses, session).ToListAsync();
+    // approvalRequests = updates.SelectMany(x => x.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");
 
 // For streaming use:
-// Console.WriteLine($"\nAgent: {updates.ToAgentRunResponse()}");
+// Console.WriteLine($"\nAgent: {updates.ToAgentResponse()}");

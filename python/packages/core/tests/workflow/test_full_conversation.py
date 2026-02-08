@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any
 
 from pydantic import PrivateAttr
@@ -8,56 +8,56 @@ from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
+    AgentExecutorResponse,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
-    Role,
-    SequentialBuilder,
-    TextContent,
+    Content,
+    Executor,
+    ResponseStream,
     WorkflowBuilder,
-    WorkflowOutputEvent,
+    WorkflowContext,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflows._executor import AgentExecutorResponse, Executor
-from agent_framework._workflows._workflow_context import WorkflowContext
+from agent_framework.orchestrations import SequentialBuilder
 
 
 class _SimpleAgent(BaseAgent):
-    """Agent that returns a single assistant message (non-streaming path)."""
+    """Agent that returns a single assistant message."""
 
     def __init__(self, *, reply_text: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        # This agent does not support streaming; yield a single complete response
-        yield AgentRunResponseUpdate(contents=[TextContent(text=self._reply_text)])
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+
+        return _run()
 
 
 class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None
@@ -71,32 +71,26 @@ class _CaptureFullConversation(Executor):
 
 
 async def test_agent_executor_populates_full_conversation_non_streaming() -> None:
-    # Arrange: non-streaming AgentExecutor for deterministic response composition
+    # Arrange: AgentExecutor will be non-streaming when using workflow.run()
     agent = _SimpleAgent(id="agent1", name="A", reply_text="agent-reply")
-    agent_exec = AgentExecutor(agent, streaming=False, id="agent1-exec")
+    agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
-    wf = WorkflowBuilder().set_start_executor(agent_exec).add_edge(agent_exec, capturer).build()
+    wf = WorkflowBuilder(start_executor=agent_exec, output_executors=[capturer]).add_edge(agent_exec, capturer).build()
 
-    # Act: run with a simple user prompt
-    completed = False
-    output: dict | None = None
-    async for ev in wf.run_stream("hello world"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
-            completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
-            output = ev.data  # type: ignore[assignment]
-        if completed and output is not None:
-            break
+    # Act: use run() to test non-streaming mode
+    result = await wf.run("hello world")
+
+    # Extract output from run result
+    outputs = result.get_outputs()
+    assert len(outputs) == 1
+    payload = outputs[0]
 
     # Assert: full_conversation contains [user("hello world"), assistant("agent-reply")]
-    assert completed
-    assert output is not None
-    payload = output
     assert isinstance(payload, dict)
     assert payload["length"] == 2
-    assert payload["roles"][0] == Role.USER and "hello world" in (payload["texts"][0] or "")
-    assert payload["roles"][1] == Role.ASSISTANT and "agent-reply" in (payload["texts"][1] or "")
+    assert payload["roles"][0] == "user" and "hello world" in (payload["texts"][0] or "")
+    assert payload["roles"][1] == "assistant" and "agent-reply" in (payload["texts"][1] or "")
 
 
 class _CaptureAgent(BaseAgent):
@@ -108,41 +102,35 @@ class _CaptureAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(  # type: ignore[override]
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
+        stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        # Normalize and record messages for verification when running non-streaming
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Normalize and record messages for verification
         norm: list[ChatMessage] = []
         if messages:
             for m in messages:  # type: ignore[iteration-over-optional]
                 if isinstance(m, ChatMessage):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage(role=Role.USER, text=m))
+                    norm.append(ChatMessage("user", [m]))
         self._last_messages = norm
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
 
-    async def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        # Normalize and record messages for verification when running streaming
-        norm: list[ChatMessage] = []
-        if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
-                if isinstance(m, ChatMessage):
-                    norm.append(m)
-                elif isinstance(m, str):
-                    norm.append(ChatMessage(role=Role.USER, text=m))
-        self._last_messages = norm
-        yield AgentRunResponseUpdate(contents=[TextContent(text=self._reply_text)])
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self._reply_text)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+
+        return _run()
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:
@@ -150,15 +138,15 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     a1 = _CaptureAgent(id="agent1", name="A1", reply_text="A1 reply")
     a2 = _CaptureAgent(id="agent2", name="A2", reply_text="A2 reply")
 
-    wf = SequentialBuilder().participants([a1, a2]).build()
+    wf = SequentialBuilder(participants=[a1, a2]).build()
 
     # Act
-    async for ev in wf.run_stream("hello seq"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+    async for ev in wf.run("hello seq", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
     # Assert: second agent should have seen the user prompt and A1's assistant reply
     seen = a2._last_messages  # pyright: ignore[reportPrivateUsage]
     assert len(seen) == 2
-    assert seen[0].role == Role.USER and "hello seq" in (seen[0].text or "")
-    assert seen[1].role == Role.ASSISTANT and "A1 reply" in (seen[1].text or "")
+    assert seen[0].role == "user" and "hello seq" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")

@@ -7,13 +7,12 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
-    AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
-    Case,  # Case entry for a switch-case edge group
+    Case,
+    ChatAgent,  # Case entry for a switch-case edge group
     ChatMessage,
     Default,  # Default branch when no cases match
-    Role,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
@@ -26,13 +25,13 @@ from typing_extensions import Never
 """
 Sample: Switch-Case Edge Group with an explicit Uncertain branch.
 
-The workflow stores a single email in shared state, asks a spam detection agent for a three way decision,
+The workflow stores a single email in workflow state, asks a spam detection agent for a three way decision,
 then routes with a switch-case group: NotSpam to the drafting assistant, Spam to a spam handler, and
 Default to an Uncertain handler.
 
 Purpose:
 Demonstrate deterministic one of N routing with switch-case edges. Show how to:
-- Persist input once in shared state, then pass around a small typed pointer that carries the email id.
+- Persist input once in workflow state, then pass around a small typed pointer that carries the email id.
 - Validate agent JSON with Pydantic models for robust parsing.
 - Keep executor responsibilities narrow. Transform model output to a typed DetectionResult, then route based
 on that type.
@@ -75,7 +74,7 @@ class DetectionResult:
 
 @dataclass
 class Email:
-    # In memory record of the email content stored in shared state.
+    # In memory record of the email content stored in workflow state.
     email_id: str
     email_content: str
 
@@ -94,20 +93,20 @@ def get_case(expected_decision: str):
 async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
     # Persist the raw email once. Store under a unique key and set the current pointer for convenience.
     new_email = Email(email_id=str(uuid4()), email_content=email_text)
-    await ctx.set_shared_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
-    await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
+    ctx.set_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
+    ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
     )
 
 
 @executor(id="to_detection_result")
 async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowContext[DetectionResult]) -> None:
     # Parse the detector JSON into a typed model. Attach the current email id for downstream lookups.
-    parsed = DetectionResultAgent.model_validate_json(response.agent_run_response.text)
-    email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
+    parsed = DetectionResultAgent.model_validate_json(response.agent_response.text)
+    email_id: str = ctx.get_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(spam_decision=parsed.spam_decision, reason=parsed.reason, email_id=email_id))
 
 
@@ -117,17 +116,17 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     if detection.spam_decision != "NotSpam":
         raise RuntimeError("This executor should only handle NotSpam messages.")
 
-    # Load the original content from shared state using the id carried in DetectionResult.
-    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
+    # Load the original content from workflow state using the id carried in DetectionResult.
+    email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
     )
 
 
 @executor(id="finalize_and_send")
 async def finalize_and_send(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Terminal step for the drafting branch. Yield the email response as output.
-    parsed = EmailResponse.model_validate_json(response.agent_run_response.text)
+    parsed = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent: {parsed.response}")
 
 
@@ -144,7 +143,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Never, str]) -> None:
     # Uncertain path terminal. Surface the original content to aid human review.
     if detection.spam_decision == "Uncertain":
-        email: Email | None = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
+        email: Email | None = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
         await ctx.yield_output(
             f"Email marked as uncertain: {detection.reason}. Email content: {getattr(email, 'email_content', '')}"
         )
@@ -152,51 +151,55 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
         raise RuntimeError("This executor should only handle Uncertain messages.")
 
 
+def create_spam_detection_agent() -> ChatAgent:
+    """Create and return the spam detection agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Be less confident in your assessments. "
+            "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
+            "and 'reason' (string)."
+        ),
+        name="spam_detection_agent",
+        default_options={"response_format": DetectionResultAgent},
+    )
+
+
+def create_email_assistant_agent() -> ChatAgent:
+    """Create and return the email assistant agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
+        name="email_assistant_agent",
+        default_options={"response_format": EmailResponse},
+    )
+
+
 async def main():
     """Main function to run the workflow."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Agents. response_format enforces that the LLM returns JSON that Pydantic can validate.
-    spam_detection_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are a spam detection assistant that identifies spam emails. "
-                "Be less confident in your assessments. "
-                "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
-                "and 'reason' (string)."
-            ),
-            response_format=DetectionResultAgent,
-        ),
-        id="spam_detection_agent",
-    )
-
-    email_assistant_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email assistant that helps users draft responses to emails with professionalism."
-            ),
-            response_format=EmailResponse,
-        ),
-        id="email_assistant_agent",
-    )
-
     # Build workflow: store -> detection agent -> to_detection_result -> switch (NotSpam or Spam or Default).
     # The switch-case group evaluates cases in order, then falls back to Default when none match.
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(store_email)
-        .add_edge(store_email, spam_detection_agent)
-        .add_edge(spam_detection_agent, to_detection_result)
+        WorkflowBuilder(start_executor="store_email")
+        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
+        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
+        .register_executor(lambda: store_email, name="store_email")
+        .register_executor(lambda: to_detection_result, name="to_detection_result")
+        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
+        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
+        .register_executor(lambda: handle_spam, name="handle_spam")
+        .register_executor(lambda: handle_uncertain, name="handle_uncertain")
+        .add_edge("store_email", "spam_detection_agent")
+        .add_edge("spam_detection_agent", "to_detection_result")
         .add_switch_case_edge_group(
-            to_detection_result,
+            "to_detection_result",
             [
-                Case(condition=get_case("NotSpam"), target=submit_to_email_assistant),
-                Case(condition=get_case("Spam"), target=handle_spam),
-                Default(target=handle_uncertain),
+                Case(condition=get_case("NotSpam"), target="submit_to_email_assistant"),
+                Case(condition=get_case("Spam"), target="handle_spam"),
+                Default(target="handle_uncertain"),
             ],
         )
-        .add_edge(submit_to_email_assistant, email_assistant_agent)
-        .add_edge(email_assistant_agent, finalize_and_send)
+        .add_edge("submit_to_email_assistant", "email_assistant_agent")
+        .add_edge("email_assistant_agent", "finalize_and_send")
         .build()
     )
 

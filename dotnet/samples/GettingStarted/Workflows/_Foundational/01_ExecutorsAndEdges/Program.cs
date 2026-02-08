@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowExecutorsAndEdgesSample;
 
@@ -21,7 +20,9 @@ public static class Program
     private static async Task Main()
     {
         // Create the executors
-        UppercaseExecutor uppercase = new();
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
         ReverseTextExecutor reverse = new();
 
         // Build the workflow by connecting executors sequentially
@@ -30,7 +31,7 @@ public static class Program
         var workflow = builder.Build();
 
         // Execute the workflow with input data
-        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+        await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is ExecutorCompletedEvent executorComplete)
@@ -42,34 +43,21 @@ public static class Program
 }
 
 /// <summary>
-/// First executor: converts input text to uppercase.
-/// </summary>
-internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
-{
-    /// <summary>
-    /// Processes the input message by converting it to uppercase.
-    /// </summary>
-    /// <param name="message">The input text to convert</param>
-    /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-    /// <returns>The input text converted to uppercase</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
-        message.ToUpperInvariant(); // The return value will be sent as a message along an edge to subsequent executors
-}
-
-/// <summary>
 /// Second executor: reverses the input text and completes the workflow.
 /// </summary>
-internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : Executor<string, string>("ReverseTextExecutor")
 {
     /// <summary>
     /// Processes the input message by reversing the text.
     /// </summary>
     /// <param name="message">The input text to reverse</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text reversed</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
+    public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Because we do not suppress it, the returned result will be yielded as an output from this executor.
-        return string.Concat(message.Reverse());
+        return ValueTask.FromResult(string.Concat(message.Reverse()));
     }
 }

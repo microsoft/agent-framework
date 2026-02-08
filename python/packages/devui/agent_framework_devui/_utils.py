@@ -6,9 +6,168 @@ import inspect
 import json
 import logging
 from dataclasses import fields, is_dataclass
-from typing import Any, get_args, get_origin
+from types import UnionType
+from typing import Any, Union, get_args, get_origin, get_type_hints
+
+from agent_framework import ChatMessage
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Agent Metadata Extraction
+# ============================================================================
+
+
+def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
+    """Extract agent-specific metadata from an entity object.
+
+    Args:
+        entity_object: Agent Framework agent object
+
+    Returns:
+        Dictionary with agent metadata: instructions, model, chat_client_type,
+        context_providers, and middleware
+    """
+    metadata = {
+        "instructions": None,
+        "model": None,
+        "chat_client_type": None,
+        "context_provider": None,
+        "middleware": None,
+    }
+
+    # Try to get instructions
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if "instructions" in chat_opts:
+                metadata["instructions"] = chat_opts.get("instructions")
+        elif hasattr(chat_opts, "instructions"):
+            metadata["instructions"] = chat_opts.instructions
+
+    # Try to get model - check both default_options and chat_client
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        if isinstance(chat_opts, dict):
+            if chat_opts.get("model_id"):
+                metadata["model"] = chat_opts.get("model_id")
+        elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
+            metadata["model"] = chat_opts.model_id
+    if (
+        metadata["model"] is None
+        and hasattr(entity_object, "chat_client")
+        and hasattr(entity_object.chat_client, "model_id")
+    ):
+        metadata["model"] = entity_object.chat_client.model_id
+
+    # Try to get chat client type
+    if hasattr(entity_object, "chat_client"):
+        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+
+    # Try to get context providers
+    if (
+        hasattr(entity_object, "context_provider")
+        and entity_object.context_provider
+        and hasattr(entity_object.context_provider, "__class__")
+    ):
+        metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+
+    # Try to get middleware
+    if hasattr(entity_object, "middleware") and entity_object.middleware:
+        middlewares_list: list[str] = []
+        for m in entity_object.middleware:
+            # Try multiple ways to get a good name for middleware
+            if hasattr(m, "__name__"):  # Function or callable
+                middlewares_list.append(m.__name__)
+            elif hasattr(m, "__class__"):  # Class instance
+                middlewares_list.append(m.__class__.__name__)
+            else:
+                middlewares_list.append(str(m))
+        metadata["middleware"] = middlewares_list  # type: ignore
+
+    return metadata
+
+
+# ============================================================================
+# Workflow Input Type Utilities
+# ============================================================================
+
+
+def extract_executor_message_types(executor: Any) -> list[Any]:
+    """Extract declared input types for the given executor.
+
+    Args:
+        executor: Workflow executor object
+
+    Returns:
+        List of message types that the executor accepts
+    """
+    message_types: list[Any] = []
+
+    try:
+        input_types = getattr(executor, "input_types", None)
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        logger.debug(f"Failed to access executor input_types: {exc}")
+    else:
+        if input_types:
+            message_types = list(input_types)
+
+    if not message_types and hasattr(executor, "_handlers"):
+        try:
+            handlers = executor._handlers
+            if isinstance(handlers, dict):
+                message_types = list(handlers.keys())
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor handlers: {exc}")
+
+    return message_types
+
+
+def _contains_chat_message(type_hint: Any) -> bool:
+    """Check whether the provided type hint directly or indirectly references ChatMessage."""
+    if type_hint is ChatMessage:
+        return True
+
+    origin = get_origin(type_hint)
+    if origin in (list, tuple):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    if origin in (Union, UnionType):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    return False
+
+
+def select_primary_input_type(message_types: list[Any]) -> Any | None:
+    """Choose the most user-friendly input type for workflow inputs.
+
+    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
+
+    Args:
+        message_types: List of possible message types
+
+    Returns:
+        Selected primary input type, or None if list is empty
+    """
+    if not message_types:
+        return None
+
+    for message_type in message_types:
+        if _contains_chat_message(message_type):
+            return ChatMessage
+
+    preferred = (str, dict)
+
+    for candidate in preferred:
+        for message_type in message_types:
+            if message_type is candidate:
+                return candidate
+            origin = get_origin(message_type)
+            if origin is candidate:
+                return candidate
+
+    return message_types[0]
+
 
 # ============================================================================
 # Type System Utilities
@@ -111,8 +270,6 @@ def generate_schema_from_serialization_mixin(cls: type[Any]) -> dict[str, Any]:
 
     # Get type hints
     try:
-        from typing import get_type_hints
-
         type_hints = get_type_hints(cls)
     except Exception:
         type_hints = {}
@@ -173,6 +330,69 @@ def generate_schema_from_dataclass(cls: type[Any]) -> dict[str, Any]:
         schema["required"] = required
 
     return schema
+
+
+def extract_response_type_from_executor(executor: Any, request_type: type) -> type | None:
+    """Extract the expected response type from an executor's response handler.
+
+    Looks for methods decorated with @response_handler that have signature:
+       async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+
+    Args:
+        executor: Executor object that should have a handler for the request type
+        request_type: The request message type
+
+    Returns:
+        The response type class, or None if not found
+    """
+    try:
+        # Introspect handler methods for @response_handler pattern
+        for attr_name in dir(executor):
+            if attr_name.startswith("_"):
+                continue
+            attr = getattr(executor, attr_name, None)
+            if not callable(attr):
+                continue
+
+            # Get type hints for this method
+            try:
+                type_hints = get_type_hints(attr)
+
+                # Check for @response_handler pattern:
+                # async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+                type_hint_params = {k: v for k, v in type_hints.items() if k not in ("self", "return")}
+
+                # Look for at least 2 parameters: original_request, response (ctx is optional)
+                if len(type_hint_params) >= 2:
+                    param_items = list(type_hint_params.items())
+                    # First param should be original_request matching request_type
+                    _, first_param_type = param_items[0]
+                    _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
+
+                    # Check if first param matches request_type
+                    first_matches_request = first_param_type == request_type or (
+                        hasattr(first_param_type, "__name__")
+                        and hasattr(request_type, "__name__")
+                        and first_param_type.__name__ == request_type.__name__
+                    )
+
+                    # Verify we have a matching request type and valid response type (must be a type class)
+                    if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
+                        response_type_class: type = second_param_type
+                        logger.debug(
+                            f"Found response type {response_type_class} for request {request_type} "
+                            f"via @response_handler"
+                        )
+                        return response_type_class
+
+            except Exception as e:
+                logger.debug(f"Failed to get type hints for {attr_name}: {e}")
+                continue
+
+    except Exception as e:
+        logger.debug(f"Failed to extract response type from executor: {e}")
+
+    return None
 
 
 def generate_input_schema(input_type: type) -> dict[str, Any]:

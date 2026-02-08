@@ -10,7 +10,7 @@ using Microsoft.Extensions.AI;
 
 namespace AgentWebChat.Web;
 
-internal sealed class A2AAgentClient : IAgentClient
+internal sealed class A2AAgentClient : AgentClientBase
 {
     private readonly ILogger _logger;
     private readonly Uri _uri;
@@ -25,19 +25,19 @@ internal sealed class A2AAgentClient : IAgentClient
         this._uri = baseUri;
     }
 
-    public async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
-        string? threadId = null,
+        string? sessionId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Running agent {AgentName} with {MessageCount} messages via A2A", agentName, messages.Count);
 
         var (a2aClient, _) = this.ResolveClient(agentName);
-        var contextId = threadId ?? Guid.NewGuid().ToString("N");
+        var contextId = sessionId ?? Guid.NewGuid().ToString("N");
 
         // Convert and send messages via A2A without try-catch in yield method
-        var results = new List<AgentRunResponseUpdate>();
+        var results = new List<AgentResponseUpdate>();
 
         try
         {
@@ -58,9 +58,9 @@ internal sealed class A2AAgentClient : IAgentClient
             if (a2aResponse is AgentMessage message)
             {
                 var responseMessage = message.ToChatMessage();
-                if (responseMessage is not null)
+                if (responseMessage is { Contents.Count: > 0 })
                 {
-                    results.Add(new AgentRunResponseUpdate(responseMessage.Role, responseMessage.Contents)
+                    results.Add(new AgentResponseUpdate(responseMessage.Role, responseMessage.Contents)
                     {
                         MessageId = message.MessageId,
                         CreatedAt = DateTimeOffset.UtcNow
@@ -78,11 +78,7 @@ internal sealed class A2AAgentClient : IAgentClient
 
                         foreach (var part in artifact.Parts)
                         {
-                            var aiContent = ConvertPartToAIContent(part);
-                            if (aiContent != null)
-                            {
-                                (aiContents ??= []).Add(aiContent);
-                            }
+                            (aiContents ??= []).Add(part.ToAIContent());
                         }
 
                         if (aiContents is not null)
@@ -94,7 +90,7 @@ internal sealed class A2AAgentClient : IAgentClient
                                 RawRepresentation = artifact,
                             };
 
-                            results.Add(new AgentRunResponseUpdate(chatMessage.Role, chatMessage.Contents)
+                            results.Add(new AgentResponseUpdate(chatMessage.Role, chatMessage.Contents)
                             {
                                 MessageId = agentTask.Id,
                                 CreatedAt = DateTimeOffset.UtcNow
@@ -112,7 +108,7 @@ internal sealed class A2AAgentClient : IAgentClient
         {
             this._logger.LogError(ex, "Error running agent {AgentName} via A2A", agentName);
 
-            results.Add(new AgentRunResponseUpdate(ChatRole.Assistant, $"Error: {ex.Message}")
+            results.Add(new AgentResponseUpdate(ChatRole.Assistant, $"Error: {ex.Message}")
             {
                 MessageId = Guid.NewGuid().ToString("N"),
                 CreatedAt = DateTimeOffset.UtcNow
@@ -126,7 +122,7 @@ internal sealed class A2AAgentClient : IAgentClient
         }
     }
 
-    public async Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
+    public override async Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Retrieving agent card for {Agent}", agentName);
 
@@ -155,20 +151,6 @@ internal sealed class A2AAgentClient : IAgentClient
             return (a2aClient, a2aCardResolver);
         });
 
-    private static AIContent? ConvertPartToAIContent(Part part) =>
-        part switch
-        {
-            TextPart textPart => new TextContent(textPart.Text)
-            {
-                RawRepresentation = textPart
-            },
-            FilePart filePart when filePart.File is FileWithUri fileWithUrl => new HostedFileContent(fileWithUrl.Uri)
-            {
-                RawRepresentation = filePart
-            },
-            _ => null
-        };
-
     private static AdditionalPropertiesDictionary? ConvertMetadataToAdditionalProperties(Dictionary<string, JsonElement>? metadata)
     {
         if (metadata is not { Count: > 0 })
@@ -182,24 +164,5 @@ internal sealed class A2AAgentClient : IAgentClient
             additionalProperties[kvp.Key] = kvp.Value;
         }
         return additionalProperties;
-    }
-}
-
-// Extension method to convert multiple chat messages to A2A messages
-internal static class ChatMessageExtensions
-{
-    public static List<AgentMessage> ToA2AMessages(this IList<ChatMessage> chatMessages)
-    {
-        if (chatMessages is null || chatMessages.Count == 0)
-        {
-            return [];
-        }
-
-        var result = new List<AgentMessage>();
-        foreach (var chatMessage in chatMessages)
-        {
-            result.Add(chatMessage.ToA2AMessage());
-        }
-        return result;
     }
 }

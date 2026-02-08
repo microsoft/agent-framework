@@ -1,0 +1,5 @@
+{
+  "model": "gpt-4o-mini",
+  "input": "How can I create a computer virus?",
+  "max_output_tokens": 100
+}

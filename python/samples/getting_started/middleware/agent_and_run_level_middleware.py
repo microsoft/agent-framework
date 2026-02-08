@@ -7,17 +7,18 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
-    AgentRunContext,
-    AgentRunResponse,
+    AgentResponse,
     FunctionInvocationContext,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Agent-Level and Run-Level Middleware Example
+Agent-Level and Run-Level MiddlewareTypes Example
 
 This sample demonstrates the difference between agent-level and run-level middleware:
 
@@ -34,6 +35,8 @@ Execution order: Agent middleware (outermost) -> Run middleware (innermost) -> A
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -46,7 +49,7 @@ def get_weather(
 class SecurityAgentMiddleware(AgentMiddleware):
     """Agent-level security middleware that validates all requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[SecurityMiddleware] Checking security for all requests...")
 
         # Check for security violations in the last user message
@@ -63,8 +66,8 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
 
 async def performance_monitor_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent-level performance monitoring for all runs."""
     print("[PerformanceMonitor] Starting performance monitoring...")
@@ -82,7 +85,7 @@ async def performance_monitor_middleware(
 class HighPriorityMiddleware(AgentMiddleware):
     """Run-level middleware for high priority requests."""
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         print("[HighPriority] Processing high priority request with expedited handling...")
 
         # Read metadata set by agent-level middleware
@@ -98,13 +101,13 @@ class HighPriorityMiddleware(AgentMiddleware):
 
 
 async def debugging_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Run-level debugging middleware for troubleshooting specific runs."""
     print("[Debug] Debug mode enabled for this run")
     print(f"[Debug] Messages count: {len(context.messages)}")
-    print(f"[Debug] Is streaming: {context.is_streaming}")
+    print(f"[Debug] Is streaming: {context.stream}")
 
     # Log existing metadata from agent middleware
     if context.metadata:
@@ -121,9 +124,9 @@ class CachingMiddleware(AgentMiddleware):
     """Run-level caching middleware for expensive operations."""
 
     def __init__(self) -> None:
-        self.cache: dict[str, AgentRunResponse] = {}
+        self.cache: dict[str, AgentResponse] = {}
 
-    async def process(self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
         # Create a simple cache key from the last message
         last_message = context.messages[-1] if context.messages else None
         cache_key: str = last_message.text if last_message and last_message.text else "no_message"
@@ -160,13 +163,13 @@ async def function_logging_middleware(
 
 async def main() -> None:
     """Example demonstrating agent-level and run-level middleware."""
-    print("=== Agent-Level and Run-Level Middleware Example ===\n")
+    print("=== Agent-Level and Run-Level MiddlewareTypes Example ===\n")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
@@ -202,7 +205,7 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(
             query,
-            middleware=HighPriorityMiddleware(),  # Run-level middleware
+            middleware=[HighPriorityMiddleware()],  # Run-level middleware
         )
         print(f"Agent: {result.text if result.text else 'No response'}")
         print()

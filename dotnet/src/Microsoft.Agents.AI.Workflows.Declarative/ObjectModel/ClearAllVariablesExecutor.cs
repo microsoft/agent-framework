@@ -5,8 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
@@ -28,7 +28,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
 
         if (scope is not null)
         {
-            await context.QueueClearScopeAsync(scope).ConfigureAwait(false);
+            await context.QueueClearScopeAsync(scope, cancellationToken).ConfigureAwait(false);
             Debug.WriteLine(
                 $"""
                 STATE: {this.GetType().Name} [{this.Id}]

@@ -31,17 +31,28 @@ export interface AgentInfo {
   has_env: boolean;
   module_path?: string;
   required_env_vars?: EnvVarRequirement[];
+  metadata?: Record<string, unknown>; // Backend metadata including lazy_loaded flag
+  // Deployment support
+  deployment_supported?: boolean;
+  deployment_reason?: string;
   // Agent-specific fields
   instructions?: string;
-  model?: string;
+  model_id?: string;
   chat_client_type?: string;
-  context_providers?: string[];
-  middleware?: string[];
+  context_provider?: string | undefined;
+  middleware?: string[] | undefined;
 }
 
 // JSON Schema types for workflow input
 export interface JSONSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?:
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -49,6 +60,16 @@ export interface JSONSchemaProperty {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  // Union types (Pydantic generates these for Optional[T], Union[T1, T2], etc.)
+  anyOf?: JSONSchemaProperty[];
+  oneOf?: JSONSchemaProperty[];
+  allOf?: JSONSchemaProperty[];
+  // Additional JSON Schema properties
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
 }
 
 export interface JSONSchema {
@@ -70,30 +91,41 @@ export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
   input_schema: JSONSchema; // JSON Schema for workflow input
   input_type_name: string; // Human-readable input type name
   start_executor_id: string; // Entry point executor ID
+  // Note: DevUI provides runtime checkpoint storage for ALL workflows via conversations
 }
 
-export interface ThreadInfo {
+// OpenAI Conversations API (standard)
+export interface Conversation {
   id: string;
-  agent_id: string;
-  created_at: string;
-  message_count: number;
-}
-
-export interface SessionInfo {
-  thread_id: string;
-  agent_id: string;
-  created_at: string;
-  messages: Array<Record<string, unknown>>;
-  metadata: Record<string, unknown>;
+  object: "conversation";
+  created_at: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunAgentRequest {
   input: import("./agent-framework").ResponseInputParam;
-  thread_id?: string;
+  conversation_id?: string; // OpenAI standard conversation parameter
 }
 
 export interface RunWorkflowRequest {
   input_data: Record<string, unknown>;
+  conversation_id?: string;
+  checkpoint_id?: string;
+}
+
+// OpenAI Proxy Mode Configuration
+export interface OAIProxyMode {
+  enabled: boolean;
+  model: string; // Model ID like "gpt-4o", "gpt-4o-mini", or custom
+
+  // Optional OpenAI Responses API parameters
+  temperature?: number;
+  max_output_tokens?: number;
+  top_p?: number;
+  instructions?: string;
+
+  // Reasoning parameters (for o-series models)
+  reasoning_effort?: "minimal" | "low" | "medium" | "high";
 }
 
 // Legacy types - DEPRECATED - use new structured events from openai.ts instead
@@ -107,11 +139,21 @@ export type {
   // New structured event types
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
-  ResponseFunctionResultComplete,
   ResponseTraceEventComplete,
-  ResponseUsageEventComplete,
+  ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
+  ResponseCreatedEvent,
+  ResponseInProgressEvent,
+  ResponseCompletedEvent,
+  ResponseFailedEvent,
+  ResponseFunctionResultComplete,
+  ResponseFunctionToolCall,
   StructuredEvent,
+  WorkflowItem,
+  ExecutorActionItem,
 } from "./openai";
+
+export { isExecutorAction } from "./openai";
 
 // Re-export Agent Framework types
 export type {
@@ -129,11 +171,24 @@ export interface HealthResponse {
   version: string;
 }
 
+export interface MetaResponse {
+  ui_mode: "developer" | "user";
+  version: string;
+  framework: string;
+  runtime: "python" | "dotnet";
+  capabilities: {
+    instrumentation: boolean;
+    openai_proxy: boolean;
+    deployment: boolean;
+  };
+  auth_required: boolean;
+}
+
 // Chat message types matching Agent Framework
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
-  contents: import("./agent-framework").Contents[];
+  contents: import("./agent-framework").Content[];
   timestamp: string;
   streaming?: boolean;
   author_name?: string;
@@ -149,7 +204,7 @@ export interface ChatMessage {
 // UI State types
 export interface AppState {
   selectedAgent?: AgentInfo | WorkflowInfo;
-  currentThread?: ThreadInfo;
+  currentConversation?: Conversation;
   agents: AgentInfo[];
   workflows: WorkflowInfo[];
   isLoading: boolean;
@@ -160,4 +215,113 @@ export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
+}
+
+// DevUI-specific: Pending approval state
+export interface PendingApproval {
+  request_id: string;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+// Deployment types
+export interface DeploymentConfig {
+  entity_id: string;
+  resource_group: string;
+  app_name: string;
+  region?: string;
+  ui_mode?: string;
+  ui_enabled?: boolean;
+  stream?: boolean;
+}
+
+export interface DeploymentEvent {
+  type: string;
+  message: string;
+  url?: string;
+  auth_token?: string;
+}
+
+export interface Deployment {
+  id: string;
+  entity_id: string;
+  resource_group: string;
+  app_name: string;
+  region: string;
+  url: string;
+  status: string;
+  created_at: string;
+  error?: string;
+}
+
+// Workflow Session Management Types
+export interface WorkflowSession {
+  conversation_id: string;
+  entity_id: string;
+  created_at: number;
+  metadata: {
+    name?: string;
+    description?: string;
+    type: "workflow_session";
+    checkpoint_summary?: {
+      count: number;
+      latest_iteration: number;
+      has_pending_hil: boolean;
+      pending_hil_count: number;
+    };
+    [key: string]: unknown;
+  };
+}
+
+export interface CheckpointInfo {
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: number;
+  iteration_count: number;
+  metadata?: Record<string, unknown>;
+}
+
+// Full checkpoint data structure
+export interface FullCheckpoint {
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  messages: Record<string, unknown[]>;
+  state: Record<string, unknown>;
+  pending_request_info_events: Record<string, PendingRequestInfoEvent>;
+  iteration_count: number;
+  metadata: Record<string, unknown>;
+  version: string;
+}
+
+// Pending request info event data
+export interface PendingRequestInfoEvent {
+  source_executor_id: string;
+  request_type?: string;
+  response_type?: string;
+  request_data?: Record<string, unknown>;
+  request_schema?: Record<string, unknown>;
+  timestamp?: string;
+}
+
+// Checkpoint item from conversation items API
+export interface CheckpointItem {
+  id: string;
+  type: "checkpoint";
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  status: "completed";
+  metadata: {
+    iteration_count: number;
+    pending_hil_count: number;
+    has_pending_hil: boolean;
+    message_count: number;
+    size_bytes?: number;
+    version: string;
+    full_checkpoint?: FullCheckpoint;
+  };
 }

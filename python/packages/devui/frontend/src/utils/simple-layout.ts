@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { ExecutorNodeData } from "@/components/workflow/executor-node";
+import type { ExecutorNodeData } from "@/components/features/workflow/executor-node";
 
 /**
  * Lightweight auto-layout algorithm to replace dagre

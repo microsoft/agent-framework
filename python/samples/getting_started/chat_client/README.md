@@ -14,6 +14,7 @@ This folder contains simple examples demonstrating direct usage of various chat 
 | [`openai_assistants_client.py`](openai_assistants_client.py) | Direct usage of OpenAI Assistants Client for basic chat interactions with OpenAI assistants. |
 | [`openai_chat_client.py`](openai_chat_client.py) | Direct usage of OpenAI Chat Client for chat interactions with OpenAI models. |
 | [`openai_responses_client.py`](openai_responses_client.py) | Direct usage of OpenAI Responses Client for structured response generation with OpenAI models. |
+| [`custom_chat_client.py`](custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `ChatAgent` using the `as_agent()` method. |
 
 ## Environment Variables
 
@@ -32,3 +33,9 @@ Depending on which client you're using, set the appropriate environment variable
 - `OPENAI_API_KEY`: Your OpenAI API key
 - `OPENAI_CHAT_MODEL_ID`: The OpenAI model to use for chat clients (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
 - `OPENAI_RESPONSES_MODEL_ID`: The OpenAI model to use for responses clients (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
+
+**For Ollama client:**
+- `OLLAMA_HOST`: Your Ollama server URL (defaults to `http://localhost:11434` if not set)
+- `OLLAMA_MODEL_ID`: The Ollama model to use for chat (e.g., `llama3.2`, `llama2`, `codellama`)
+
+> **Note**: For Ollama, ensure you have Ollama installed and running locally with at least one model downloaded. Visit [https://ollama.com/](https://ollama.com/) for installation instructions.

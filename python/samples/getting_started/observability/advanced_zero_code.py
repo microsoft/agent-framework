@@ -4,6 +4,7 @@ import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
+from agent_framework import tool
 from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry.trace import SpanKind
@@ -19,15 +20,28 @@ This sample shows how you can configure observability of an application with zer
 It relies on the OpenTelemetry auto-instrumentation capabilities, and the observability setup
 is done via environment variables.
 
-This sample requires the `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable to be set.
+Follow the install guidance from https://opentelemetry.io/docs/zero-code/python/ to install the OpenTelemetry CLI tool.
 
-Run the sample with the following command:
+And setup a local OpenTelemetry Collector instance to receive the traces and metrics (and update the endpoint below).
+
+Then you can run:
+```bash
+opentelemetry-enable_instrumentation \
+    --traces_exporter otlp \
+    --metrics_exporter otlp \
+    --service_name agent_framework \
+    --exporter_otlp_endpoint http://localhost:4317 \
+    python samples/getting_started/observability/advanced_zero_code.py
 ```
-uv run --env-file=.env opentelemetry-instrument python advanced_zero_code.py
-```
+(or use uv run in front when you have did the install within your uv virtual environment)
+
+You can also set the environment variables instead of passing them as CLI arguments.
+
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -67,7 +81,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
+        async for chunk in client.get_response(message, tools=get_weather, stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")

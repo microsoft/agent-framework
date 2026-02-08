@@ -1,0 +1,14 @@
+{
+  "id": "msg_04cbf451511948220068fb976c70208195a34d776fd6ad006e",
+  "type": "message",
+  "status": "completed",
+  "content": [
+    {
+      "type": "output_text",
+      "annotations": [],
+      "logprobs": [],
+      "text": "The capital of France is Paris."
+    }
+  ],
+  "role": "assistant"
+}

@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowCustomAgentExecutorsSample;
@@ -49,8 +48,8 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)
             {
@@ -107,13 +106,10 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 /// 1. HandleAsync(string message): Handles the initial task to create a slogan.
 /// 2. HandleAsync(Feedback message): Handles feedback to improve the slogan.
 /// </summary>
-internal sealed class SloganWriterExecutor
-    : ReflectingExecutor<SloganWriterExecutor>,
-      IMessageHandler<string, SloganResult>,
-      IMessageHandler<FeedbackResult, SloganResult>
+internal sealed class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
-    private readonly AgentThread _thread;
+    private AgentSession? _session;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
@@ -122,29 +118,35 @@ internal sealed class SloganWriterExecutor
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
     public SloganWriterExecutor(string id, IChatClient chatClient) : base(id)
     {
-        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional slogan writer. You will be given a task to create a slogan.")
+        ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                Instructions = "You are a professional slogan writer. You will be given a task to create a slogan.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<SloganResult>()
             }
         };
 
         this._agent = new ChatClientAgent(chatClient, agentOptions);
-        this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context)
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync)
+                    .AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
+
+    public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        var result = await this._agent.RunAsync(message, this._thread);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
+
+        var result = await this._agent.RunAsync(message, this._session, cancellationToken: cancellationToken);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult));
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 
-    public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context)
+    public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var feedbackMessage = $"""
             Here is the feedback on your previous slogan:
@@ -155,10 +157,10 @@ internal sealed class SloganWriterExecutor
             Please use this feedback to improve your slogan.
             """;
 
-        var result = await this._agent.RunAsync(feedbackMessage, this._thread);
+        var result = await this._agent.RunAsync(feedbackMessage, this._session, cancellationToken: cancellationToken);
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult));
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 }
@@ -175,10 +177,10 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 /// <summary>
 /// A custom executor that uses an AI agent to provide feedback on a slogan.
 /// </summary>
-internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, IMessageHandler<SloganResult>
+internal sealed class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
-    private readonly AgentThread _thread;
+    private AgentSession? _session;
 
     public int MinimumRating { get; init; } = 8;
 
@@ -193,44 +195,46 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
     public FeedbackExecutor(string id, IChatClient chatClient) : base(id)
     {
-        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.")
+        ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                Instructions = "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<FeedbackResult>()
             }
         };
 
         this._agent = new ChatClientAgent(chatClient, agentOptions);
-        this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask HandleAsync(SloganResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
+
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':
             Slogan: {message.Slogan}
             Please provide feedback on this slogan, including comments, a rating from 1 to 10, and suggested actions for improvement.
             """;
 
-        var response = await this._agent.RunAsync(sloganMessage, this._thread);
+        var response = await this._agent.RunAsync(sloganMessage, this._session, cancellationToken: cancellationToken);
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
-        await context.AddEventAsync(new FeedbackEvent(feedback));
+        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken);
 
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}");
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}");
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
-        await context.SendMessageAsync(feedback);
+        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
         this._attempts++;
     }
 }

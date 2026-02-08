@@ -2,6 +2,7 @@
 
 using System;
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,7 +13,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides extensions for <see cref="AIAgent"/>.
 /// </summary>
-public static class AIAgentExtensions
+public static partial class AIAgentExtensions
 {
     /// <summary>
     /// Creates a new <see cref="AIAgentBuilder"/> using the specified agent as the foundation for the builder pipeline.
@@ -41,8 +42,8 @@ public static class AIAgentExtensions
     /// Optional metadata to customize the function representation, such as name and description.
     /// If not provided, defaults will be inferred from the agent's properties.
     /// </param>
-    /// <param name="thread">
-    /// Optional <see cref="AgentThread"/> to use for function invocations. If not provided, a new thread
+    /// <param name="session">
+    /// Optional <see cref="AgentSession"/> to use for function invocations. If not provided, a new session
     /// will be created for each function call, which may not preserve conversation context.
     /// </param>
     /// <returns>
@@ -58,12 +59,12 @@ public static class AIAgentExtensions
     /// </para>
     /// <para>
     /// The resulting <see cref="AIFunction"/> is stateful, referencing both the <paramref name="agent"/> and the optional
-    /// <paramref name="thread"/>. Especially if a specific thread is provided, avoid using the resulting function concurrently
-    /// in multiple conversations or in requests where the parallel function calls may result in concurrent usage of the thread,
+    /// <paramref name="session"/>. Especially if a specific session is provided, avoid using the resulting function concurrently
+    /// in multiple conversations or in requests where the parallel function calls may result in concurrent usage of the session,
     /// as that could lead to undefined and unpredictable behavior.
     /// </para>
     /// </remarks>
-    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentThread? thread = null)
+    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentSession? session = null)
     {
         Throw.IfNull(agent);
 
@@ -72,14 +73,42 @@ public static class AIAgentExtensions
             [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(query, thread: thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+            // Propagate any additional properties from the parent agent's run to the child agent if the parent is using a FunctionInvokingChatClient.
+            AgentRunOptions? agentRunOptions = FunctionInvokingChatClient.CurrentContext?.Options?.AdditionalProperties is AdditionalPropertiesDictionary dict
+                ? new AgentRunOptions { AdditionalProperties = dict }
+                : null;
+
+            var response = await agent.RunAsync(query, session: session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 
         options ??= new();
-        options.Name ??= agent.Name;
+        options.Name ??= SanitizeAgentName(agent.Name);
         options.Description ??= agent.Description;
 
         return AIFunctionFactory.Create(InvokeAgentAsync, options);
     }
+
+    /// <summary>
+    /// Removes characters from AI agent name that shouldn't be used in an AI function name.
+    /// </summary>
+    /// <param name="agentName">The AI agent name to sanitize.</param>
+    /// <returns>
+    /// The sanitized agent name with invalid characters replaced by underscores, or <c>null</c> if the input is <c>null</c>.
+    /// </returns>
+    private static string? SanitizeAgentName(string? agentName)
+    {
+        return agentName is null
+            ? agentName
+            : InvalidNameCharsRegex().Replace(agentName, "_");
+    }
+
+    /// <summary>Regex that flags any character other than ASCII digits or letters.</summary>
+#if NET
+    [GeneratedRegex("[^0-9A-Za-z]+")]
+    private static partial Regex InvalidNameCharsRegex();
+#else
+    private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z]+", RegexOptions.Compiled);
+#endif
 }

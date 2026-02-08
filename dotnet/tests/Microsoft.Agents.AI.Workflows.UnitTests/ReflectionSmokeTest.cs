@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Testing legacy reflection-based pattern
+
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Reflection;
@@ -21,7 +24,7 @@ public class BaseTestExecutor<TActual>(string id) : ReflectingExecutor<TActual>(
 
 public class DefaultHandler() : BaseTestExecutor<DefaultHandler>(nameof(DefaultHandler)), IMessageHandler<object>
 {
-    public ValueTask HandleAsync(object message, IWorkflowContext context)
+    public ValueTask HandleAsync(object message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this.OnInvokedHandler();
         return this.Handler(message, context);
@@ -34,9 +37,9 @@ public class DefaultHandler() : BaseTestExecutor<DefaultHandler>(nameof(DefaultH
     } = (message, context) => default;
 }
 
-public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nameof(TypedHandler<TInput>)), IMessageHandler<TInput>
+public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nameof(TypedHandler<>)), IMessageHandler<TInput>
 {
-    public ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this.OnInvokedHandler();
         return this.Handler(message, context);
@@ -49,9 +52,9 @@ public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nam
     } = (message, context) => default;
 }
 
-public class TypedHandlerWithOutput<TInput, TResult>() : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>(nameof(TypedHandlerWithOutput<TInput, TResult>)), IMessageHandler<TInput, TResult>
+public class TypedHandlerWithOutput<TInput, TResult>() : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>(nameof(TypedHandlerWithOutput<,>)), IMessageHandler<TInput, TResult>
 {
-    public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context)
+    public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         this.OnInvokedHandler();
         return this.Handler(message, context);

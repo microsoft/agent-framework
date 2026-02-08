@@ -5,6 +5,6 @@ lint = "ruff check"
 pyright = "pyright"
 publish = "uv publish"
 clean-dist = "rm -rf dist"
-build-package = "python -m flit build"
+build-package = "uv build"
 move-dist = "sh -c 'mkdir -p ../../dist && mv dist/* ../../dist/ 2>/dev/null || true'"
 build = ["build-package", "move-dist"]

@@ -1,31 +1,60 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
 from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
+from ..openai._assistants_client import OpenAIAssistantsOptions
 from ._shared import AzureOpenAISettings
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
 
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 __all__ = ["AzureOpenAIAssistantsClient"]
 
 
-class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
+# region Azure OpenAI Assistants Options TypedDict
+
+
+TAzureOpenAIAssistantsOptions = TypeVar(
+    "TAzureOpenAIAssistantsOptions",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="OpenAIAssistantsOptions",
+    covariant=True,
+)
+
+
+# endregion
+
+
+class AzureOpenAIAssistantsClient(
+    OpenAIAssistantsClient[TAzureOpenAIAssistantsOptions], Generic[TAzureOpenAIAssistantsOptions]
+):
     """Azure OpenAI Assistants client."""
 
     DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"
 
     def __init__(
         self,
+        *,
         deployment_name: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
+        assistant_description: str | None = None,
         thread_id: str | None = None,
         api_key: str | None = None,
         endpoint: str | None = None,
@@ -42,32 +71,69 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
     ) -> None:
         """Initialize an Azure OpenAI Assistants client.
 
-        Args:
+        Keyword Args:
             deployment_name: The Azure OpenAI deployment name for the model to use.
+                Can also be set via environment variable AZURE_OPENAI_CHAT_DEPLOYMENT_NAME.
             assistant_id: The ID of an Azure OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
+            assistant_description: The description to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property, when making a request.
+                conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            endpoint: The optional deployment endpoint. If provided will override the value
+            api_key: The API key to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable AZURE_OPENAI_API_KEY.
+            endpoint: The deployment endpoint. If provided will override the value
                 in the env vars or .env file.
-            base_url: The optional deployment base_url. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
+            base_url: The deployment base URL. If provided will override the value
                 in the env vars or .env file.
-            api_version: The optional deployment api version. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_BASE_URL.
+            api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file.
-            ad_token: The Azure Active Directory token. (Optional)
-            ad_token_provider: The Azure Active Directory token provider. (Optional)
-            token_endpoint: The token endpoint to request an Azure token. (Optional)
-            credential: The Azure credential to use for authentication. (Optional)
+                Can also be set via environment variable AZURE_OPENAI_API_VERSION.
+            ad_token: The Azure Active Directory token.
+            ad_token_provider: The Azure Active Directory token provider.
+            token_endpoint: The token endpoint to request an Azure token.
+                Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
+            credential: The Azure credential to use for authentication.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
+                to environment variables.
+            env_file_encoding: The encoding of the environment settings file.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureOpenAIAssistantsClient
+
+                # Using environment variables
+                # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
+                # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_OPENAI_API_KEY=your-key
+                client = AzureOpenAIAssistantsClient()
+
+                # Or passing parameters directly
+                client = AzureOpenAIAssistantsClient(
+                    endpoint="https://your-endpoint.openai.azure.com", deployment_name="gpt-4", api_key="your-key"
+                )
+
+                # Or loading from a .env file
+                client = AzureOpenAIAssistantsClient(env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.azure import AzureOpenAIAssistantsOptions
+
+
+                class MyOptions(AzureOpenAIAssistantsOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureOpenAIAssistantsClient[MyOptions] = AzureOpenAIAssistantsClient()
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         try:
             azure_openai_settings = AzureOpenAISettings(
@@ -130,6 +196,7 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
             model_id=azure_openai_settings.chat_deployment_name,
             assistant_id=assistant_id,
             assistant_name=assistant_name,
+            assistant_description=assistant_description,
             thread_id=thread_id,
             async_client=async_client,  # type: ignore[reportArgumentType]
             default_headers=default_headers,

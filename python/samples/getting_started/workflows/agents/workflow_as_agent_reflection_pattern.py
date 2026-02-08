@@ -5,13 +5,10 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    AgentRunResponseUpdate,
-    AgentRunUpdateEvent,
+    AgentResponse,
     ChatClientProtocol,
     ChatMessage,
-    Contents,
     Executor,
-    Role,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -32,7 +29,6 @@ approved responses are emitted to the external consumer. The workflow completes 
 Key Concepts Demonstrated:
 - WorkflowAgent: Wraps a workflow to behave like a regular agent.
 - Cyclic workflow design (Worker ↔ Reviewer) for iterative improvement.
-- AgentRunUpdateEvent: Mechanism for emitting approved responses externally.
 - Structured output parsing for review feedback using Pydantic.
 - State management for pending requests and retry logic.
 
@@ -80,7 +76,7 @@ class Reviewer(Executor):
         # Construct review instructions and context.
         messages = [
             ChatMessage(
-                role=Role.SYSTEM,
+                role="system",
                 text=(
                     "You are a reviewer for an AI agent. Provide feedback on the "
                     "exchange between a user and the agent. Indicate approval only if:\n"
@@ -97,10 +93,10 @@ class Reviewer(Executor):
         messages.extend(request.agent_messages)
 
         # Add explicit review instruction.
-        messages.append(ChatMessage(role=Role.USER, text="Please review the agent's responses."))
+        messages.append(ChatMessage("user", ["Please review the agent's responses."]))
 
         print("Reviewer: Sending review request to LLM...")
-        response = await self._chat_client.get_response(messages=messages, response_format=_Response)
+        response = await self._chat_client.get_response(messages=messages, options={"response_format": _Response})
 
         parsed = _Response.model_validate_json(response.messages[-1].text)
 
@@ -126,7 +122,7 @@ class Worker(Executor):
         print("Worker: Received user messages, generating response...")
 
         # Initialize chat with system prompt.
-        messages = [ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant.")]
+        messages = [ChatMessage("system", ["You are a helpful assistant."])]
         messages.extend(user_messages)
 
         print("Worker: Calling LLM to generate response...")
@@ -145,7 +141,9 @@ class Worker(Executor):
         self._pending_requests[request.request_id] = (request, messages)
 
     @handler
-    async def handle_review_response(self, review: ReviewResponse, ctx: WorkflowContext[ReviewRequest]) -> None:
+    async def handle_review_response(
+        self, review: ReviewResponse, ctx: WorkflowContext[ReviewRequest, AgentResponse]
+    ) -> None:
         print(f"Worker: Received review for request {review.request_id[:8]} - Approved: {review.approved}")
 
         if review.request_id not in self._pending_requests:
@@ -155,24 +153,16 @@ class Worker(Executor):
 
         if review.approved:
             print("Worker: Response approved. Emitting to external consumer...")
-            contents: list[Contents] = []
-            for message in request.agent_messages:
-                contents.extend(message.contents)
-
-            # Emit approved result to external consumer via AgentRunUpdateEvent.
-            await ctx.add_event(
-                AgentRunUpdateEvent(self.id, data=AgentRunResponseUpdate(contents=contents, role=Role.ASSISTANT))
-            )
+            # Emit approved result to external consumer
+            await ctx.yield_output(AgentResponse(messages=request.agent_messages))
             return
 
         print(f"Worker: Response not approved. Feedback: {review.feedback}")
         print("Worker: Regenerating response with feedback...")
 
         # Incorporate review feedback.
-        messages.append(ChatMessage(role=Role.SYSTEM, text=review.feedback))
-        messages.append(
-            ChatMessage(role=Role.SYSTEM, text="Please incorporate the feedback and regenerate the response.")
-        )
+        messages.append(ChatMessage("system", [review.feedback]))
+        messages.append(ChatMessage("system", ["Please incorporate the feedback and regenerate the response."]))
         messages.extend(request.user_messages)
 
         # Retry with updated prompt.
@@ -195,19 +185,19 @@ async def main() -> None:
     print("Starting Workflow Agent Demo")
     print("=" * 50)
 
-    # Initialize chat clients and executors.
-    print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
-    chat_client = OpenAIChatClient(model_id="gpt-4.1")
-    reviewer = Reviewer(id="reviewer", chat_client=chat_client)
-    worker = Worker(id="worker", chat_client=mini_chat_client)
-
     print("Building workflow with Worker ↔ Reviewer cycle...")
     agent = (
-        WorkflowBuilder()
-        .add_edge(worker, reviewer)  # Worker sends responses to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer provides feedback to Worker
-        .set_start_executor(worker)
+        WorkflowBuilder(start_executor="worker")
+        .register_executor(
+            lambda: Worker(id="worker", chat_client=OpenAIChatClient(model_id="gpt-4.1-nano")),
+            name="worker",
+        )
+        .register_executor(
+            lambda: Reviewer(id="reviewer", chat_client=OpenAIChatClient(model_id="gpt-4.1")),
+            name="reviewer",
+        )
+        .add_edge("worker", "reviewer")  # Worker sends responses to Reviewer
+        .add_edge("reviewer", "worker")  # Reviewer provides feedback to Worker
         .build()
         .as_agent()  # Wrap workflow as an agent
     )
@@ -217,13 +207,13 @@ async def main() -> None:
     print("-" * 50)
 
     # Run agent in streaming mode to observe incremental updates.
-    async for event in agent.run_stream(
+    response = await agent.run(
         "Write code for parallel reading 1 million files on disk and write to a sorted output file."
-    ):
-        print(f"Agent Response: {event}")
+    )
 
-    print("=" * 50)
-    print("Workflow completed!")
+    print("-" * 50)
+    print("Final Approved Response:")
+    print(f"{response.agent_id}: {response.text}")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ from random import randint
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import ChatAgent, tool
+from agent_framework.azure import AzureAIClient
 from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -29,6 +29,8 @@ for this sample to work.
 dotenv.load_dotenv()
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -41,13 +43,13 @@ async def get_weather(
 async def main():
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIAgentClient(project_client=project) as client,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
+        AzureAIClient(project_client=project_client) as client,
     ):
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.
         # This will override any existing configuration.
-        await client.setup_azure_ai_observability()
+        await client.configure_azure_monitor(enable_live_metrics=True)
 
         questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
 
@@ -59,15 +61,13 @@ async def main():
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",
+                id="edvan-weather-agent",
             )
             thread = agent.get_new_thread()
             for question in questions:
-                print(f"User: {question}")
-                print(f"{agent.display_name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                print(f"\nUser: {question}")
+                print(f"{agent.name}: ", end="")
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

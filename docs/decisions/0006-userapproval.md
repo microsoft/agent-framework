@@ -22,7 +22,6 @@ This document aims to provide options and capture the decision on how to model t
 See various features that would need to be supported via this type of mechanism, plus how various other frameworks support this:
 
 - Also see [dotnet issue 6492](https://github.com/dotnet/extensions/issues/6492), which discusses the need for a similar pattern in the context of MCP approvals.
-- Also see [the openai RunToolApprovalItem](https://openai.github.io/openai-agents-js/openai/agents/classes/runtoolapprovalitem/).
 - Also see [the openai human-in-the-loop guide](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/#approval-requests).
 - Also see [the openai MCP guide](https://openai.github.io/openai-agents-js/guides/mcp/#optional-approval-flow).
 - Also see [MCP Approval Requests from OpenAI](https://platform.openai.com/docs/guides/tools-remote-mcp#approvals).
@@ -162,11 +161,11 @@ while (response.ApprovalRequests.Count > 0)
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the ApprovalRequestContent items from
+    // A new property on AgentResponse to aggregate the ApprovalRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<ApprovalRequestContent> ApprovalRequests { get; set; }
 
@@ -252,11 +251,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IReadOnlyList<UserInputRequestContent> UserInputRequests { get; set; }
 
@@ -367,11 +366,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<UserInputRequestContent> UserInputRequests { get; set; }
 

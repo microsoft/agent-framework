@@ -257,11 +257,10 @@ public class AIAgentBuilderTests
     {
         // Arrange
         var mockInnerAgent = new Mock<AIAgent>();
-        var builder = new AIAgentBuilder(mockInnerAgent.Object);
-
-        builder.Use(next => new InnerAgentCapturingAgent("First", next));
-        builder.Use(next => new InnerAgentCapturingAgent("Second", next));
-        builder.Use(next => new InnerAgentCapturingAgent("Third", next));
+        var builder = new AIAgentBuilder(mockInnerAgent.Object)
+            .Use(next => new InnerAgentCapturingAgent("First", next))
+            .Use(next => new InnerAgentCapturingAgent("Second", next))
+            .Use(next => new InnerAgentCapturingAgent("Third", next));
 
         // Act
         var first = (InnerAgentCapturingAgent)builder.Build();
@@ -306,7 +305,7 @@ public class AIAgentBuilderTests
         {
             Assert.Null(serviceProvider.GetService(typeof(object)));
 
-            var keyedServiceProvider = Assert.IsAssignableFrom<IKeyedServiceProvider>(serviceProvider);
+            var keyedServiceProvider = Assert.IsType<IKeyedServiceProvider>(serviceProvider, exactMatch: false);
             Assert.Null(keyedServiceProvider.GetKeyedService(typeof(object), "key"));
             Assert.Throws<InvalidOperationException>(() => keyedServiceProvider.GetRequiredKeyedService(typeof(object), "key"));
 
@@ -329,7 +328,7 @@ public class AIAgentBuilderTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>("sharedFunc", () =>
-            builder.Use((Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>)null!));
+            builder.Use((Func<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>)null!));
     }
 
     /// <summary>
@@ -377,7 +376,7 @@ public class AIAgentBuilderTests
         var builder = new AIAgentBuilder(mockAgent.Object);
 
         // Act
-        var result = builder.Use((_, _, _, _, _) => Task.FromResult(new AgentRunResponse()), null).Build();
+        var result = builder.Use((_, _, _, _, _) => Task.FromResult(new AgentResponse()), null).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
@@ -394,7 +393,7 @@ public class AIAgentBuilderTests
         var builder = new AIAgentBuilder(mockAgent.Object);
 
         // Act
-        var result = builder.Use(null, (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+        var result = builder.Use(null, (_, _, _, _, _) => AsyncEnumerable.Empty<AgentResponseUpdate>()).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
@@ -412,11 +411,56 @@ public class AIAgentBuilderTests
 
         // Act
         var result = builder.Use(
-            (_, _, _, _, _) => Task.FromResult(new AgentRunResponse()),
-            (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+            (_, _, _, _, _) => Task.FromResult(new AgentResponse()),
+            (_, _, _, _, _) => AsyncEnumerable.Empty<AgentResponseUpdate>()).Build();
 
         // Assert
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that Use with both delegates allows both to access AgentRunContext.
+    /// </summary>
+    [Fact]
+    public async Task Use_WithBothDelegates_AllowsDelegateToAccessAgentRunContextAsync()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var mockSession = new Mock<AgentSession>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        AIAgent? builtAgent = null;
+
+        bool nonStreamingMiddlewareExecuted = false;
+        bool streamingMiddlwareExecuted = true;
+
+        builtAgent = builder.Use(
+            (_, _, _, _, _) =>
+            {
+                Assert.NotNull(AIAgent.CurrentRunContext);
+                Assert.Same(builtAgent, AIAgent.CurrentRunContext.Agent);
+                Assert.Same(mockSession.Object, AIAgent.CurrentRunContext.Session);
+                nonStreamingMiddlewareExecuted = true;
+                return Task.FromResult(new AgentResponse());
+            },
+            (_, _, _, _, _) =>
+            {
+                Assert.NotNull(AIAgent.CurrentRunContext);
+                Assert.Same(builtAgent, AIAgent.CurrentRunContext.Agent);
+                Assert.Same(mockSession.Object, AIAgent.CurrentRunContext.Session);
+                streamingMiddlwareExecuted = true;
+                return AsyncEnumerable.Empty<AgentResponseUpdate>();
+            }).Build();
+
+        // Act
+        await builtAgent.RunAsync("Input message", mockSession.Object);
+        await foreach (var update in builtAgent.RunStreamingAsync("Input message", mockSession.Object))
+        {
+        }
+
+        // Assert
+        Assert.True(nonStreamingMiddlewareExecuted);
+        Assert.True(streamingMiddlwareExecuted);
     }
 
     #endregion

@@ -125,15 +125,17 @@ var agent = new ChatClientAgent(instrumentedChatClient,
     instructions: "You are a helpful assistant that provides concise and informative responses.",
     tools: [AIFunctionFactory.Create(GetWeatherAsync)])
     .AsBuilder()
-    .UseOpenTelemetry(SourceName) // enable telemetry at the agent level
+    .UseOpenTelemetry(SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();
 
-var thread = agent.GetNewThread();
+var session = await agent.CreateSessionAsync();
 
 appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
+Console.WriteLine($"Trace ID: {sessionActivity?.TraceId} ");
+
 var sessionId = Guid.NewGuid().ToString("N");
 sessionActivity?
     .SetTag("agent.name", "OpenTelemetryDemoAgent")
@@ -147,7 +149,7 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
 
     while (true)
     {
-        Console.Write("You: ");
+        Console.Write("You (or 'exit' to quit): ");
         var userInput = Console.ReadLine();
 
         if (string.IsNullOrWhiteSpace(userInput) || userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
@@ -174,7 +176,7 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
             Console.Write("Agent: ");
 
             // Run the agent (this will create its own internal telemetry spans)
-            await foreach (var update in agent.RunStreamingAsync(userInput, thread))
+            await foreach (var update in agent.RunStreamingAsync(userInput, session))
             {
                 Console.Write(update.Text);
             }

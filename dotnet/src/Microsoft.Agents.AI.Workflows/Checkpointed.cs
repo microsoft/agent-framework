@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <typeparam name="TRun">The type of the underlying workflow run handle.</typeparam>
 /// <seealso cref="Run"/>
 /// <seealso cref="StreamingRun"/>
-public class Checkpointed<TRun>
+public sealed class Checkpointed<TRun> : IAsyncDisposable
 {
     private readonly ICheckpointingHandle _runner;
 
@@ -43,6 +44,19 @@ public class Checkpointed<TRun>
         {
             var checkpoints = this.Checkpoints;
             return checkpoints.Count > 0 ? checkpoints[checkpoints.Count - 1] : null;
+        }
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask DisposeAsync()
+    {
+        if (this.Run is IAsyncDisposable asyncDisposable)
+        {
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+        }
+        else if (this.Run is IDisposable disposable)
+        {
+            disposable.Dispose();
         }
     }
 

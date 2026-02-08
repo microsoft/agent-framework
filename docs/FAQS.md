@@ -23,23 +23,23 @@ To download nightly builds follow the following steps:
     <configuration>
       <packageSources>
         <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
-        <add key="github" value="https://nuget.pkg.github.com/microsoft/index.json" />
+        <add key="GitHubMicrosoft" value="https://nuget.pkg.github.com/microsoft/index.json" />
       </packageSources>
     
       <packageSourceMapping>
         <packageSource key="nuget.org">
           <package pattern="*" />
         </packageSource>
-        <packageSource key="github">
+        <packageSource key="GitHubMicrosoft">
           <package pattern="*nightly"/>
         </packageSource>
       </packageSourceMapping>
     
       <packageSourceCredentials>
-        <github>
-            <add key="Username" value="<Your GitHub Id>" />
-            <add key="ClearTextPassword" value="<Your Personal Access Token>" />
-          </github>
+        <GitHubMicrosoft>
+          <add key="Username" value="<Your GitHub Id>" />
+          <add key="ClearTextPassword" value="<Your Personal Access Token>" />
+        </GitHubMicrosoft>
       </packageSourceCredentials>
     </configuration>
     ```

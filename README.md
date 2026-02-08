@@ -48,6 +48,8 @@ dotnet add package Microsoft.Agents.AI
 - **[Migration from Semantic Kernel](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-semantic-kernel)** - Guide to migrate from Semantic Kernel
 - **[Migration from AutoGen](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen)** - Guide to migrate from AutoGen
 
+Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-community-office-hours) or ask questions in our [Discord channel](https://discord.gg/b5zjErwbQM) to get help from the team and other users.
+
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
@@ -106,7 +108,7 @@ async def main():
         # api_version=os.environ["AZURE_OPENAI_API_VERSION"],
         # api_key=os.environ["AZURE_OPENAI_API_KEY"],  # Optional if using AzureCliCredential
         credential=AzureCliCredential(), # Optional, if using api_key
-    ).create_agent(
+    ).as_agent(
         name="HaikuBot",
         instructions="You are an upbeat assistant that writes beautifully.",
     )
@@ -119,23 +121,36 @@ if __name__ == "__main__":
 
 ### Basic Agent - .NET
 
+Create a simple Agent, using OpenAI Responses, that writes a haiku about the Microsoft Agent Framework
+
 ```c#
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-// dotnet add package Azure.AI.OpenAI
+using System;
+using OpenAI;
+
+// Replace the <apikey> with your OpenAI API key.
+var agent = new OpenAIClient("<apikey>")
+    .GetOpenAIResponseClient("gpt-4o-mini")
+    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+
+Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
+```
+
+Create a simple Agent, using Azure OpenAI Responses with token based auth, that writes a haiku about the Microsoft Agent Framework
+
+```c#
+// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
 using System;
-using Azure.AI.OpenAI;
-using Azure.Identity;
-using Microsoft.Agents.AI;
 using OpenAI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
-
-var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-    .GetOpenAIResponseClient(deploymentName)
-    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+// Replace <resource> and gpt-4o-mini with your Azure OpenAI resource name and deployment name.
+var agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
+    .GetOpenAIResponseClient("gpt-4o-mini")
+    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```

@@ -4,9 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
-using Microsoft.Bot.ObjectModel.Exceptions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -274,6 +274,13 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        return new(this._engine.Eval(expressionText), SensitivityLevel.None);
+        FormulaValue result = this._engine.Eval(expressionText);
+
+        if (result is ErrorValue errorValue)
+        {
+            throw new DeclarativeActionException(errorValue.Format());
+        }
+
+        return new(result, SensitivityLevel.None);
     }
 }

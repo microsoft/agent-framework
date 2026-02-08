@@ -6,10 +6,10 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agent_framework import WorkflowBuilder
+from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message
-from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
+from agent_framework._workflows._state import State
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework.observability import (
@@ -127,7 +127,9 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
         }
         with (
-            create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
+            create_processing_span(
+                "executor-456", "TestExecutor", str(MessageType.STANDARD), "TestMessage"
+            ) as processing_span,
             create_workflow_span(
                 OtelAttr.MESSAGE_SEND_SPAN, sending_attributes, kind=trace.SpanKind.PRODUCER
             ) as sending_span,
@@ -149,13 +151,14 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
     event_names = [event.name for event in workflow_span.events]
     assert "workflow.started" in event_names
 
-    # Check processing span
-    processing_span = next(s for s in spans if s.name == "executor.process")
+    # Check processing span - span name uses format "executor.process {executor_id}"
+    processing_span = next(s for s in spans if s.name == "executor.process executor-456")
     assert processing_span.kind == trace.SpanKind.INTERNAL
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "executor-456"
     assert processing_span.attributes.get("executor.type") == "TestExecutor"
-    assert processing_span.attributes.get("message.type") == "TestMessage"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "TestMessage"
 
     # Check sending span
     sending_span = next(s for s in spans if s.name == "message.send")
@@ -167,7 +170,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
 
 async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> None:
     """Test trace context propagation and handling in messages and executors."""
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
     executor = MockExecutor("test-executor")
 
@@ -175,9 +178,9 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
-        shared_state,
+        state,
         ctx,
         trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
         source_span_ids=["1234567890123456"],
@@ -199,7 +202,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     await executor.execute(
         "test message",
         ["source"],  # source_executor_ids
-        shared_state,  # shared_state
+        state,  # state
         ctx,  # runner_context
         trace_contexts=[{"traceparent": "00-12345678901234567890123456789012-1234567890123456-01"}],
         source_span_ids=["1234567890123456"],
@@ -207,7 +210,8 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Check that spans were created with proper attributes
     spans = span_exporter.get_finished_spans()
-    processing_spans = [s for s in spans if s.name == "executor.process"]
+    # Processing spans now use executor_id as the span name
+    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") == "test-executor"]
     sending_spans = [s for s in spans if s.name == "message.send"]
 
     assert len(processing_spans) >= 1
@@ -215,23 +219,30 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Verify processing span attributes
     processing_span = processing_spans[0]
+    assert (
+        processing_span.name == "executor.process test-executor"
+    )  # Span name uses format "executor.process {executor_id}"
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "test-executor"
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
-    assert processing_span.attributes.get("message.type") == "str"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "str"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
-async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
+async def test_trace_context_disabled_when_tracing_disabled(
+    enable_instrumentation, span_exporter: InMemorySpanExporter
+) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
-    shared_state = SharedState()
+    executor = MockExecutor("test-executor")
+    state = State()
     ctx = InProcRunnerContext()
 
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
-        shared_state,
+        state,
         ctx,
     )
 
@@ -257,8 +268,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Create workflow with fan-in: executor1 -> [executor2, executor3] -> aggregator
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor1)
+        WorkflowBuilder(start_executor=executor1)
         .add_fan_out_edges(executor1, [executor2, executor3])
         .add_fan_in_edges([executor2, executor3], aggregator)
         .build()
@@ -286,11 +296,11 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     span_exporter.clear()
 
     # Test workflow with name and description - verify OTEL attributes
-    (
-        WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
-        .set_start_executor(MockExecutor("start"))
-        .build()
-    )
+    WorkflowBuilder(
+        name="Test Pipeline",
+        description="Test workflow description",
+        start_executor=MockExecutor("start"),
+    ).build()
 
     build_spans_with_metadata = [s for s in span_exporter.get_finished_spans() if s.name == "workflow.build"]
     assert len(build_spans_with_metadata) == 1
@@ -304,7 +314,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Run workflow (this should create run spans)
     events = []
-    async for event in workflow.run_stream("test input"):
+    async for event in workflow.run("test input", stream=True):
         events.append(event)
 
     # Verify workflow executed correctly
@@ -324,8 +334,9 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     spans = span_exporter.get_finished_spans()
 
     # Should have workflow span, processing spans, and sending spans
+    # Processing spans now use executor_id as the span name, filter by executor.id attribute
     workflow_spans = [s for s in spans if s.name == "workflow.run"]
-    processing_spans = [s for s in spans if s.name == "executor.process"]
+    processing_spans = [s for s in spans if s.attributes and s.attributes.get("executor.id") is not None]
     sending_spans = [s for s in spans if s.name == "message.send"]
     build_spans_after_run = [s for s in spans if s.name == "workflow.build"]
 
@@ -400,11 +411,11 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
             raise ValueError("Test error")
 
     failing_executor = FailingExecutor()
-    workflow = WorkflowBuilder().set_start_executor(failing_executor).build()
+    workflow = WorkflowBuilder(start_executor=failing_executor).build()
 
     # Run workflow and expect error
     with pytest.raises(ValueError, match="Test error"):
-        async for _ in workflow.run_stream("test input"):
+        async for _ in workflow.run("test input", stream=True):
             pass
 
     spans = span_exporter.get_finished_spans()
@@ -423,10 +434,10 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
     assert workflow_span.status.status_code.name == "ERROR"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
-    ctx = InProcRunnerContext()
+    ctx = InProcRunnerContext(InMemoryCheckpointStorage())
 
     # Create message with trace context
     message = Message(
@@ -439,16 +450,18 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 
     await ctx.send_message(message)
 
-    # Get checkpoint state (which serializes messages)
-    state = await ctx.get_checkpoint_state()
+    # Create a checkpoint that includes the message
+    checkpoint_id = await ctx.create_checkpoint(State(), 0)
+    checkpoint = await ctx.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
 
     # Check serialized message includes trace context
-    serialized_msg = state["messages"]["source"][0]
+    serialized_msg = checkpoint.messages["source"][0]
     assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
     assert serialized_msg["source_span_ids"] == ["span123"]
 
     # Test deserialization
-    await ctx.set_checkpoint_state(state)
+    await ctx.apply_checkpoint(checkpoint)
     restored_messages = await ctx.drain_messages()
 
     restored_msg = list(restored_messages.values())[0][0]
@@ -461,10 +474,10 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
-    # Test validation error by not setting start executor
-    builder = WorkflowBuilder()
+    # Test validation error by referencing a non-existent start executor
+    builder = WorkflowBuilder(start_executor="NonExistent")
 
-    with pytest.raises(ValueError, match="Starting executor must be set"):
+    with pytest.raises(ValueError):
         builder.build()
 
     spans = span_exporter.get_finished_spans()
@@ -487,5 +500,5 @@ async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter)
 
     error_event = error_events[0]
     assert error_event.attributes is not None
-    assert "Starting executor must be set" in str(error_event.attributes.get("build.error.message"))
+    assert "starting executor" in str(error_event.attributes.get("build.error.message")).lower()
     assert error_event.attributes.get("build.error.type") == "ValueError"

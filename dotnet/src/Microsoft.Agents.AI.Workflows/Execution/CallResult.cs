@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
@@ -27,15 +28,21 @@ internal sealed class CallResult
     public Exception? Exception { get; init; }
 
     /// <summary>
+    /// Indicated whether the call was cancelled (e.g., via a <see cref="CancellationToken"/>).
+    /// </summary>
+    public bool IsCancelled { get; init; }
+
+    /// <summary>
     /// Indicates whether the call was successful. A call is considered successful if it returned
     /// without throwing an exception.
     /// </summary>
-    public bool IsSuccess => this.Exception is null;
+    public bool IsSuccess => this.Exception is null && !this.IsCancelled;
 
-    private CallResult(bool isVoid = false)
+    private CallResult(bool isVoid = false, bool isCancelled = false)
     {
         // Private constructor to enforce use of static methods.
         this.IsVoid = isVoid;
+        this.IsCancelled = isCancelled;
     }
 
     /// <summary>
@@ -50,6 +57,14 @@ internal sealed class CallResult
     /// </summary>
     /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>
     public static CallResult ReturnVoid() => new(isVoid: true);
+
+    /// <summary>
+    /// Create a <see cref="CallResult"/> indicating that the call was cancelled.
+    /// </summary>
+    /// <param name="wasVoid">A boolean specifying whether the call was void (was not expected to return
+    /// a value).</param>
+    /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>
+    public static CallResult Cancelled(bool wasVoid) => new(wasVoid, isCancelled: true);
 
     /// <summary>
     /// Create a <see cref="CallResult"/> indicating that an exception was raised during the call.

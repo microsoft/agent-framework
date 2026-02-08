@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowOutputEvent
+from agent_framework import ChatMessage, ConcurrentBuilderWorkflowEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
@@ -77,21 +77,21 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physics = chat_client.create_agent(
+    physics = chat_client.as_agent(
         instructions=("You are an expert in physics. Answer questions from a physics perspective."),
         name="physics",
     )
 
-    chemistry = chat_client.create_agent(
+    chemistry = chat_client.as_agent(
         instructions=("You are an expert in chemistry. Answer questions from a chemistry perspective."),
         name="chemistry",
     )
 
-    workflow = ConcurrentBuilder().participants([physics, chemistry]).build()
+    workflow = ConcurrentBuilder(participants=[physics, chemistry]).build()
 
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
             outputs.append(cast(list[ChatMessage], event.data))
 
     return outputs

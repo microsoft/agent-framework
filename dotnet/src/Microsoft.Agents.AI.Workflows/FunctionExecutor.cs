@@ -13,9 +13,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+/// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
 public class FunctionExecutor<TInput>(string id,
         Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerAsync,
-        ExecutorOptions? options = null) : Executor<TInput>(id, options)
+        ExecutorOptions? options = null,
+        bool declareCrossRunShareable = false) : Executor<TInput>(id, options, declareCrossRunShareable)
 {
     internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask> WrapAction(Action<TInput, IWorkflowContext, CancellationToken> handlerSync)
     {
@@ -29,14 +31,16 @@ public class FunctionExecutor<TInput>(string id,
     }
 
     /// <inheritdoc/>
-    public override ValueTask HandleAsync(TInput message, IWorkflowContext context) => handlerAsync(message, context, default);
+    public override ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);
 
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput}"/> class.
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(string id, Action<TInput, IWorkflowContext, CancellationToken> handlerSync) : this(id, WrapAction(handlerSync))
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+    public FunctionExecutor(string id, Action<TInput, IWorkflowContext, CancellationToken> handlerSync, ExecutorOptions? options = null, bool declareCrossRunShareable = false) : this(id, WrapAction(handlerSync), options, declareCrossRunShareable)
     {
     }
 }
@@ -49,9 +53,11 @@ public class FunctionExecutor<TInput>(string id,
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="handlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+/// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
 public class FunctionExecutor<TInput, TOutput>(string id,
         Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerAsync,
-        ExecutorOptions? options = null) : Executor<TInput, TOutput>(id, options)
+        ExecutorOptions? options = null,
+        bool declareCrossRunShareable = false) : Executor<TInput, TOutput>(id, options, declareCrossRunShareable)
 {
     internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> WrapFunc(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync)
     {
@@ -65,14 +71,16 @@ public class FunctionExecutor<TInput, TOutput>(string id,
     }
 
     /// <inheritdoc/>
-    public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context) => handlerAsync(message, context, default);
+    public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);
 
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput,TOutput}"/> class.
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(string id, Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync) : this(id, WrapFunc(handlerSync))
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+    public FunctionExecutor(string id, Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync, ExecutorOptions? options = null, bool declareCrossRunShareable = false) : this(id, WrapFunc(handlerSync), options, declareCrossRunShareable)
     {
     }
 }

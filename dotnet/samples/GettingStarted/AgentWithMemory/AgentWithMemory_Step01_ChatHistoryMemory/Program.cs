@@ -1,0 +1,60 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+// This sample shows how to create and use a simple AI agent that stores chat messages in a vector store using the ChatHistoryMemoryProvider.
+// It can then use the chat history from prior conversations to inform responses in new conversations.
+
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.VectorData;
+using Microsoft.SemanticKernel.Connectors.InMemory;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
+
+// Create a vector store to store the chat messages in.
+// For demonstration purposes, we are using an in-memory vector store.
+// Replace this with a vector store implementation of your choice that can persist the chat history long term.
+VectorStore vectorStore = new InMemoryVectorStore(new InMemoryVectorStoreOptions()
+{
+    EmbeddingGenerator = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetEmbeddingClient(embeddingDeploymentName)
+        .AsIEmbeddingGenerator()
+});
+
+// Create the agent and add the ChatHistoryMemoryProvider to store chat messages in the vector store.
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .AsAIAgent(new ChatClientAgentOptions
+    {
+        ChatOptions = new() { Instructions = "You are good at telling jokes." },
+        Name = "Joker",
+        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new ChatHistoryMemoryProvider(
+            vectorStore,
+            collectionName: "chathistory",
+            vectorDimensions: 3072,
+            // Configure the scope values under which chat messages will be stored.
+            // In this case, we are using a fixed user ID and a unique session ID for each new session.
+            storageScope: new() { UserId = "UID1", SessionId = Guid.NewGuid().ToString() },
+            // Configure the scope which would be used to search for relevant prior messages.
+            // In this case, we are searching for any messages for the user across all sessions.
+            searchScope: new() { UserId = "UID1" }))
+    });
+
+// Start a new session for the agent conversation.
+AgentSession session = await agent.CreateSessionAsync();
+
+// Run the agent with the session that stores conversation history in the vector store.
+Console.WriteLine(await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", session));
+
+// Start a second session. Since we configured the search scope to be across all sessions for the user,
+// the agent should remember that the user likes pirate jokes.
+AgentSession? session2 = await agent.CreateSessionAsync();
+
+// Run the agent with the second session.
+Console.WriteLine(await agent.RunAsync("Tell me a joke that I might like.", session2));

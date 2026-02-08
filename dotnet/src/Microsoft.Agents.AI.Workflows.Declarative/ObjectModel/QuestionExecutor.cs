@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Entities;
@@ -8,13 +9,14 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class QuestionExecutor(Question model, WorkflowFormulaState state) :
+internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<Question>(model, state)
 {
     public static class Steps
@@ -65,7 +67,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
         else
         {
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
 
         return default;
@@ -74,30 +76,30 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
-        InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
-        await context.SendMessageAsync(inputRequest).ConfigureAwait(false);
+        ExternalInputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
+        await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
-    public async ValueTask CaptureResponseAsync(IWorkflowContext context, InputResponse message, CancellationToken cancellationToken)
+    public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
         FormulaValue? extractedValue = null;
-        if (string.IsNullOrWhiteSpace(message.Value))
+        if (!response.HasMessages)
         {
             string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
-            await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim())).ConfigureAwait(false);
+            await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim()), cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            EntityExtractionResult entityResult = EntityExtractor.Parse(this.Model.Entity, message.Value);
+            EntityExtractionResult entityResult = EntityExtractor.Parse(this.Model.Entity, string.Concat(response.Messages.Select(message => message.Text)));
             if (entityResult.IsValid)
             {
                 extractedValue = entityResult.Value;
             }
             else
             {
-                string invalidResponse = this.FormatPrompt(this.Model.InvalidPrompt);
-                await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim())).ConfigureAwait(false);
+                string invalidResponse = this.Model.InvalidPrompt is not null ? this.FormatPrompt(this.Model.InvalidPrompt) : "Invalid response";
+                await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim()), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -107,15 +109,34 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
         else
         {
+            bool autoSend = true;
+
+            if (this.Model.ExtensionData?.Properties.TryGetValue("autoSend", out DataValue? autoSendValue) ?? false)
+            {
+                autoSend = autoSendValue.ToObject() is bool value && value;
+            }
+
+            if (autoSend)
+            {
+                string? workflowConversationId = context.GetWorkflowConversation();
+                if (workflowConversationId is not null)
+                {
+                    // Input message always defined if values has been extracted.
+                    ChatMessage input = response.Messages.Last();
+                    await agentProvider.CreateMessageAsync(workflowConversationId, input, cancellationToken).ConfigureAwait(false);
+                    await context.SetLastMessageAsync(input).ConfigureAwait(false);
+                }
+            }
+
             await this.AssignAsync(this.Model.Variable?.Path, extractedValue, context).ConfigureAwait(false);
             await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
     }
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
-        await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -128,8 +149,8 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             DataValue defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
             await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
-            await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
         else
         {

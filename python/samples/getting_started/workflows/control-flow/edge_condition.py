@@ -5,11 +5,10 @@ import os
 from typing import Any
 
 from agent_framework import (  # Core chat primitives used to build requests
-    AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
-    AgentExecutorResponse,  # Output from an AgentExecutor
+    AgentExecutorResponse,
+    ChatAgent,  # Output from an AgentExecutor
     ChatMessage,
-    Role,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
@@ -85,7 +84,7 @@ def get_condition(expected_result: bool):
         try:
             # Prefer parsing a structured DetectionResult from the agent JSON text.
             # Using model_validate_json ensures type safety and raises if the shape is wrong.
-            detection = DetectionResult.model_validate_json(message.agent_run_response.text)
+            detection = DetectionResult.model_validate_json(message.agent_response.text)
             # Route only when the spam flag matches the expected path.
             return detection.is_spam == expected_result
         except Exception:
@@ -99,14 +98,14 @@ def get_condition(expected_result: bool):
 @executor(id="send_email")
 async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Downstream of the email assistant. Parse a validated EmailResponse and yield the workflow output.
-    email_response = EmailResponse.model_validate_json(response.agent_run_response.text)
+    email_response = EmailResponse.model_validate_json(response.agent_response.text)
     await ctx.yield_output(f"Email sent:\n{email_response.response}")
 
 
 @executor(id="handle_spam")
 async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
     # Spam path. Confirm the DetectionResult and yield the workflow output. Guard against accidental non spam input.
-    detection = DetectionResult.model_validate_json(response.agent_run_response.text)
+    detection = DetectionResult.model_validate_json(response.agent_response.text)
     if detection.is_spam:
         await ctx.yield_output(f"Email marked as spam: {detection.reason}")
     else:
@@ -123,57 +122,58 @@ async def to_email_assistant_request(
     Extracts DetectionResult.email_content and forwards it as a user message.
     """
     # Bridge executor. Converts a structured DetectionResult into a ChatMessage and forwards it as a new request.
-    detection = DetectionResult.model_validate_json(response.agent_run_response.text)
-    user_msg = ChatMessage(Role.USER, text=detection.email_content)
+    detection = DetectionResult.model_validate_json(response.agent_response.text)
+    user_msg = ChatMessage("user", text=detection.email_content)
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
-async def main() -> None:
-    # Create agents
+def create_spam_detector_agent() -> ChatAgent:
+    """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Agent 1. Classifies spam and returns a DetectionResult object.
-    # response_format enforces that the LLM returns parsable JSON for the Pydantic model.
-    spam_detection_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are a spam detection assistant that identifies spam emails. "
-                "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
-                "Include the original email content in email_content."
-            ),
-            response_format=DetectionResult,
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
+            "Include the original email content in email_content."
         ),
-        id="spam_detection_agent",
+        name="spam_detection_agent",
+        default_options={"response_format": DetectionResult},
     )
 
-    # Agent 2. Drafts a professional reply. Also uses structured JSON output for reliability.
-    email_assistant_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email assistant that helps users draft professional responses to emails. "
-                "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "
-                "Return JSON with a single field 'response' containing the drafted reply."
-            ),
-            response_format=EmailResponse,
+
+def create_email_assistant_agent() -> ChatAgent:
+    """Helper to create an email assistant agent."""
+    # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions=(
+            "You are an email assistant that helps users draft professional responses to emails. "
+            "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "
+            "Return JSON with a single field 'response' containing the drafted reply."
         ),
-        id="email_assistant_agent",
+        name="email_assistant_agent",
+        default_options={"response_format": EmailResponse},
     )
 
+
+async def main() -> None:
     # Build the workflow graph.
     # Start at the spam detector.
     # If not spam, hop to a transformer that creates a new AgentExecutorRequest,
     # then call the email assistant, then finalize.
     # If spam, go directly to the spam handler and finalize.
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(spam_detection_agent)
+        WorkflowBuilder(start_executor="spam_detection_agent")
+        .register_agent(create_spam_detector_agent, name="spam_detection_agent")
+        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
+        .register_executor(lambda: to_email_assistant_request, name="to_email_assistant_request")
+        .register_executor(lambda: handle_email_response, name="send_email")
+        .register_executor(lambda: handle_spam_classifier_response, name="handle_spam")
         # Not spam path: transform response -> request for assistant -> assistant -> send email
-        .add_edge(spam_detection_agent, to_email_assistant_request, condition=get_condition(False))
-        .add_edge(to_email_assistant_request, email_assistant_agent)
-        .add_edge(email_assistant_agent, handle_email_response)
+        .add_edge("spam_detection_agent", "to_email_assistant_request", condition=get_condition(False))
+        .add_edge("to_email_assistant_request", "email_assistant_agent")
+        .add_edge("email_assistant_agent", "send_email")
         # Spam path: send to spam handler
-        .add_edge(spam_detection_agent, handle_spam_classifier_response, condition=get_condition(True))
+        .add_edge("spam_detection_agent", "handle_spam", condition=get_condition(True))
         .build()
     )
 
@@ -186,7 +186,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[ChatMessage("user", text=email)], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

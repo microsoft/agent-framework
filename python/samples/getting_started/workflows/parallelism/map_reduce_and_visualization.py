@@ -11,7 +11,6 @@ from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
     WorkflowContext,  # Per run context with shared state and messaging
-    WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
 )
@@ -26,7 +25,7 @@ It also demonstrates WorkflowViz for graph visualization.
 
 Purpose:
 Show how to:
-- Partition input once and coordinate parallel mappers with shared state.
+- Partition input once and coordinate parallel mappers with workflow state.
 - Implement map, shuffle, and reduce executors that pass file paths instead of large payloads.
 - Use fan out and fan in edges to express parallelism and joins.
 - Persist intermediate results to disk to bound memory usage for large inputs.
@@ -37,7 +36,10 @@ Prerequisites:
 - aiofiles installed for async file I/O.
 - Write access to a tmp directory next to this script.
 - A source text at resources/long_text.txt.
-- Optional for SVG export: install the viz extra for agent framework workflow.
+- Optional for SVG export: install graphviz.
+
+Installation:
+    pip install agent-framework aiofiles graphviz
 """
 
 # Define the temporary directory for storing intermediate results
@@ -46,8 +48,8 @@ TEMP_DIR = os.path.join(DIR, "tmp")
 # Ensure the temporary directory exists
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Define a key for the shared state to store the data to be processed
-SHARED_STATE_DATA_KEY = "data_to_be_processed"
+# Define a key for the workflow state to store the data to be processed
+STATE_DATA_KEY = "data_to_be_processed"
 
 
 class SplitCompleted:
@@ -66,17 +68,17 @@ class Split(Executor):
 
     @handler
     async def split(self, data: str, ctx: WorkflowContext[SplitCompleted]) -> None:
-        """Tokenize input and assign contiguous index ranges to each mapper via shared state.
+        """Tokenize input and assign contiguous index ranges to each mapper via workflow state.
 
         Args:
             data: The raw text to process.
-            ctx: Workflow context to persist shared state and send messages.
+            ctx: Workflow context to persist state and send messages.
         """
         # Process data into a list of words and remove empty lines or words.
         word_list = self._preprocess(data)
 
         # Store tokenized words once so all mappers can read by index.
-        await ctx.set_shared_state(SHARED_STATE_DATA_KEY, word_list)
+        ctx.set_state(STATE_DATA_KEY, word_list)
 
         # Divide indices into contiguous slices for each mapper.
         map_executor_count = len(self._map_executor_ids)
@@ -87,8 +89,8 @@ class Split(Executor):
             start_index = i * chunk_size
             end_index = start_index + chunk_size if i < map_executor_count - 1 else len(word_list)
 
-            # The mapper reads its slice from shared state keyed by its own executor id.
-            await ctx.set_shared_state(self._map_executor_ids[i], (start_index, end_index))
+            # The mapper reads its slice from workflow state keyed by its own executor id.
+            ctx.set_state(self._map_executor_ids[i], (start_index, end_index))
             await ctx.send_message(SplitCompleted(), self._map_executor_ids[i])
 
         tasks = [asyncio.create_task(_process_chunk(i)) for i in range(map_executor_count)]
@@ -116,11 +118,11 @@ class Map(Executor):
 
         Args:
             _: SplitCompleted marker indicating maps can begin.
-            ctx: Workflow context for shared state access and messaging.
+            ctx: Workflow context for workflow state access and messaging.
         """
         # Retrieve tokens and our assigned slice.
-        data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
-        chunk_start, chunk_end = await ctx.get_shared_state(self.id)
+        data_to_be_processed: list[str] = ctx.get_state(STATE_DATA_KEY)
+        chunk_start, chunk_end = ctx.get_state(self.id)
 
         results = [(item, 1) for item in data_to_be_processed[chunk_start:chunk_end]]
 
@@ -256,27 +258,50 @@ class CompletionExecutor(Executor):
 
 async def main():
     """Construct the map reduce workflow, visualize it, then run it over a sample file."""
-    # Step 1: Create the executors.
-    map_operations = [Map(id=f"map_executor_{i}") for i in range(3)]
-    split_operation = Split(
-        [map_operation.id for map_operation in map_operations],
-        id="split_data_executor",
+
+    # Step 1: Create the workflow builder and register executors.
+    workflow_builder = (
+        WorkflowBuilder(start_executor="split_data_executor")
+        .register_executor(lambda: Map(id="map_executor_0"), name="map_executor_0")
+        .register_executor(lambda: Map(id="map_executor_1"), name="map_executor_1")
+        .register_executor(lambda: Map(id="map_executor_2"), name="map_executor_2")
+        .register_executor(
+            lambda: Split(["map_executor_0", "map_executor_1", "map_executor_2"], id="split_data_executor"),
+            name="split_data_executor",
+        )
+        .register_executor(lambda: Reduce(id="reduce_executor_0"), name="reduce_executor_0")
+        .register_executor(lambda: Reduce(id="reduce_executor_1"), name="reduce_executor_1")
+        .register_executor(lambda: Reduce(id="reduce_executor_2"), name="reduce_executor_2")
+        .register_executor(lambda: Reduce(id="reduce_executor_3"), name="reduce_executor_3")
+        .register_executor(
+            lambda: Shuffle(
+                ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+                id="shuffle_executor",
+            ),
+            name="shuffle_executor",
+        )
+        .register_executor(lambda: CompletionExecutor(id="completion_executor"), name="completion_executor")
     )
-    reduce_operations = [Reduce(id=f"reduce_executor_{i}") for i in range(4)]
-    shuffle_operation = Shuffle(
-        [reduce_operation.id for reduce_operation in reduce_operations],
-        id="shuffle_executor",
-    )
-    completion_executor = CompletionExecutor(id="completion_executor")
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(split_operation)
-        .add_fan_out_edges(split_operation, map_operations)  # Split -> many mappers
-        .add_fan_in_edges(map_operations, shuffle_operation)  # All mappers -> shuffle
-        .add_fan_out_edges(shuffle_operation, reduce_operations)  # Shuffle -> many reducers
-        .add_fan_in_edges(reduce_operations, completion_executor)  # All reducers -> completion
+        workflow_builder
+        .add_fan_out_edges(
+            "split_data_executor",
+            ["map_executor_0", "map_executor_1", "map_executor_2"],
+        )  # Split -> many mappers
+        .add_fan_in_edges(
+            ["map_executor_0", "map_executor_1", "map_executor_2"],
+            "shuffle_executor",
+        )  # All mappers -> shuffle
+        .add_fan_out_edges(
+            "shuffle_executor",
+            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+        )  # Shuffle -> many reducers
+        .add_fan_in_edges(
+            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+            "completion_executor",
+        )  # All reducers -> completion
         .build()
     )
 
@@ -303,9 +328,9 @@ async def main():
         raw_text = await f.read()
 
     # Step 4: Run the workflow with the raw text as input.
-    async for event in workflow.run_stream(raw_text):
+    async for event in workflow.run(raw_text, stream=True):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             print(f"Final Output: {event.data}")
 
 

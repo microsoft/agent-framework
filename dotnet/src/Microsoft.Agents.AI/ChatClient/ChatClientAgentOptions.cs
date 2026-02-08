@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -15,42 +16,8 @@ namespace Microsoft.Agents.AI;
 /// identifier, display name, operational instructions, and a descriptive summary. It can be used to store and transfer
 /// agent-related metadata within a chat application.
 /// </remarks>
-public class ChatClientAgentOptions
+public sealed class ChatClientAgentOptions
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentOptions"/> class.
-    /// </summary>
-    public ChatClientAgentOptions()
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentOptions"/> class with the specified parameters.
-    /// </summary>
-    /// <remarks>If <paramref name="tools"/> is provided, a new <see cref="ChatOptions"/> instance is created
-    /// with the specified instructions and tools.</remarks>
-    /// <param name="instructions">The instructions or guidelines for the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="name">The name of the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="description">The description of the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="tools">A list of <see cref="AITool"/> instances available to the chat client agent. Can be <see langword="null"/> if no
-    /// tools are specified.</param>
-    public ChatClientAgentOptions(string? instructions, string? name = null, string? description = null, IList<AITool>? tools = null)
-    {
-        this.Name = name;
-        this.Instructions = instructions;
-        this.Description = description;
-
-        if (tools is not null)
-        {
-            (this.ChatOptions ??= new()).Tools = tools;
-        }
-
-        if (instructions is not null)
-        {
-            (this.ChatOptions ??= new()).Instructions = instructions;
-        }
-    }
-
     /// <summary>
     /// Gets or sets the agent id.
     /// </summary>
@@ -60,11 +27,6 @@ public class ChatClientAgentOptions
     /// Gets or sets the agent name.
     /// </summary>
     public string? Name { get; set; }
-
-    /// <summary>
-    /// Gets or sets the agent instructions.
-    /// </summary>
-    public string? Instructions { get; set; }
 
     /// <summary>
     /// Gets or sets the agent description.
@@ -77,17 +39,17 @@ public class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="ChatMessageStore"/>
-    /// which will be used to store chat messages for this agent.
+    /// Gets or sets a factory function to create an instance of <see cref="ChatHistoryProvider"/>
+    /// which will be used to provide chat history for this agent.
     /// </summary>
-    public Func<ChatMessageStoreFactoryContext, ChatMessageStore>? ChatMessageStoreFactory { get; set; }
+    public Func<ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>? ChatHistoryProviderFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
     /// which will be used to create a context provider for each new thread, and can then
     /// provide additional context for each agent run.
     /// </summary>
-    public Func<AIContextProviderFactoryContext, AIContextProvider>? AIContextProviderFactory { get; set; }
+    public Func<AIContextProviderFactoryContext, CancellationToken, ValueTask<AIContextProvider>>? AIContextProviderFactory { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
@@ -106,22 +68,21 @@ public class ChatClientAgentOptions
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
-    internal ChatClientAgentOptions Clone()
+    public ChatClientAgentOptions Clone()
         => new()
         {
             Id = this.Id,
             Name = this.Name,
-            Instructions = this.Instructions,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatMessageStoreFactory = this.ChatMessageStoreFactory,
+            ChatHistoryProviderFactory = this.ChatHistoryProviderFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
         };
 
     /// <summary>
     /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
     /// </summary>
-    public class AIContextProviderFactoryContext
+    public sealed class AIContextProviderFactoryContext
     {
         /// <summary>
         /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
@@ -136,14 +97,14 @@ public class ChatClientAgentOptions
     }
 
     /// <summary>
-    /// Context object passed to the <see cref="ChatMessageStoreFactory"/> to create a new instance of <see cref="ChatMessageStore"/>.
+    /// Context object passed to the <see cref="ChatHistoryProviderFactory"/> to create a new instance of <see cref="ChatHistoryProvider"/>.
     /// </summary>
-    public class ChatMessageStoreFactoryContext
+    public sealed class ChatHistoryProviderFactoryContext
     {
         /// <summary>
-        /// Gets or sets the serialized state of the chat message store, if any.
+        /// Gets or sets the serialized state of the <see cref="ChatHistoryProvider"/>, if any.
         /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatMessageStore"/> is first created.</value>
+        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatHistoryProvider"/> is first created.</value>
         public JsonElement SerializedState { get; set; }
 
         /// <summary>

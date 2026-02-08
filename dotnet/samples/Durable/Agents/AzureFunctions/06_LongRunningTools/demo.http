@@ -1,0 +1,27 @@
+### Run an agent that can schedule orchestrations as tool calls
+POST http://localhost:7071/api/agents/publisher/run
+Content-Type: text/plain
+
+Start a content generation workflow for the topic 'The Future of Artificial Intelligence'
+
+
+### Save the session ID from the response to continue the conversation
+@threadId = <YOUR_THREAD_ID>
+
+### Check the status of the workflow
+POST http://localhost:7071/api/agents/publisher/run?thread_id={{threadId}}
+Content-Type: text/plain
+
+Check the status of the workflow you previously started
+
+### Reject content with feedback
+POST http://localhost:7071/api/agents/publisher/run?thread_id={{threadId}}
+Content-Type: text/plain
+
+Reject the content with feedback: The article needs more technical depth and better examples.
+
+### Approve content
+POST http://localhost:7071/api/agents/publisher/run?thread_id={{threadId}}
+Content-Type: text/plain
+
+Approve the content

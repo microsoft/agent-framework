@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, IWorkflowExecutionEnvironment environment, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
         Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = [];
 
@@ -21,9 +21,10 @@ internal static class Step5EntryPoint
         checkpointManager ??= CheckpointManager.Default;
 
         Workflow workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
+
         Checkpointed<StreamingRun> checkpointed =
-            await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
-                                    .ConfigureAwait(false);
+            await environment.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
+                             .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
         CancellationTokenSource cancellationSource = new();
@@ -33,17 +34,16 @@ internal static class Step5EntryPoint
 
         result.Should().BeNull();
         checkpoints.Should().HaveCount(6, "we should have two checkpoints, one for each step");
-        judge.Tries.Should().Be(2);
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
         Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
         if (rehydrateToRestore)
         {
-            await handle.EndRunAsync().ConfigureAwait(false);
+            await handle.DisposeAsync().ConfigureAwait(false);
 
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
-                                                   .ConfigureAwait(false);
+            checkpointed = await environment.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, cancellationToken: CancellationToken.None)
+                                            .ConfigureAwait(false);
             handle = checkpointed.Run;
         }
         else
@@ -53,8 +53,6 @@ internal static class Step5EntryPoint
 
         (signal, prompt) = checkpointedOutputs[targetCheckpoint];
 
-        judge.Tries.Should().Be(1);
-
         cancellationSource.Dispose();
         cancellationSource = new();
 
@@ -62,7 +60,11 @@ internal static class Step5EntryPoint
         result = await RunStreamToHaltOrMaxStepAsync().ConfigureAwait(false);
 
         result.Should().NotBeNull();
-        checkpoints.Should().HaveCount(6);
+
+        // Depending on the timing of the response with respect to the underlying workflow
+        // we may end up with an extra superstep in between.
+        checkpoints.Should().HaveCountGreaterThanOrEqualTo(6)
+                        .And.HaveCountLessThanOrEqualTo(7);
 
         cancellationSource.Dispose();
 
@@ -80,13 +82,16 @@ internal static class Step5EntryPoint
                         switch (outputEvent.SourceId)
                         {
                             case Step4EntryPoint.JudgeId:
-                                if (!outputEvent.Is<NumberSignal>())
+                                if (outputEvent.Is(out NumberSignal newSignal))
+                                {
+                                    prompt = Step4EntryPoint.UpdatePrompt(prompt, signal = newSignal);
+                                }
+                                // TODO: We should make some well-defined way to avoid this kind of
+                                // if/elseif chain, because .Is() chains are slow
+                                else if (!outputEvent.Is<TryCount>())
                                 {
                                     throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
                                 }
-
-                                signal = outputEvent.As<NumberSignal?>()!.Value;
-                                prompt = Step4EntryPoint.UpdatePrompt(null, signal);
                                 break;
                         }
 
@@ -112,20 +117,21 @@ internal static class Step5EntryPoint
                         {
                             Console.WriteLine($"*** Max step {maxStep} reached, cancelling.");
                             cancellationSource.Cancel();
+                            return null;
                         }
-                        else
-                        {
-                            Console.WriteLine($"*** Processing {requests.Count} queued requests.");
-                            foreach (ExternalRequest request in requests)
-                            {
-                                ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
-                                Console.WriteLine($"!!! Sending response: {response}");
-                                await handle.SendResponseAsync(response).ConfigureAwait(false);
-                            }
 
-                            requests.Clear();
-                            Console.WriteLine("*** Completed processing requests.");
+                        Console.WriteLine($"*** Processing {requests.Count} queued requests.");
+                        foreach (ExternalRequest request in requests)
+                        {
+                            ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
+                            Console.WriteLine($"!!! Sending response: {response}");
+                            await handle.SendResponseAsync(response).ConfigureAwait(false);
                         }
+
+                        requests.Clear();
+
+                        Console.WriteLine("*** Completed processing requests.");
+
                         break;
 
                     case ExecutorCompletedEvent executorCompleteEvt:

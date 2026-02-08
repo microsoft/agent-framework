@@ -1,5 +1,0 @@
-type: foundry_agent
-name: ResearchManager
-description: Demo agent for DeepResearch workflow
-model:
-  id: ${FOUNDRY_MODEL_DEPLOYMENT_NAME}

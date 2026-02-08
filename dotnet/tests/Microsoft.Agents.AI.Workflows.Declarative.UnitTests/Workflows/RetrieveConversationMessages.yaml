@@ -1,0 +1,11 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+  
+    - kind: RetrieveConversationMessages
+      id: get_messages_all
+      messages: Local.AllMessages
+      conversationId: =System.ConversationId

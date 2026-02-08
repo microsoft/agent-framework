@@ -15,7 +15,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class PortableValue
 {
-    internal PortableValue(object value)
+    /// <summary>
+    /// Initializes a new instance <see cref="PortableValue"/>.
+    /// </summary>
+    /// <param name="value">The represented value.</param>
+    public PortableValue(object value)
     {
         this._value = value;
         this.TypeId = new(value.GetType());
@@ -114,10 +118,7 @@ public sealed class PortableValue
     /// <returns>true if the current value can be represented as type TValue; otherwise, false.</returns>
     public bool Is<TValue>([NotNullWhen(true)] out TValue? value)
     {
-        if (this.Value is IDelayedDeserialization delayedDeserialization)
-        {
-            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
-        }
+        this.TryDeserializeAndUpdateCache(typeof(TValue), out _);
 
         if (this.Value is TValue typedValue)
         {
@@ -152,11 +153,9 @@ public sealed class PortableValue
     /// <returns>true if the current instance can be assigned to targetType; otherwise, false.</returns>
     public bool IsType(Type targetType, [NotNullWhen(true)] out object? value)
     {
+        // Unfortunately, there is no way to check that the TypeId specified is assignable to the provided type
         Throw.IfNull(targetType);
-        if (this.Value is IDelayedDeserialization delayedDeserialization)
-        {
-            this._deserializedValueCache ??= delayedDeserialization.Deserialize(targetType);
-        }
+        this.TryDeserializeAndUpdateCache(targetType, out _);
 
         if (this.Value is not null && targetType.IsInstanceOfType(this.Value))
         {
@@ -166,5 +165,42 @@ public sealed class PortableValue
 
         value = null;
         return false;
+    }
+
+    private bool TryDeserializeAndUpdateCache(Type targetType, out object? replacedCacheValueOrNull)
+    {
+        replacedCacheValueOrNull = null;
+
+        // Explicitly use _value here since we do not want to be overridden by the cache, if any
+        if (this._value is not IDelayedDeserialization delayedDeserialization)
+        {
+            // Not a delayed deserialization; nothing to do
+            return false;
+        }
+
+        bool isCompatibleType = false;
+        if (this._deserializedValueCache == null || !(isCompatibleType = targetType.IsAssignableFrom(this._deserializedValueCache.GetType())))
+        {
+            // Either we have no cache, or the types are incompatible; see if we can deserialize
+            try
+            {
+                object? deserialized = delayedDeserialization.Deserialize(targetType);
+
+                if (deserialized != null && targetType.IsInstanceOfType(deserialized))
+                {
+                    replacedCacheValueOrNull = this._deserializedValueCache;
+                    this._deserializedValueCache = deserialized;
+
+                    return true;
+                }
+            }
+            catch
+            {
+                isCompatibleType = false;
+            }
+        }
+
+        // The last possibility is that we already deserialized successfully
+        return isCompatibleType;
     }
 }

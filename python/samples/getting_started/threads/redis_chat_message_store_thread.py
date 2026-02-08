@@ -8,6 +8,14 @@ from agent_framework import AgentThread
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisChatMessageStore
 
+"""
+Redis Chat Message Store Thread Example
+
+This sample demonstrates how to use Redis as a chat message store for thread
+management, enabling persistent conversation history storage across sessions
+with Redis as the backend data store.
+"""
+
 
 async def example_manual_memory_store() -> None:
     """Basic example of using Redis chat message store."""
@@ -25,7 +33,7 @@ async def example_manual_memory_store() -> None:
     thread = AgentThread(message_store=redis_store)
 
     # Create agent
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="RedisBot",
         instructions="You are a helpful assistant that remembers our conversation using Redis.",
     )
@@ -68,7 +76,7 @@ async def example_user_session_management() -> None:
         )
 
     # Create agent with factory pattern
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="SessionBot",
         instructions="You are a helpful assistant. Keep track of user preferences.",
         chat_message_store_factory=create_user_session_store,
@@ -121,7 +129,7 @@ async def example_conversation_persistence() -> None:
     )
 
     thread1 = AgentThread(message_store=store1)
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="PersistentBot",
         instructions="You are a helpful assistant. Remember our conversation history.",
     )
@@ -181,7 +189,7 @@ async def example_thread_serialization() -> None:
 
     original_thread = AgentThread(message_store=original_store)
 
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="SerializationBot",
         instructions="You are a helpful assistant.",
     )
@@ -233,7 +241,7 @@ async def example_message_limits() -> None:
     )
 
     thread = AgentThread(message_store=store)
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIChatClient().as_agent(
         name="LimitBot",
         instructions="You are a helpful assistant with limited memory.",
     )

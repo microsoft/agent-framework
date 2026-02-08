@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 ######################################################################
 # region Agent Framework imports
 ######################################################################
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext,  handler
 from pydantic import BaseModel, Field
 
 ######################################################################
@@ -64,6 +64,7 @@ class CommonEvents(Enum):
     START_B_REQUESTED = "StartBRequested"
     EXIT_REQUESTED = "ExitRequested"
     START_PROCESS = "StartProcess"
+
 
 ######################################################################
 # region Semantic Kernel Process Framework path
@@ -143,7 +144,7 @@ async def run_semantic_kernel_process_example() -> None:
         kernel=kernel,
         initial_event=KernelProcessEvent(id=CommonEvents.START_PROCESS.value, data="Initial"),
     ) as process_context:
-        process_state = await process_context.get_state()
+        process_state = await process_context.get_executor_state()
         c_step_state: KernelProcessStepState[CStepState] | None = next(
             (s.state for s in process_state.steps if s.state.name == "CStep"),
             None,
@@ -152,6 +153,7 @@ async def run_semantic_kernel_process_example() -> None:
             raise RuntimeError("CStep state unavailable")
         assert c_step_state.state.current_cycle == 3  # nosec
         print(f"Final State Check: CStepState current cycle: {c_step_state.state.current_cycle}")
+
 
 ######################################################################
 # region Agent Framework workflow path
@@ -219,18 +221,17 @@ async def run_agent_framework_workflow_example() -> str | None:
     aggregate = FanInExecutor(required_cycles=3)
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=kickoff)
         .add_edge(kickoff, step_a)
         .add_edge(kickoff, step_b)
         .add_fan_in_edges([step_a, step_b], aggregate)
         .add_edge(aggregate, kickoff)
-        .set_start_executor(kickoff)
         .build()
     )
 
     final_text: str | None = None
-    async for event in workflow.run_stream(CommonEvents.START_PROCESS):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(CommonEvents.START_PROCESS, stream=True):
+        if event.type == "output":
             final_text = cast(str, event.data)
 
     return final_text

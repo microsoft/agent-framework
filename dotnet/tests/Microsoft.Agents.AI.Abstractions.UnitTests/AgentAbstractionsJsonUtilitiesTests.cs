@@ -55,6 +55,9 @@ public class AgentAbstractionsJsonUtilitiesTests
         Assert.Equal(JsonSerializer.IsReflectionEnabledByDefault, AgentAbstractionsJsonUtilities.DefaultOptions.TryGetTypeInfo(anonType, out _));
     }
 
+    // The following two tests validate behaviors of reflection-based serialization
+    // which is only available in .NET Framework builds.
+#if NETFRAMEWORK
     [Fact]
     public void DefaultOptions_AllowsReadingNumbersFromStrings_AndOmitsNulls()
     {
@@ -73,11 +76,12 @@ public class AgentAbstractionsJsonUtilitiesTests
     {
         Assert.Equal("\"Monday\"", JsonSerializer.Serialize(DayOfWeek.Monday, AgentAbstractionsJsonUtilities.DefaultOptions));
     }
+#endif
 
     [Fact]
-    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentRunResponse()
+    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentResponse()
     {
-        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hello"));
+        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hello"));
         string json = JsonSerializer.Serialize(response, AgentAbstractionsJsonUtilities.DefaultOptions);
         Assert.Contains("\"messages\"", json);
         Assert.DoesNotContain("\"Messages\"", json);

@@ -2,7 +2,7 @@
 
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
@@ -13,6 +13,33 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 /// </summary>
 public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
+    [Fact]
+    public async Task ParseRecordAsync()
+    {
+        // Arrange
+        RecordDataType.Builder recordBuilder =
+            new()
+            {
+                Properties =
+                {
+                    {"key1", new PropertyInfo.Builder() { Type = DataType.String } },
+                }
+            };
+        ParseValue model =
+            this.CreateModel(
+                this.FormatDisplayName(nameof(ParseRecordAsync)),
+                recordBuilder,
+                @"{ ""key1"": ""val1"" }");
+
+        // Act
+        ParseValueExecutor action = new(model, this.State);
+        await this.ExecuteAsync(action);
+
+        // Assert
+        VerifyModel(model, action);
+        this.VerifyState("Target", FormulaValue.NewRecordFromFields(new NamedValue("key1", FormulaValue.New("val1"))));
+    }
+
     [Fact]
     public async Task ParseTableAsync()
     {
@@ -28,8 +55,8 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
         ParseValue model =
             this.CreateModel(
                 this.FormatDisplayName(nameof(ParseTableAsync)),
-                recordBuilder,
-                @"{ ""key1"": ""val1"" }");
+                DataType.EmptyTable,
+                @"[""apple"",""banana"",""cat""]");
 
         // Act
         ParseValueExecutor action = new(model, this.State);
@@ -37,7 +64,7 @@ public sealed class ParseValueExecutorTest(ITestOutputHelper output) : WorkflowA
 
         // Assert
         VerifyModel(model, action);
-        this.VerifyState("Target", FormulaValue.NewRecordFromFields(new NamedValue("key1", FormulaValue.New("val1"))));
+        this.VerifyState("Target", FormulaValue.NewSingleColumnTable(FormulaValue.New("apple"), FormulaValue.New("banana"), FormulaValue.New("cat")));
     }
 
     [Fact]

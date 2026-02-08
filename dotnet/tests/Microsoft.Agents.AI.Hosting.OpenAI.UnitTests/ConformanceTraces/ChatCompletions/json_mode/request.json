@@ -1,0 +1,36 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that outputs JSON."
+    },
+    {
+      "role": "user",
+      "content": "Provide information about a person named John Doe, age 30, who is a software engineer."
+    }
+  ],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "person_info",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "age": {
+            "type": "number"
+          },
+          "occupation": {
+            "type": "string"
+          }
+        },
+        "required": [ "name", "age", "occupation" ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

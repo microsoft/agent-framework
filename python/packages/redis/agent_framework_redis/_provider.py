@@ -8,7 +8,7 @@ from operator import and_
 from typing import Any, Literal, cast
 
 import numpy as np
-from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import (
     AgentException,
     ServiceInitializationError,
@@ -154,7 +154,7 @@ class RedisProvider(ContextProvider):
 
         Defines text and tag fields for messages plus an optional vector field enabling KNN/hybrid search.
 
-        Args:
+        Keyword Args:
             index_name: Index name.
             prefix: Key prefix.
             vector_field_name: Vector field name or None.
@@ -300,7 +300,7 @@ class RedisProvider(ContextProvider):
 
         Fills default partition fields, optionally embeds content when configured, and loads documents in a batch.
 
-        Args:
+        Keyword Args:
             data: Single document or list of documents to insert.
             metadata: Optional metadata dictionary (unused placeholder).
 
@@ -363,6 +363,8 @@ class RedisProvider(ContextProvider):
 
         Args:
             text: Query text.
+
+        Keyword Args:
             text_scorer: Scorer to use for text ranking.
             filter_expression: Additional filter expression to AND with partition filters.
             return_fields: Fields to return in results.
@@ -501,13 +503,9 @@ class RedisProvider(ContextProvider):
 
         messages: list[dict[str, Any]] = []
         for message in messages_list:
-            if (
-                message.role.value in {Role.USER.value, Role.ASSISTANT.value, Role.SYSTEM.value}
-                and message.text
-                and message.text.strip()
-            ):
+            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 shaped: dict[str, Any] = {
-                    "role": message.role.value,
+                    "role": message.role,
                     "content": message.text,
                     "conversation_id": self._conversation_id,
                     "message_id": message.message_id,
@@ -526,7 +524,9 @@ class RedisProvider(ContextProvider):
 
         Args:
             messages: List of new messages in the thread.
-            kwargs: not used at present at present.
+
+        Keyword Args:
+            **kwargs: not used at present at present.
 
         Returns:
             Context: Context object containing instructions with memories.

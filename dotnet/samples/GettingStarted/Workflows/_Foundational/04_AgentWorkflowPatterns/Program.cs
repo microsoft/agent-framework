@@ -64,13 +64,13 @@ public static class Program
                 while (true)
                 {
                     Console.Write("Q: ");
-                    messages.Add(new(ChatRole.User, Console.ReadLine()!));
+                    messages.Add(new(ChatRole.User, Console.ReadLine()));
                     messages.AddRange(await RunWorkflowAsync(workflow, messages));
                 }
 
             case "groupchat":
                 await RunWorkflowAsync(
-                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
+                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
                         .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
                         .Build(),
                     [new(ChatRole.User, "Hello, world!")]);
@@ -84,11 +84,11 @@ public static class Program
         {
             string? lastExecutorId = null;
 
-            StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
+            await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {
-                if (evt is AgentRunUpdateEvent e)
+                if (evt is AgentResponseUpdateEvent e)
                 {
                     if (e.ExecutorId != lastExecutorId)
                     {
