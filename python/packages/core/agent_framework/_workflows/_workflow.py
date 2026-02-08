@@ -218,7 +218,6 @@ class Workflow(DictConvertible):
             # can assert they are resumed with an equivalent topology.
             self._hash_graph_signature(self._compute_graph_signature()),
             max_iterations=max_iterations,
-            workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
@@ -775,7 +774,6 @@ class Workflow(DictConvertible):
             "start_executor": self.start_executor_id,
             "executors": executors_signature,
             "edge_groups": edge_groups_signature,
-            "max_iterations": self.max_iterations,
         }
 
     @staticmethod

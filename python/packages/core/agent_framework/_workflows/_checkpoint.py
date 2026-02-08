@@ -28,8 +28,9 @@ class WorkflowCheckpoint:
     enabling workflows to be paused and resumed.
 
     Attributes:
+        graph_signature_hash: Hash of the workflow graph topology to validate checkpoint
+            compatibility during restore
         checkpoint_id: Unique identifier for this checkpoint
-        workflow_id: Identifier of the workflow this checkpoint belongs to
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
         state: Committed workflow state including user data and executor states.
@@ -48,8 +49,10 @@ class WorkflowCheckpoint:
         See State class documentation for details on reserved keys.
     """
 
+    # Hash of the workflow graph topology to validate checkpoint compatibility during restore
+    graph_signature_hash: str
+
     checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    workflow_id: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Core workflow state

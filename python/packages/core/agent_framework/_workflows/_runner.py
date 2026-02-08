@@ -38,7 +38,6 @@ class Runner:
         ctx: RunnerContext,
         graph_signature_hash: str,
         max_iterations: int = 100,
-        workflow_id: str | None = None,
     ) -> None:
         """Initialize the runner with edges, state, and context.
 
@@ -49,7 +48,6 @@ class Runner:
             ctx: The runner context for the workflow.
             graph_signature_hash: A hash representing the workflow graph topology for checkpoint validation.
             max_iterations: The maximum number of iterations to run.
-            workflow_id: The workflow ID for checkpointing.
         """
         # Workflow instance related attributes
         self._executors = executors
@@ -57,7 +55,6 @@ class Runner:
         self._edge_runner_map = self._parse_edge_runners(self._edge_runners)
         self._ctx = ctx
         self._graph_signature_hash = graph_signature_hash
-        self._workflow_id = workflow_id
 
         # Runner state related attributes
         self._iteration = 0
@@ -65,10 +62,6 @@ class Runner:
         self._state = state
         self._running = False
         self._resumed_from_checkpoint = False  # Track whether we resumed
-
-        # Set workflow ID in context if provided
-        if workflow_id:
-            self._ctx.set_workflow_id(workflow_id)
 
     @property
     def context(self) -> RunnerContext:
@@ -190,12 +183,14 @@ class Runner:
             return None
 
         try:
-            # Snapshot executor states
+            # Save executor states into the shared state before creating the checkpoint,
+            # so that they are included in the checkpoint payload.
             await self._save_executor_states()
+
             checkpoint_id = await self._ctx.create_checkpoint(
+                self._graph_signature_hash,
                 self._state,
                 self._iteration,
-                metadata={"graph_signature": self._graph_signature_hash},
             )
 
             logger.info(f"Created checkpoint: {checkpoint_id}")
@@ -251,7 +246,6 @@ class Runner:
                     checkpoint_id,
                 )
 
-            self._workflow_id = checkpoint.workflow_id
             # Restore state
             self._state.import_state(checkpoint.state)
             # Restore executor states using the restored state

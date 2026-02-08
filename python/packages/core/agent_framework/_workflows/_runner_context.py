@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
@@ -173,11 +172,6 @@ class RunnerContext(Protocol):
         """Clear runtime checkpoint storage override."""
         ...
 
-    # Checkpointing APIs (optional, enabled by storage)
-    def set_workflow_id(self, workflow_id: str) -> None:
-        """Set the workflow ID for the context."""
-        ...
-
     def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run."""
         ...
@@ -200,6 +194,7 @@ class RunnerContext(Protocol):
 
     async def create_checkpoint(
         self,
+        graph_signature_hash: str,
         state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
@@ -207,6 +202,8 @@ class RunnerContext(Protocol):
         """Create a checkpoint of the current workflow state.
 
         Args:
+            graph_signature_hash: Hash of the workflow graph topology to
+                validate checkpoint compatibility during restore.
             state: The state to include in the checkpoint.
                    This is needed to capture the full state of the workflow.
                    The state is not managed by the context itself.
@@ -282,7 +279,6 @@ class InProcRunnerContext:
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
         self._runtime_checkpoint_storage: CheckpointStorage | None = None
-        self._workflow_id: str | None = None
 
         # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
@@ -357,6 +353,7 @@ class InProcRunnerContext:
 
     async def create_checkpoint(
         self,
+        graph_signature_hash: str,
         state: State,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
@@ -366,7 +363,7 @@ class InProcRunnerContext:
             raise ValueError("Checkpoint storage not configured")
 
         checkpoint = WorkflowCheckpoint(
-            workflow_id=self._workflow_id or str(uuid.uuid4()),
+            graph_signature_hash=graph_signature_hash,
             messages=dict(self._messages),
             state=state.export_state(),
             pending_request_info_events=dict(self._pending_request_info_events),
@@ -374,7 +371,7 @@ class InProcRunnerContext:
             metadata=metadata or {},
         )
         checkpoint_id = await storage.save_checkpoint(checkpoint)
-        logger.info(f"Created checkpoint {checkpoint_id} for workflow {self._workflow_id}")
+        logger.debug(f"Created checkpoint {checkpoint_id}")
         return checkpoint_id
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
@@ -408,13 +405,7 @@ class InProcRunnerContext:
             self._pending_request_info_events[request_id] = request_info_event
             await self.add_event(request_info_event)
 
-        # Restore workflow ID
-        self._workflow_id = checkpoint.workflow_id
-
     # endregion Checkpointing
-
-    def set_workflow_id(self, workflow_id: str) -> None:
-        self._workflow_id = workflow_id
 
     def set_streaming(self, streaming: bool) -> None:
         """Set whether agents should stream incremental updates.
@@ -438,8 +429,8 @@ class InProcRunnerContext:
         Args:
             event: The WorkflowEvent with type='request_info' to be added.
         """
-        if event.request_id is None:
-            raise ValueError("request_info event must have a request_id")
+        if event.type != "request_info":
+            raise ValueError("Event type must be 'request_info'")
         self._pending_request_info_events[event.request_id] = event
         await self.add_event(event)
 
