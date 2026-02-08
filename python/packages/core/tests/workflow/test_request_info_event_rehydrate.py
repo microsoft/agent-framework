@@ -46,7 +46,7 @@ async def test_rehydrate_request_info_event() -> None:
     runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
     await runner_context.add_request_info_event(request_info_event)
 
-    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     assert checkpoint is not None
@@ -85,7 +85,7 @@ async def test_request_info_event_serializes_non_json_payloads() -> None:
     await runner_context.add_request_info_event(req_1)
     await runner_context.add_request_info_event(req_2)
 
-    checkpoint_id = await runner_context.create_checkpoint(State(), iteration_count=1)
+    checkpoint_id = await runner_context.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
     checkpoint = await runner_context.load_checkpoint(checkpoint_id)
 
     # Should be JSON serializable despite datetime/slots

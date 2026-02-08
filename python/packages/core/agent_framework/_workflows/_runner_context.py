@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
-from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import INTERNAL_SOURCE_ID
 from ._events import WorkflowEvent
 from ._state import State
@@ -194,19 +194,23 @@ class RunnerContext(Protocol):
 
     async def create_checkpoint(
         self,
+        workflow_name: str,
         graph_signature_hash: str,
         state: State,
+        previous_checkpoint_id: CheckpointID | None,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> CheckpointID:
         """Create a checkpoint of the current workflow state.
 
         Args:
+            workflow_name: The name of the workflow for which the checkpoint is being created.
             graph_signature_hash: Hash of the workflow graph topology to
                 validate checkpoint compatibility during restore.
             state: The state to include in the checkpoint.
                    This is needed to capture the full state of the workflow.
                    The state is not managed by the context itself.
+            previous_checkpoint_id: The ID of the previous checkpoint, if any, to form a checkpoint chain.
             iteration_count: The current iteration count of the workflow.
             metadata: Optional metadata to associate with the checkpoint.
 
@@ -215,7 +219,7 @@ class RunnerContext(Protocol):
         """
         ...
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint | None:
         """Load a checkpoint without mutating the current context state.
 
         Args:
@@ -353,32 +357,36 @@ class InProcRunnerContext:
 
     async def create_checkpoint(
         self,
+        workflow_name: str,
         graph_signature_hash: str,
         state: State,
+        previous_checkpoint_id: CheckpointID | None,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> CheckpointID:
         storage = self._get_effective_checkpoint_storage()
         if not storage:
             raise ValueError("Checkpoint storage not configured")
 
         checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow_name,
             graph_signature_hash=graph_signature_hash,
+            previous_checkpoint_id=previous_checkpoint_id,
             messages=dict(self._messages),
             state=state.export_state(),
             pending_request_info_events=dict(self._pending_request_info_events),
             iteration_count=iteration_count,
             metadata=metadata or {},
         )
-        checkpoint_id = await storage.save_checkpoint(checkpoint)
+        checkpoint_id = await storage.save(checkpoint)
         logger.debug(f"Created checkpoint {checkpoint_id}")
         return checkpoint_id
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
         storage = self._get_effective_checkpoint_storage()
         if not storage:
             raise ValueError("Checkpoint storage not configured")
-        return await storage.load_checkpoint(checkpoint_id)
+        return await storage.load(checkpoint_id)
 
     def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run.

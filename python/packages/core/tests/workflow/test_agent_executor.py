@@ -84,7 +84,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert initial_agent.call_count == 1
 
     # Verify checkpoint was created
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list(wf.name)
     assert len(checkpoints) > 0
 
     # Get the second checkpoint which should contain the state after processing

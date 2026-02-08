@@ -175,9 +175,9 @@ class Workflow(DictConvertible):
         executors: dict[str, Executor],
         start_executor: Executor,
         runner_context: RunnerContext,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        name: str | None = None,
+        name: str,
         description: str | None = None,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
         output_executors: list[str] | None = None,
         **kwargs: Any,
     ):
@@ -189,8 +189,12 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
-            name: Optional human-readable name for the workflow.
-            description: Optional description of what the workflow does.
+            name: Optional human-readable name for the workflow. This can be used to identify the workflow in
+                checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
+                name of the builder. This name should be unique across different workflow definitions for
+                better observability and management.
+            description: Optional description of what the workflow does. If the workflow is built using
+                WorkflowBuilder, this will be the description of the builder.
             output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
                               If None or empty, all executor outputs are treated as workflow outputs.
             kwargs: Additional keyword arguments. Unused in this implementation.
@@ -199,9 +203,14 @@ class Workflow(DictConvertible):
         self.executors = dict(executors)
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
-        self.id = str(uuid.uuid4())
         self.name = name
         self.description = description
+        # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
+        # stable identifier across instances created from the same builder, for that, use the name field.
+        self.id = str(uuid.uuid4())
+        # Capture a canonical fingerprint of the workflow graph so checkpoints can assert they are resumed with
+        # an equivalent topology.
+        self.graph_signature_hash = self._hash_graph_signature(self._compute_graph_signature())
 
         # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
         # If None or empty, all executor outputs are considered workflow outputs.
@@ -215,9 +224,8 @@ class Workflow(DictConvertible):
             self.executors,
             self._state,
             runner_context,
-            # Capture a canonical fingerprint of the workflow graph so checkpoints
-            # can assert they are resumed with an equivalent topology.
-            self._hash_graph_signature(self._compute_graph_signature()),
+            self.name,
+            self.graph_signature_hash,
             max_iterations=max_iterations,
         )
 
@@ -237,6 +245,7 @@ class Workflow(DictConvertible):
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {
+            "name": self.name,
             "id": self.id,
             "start_executor_id": self.start_executor_id,
             "max_iterations": self.max_iterations,
@@ -245,9 +254,6 @@ class Workflow(DictConvertible):
             "output_executors": self._output_executors,
         }
 
-        # Add optional name and description if provided
-        if self.name is not None:
-            data["name"] = self.name
         if self.description is not None:
             data["description"] = self.description
 

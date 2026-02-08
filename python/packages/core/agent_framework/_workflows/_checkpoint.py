@@ -11,13 +11,19 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+
+from ._exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ._events import WorkflowEvent
     from ._runner_context import Message
+
+# Type alias for checkpoint IDs in case we want to change the
+# underlying type in the future (e.g., to UUID or a custom class)
+CheckpointID: TypeAlias = str
 
 
 @dataclass(slots=True)
@@ -27,10 +33,22 @@ class WorkflowCheckpoint:
     Checkpoints capture the full execution state of a workflow at a specific point,
     enabling workflows to be paused and resumed.
 
+    Note that a checkpoint is not tied to a specific workflow instance, but rather to
+    a workflow definition (identified by workflow_name and graph_signature_hash). Thus,
+    the ID of the workflow instance that created the checkpoint is not included in the
+    checkpoint data. This allows checkpoints to be shared and restored across different
+    workflow instances of the same workflow definition.
+
     Attributes:
+        workflow_name: Name of the workflow this checkpoint belongs to. This acts as a
+            logical grouping for checkpoints and can be used to filter checkpoints by
+            workflow. Workflows with the same name are expected to have compatible graph
+            structures for checkpointing.
         graph_signature_hash: Hash of the workflow graph topology to validate checkpoint
             compatibility during restore
         checkpoint_id: Unique identifier for this checkpoint
+        previous_checkpoint_id: ID of the previous checkpoint in the chain, if any. This
+            allows chaining checkpoints together to form a history of workflow states.
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
         state: Committed workflow state including user data and executor states.
@@ -49,10 +67,11 @@ class WorkflowCheckpoint:
         See State class documentation for details on reserved keys.
     """
 
-    # Hash of the workflow graph topology to validate checkpoint compatibility during restore
+    workflow_name: str
     graph_signature_hash: str
 
-    checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    checkpoint_id: CheckpointID = field(default_factory=lambda: str(uuid.uuid4()))
+    previous_checkpoint_id: CheckpointID | None = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Core workflow state
@@ -78,24 +97,73 @@ class WorkflowCheckpoint:
 class CheckpointStorage(Protocol):
     """Protocol for checkpoint storage backends."""
 
-    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
-        """Save a checkpoint and return its ID."""
+    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+        """Save a checkpoint and return its ID.
+
+        Args:
+            checkpoint: The WorkflowCheckpoint object to save.
+
+        Returns:
+            The unique ID of the saved checkpoint.
+        """
         ...
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        """Load a checkpoint by ID."""
+    async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
+        """Load a checkpoint by ID.
+
+        Args:
+            checkpoint_id: The unique ID of the checkpoint to load.
+
+        Returns:
+            The WorkflowCheckpoint object corresponding to the given ID.
+
+        Raises:
+            WorkflowCheckpointException: If no checkpoint with the given ID exists.
+        """
         ...
 
-    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
-        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
+    async def list(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects for a given workflow name.
+
+        Args:
+            workflow_name: The name of the workflow to list checkpoints for.
+
+        Returns:
+            A list of WorkflowCheckpoint objects for the specified workflow name.
+        """
         ...
 
-    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
-        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
+    async def delete(self, checkpoint_id: CheckpointID) -> bool:
+        """Delete a checkpoint by ID.
+
+        Args:
+            checkpoint_id: The unique ID of the checkpoint to delete.
+
+        Returns:
+            True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
+        """
         ...
 
-    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
-        """Delete a checkpoint by ID."""
+    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+        """Get the latest checkpoint for a given workflow name.
+
+        Args:
+            workflow_name: The name of the workflow to get the latest checkpoint for.
+
+        Returns:
+            The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
+        """
+        ...
+
+    async def list_ids(self, workflow_name: str) -> list[CheckpointID]:
+        """List checkpoint IDs for a given workflow name.
+
+        Args:
+            workflow_name: The name of the workflow to list checkpoint IDs for.
+
+        Returns:
+            A list of checkpoint IDs for the specified workflow name.
+        """
         ...
 
 
@@ -104,40 +172,46 @@ class InMemoryCheckpointStorage:
 
     def __init__(self) -> None:
         """Initialize the memory storage."""
-        self._checkpoints: dict[str, WorkflowCheckpoint] = {}
+        self._checkpoints: dict[CheckpointID, WorkflowCheckpoint] = {}
 
-    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
+    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID."""
         self._checkpoints[checkpoint.checkpoint_id] = checkpoint
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
         """Load a checkpoint by ID."""
         checkpoint = self._checkpoints.get(checkpoint_id)
         if checkpoint:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
-        return checkpoint
+            return checkpoint
+        raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
-    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
-        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
-        if workflow_id is None:
-            return list(self._checkpoints.keys())
-        return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
+    async def list(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects for a given workflow name."""
+        return [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
-    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
-        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
-        if workflow_id is None:
-            return list(self._checkpoints.values())
-        return [cp for cp in self._checkpoints.values() if cp.workflow_id == workflow_id]
-
-    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
+    async def delete(self, checkpoint_id: CheckpointID) -> bool:
         """Delete a checkpoint by ID."""
         if checkpoint_id in self._checkpoints:
             del self._checkpoints[checkpoint_id]
             logger.debug(f"Deleted checkpoint {checkpoint_id} from memory")
             return True
         return False
+
+    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+        """Get the latest checkpoint for a given workflow name."""
+        checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
+        if not checkpoints:
+            return None
+        latest_checkpoint = max(checkpoints, key=lambda cp: cp.timestamp)
+        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
+        return latest_checkpoint
+
+    async def list_ids(self, workflow_name: str) -> list[CheckpointID]:
+        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
+        return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
 
 class FileCheckpointStorage:
@@ -158,8 +232,15 @@ class FileCheckpointStorage:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
 
-    async def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> str:
-        """Save a checkpoint and return its ID."""
+    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+        """Save a checkpoint and return its ID.
+
+        Args:
+            checkpoint: The WorkflowCheckpoint object to save.
+
+        Returns:
+            The unique ID of the saved checkpoint.
+        """
         from ._checkpoint_encoding import encode_checkpoint_value
 
         file_path = self.storage_path / f"{checkpoint.checkpoint_id}.json"
@@ -177,12 +258,22 @@ class FileCheckpointStorage:
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        """Load a checkpoint by ID."""
+    async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
+        """Load a checkpoint by ID.
+
+        Args:
+            checkpoint_id: The unique ID of the checkpoint to load.
+
+        Returns:
+            The WorkflowCheckpoint object corresponding to the given ID.
+
+        Raises:
+            WorkflowCheckpointException: If no checkpoint with the given ID exists.
+        """
         file_path = self.storage_path / f"{checkpoint_id}.json"
 
         if not file_path.exists():
-            return None
+            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
         def _read() -> dict[str, Any]:
             with open(file_path) as f:
@@ -197,25 +288,15 @@ class FileCheckpointStorage:
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
 
-    async def list_checkpoint_ids(self, workflow_id: str | None = None) -> list[str]:
-        """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
+    async def list(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+        """List checkpoint objects for a given workflow name.
 
-        def _list_ids() -> list[str]:
-            checkpoint_ids: list[str] = []
-            for file_path in self.storage_path.glob("*.json"):
-                try:
-                    with open(file_path) as f:
-                        data = json.load(f)
-                    if workflow_id is None or data.get("workflow_id") == workflow_id:
-                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
-                except Exception as e:
-                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
-            return checkpoint_ids
+        Args:
+            workflow_name: The name of the workflow to list checkpoints for.
 
-        return await asyncio.to_thread(_list_ids)
-
-    async def list_checkpoints(self, workflow_id: str | None = None) -> list[WorkflowCheckpoint]:
-        """List checkpoint objects. If workflow_id is provided, filter by that workflow."""
+        Returns:
+            A list of WorkflowCheckpoint objects for the specified workflow name.
+        """
 
         def _list_checkpoints() -> list[WorkflowCheckpoint]:
             checkpoints: list[WorkflowCheckpoint] = []
@@ -227,7 +308,7 @@ class FileCheckpointStorage:
 
                         decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
                         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
-                    if workflow_id is None or checkpoint.workflow_id == workflow_id:
+                    if checkpoint.workflow_name == workflow_name:
                         checkpoints.append(checkpoint)
                 except Exception as e:
                     logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
@@ -235,8 +316,15 @@ class FileCheckpointStorage:
 
         return await asyncio.to_thread(_list_checkpoints)
 
-    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
-        """Delete a checkpoint by ID."""
+    async def delete(self, checkpoint_id: CheckpointID) -> bool:
+        """Delete a checkpoint by ID.
+
+        Args:
+            checkpoint_id: The unique ID of the checkpoint to delete.
+
+        Returns:
+            True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
+        """
         file_path = self.storage_path / f"{checkpoint_id}.json"
 
         def _delete() -> bool:
@@ -247,3 +335,43 @@ class FileCheckpointStorage:
             return False
 
         return await asyncio.to_thread(_delete)
+
+    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+        """Get the latest checkpoint for a given workflow name.
+
+        Args:
+            workflow_name: The name of the workflow to get the latest checkpoint for.
+
+        Returns:
+            The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
+        """
+        checkpoints = await self.list(workflow_name)
+        if not checkpoints:
+            return None
+        latest_checkpoint = max(checkpoints, key=lambda cp: cp.timestamp)
+        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
+        return latest_checkpoint
+
+    async def list_ids(self, workflow_name: str) -> list[CheckpointID]:
+        """List checkpoint IDs for a given workflow name.
+
+        Args:
+            workflow_name: The name of the workflow to list checkpoint IDs for.
+
+        Returns:
+            A list of checkpoint IDs for the specified workflow name.
+        """
+
+        def _list_ids() -> list[CheckpointID]:
+            checkpoint_ids: list[CheckpointID] = []
+            for file_path in self.storage_path.glob("*.json"):
+                try:
+                    with open(file_path) as f:
+                        data = json.load(f)
+                    if data.get("workflow_name") == workflow_name:
+                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
+                except Exception as e:
+                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
+            return checkpoint_ids
+
+        return await asyncio.to_thread(_list_ids)

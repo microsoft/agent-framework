@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
-from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
@@ -36,6 +36,7 @@ class Runner:
         executors: dict[str, Executor],
         state: State,
         ctx: RunnerContext,
+        workflow_name: str,
         graph_signature_hash: str,
         max_iterations: int = 100,
     ) -> None:
@@ -46,6 +47,7 @@ class Runner:
             executors: Map of executor IDs to executor instances.
             state: The state for the workflow.
             ctx: The runner context for the workflow.
+            workflow_name: The name of the workflow, used for checkpoint labeling.
             graph_signature_hash: A hash representing the workflow graph topology for checkpoint validation.
             max_iterations: The maximum number of iterations to run.
         """
@@ -54,6 +56,7 @@ class Runner:
         self._edge_runners = [create_edge_runner(group, executors) for group in edge_groups]
         self._edge_runner_map = self._parse_edge_runners(self._edge_runners)
         self._ctx = ctx
+        self._workflow_name = workflow_name
         self._graph_signature_hash = graph_signature_hash
 
         # Runner state related attributes
@@ -78,6 +81,7 @@ class Runner:
             raise WorkflowRunnerException("Runner is already running.")
 
         self._running = True
+        previous_checkpoint_id: CheckpointID | None = None
         try:
             # Emit any events already produced prior to entering loop
             if await self._ctx.has_events():
@@ -90,7 +94,7 @@ class Runner:
             # initial state before any iterations have run. This is only needed if it's not a resume from checkpoint
             # scenario, since if we are resuming, the caller should have already created a checkpoint to resume from.
             if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
-                await self._create_checkpoint_if_enabled()
+                previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
 
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
@@ -137,7 +141,7 @@ class Runner:
                 self._state.commit()
 
                 # Create checkpoint after each superstep iteration
-                await self._create_checkpoint_if_enabled()
+                previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
 
                 yield WorkflowEvent.superstep_completed(iteration=self._iteration)
 
@@ -177,7 +181,7 @@ class Runner:
         tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
         await asyncio.gather(*tasks)
 
-    async def _create_checkpoint_if_enabled(self) -> str | None:
+    async def _create_checkpoint_if_enabled(self, previous_checkpoint_id: CheckpointID | None) -> CheckpointID | None:
         """Create a checkpoint if checkpointing is enabled and attach a label and metadata."""
         if not self._ctx.has_checkpointing():
             return None
@@ -188,8 +192,10 @@ class Runner:
             await self._save_executor_states()
 
             checkpoint_id = await self._ctx.create_checkpoint(
+                self._workflow_name,
                 self._graph_signature_hash,
                 self._state,
+                previous_checkpoint_id,
                 self._iteration,
             )
 
@@ -201,7 +207,7 @@ class Runner:
 
     async def restore_from_checkpoint(
         self,
-        checkpoint_id: str,
+        checkpoint_id: CheckpointID,
         checkpoint_storage: CheckpointStorage | None = None,
     ) -> None:
         """Restore workflow state from a checkpoint.
@@ -223,7 +229,7 @@ class Runner:
             if self._ctx.has_checkpointing():
                 checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
             elif checkpoint_storage is not None:
-                checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+                checkpoint = await checkpoint_storage.load(checkpoint_id)
             else:
                 raise WorkflowCheckpointException(
                     "Cannot load checkpoint: no checkpointing configured in context or external storage provided."
@@ -234,16 +240,10 @@ class Runner:
                 raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
             # Validate the loaded checkpoint against the workflow
-            checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
-            if checkpoint_hash and self._graph_signature_hash != checkpoint_hash:
+            if self._graph_signature_hash != checkpoint.graph_signature_hash:
                 raise WorkflowCheckpointException(
                     "Workflow graph has changed since the checkpoint was created. "
                     "Please rebuild the original workflow before resuming."
-                )
-            if self._graph_signature_hash and not checkpoint_hash:
-                logger.warning(
-                    "Checkpoint %s does not include graph signature metadata; skipping topology validation.",
-                    checkpoint_id,
                 )
 
             # Restore state
