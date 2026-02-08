@@ -68,38 +68,36 @@ class _InvalidExecutor(Executor):
 
 def test_sequential_builder_rejects_empty_participants() -> None:
     with pytest.raises(ValueError):
-        SequentialBuilder().participants([])
+        SequentialBuilder(participants=[])
 
 
 def test_sequential_builder_rejects_empty_participant_factories() -> None:
     with pytest.raises(ValueError):
-        SequentialBuilder().register_participants([])
+        SequentialBuilder(participant_factories=[])
 
 
 def test_sequential_builder_rejects_mixing_participants_and_factories() -> None:
-    """Test that mixing .participants() and .register_participants() raises an error."""
+    """Test that passing both participants and participant_factories to the constructor raises an error."""
     a1 = _EchoAgent(id="agent1", name="A1")
 
-    # Try .participants() then .register_participants()
-    with pytest.raises(ValueError, match="Cannot mix"):
-        SequentialBuilder().participants([a1]).register_participants([lambda: _EchoAgent(id="agent2", name="A2")])
-
-    # Try .register_participants() then .participants()
-    with pytest.raises(ValueError, match="Cannot mix"):
-        SequentialBuilder().register_participants([lambda: _EchoAgent(id="agent1", name="A1")]).participants([a1])
+    with pytest.raises(ValueError, match="Cannot provide both participants and participant_factories"):
+        SequentialBuilder(
+            participants=[a1],
+            participant_factories=[lambda: _EchoAgent(id="agent2", name="A2")],
+        )
 
 
 def test_sequential_builder_validation_rejects_invalid_executor() -> None:
     """Test that adding an invalid executor to the builder raises an error."""
     with pytest.raises(TypeCompatibilityError):
-        SequentialBuilder().participants([_EchoAgent(id="agent1", name="A1"), _InvalidExecutor(id="invalid")]).build()
+        SequentialBuilder(participants=[_EchoAgent(id="agent1", name="A1"), _InvalidExecutor(id="invalid")]).build()
 
 
 async def test_sequential_agents_append_to_context() -> None:
     a1 = _EchoAgent(id="agent1", name="A1")
     a2 = _EchoAgent(id="agent2", name="A2")
 
-    wf = SequentialBuilder().participants([a1, a2]).build()
+    wf = SequentialBuilder(participants=[a1, a2]).build()
 
     completed = False
     output: list[ChatMessage] | None = None
@@ -132,7 +130,7 @@ async def test_sequential_register_participants_with_agent_factories() -> None:
     def create_agent2() -> _EchoAgent:
         return _EchoAgent(id="agent2", name="A2")
 
-    wf = SequentialBuilder().register_participants([create_agent1, create_agent2]).build()
+    wf = SequentialBuilder(participant_factories=[create_agent1, create_agent2]).build()
 
     completed = False
     output: list[ChatMessage] | None = None
@@ -158,7 +156,7 @@ async def test_sequential_with_custom_executor_summary() -> None:
     a1 = _EchoAgent(id="agent1", name="A1")
     summarizer = _SummarizerExec(id="summarizer")
 
-    wf = SequentialBuilder().participants([a1, summarizer]).build()
+    wf = SequentialBuilder(participants=[a1, summarizer]).build()
 
     completed = False
     output: list[ChatMessage] | None = None
@@ -189,7 +187,7 @@ async def test_sequential_register_participants_mixed_agents_and_executors() -> 
     def create_summarizer() -> _SummarizerExec:
         return _SummarizerExec(id="summarizer")
 
-    wf = SequentialBuilder().register_participants([create_agent, create_summarizer]).build()
+    wf = SequentialBuilder(participant_factories=[create_agent, create_summarizer]).build()
 
     completed = False
     output: list[ChatMessage] | None = None
@@ -215,7 +213,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     storage = InMemoryCheckpointStorage()
 
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
-    wf = SequentialBuilder().participants(list(initial_agents)).with_checkpointing(storage).build()
+    wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("checkpoint sequential", stream=True):
@@ -236,7 +234,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     )
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
-    wf_resume = SequentialBuilder().participants(list(resumed_agents)).with_checkpointing(storage).build()
+    wf_resume = SequentialBuilder(participants=list(resumed_agents), checkpoint_storage=storage).build()
 
     resumed_output: list[ChatMessage] | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
@@ -258,7 +256,7 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     storage = InMemoryCheckpointStorage()
 
     agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
-    wf = SequentialBuilder().participants(list(agents)).build()
+    wf = SequentialBuilder(participants=list(agents)).build()
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
@@ -279,7 +277,7 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     )
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
-    wf_resume = SequentialBuilder().participants(list(resumed_agents)).build()
+    wf_resume = SequentialBuilder(participants=list(resumed_agents)).build()
 
     resumed_output: list[ChatMessage] | None = None
     async for ev in wf_resume.run(
@@ -309,7 +307,7 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
         runtime_storage = FileCheckpointStorage(temp_dir2)
 
         agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
-        wf = SequentialBuilder().participants(list(agents)).with_checkpointing(buildtime_storage).build()
+        wf = SequentialBuilder(participants=list(agents), checkpoint_storage=buildtime_storage).build()
 
         baseline_output: list[ChatMessage] | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
@@ -337,7 +335,7 @@ async def test_sequential_register_participants_with_checkpointing() -> None:
     def create_agent2() -> _EchoAgent:
         return _EchoAgent(id="agent2", name="A2")
 
-    wf = SequentialBuilder().register_participants([create_agent1, create_agent2]).with_checkpointing(storage).build()
+    wf = SequentialBuilder(participant_factories=[create_agent1, create_agent2], checkpoint_storage=storage).build()
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("checkpoint with factories", stream=True):
@@ -357,9 +355,9 @@ async def test_sequential_register_participants_with_checkpointing() -> None:
         checkpoints[-1],
     )
 
-    wf_resume = (
-        SequentialBuilder().register_participants([create_agent1, create_agent2]).with_checkpointing(storage).build()
-    )
+    wf_resume = SequentialBuilder(
+        participant_factories=[create_agent1, create_agent2], checkpoint_storage=storage
+    ).build()
 
     resumed_output: list[ChatMessage] | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
@@ -385,7 +383,7 @@ async def test_sequential_register_participants_factories_called_on_build() -> N
         call_count += 1
         return _EchoAgent(id=f"agent{call_count}", name=f"A{call_count}")
 
-    builder = SequentialBuilder().register_participants([create_agent, create_agent])
+    builder = SequentialBuilder(participant_factories=[create_agent, create_agent])
 
     # Factories should not be called yet
     assert call_count == 0
@@ -418,7 +416,7 @@ async def test_sequential_builder_reusable_after_build_with_participants() -> No
     a1 = _EchoAgent(id="agent1", name="A1")
     a2 = _EchoAgent(id="agent2", name="A2")
 
-    builder = SequentialBuilder().participants([a1, a2])
+    builder = SequentialBuilder(participants=[a1, a2])
 
     # Build first workflow
     builder.build()
@@ -442,7 +440,7 @@ async def test_sequential_builder_reusable_after_build_with_factories() -> None:
         call_count += 1
         return _EchoAgent(id="agent2", name="A2")
 
-    builder = SequentialBuilder().register_participants([create_agent1, create_agent2])
+    builder = SequentialBuilder(participant_factories=[create_agent1, create_agent2])
 
     # Build first workflow - factories should be called
     builder.build()

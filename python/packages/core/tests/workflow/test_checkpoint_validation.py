@@ -30,8 +30,9 @@ def build_workflow(storage: InMemoryCheckpointStorage, finish_id: str = "finish"
     start = StartExecutor(id="start")
     finish = FinishExecutor(id=finish_id)
 
-    builder = WorkflowBuilder(max_iterations=3).set_start_executor(start).add_edge(start, finish)
-    builder = builder.with_checkpointing(checkpoint_storage=storage)
+    builder = WorkflowBuilder(max_iterations=3, start_executor=start, checkpoint_storage=storage).add_edge(
+        start, finish
+    )
     return builder.build()
 
 

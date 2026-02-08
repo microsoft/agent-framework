@@ -232,7 +232,7 @@ def _build_inner_workflow() -> WorkflowExecutor:
     inner_echo = InnerEchoExecutor()
     inner_repeat = InnerRepeatExecutor()
 
-    inner_workflow = WorkflowBuilder().set_start_executor(inner_echo).add_edge(inner_echo, inner_repeat).build()
+    inner_workflow = WorkflowBuilder(start_executor=inner_echo).add_edge(inner_echo, inner_repeat).build()
 
     return WorkflowExecutor(inner_workflow, id="inner_workflow")
 
@@ -246,8 +246,7 @@ async def run_agent_framework_nested_workflow(initial_message: str) -> Sequence[
     collector = CollectResultExecutor()
 
     outer_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(kickoff)
+        WorkflowBuilder(start_executor=kickoff)
         .add_edge(kickoff, outer_echo)
         .add_edge(outer_echo, outer_repeat)
         .add_edge(outer_repeat, inner_executor)

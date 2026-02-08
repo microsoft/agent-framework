@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Fan out concurrent runs across two agents inside a Durable Functions orchestration.
 
 Components used in this sample:

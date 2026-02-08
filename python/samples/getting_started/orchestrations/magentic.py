@@ -72,20 +72,16 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    workflow = (
-        MagenticBuilder()
-        .participants([researcher_agent, coder_agent])
-        .with_manager(
-            agent=manager_agent,
-            max_round_count=10,
-            max_stall_count=3,
-            max_reset_count=2,
-        )
-        # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowEvent events
-        .with_intermediate_outputs()
-        .build()
-    )
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    workflow = MagenticBuilder(
+        participants=[researcher_agent, coder_agent],
+        intermediate_outputs=True,
+        manager_agent=manager_agent,
+        max_round_count=10,
+        max_stall_count=3,
+        max_reset_count=2,
+    ).build()
 
     task = (
         "I am preparing a report on the energy efficiency of different machine learning model architectures. "

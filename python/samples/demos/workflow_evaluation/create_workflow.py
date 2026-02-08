@@ -154,19 +154,19 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
     """
     if chat_client is None:
         try:
-            # Create AIProjectClient with the correct API version for V2 prompt agents
-            project_client = AIProjectClient(
-                endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-                credential=credential,
-                api_version="2025-11-15-preview",
-            )
+            async with DefaultAzureCredential() as credential:
+                # Create AIProjectClient with the correct API version for V2 prompt agents
+                project_client = AIProjectClient(
+                    endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+                    credential=credential,
+                    api_version="2025-11-15-preview",
+                )
 
-            async with (
-                DefaultAzureCredential() as credential,
-                project_client,
-                AzureAIClient(project_client=project_client, credential=credential) as client,
-            ):
-                return await _run_workflow_with_client(query, client)
+                async with (
+                    project_client,
+                    AzureAIClient(project_client=project_client, credential=credential) as client,
+                ):
+                    return await _run_workflow_with_client(query, client)
         except Exception as e:
             print(f"Error during workflow execution: {e}")
             raise
@@ -319,8 +319,7 @@ async def _create_workflow(project_client, credential):
     # 7. booking_info_aggregation, booking_payment, activity_search → final_coordinator (final aggregation, fan-in)
 
     workflow = (
-        WorkflowBuilder(name="Travel Planning Workflow")
-        .set_start_executor(start_executor)
+        WorkflowBuilder(name="Travel Planning Workflow", start_executor=start_executor)
         .add_edge(start_executor, travel_request_handler)
         .add_fan_out_edges(travel_request_handler, [hotel_search_agent, flight_search_agent, activity_search_agent])
         .add_edge(hotel_search_agent, booking_info_aggregation_agent)
@@ -370,27 +369,36 @@ async def _process_workflow_events(events, conversation_ids, response_ids):
 
 def _track_agent_ids(event, agent, response_ids, conversation_ids):
     """Track agent response and conversation IDs - supporting multiple responses per agent."""
-    if isinstance(event.data, AgentResponseUpdate):
+    if (
+        isinstance(event.data, AgentResponseUpdate)
+        and hasattr(event.data, "raw_representation")
+        and event.data.raw_representation
+    ):
         # Check for conversation_id and response_id from raw_representation
         # V2 API stores conversation_id directly on raw_representation (ChatResponseUpdate)
-        if hasattr(event.data, "raw_representation") and event.data.raw_representation:
-            raw = event.data.raw_representation
+        raw = event.data.raw_representation
 
-            # Try conversation_id directly on raw representation
-            if hasattr(raw, "conversation_id") and raw.conversation_id:
+        # Try conversation_id directly on raw representation
+        if (
+            hasattr(raw, "conversation_id")
+            and raw.conversation_id  # type: ignore[union-attr]
+            and raw.conversation_id not in conversation_ids[agent]  # type: ignore[union-attr]
+        ):
+            # Only add if not already in the list
+            conversation_ids[agent].append(raw.conversation_id)  # type: ignore[union-attr]
+
+        # Extract response_id from the OpenAI event (available from first event)
+        if hasattr(raw, "raw_representation") and raw.raw_representation:  # type: ignore[union-attr]
+            openai_event = raw.raw_representation  # type: ignore[union-attr]
+
+            # Check if event has response object with id
+            if (
+                hasattr(openai_event, "response")
+                and hasattr(openai_event.response, "id")
+                and openai_event.response.id not in response_ids[agent]
+            ):
                 # Only add if not already in the list
-                if raw.conversation_id not in conversation_ids[agent]:
-                    conversation_ids[agent].append(raw.conversation_id)
-
-            # Extract response_id from the OpenAI event (available from first event)
-            if hasattr(raw, "raw_representation") and raw.raw_representation:
-                openai_event = raw.raw_representation
-
-                # Check if event has response object with id
-                if hasattr(openai_event, "response") and hasattr(openai_event.response, "id"):
-                    # Only add if not already in the list
-                    if openai_event.response.id not in response_ids[agent]:
-                        response_ids[agent].append(openai_event.response.id)
+                response_ids[agent].append(openai_event.response.id)
 
 
 async def create_and_run_workflow():

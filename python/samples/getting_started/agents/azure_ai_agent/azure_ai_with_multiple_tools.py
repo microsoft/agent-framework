@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework import (
-    SupportsAgentRun,
     AgentThread,
     HostedMCPTool,
     HostedWebSearchTool,
+    SupportsAgentRun,
     tool,
 )
 from agent_framework.azure import AzureAIAgentsProvider

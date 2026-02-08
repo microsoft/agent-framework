@@ -74,7 +74,7 @@ async def run_agent_framework_example(prompt: str) -> list[ChatMessage]:
         name="reviewer",
     )
 
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     conversation_outputs: list[list[ChatMessage]] = []
     async for event in workflow.run(prompt, stream=True):

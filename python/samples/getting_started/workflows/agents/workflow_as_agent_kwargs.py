@@ -94,7 +94,7 @@ async def main() -> None:
     )
 
     # Build a sequential workflow
-    workflow = SequentialBuilder().participants([agent]).build()
+    workflow = SequentialBuilder(participants=[agent]).build()
 
     # Expose the workflow as an agent using .as_agent()
     workflow_agent = workflow.as_agent(name="WorkflowAgent")

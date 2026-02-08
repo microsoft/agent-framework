@@ -96,7 +96,7 @@ agents/
 │   ├── agent.py
 │   └── .env             # Optional: API keys, config vars
 ├── my_workflow/
-│   ├── __init__.py      # Must export: workflow = WorkflowBuilder()...
+│   ├── __init__.py      # Must export: workflow = WorkflowBuilder(start_executor=...)...
 │   ├── workflow.py
 │   └── .env             # Optional: environment variables
 └── .env                 # Optional: shared environment variables

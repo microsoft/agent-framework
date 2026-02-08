@@ -97,10 +97,7 @@ def workflow_two_agents():
 
             # Build workflow: analyzer -> advisor
             workflow = (
-                WorkflowBuilder()
-                .set_start_executor(analyzer_executor)
-                .add_edge(analyzer_executor, advisor_executor)
-                .build()
+                WorkflowBuilder(start_executor=analyzer_executor).add_edge(analyzer_executor, advisor_executor).build()
             )
 
             yield workflow

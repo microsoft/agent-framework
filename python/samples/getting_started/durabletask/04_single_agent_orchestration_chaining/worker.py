@@ -1,11 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting a single agent with chaining orchestration using Durable Task.
 
 This worker registers a writer agent and an orchestration function that demonstrates
 chaining behavior by running the agent twice sequentially on the same thread,
 preserving conversation context between invocations.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -31,10 +33,10 @@ WRITER_AGENT_NAME = "WriterAgent"
 
 def create_writer_agent() -> "ChatAgent":
     """Create the Writer agent using Azure OpenAI.
-    
+
     This agent refines short pieces of text, enhancing initial sentences
     and polishing improved versions further.
-    
+
     Returns:
         ChatAgent: The configured Writer agent
     """
@@ -51,7 +53,7 @@ def create_writer_agent() -> "ChatAgent":
 
 def get_orchestration():
     """Get the orchestration function for this sample.
-    
+
     Returns:
         The orchestration function to register with the worker
     """
@@ -62,18 +64,18 @@ def single_agent_chaining_orchestration(
     context: OrchestrationContext, _: str
 ) -> Generator[Task[AgentResponse], AgentResponse, str]:
     """Orchestration that runs the writer agent twice on the same thread.
-    
+
     This demonstrates chaining behavior where the output of the first agent run
     becomes part of the input for the second run, all while maintaining the
     conversation context through a shared thread.
-    
+
     Args:
         context: The orchestration context
         _: Input parameter (unused)
-        
+
     Yields:
         Task[AgentRunResponse]: Tasks that resolve to AgentRunResponse
-        
+
     Returns:
         str: The final refined text from the second agent run
     """
@@ -123,12 +125,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -151,10 +153,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents and orchestrations registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents and orchestrations registered
     """

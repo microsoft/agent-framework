@@ -126,7 +126,7 @@ async def main():
     # Step 1: Build the workflow with the defined edges.
     # This time we are creating a loop in the workflow.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="guess_number")
         .register_executor(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
         .register_agent(create_judge_agent, name="judge_agent")
         .register_executor(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
@@ -135,7 +135,6 @@ async def main():
         .add_edge("submit_judge", "judge_agent")
         .add_edge("judge_agent", "parse_judge")
         .add_edge("parse_judge", "guess_number")
-        .set_start_executor("guess_number")
         .build()
     )
 

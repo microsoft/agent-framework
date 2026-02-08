@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Single Agent Orchestration Chaining Sample - Durable Task Integration
 
 This sample demonstrates chaining two invocations of the same agent inside a Durable Task
@@ -10,8 +12,8 @@ Components used:
 - DurableTaskSchedulerClient and orchestration for sequential agent invocations
 - Thread management to maintain conversation context across invocations
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker emulator)
 

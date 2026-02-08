@@ -163,7 +163,7 @@ class RedisStreamResponseHandler:
                 has_seen_data = True
 
                 # Process entries from the stream
-                for stream_name, stream_entries in entries:
+                for _stream_name, stream_entries in entries:
                     for entry_id, entry_data in stream_entries:
                         start_id = entry_id.decode() if isinstance(entry_id, bytes) else entry_id
 
