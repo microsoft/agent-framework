@@ -874,6 +874,14 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                     options=options,
                     kwargs=kwargs,
                 )
+
+                # Update ambient context with resolved thread for sub-agent conversation_id inheritance
+                from ._agent_context import get_current_agent_run_context
+
+                parent_context = get_current_agent_run_context()
+                if parent_context is not None and parent_context.thread is None:
+                    parent_context.thread = ctx["thread"]
+
                 response = await self.chat_client.get_response(  # type: ignore[call-overload]
                     messages=ctx["thread_messages"],
                     stream=False,
@@ -945,6 +953,14 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
                 kwargs=kwargs,
             )
             ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
+
+            # Update ambient context with resolved thread for sub-agent conversation_id inheritance
+            from ._agent_context import get_current_agent_run_context
+
+            parent_context = get_current_agent_run_context()
+            if parent_context is not None and parent_context.thread is None:
+                parent_context.thread = ctx["thread"]
+
             return self.chat_client.get_response(  # type: ignore[call-overload, no-any-return]
                 messages=ctx["thread_messages"],
                 stream=True,
