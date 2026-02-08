@@ -329,3 +329,180 @@ def test_checkpoint_storage_protocol_compliance():
             assert callable(storage.delete)
             assert hasattr(storage, "list_ids")
             assert callable(storage.list_ids)
+            assert hasattr(storage, "get_latest")
+            assert callable(storage.get_latest)
+
+
+def test_workflow_checkpoint_to_dict():
+    checkpoint = WorkflowCheckpoint(
+        checkpoint_id="test-id",
+        workflow_name="test-workflow",
+        graph_signature_hash="test-hash",
+        messages={"executor1": [{"data": "test"}]},
+        state={"key": "value"},
+        iteration_count=5,
+    )
+
+    result = checkpoint.to_dict()
+
+    assert result["checkpoint_id"] == "test-id"
+    assert result["workflow_name"] == "test-workflow"
+    assert result["graph_signature_hash"] == "test-hash"
+    assert result["messages"] == {"executor1": [{"data": "test"}]}
+    assert result["state"] == {"key": "value"}
+    assert result["iteration_count"] == 5
+
+
+def test_workflow_checkpoint_previous_checkpoint_id():
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="test-workflow",
+        graph_signature_hash="test-hash",
+        previous_checkpoint_id="previous-id-123",
+    )
+
+    assert checkpoint.previous_checkpoint_id == "previous-id-123"
+
+
+async def test_memory_checkpoint_storage_get_latest():
+    import asyncio
+
+    storage = InMemoryCheckpointStorage()
+
+    # Create checkpoints with small delays to ensure different timestamps
+    checkpoint1 = WorkflowCheckpoint(workflow_name="workflow-1", graph_signature_hash="hash-1")
+    await asyncio.sleep(0.01)
+    checkpoint2 = WorkflowCheckpoint(workflow_name="workflow-1", graph_signature_hash="hash-2")
+    await asyncio.sleep(0.01)
+    checkpoint3 = WorkflowCheckpoint(workflow_name="workflow-2", graph_signature_hash="hash-3")
+
+    await storage.save(checkpoint1)
+    await storage.save(checkpoint2)
+    await storage.save(checkpoint3)
+
+    # Test get_latest for workflow-1
+    latest = await storage.get_latest("workflow-1")
+    assert latest is not None
+    assert latest.checkpoint_id == checkpoint2.checkpoint_id
+
+    # Test get_latest for workflow-2
+    latest2 = await storage.get_latest("workflow-2")
+    assert latest2 is not None
+    assert latest2.checkpoint_id == checkpoint3.checkpoint_id
+
+    # Test get_latest for non-existent workflow
+    latest_none = await storage.get_latest("nonexistent-workflow")
+    assert latest_none is None
+
+
+async def test_file_checkpoint_storage_get_latest():
+    import asyncio
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Create checkpoints with small delays to ensure different timestamps
+        checkpoint1 = WorkflowCheckpoint(workflow_name="workflow-1", graph_signature_hash="hash-1")
+        await asyncio.sleep(0.01)
+        checkpoint2 = WorkflowCheckpoint(workflow_name="workflow-1", graph_signature_hash="hash-2")
+        await asyncio.sleep(0.01)
+        checkpoint3 = WorkflowCheckpoint(workflow_name="workflow-2", graph_signature_hash="hash-3")
+
+        await storage.save(checkpoint1)
+        await storage.save(checkpoint2)
+        await storage.save(checkpoint3)
+
+        # Test get_latest for workflow-1
+        latest = await storage.get_latest("workflow-1")
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint2.checkpoint_id
+
+        # Test get_latest for workflow-2
+        latest2 = await storage.get_latest("workflow-2")
+        assert latest2 is not None
+        assert latest2.checkpoint_id == checkpoint3.checkpoint_id
+
+        # Test get_latest for non-existent workflow
+        latest_none = await storage.get_latest("nonexistent-workflow")
+        assert latest_none is None
+
+
+async def test_file_checkpoint_storage_list_ids_corrupted_file():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Create a valid checkpoint first
+        checkpoint = WorkflowCheckpoint(workflow_name="test-workflow", graph_signature_hash="test-hash")
+        await storage.save(checkpoint)
+
+        # Create a corrupted JSON file
+        corrupted_file = Path(temp_dir) / "corrupted.json"
+        with open(corrupted_file, "w") as f:  # noqa: ASYNC230
+            f.write("{ invalid json }")
+
+        # list_ids should handle the corrupted file gracefully
+        checkpoint_ids = await storage.list_ids("test-workflow")
+        assert len(checkpoint_ids) == 1
+        assert checkpoint.checkpoint_id in checkpoint_ids
+
+
+async def test_file_checkpoint_storage_list_ids_empty():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Test list_ids on empty storage
+        checkpoint_ids = await storage.list_ids("any-workflow")
+        assert checkpoint_ids == []
+
+
+async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
+    """Test that consecutive checkpoints created by a workflow are properly chained via previous_checkpoint_id."""
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class StartExecutor(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message, target_id="middle")
+
+    class MiddleExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-processed", target_id="finish")
+
+    class FinishExecutor(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+            await ctx.yield_output(message + "-done")
+
+    storage = InMemoryCheckpointStorage()
+
+    start = StartExecutor(id="start")
+    middle = MiddleExecutor(id="middle")
+    finish = FinishExecutor(id="finish")
+
+    workflow = (
+        WorkflowBuilder(max_iterations=10, start_executor=start, checkpoint_storage=storage)
+        .add_edge(start, middle)
+        .add_edge(middle, finish)
+        .build()
+    )
+
+    # Run workflow - this creates checkpoints at each superstep
+    _ = [event async for event in workflow.run("hello", stream=True)]
+
+    # Get all checkpoints sorted by timestamp
+    checkpoints = sorted(await storage.list(workflow.name), key=lambda c: c.timestamp)
+
+    # Should have multiple checkpoints (one initial + one per superstep)
+    assert len(checkpoints) >= 2, f"Expected at least 2 checkpoints, got {len(checkpoints)}"
+
+    # Verify chaining: first checkpoint has no previous
+    assert checkpoints[0].previous_checkpoint_id is None
+
+    # Subsequent checkpoints should chain to the previous one
+    for i in range(1, len(checkpoints)):
+        assert checkpoints[i].previous_checkpoint_id == checkpoints[i - 1].checkpoint_id, (
+            f"Checkpoint {i} should chain to checkpoint {i - 1}"
+        )
