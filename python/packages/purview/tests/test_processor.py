@@ -92,7 +92,7 @@ class TestScopedContentProcessor:
 
             assert should_block is False
             assert user_id is None
-            mock_map.assert_called_once_with(messages, Activity.UPLOAD_TEXT, None)
+            mock_map.assert_called_once_with(messages, Activity.UPLOAD_TEXT, None, None)
 
     async def test_process_messages_blocks_content(
         self, processor: ScopedContentProcessor, process_content_request_factory
