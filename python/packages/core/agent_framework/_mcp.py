@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import logging
@@ -333,7 +335,7 @@ class MCPTool:
         parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        chat_client: ChatClientProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
@@ -940,7 +942,7 @@ class MCPStdioTool(MCPTool):
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        chat_client: ChatClientProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1059,7 +1061,7 @@ class MCPStreamableHTTPTool(MCPTool):
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        chat_client: ChatClientProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
@@ -1173,7 +1175,7 @@ class MCPWebsocketTool(MCPTool):
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        chat_client: ChatClientProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:

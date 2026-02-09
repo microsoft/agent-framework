@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import os
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Literal, cast

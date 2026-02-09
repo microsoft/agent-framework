@@ -89,7 +89,7 @@ namespace SampleApp
 
         public string? SessionDbKey { get; private set; }
 
-        public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
@@ -107,7 +107,7 @@ namespace SampleApp
             return messages;
         }
 
-        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Don't store messages if the request failed.
             if (context.InvokeException is not null)
@@ -122,7 +122,7 @@ namespace SampleApp
 
             // Add both request and response messages to the store
             // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
-            var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+            var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
 
             await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
             {

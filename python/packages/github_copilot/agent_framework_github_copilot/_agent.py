@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
@@ -223,7 +225,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> "GitHubCopilotAgent[OptionsT]":
+    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self

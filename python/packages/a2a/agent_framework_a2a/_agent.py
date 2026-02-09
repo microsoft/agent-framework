@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import json
 import re
@@ -169,7 +171,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         msg = f"Invalid timeout type: {type(timeout)}. Expected float, httpx.Timeout, or None."
         raise TypeError(msg)
 
-    async def __aenter__(self) -> "A2AAgent":
+    async def __aenter__(self) -> A2AAgent:
         """Async context manager entry."""
         return self
 

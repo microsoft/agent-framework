@@ -2,6 +2,8 @@
 
 """Example agent demonstrating predictive state updates with document writing."""
 
+from __future__ import annotations
+
 from agent_framework import ChatAgent, ChatClientProtocol, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 

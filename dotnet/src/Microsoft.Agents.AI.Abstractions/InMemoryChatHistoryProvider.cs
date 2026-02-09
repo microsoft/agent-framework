@@ -133,7 +133,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider, IList<Cha
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -146,7 +146,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider, IList<Cha
     }
 
     /// <inheritdoc />
-    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -155,8 +155,8 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider, IList<Cha
             return;
         }
 
-        // Add request, AI context provider, and response messages to the provider
-        var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+        // Add request and response messages to the provider
+        var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         this._messages.AddRange(allNewMessages);
 
         if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
@@ -229,7 +229,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider, IList<Cha
     {
         /// <summary>
         /// Trigger the reducer when a new message is added.
-        /// <see cref="InvokedAsync(InvokedContext, CancellationToken)"/> will only complete when reducer processing is done.
+        /// <see cref="InvokedCoreAsync(InvokedContext, CancellationToken)"/> will only complete when reducer processing is done.
         /// </summary>
         AfterMessageAdded,
 

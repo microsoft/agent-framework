@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -137,7 +139,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[ResponseModelBoundT]",
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -147,7 +149,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "OptionsContraT | ChatOptions[None] | None" = None,
+        options: OptionsContraT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -157,7 +159,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "OptionsContraT | ChatOptions[Any] | None" = None,
+        options: OptionsContraT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -166,7 +168,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "OptionsContraT | ChatOptions[Any] | None" = None,
+        options: OptionsContraT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
@@ -366,7 +368,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[ResponseModelBoundT]",
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -376,7 +378,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "OptionsCoT | ChatOptions[None] | None" = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -386,7 +388,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "OptionsCoT | ChatOptions[Any] | None" = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -395,7 +397,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "OptionsCoT | ChatOptions[Any] | None" = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
@@ -443,10 +445,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence["MiddlewareTypes"] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[OptionsCoT]":
+    ) -> ChatAgent[OptionsCoT]:
         """Create a ChatAgent with this client.
 
         This is a convenience method that creates a ChatAgent instance with this

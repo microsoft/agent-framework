@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
 
@@ -74,7 +76,7 @@ class ChatMessageStoreProtocol(Protocol):
     @classmethod
     async def deserialize(
         cls, serialized_store_state: MutableMapping[str, Any], **kwargs: Any
-    ) -> "ChatMessageStoreProtocol":
+    ) -> ChatMessageStoreProtocol:
         """Creates a new instance of the store from previously serialized state.
 
         This method, together with ``serialize()`` can be used to save and load messages from a persistent store

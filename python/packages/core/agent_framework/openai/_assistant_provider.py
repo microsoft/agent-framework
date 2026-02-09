@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
@@ -177,7 +179,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
             self._client = AsyncOpenAI(**client_args)
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
@@ -206,7 +208,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[OptionsCoT]":
+    ) -> ChatAgent[OptionsCoT]:
         """Create a new assistant on OpenAI and return a ChatAgent.
 
         This method creates a new assistant on the OpenAI service and wraps it
@@ -314,7 +316,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[OptionsCoT]":
+    ) -> ChatAgent[OptionsCoT]:
         """Retrieve an existing assistant by ID and return a ChatAgent.
 
         This method fetches an existing assistant from OpenAI by its ID
@@ -380,7 +382,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[OptionsCoT]":
+    ) -> ChatAgent[OptionsCoT]:
         """Wrap an existing SDK Assistant object as a ChatAgent.
 
         This method does NOT make any HTTP calls. It simply wraps an already-
@@ -524,7 +526,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         context_provider: ContextProvider | None,
         default_options: OptionsCoT | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[OptionsCoT]":
+    ) -> ChatAgent[OptionsCoT]:
         """Create a ChatAgent from an Assistant.
 
         Args:

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -305,7 +307,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
 
-    def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> "ChatResponse":
+    def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []

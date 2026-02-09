@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import ast
 import json
 import os
@@ -346,7 +348,7 @@ class AzureAIAgentClient(
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
@@ -1047,9 +1049,7 @@ class AzureAIAgentClient(
 
         return tool_definitions
 
-    def _prepare_mcp_resources(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
-    ) -> list[dict[str, Any]]:
+    def _prepare_mcp_resources(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         """Prepare MCP tool resources for approval mode configuration."""
         mcp_tools = [tool for tool in tools if isinstance(tool, HostedMCPTool)]
         if not mcp_tools:
@@ -1142,7 +1142,7 @@ class AzureAIAgentClient(
         return additional_messages, instructions, required_action_results
 
     async def _prepare_tools_for_azure_ai(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
+        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the Azure AI Agents API."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []

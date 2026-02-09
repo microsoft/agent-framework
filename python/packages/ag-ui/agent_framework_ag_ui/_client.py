@@ -2,6 +2,8 @@
 
 """AG-UI Chat Client implementation."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
@@ -216,7 +218,7 @@ class AGUIChatClient(
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         additional_properties: dict[str, Any] | None = None,
-        middleware: Sequence["ChatAndFunctionMiddlewareTypes"] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Generic
@@ -63,7 +65,7 @@ class AzureOpenAIAssistantsClient(
         ad_token: str | None = None,
         ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        credential: "TokenCredential | None" = None,
+        credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,

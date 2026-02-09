@@ -92,7 +92,7 @@ namespace SampleApp
             }
         }
 
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             StringBuilder outputMessageBuilder = new();
             outputMessageBuilder.AppendLine("Your todo list contains the following items:");
@@ -132,7 +132,7 @@ namespace SampleApp
     /// </summary>
     internal sealed class CalendarSearchAIContextProvider(Func<Task<string[]>> loadNextThreeCalendarEvents) : AIContextProvider
     {
-        public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var events = await loadNextThreeCalendarEvents();
 
@@ -179,7 +179,7 @@ namespace SampleApp
                 .ToList();
         }
 
-        public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             // Invoke all the sub providers.
             var tasks = this._providers.Select(provider => provider.InvokingAsync(context, cancellationToken).AsTask());
