@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.Agents.Persistent" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="System.Linq.AsyncEnumerable" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting.A2A.AspNetCore\Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
+
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.A2A\Microsoft.Agents.AI.A2A.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.AzureAI.Persistent\Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
+  </ItemGroup>
+
+</Project>

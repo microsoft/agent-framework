@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Aspire.AppHost.Sdk" Version="$(AspireAppHostSdkVersion)" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAspireHost>true</IsAspireHost>
+    <UserSecretsId>2969a84d-8ee6-4304-8737-6e469a315aa8</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Azure.CognitiveServices" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentWebChat.AgentHost\AgentWebChat.AgentHost.csproj" />
+    <ProjectReference Include="..\AgentWebChat.Web\AgentWebChat.Web.csproj" />
+  </ItemGroup>
+
+</Project>

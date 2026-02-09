@@ -1,0 +1,8 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Prompt the agent
+POST {{authority}}/api/agents/Joker/run
+Content-Type: text/plain
+
+Tell me a joke about a pirate.

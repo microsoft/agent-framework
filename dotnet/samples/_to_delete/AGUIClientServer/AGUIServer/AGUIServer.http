@@ -1,0 +1,17 @@
+@host = http://localhost:5100
+
+### Send a message to the AG-UI agent
+POST {{host}}/
+Content-Type: application/json
+
+{
+  "threadId": "thread_123",
+  "runId": "run_456",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of France?"
+    }
+  ],
+  "context": {}
+}

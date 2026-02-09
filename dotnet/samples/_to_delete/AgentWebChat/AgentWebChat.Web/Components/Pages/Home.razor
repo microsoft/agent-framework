@@ -1,0 +1,1207 @@
+@page "/"
+@attribute [StreamRendering(true)]
+@inject AgentDiscoveryClient AgentClient
+@inject IJSRuntime JSRuntime
+@inject ILogger<Home> Logger
+@inject A2AAgentClient A2AActorClient
+@inject OpenAIResponsesAgentClient OpenAIResponsesAgentClient
+@inject OpenAIChatCompletionsAgentClient OpenAIChatCompletionsAgentClient
+@rendermode InteractiveServer
+@using System.Text
+@using System.Text.Json
+@using Microsoft.Extensions.AI
+@using Microsoft.Agents.AI.Hosting
+@using A2A
+
+<PageTitle>Agent Web Chat</PageTitle>
+
+<div class="chat-app-container">
+    <div class="chat-header">
+        <h1 class="chat-title">
+            <svg class="chat-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Agent Web Chat
+        </h1>
+        <p class="chat-subtitle">The best hypertext-based chat on the Web!</p>
+    </div>
+
+    <div class="agent-selection-card">
+        <label for="agent-select" class="agent-select-label">Choose your AI agent:</label>
+        <div class="agent-select-wrapper">
+            <select id="agent-select" class="agent-select" @bind="selectedAgentName" disabled="@(isLoadingAgents || isStreaming)">
+                <option value="">-- Select an agent --</option>
+                @foreach (var agent in availableAgents)
+                {
+                    <option value="@agent.Name">@GetAgentDisplayName(agent.Name!) - @agent.Description</option>
+                }
+            </select>
+            @if (!string.IsNullOrEmpty(selectedAgentName) && currentConversation is null)
+            {
+                <button class="start-chat-btn" @onclick="StartNewConversation">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    Start Chat
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="protocol-selection-card">
+        <label for="protocol-select" class="protocol-select-label">Choose communication protocol:</label>
+        <div class="protocol-select-wrapper">
+            <select id="protocol-select" class="protocol-select" @bind="selectedProtocol" disabled="@(isStreaming)">
+				<option value="OpenAIResponses">OpenAI Responses</option>
+				<option value="OpenAIChatCompletions">OpenAI ChatCompletions</option>
+				<option value="A2A">A2A (Agent-to-Agent)</option>
+            </select>
+            <div class="protocol-info">
+                @switch (selectedProtocol)
+                {
+					case Protocol.OpenAIResponses:
+                        <span class="protocol-description">֎ OpenAI Responses</span>
+                        break;
+					case Protocol.OpenAIChatCompletions:
+                        <span class="protocol-description">֎ OpenAI ChatCompletions</span>
+                        break;
+					case Protocol.A2A:
+					default:
+                        <span class="protocol-description">🔗 A2A protocol supports long-running agentic processes</span>
+                        break;
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (selectedProtocol == Protocol.A2A)
+    {
+        <div class="a2a-configuration-card">
+            <div class="a2a-header" @onclick="ToggleA2AExpanded">
+                <h3 class="a2a-title">
+                    <svg class="a2a-toggle-icon @(isA2AExpanded ? "expanded" : "")" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6,9 12,15 18,9"></polyline>
+                    </svg>
+                    A2A Configuration
+                </h3>
+                <span class="a2a-subtitle">Discover and configure agent cards</span>
+            </div>
+            
+            @if (isA2AExpanded)
+            {
+                <div class="a2a-content">
+                    <div class="discover-section">
+                        <button class="discover-btn" 
+                                @onclick="DiscoverAgentCard" 
+                                disabled="@(string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)">
+                            @if (isDiscoveringCard)
+                            {
+                                <div class="spinner-small"></div>
+                                <span>Discovering...</span>
+                            }
+                            else
+                            {
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                                <span>Discover Agent Card</span>
+                            }
+                        </button>
+                        
+                        @if (!string.IsNullOrEmpty(selectedAgentName))
+                        {
+                            <span class="discover-info">for agent: <strong>@GetAgentDisplayName(selectedAgentName)</strong></span>
+                        }
+                        else
+                        {
+                            <span class="discover-info text-muted">Please select an agent first</span>
+                        }
+                    </div>
+
+                    @if (discoveredAgentCardJson is not null)
+                    {
+                        <div class="agent-card-display">
+                            <h4 class="card-title">🔗 Discovered Agent Card</h4>
+                            <div class="card-details">
+                                <div class="json-container">
+                                    <div class="json-header">
+                                        <span class="json-label">Agent Card JSON:</span>
+                                    </div>
+                                    <pre class="json-display"><code>@discoveredAgentCardJson</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(discoveryError))
+                    {
+                        <div class="error-display">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="15" y1="9" x2="9" y2="15"></line>
+                                <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                            <span>@discoveryError</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+	@if (conversations.Any())
+    {
+        <div class="conversations-section">
+            <div class="conversation-tabs">
+                @foreach (var conv in conversations)
+                {
+                    <div class="conversation-tab @(conv.SessionId == currentConversation?.SessionId ? "active" : "")"
+                         @onclick="() => SelectConversation(conv.SessionId)">
+                        <span class="tab-icon">@GetAgentIcon(conv.AgentName)</span>
+                        <span class="tab-name">@GetAgentDisplayName(conv.AgentName)</span>
+                        <button type="button" class="tab-close" 
+                                aria-label="Close"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => CloseConversation(conv.SessionId)">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (currentConversation is not null)
+    {
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                @foreach (var message in currentConversation.Messages)
+                {
+                    <div class="message-wrapper @(message.Role == ChatRole.User ? "user" : "agent")">
+                        @if (message.Role != ChatRole.User)
+                        {
+                            <div class="message-avatar">@GetAgentIcon(currentConversation.AgentName)</div>
+                        }
+                        <div class="message-bubble">
+                            <div class="message-content">@message.Text</div>
+                            <div class="message-meta">
+                                @(message.Role == ChatRole.User ? "You" : GetAgentDisplayName(currentConversation.AgentName))
+                            </div>
+                        </div>
+                    </div>
+                }
+                
+                @if (isStreaming && currentStreamedMessage.Length > 0)
+                {
+                    <div class="message-wrapper agent">
+                        <div class="message-avatar">@GetAgentIcon(currentConversation.AgentName)</div>
+                        <div class="message-bubble streaming">
+                            <div class="message-content">
+                                @currentStreamedMessage
+                                <span class="typing-indicator"></span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="chat-input-container">
+                <div class="chat-input-wrapper">
+                    <input @bind="currentMessage" 
+                           @bind:event="oninput"
+                           @onkeydown="HandleKeyPress" 
+                           @onkeydown:preventDefault="ShouldPreventDefault" 
+                           class="chat-input" 
+                           placeholder="Type your message..." 
+                           disabled="@isStreaming" />
+                    <button @onclick="SendMessage" 
+                            class="send-button" 
+                            disabled="@(isStreaming || string.IsNullOrWhiteSpace(currentMessage))">
+                        @if (isStreaming)
+                        {
+                            <div class="spinner"></div>
+                        }
+                        else
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    .chat-app-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    .chat-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+
+    .chat-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #1a1a1a;
+        margin: 0 0 0.5rem 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+    }
+
+    .chat-icon {
+        color: #6366f1;
+    }
+
+    .chat-subtitle {
+        color: #6b7280;
+        font-size: 1.125rem;
+        margin: 0;
+    }
+
+    .agent-selection-card, .protocol-selection-card, .a2a-configuration-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 2rem;
+    }
+
+    .agent-select-label, .protocol-select-label {
+        display: block;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 0.75rem;
+    }
+
+    .agent-select-wrapper, .protocol-select-wrapper {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .agent-select, .protocol-select {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        font-size: 1rem;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        background: white;
+        color: #374151;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .agent-select:hover:not(:disabled), .protocol-select:hover:not(:disabled) {
+        border-color: #6366f1;
+    }
+
+    .agent-select:focus, .protocol-select:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .agent-select:disabled, .protocol-select:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .protocol-info {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .protocol-description {
+        font-size: 0.875rem;
+        color: #6b7280;
+        font-style: italic;
+    }
+
+    /* A2A Configuration Card Styles */
+    .a2a-header {
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.5rem 0;
+        transition: all 0.2s;
+    }
+
+    .a2a-header:hover {
+        background: rgba(99, 102, 241, 0.05);
+        border-radius: 8px;
+        padding: 0.5rem;
+        margin: -0.5rem;
+    }
+
+    .a2a-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0;
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #374151;
+    }
+
+    .a2a-toggle-icon {
+        transition: transform 0.2s;
+    }
+
+    .a2a-toggle-icon.expanded {
+        transform: rotate(180deg);
+    }
+
+    .a2a-subtitle {
+        font-size: 0.875rem;
+        color: #6b7280;
+        margin-left: 1.25rem;
+    }
+
+    .a2a-content {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    .discover-section {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .discover-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        background: #059669;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .discover-btn:hover:not(:disabled) {
+        background: #047857;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    }
+
+    .discover-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .discover-info {
+        font-size: 0.875rem;
+        color: #6b7280;
+    }
+
+    .text-muted {
+        color: #9ca3af !important;
+    }
+
+    .spinner-small {
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    /* Agent Card Display */
+    .agent-card-display {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+
+    .card-title {
+        margin: 0 0 1rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #374151;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .card-details {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    /* JSON Display Styles */
+    .json-container {
+        background: #1e293b;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid #334155;
+    }
+
+    .json-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: #334155;
+        border-bottom: 1px solid #475569;
+    }
+
+    .json-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #e2e8f0;
+    }
+
+    .copy-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.75rem;
+        background: #475569;
+        color: #e2e8f0;
+        border: none;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .copy-btn:hover {
+        background: #64748b;
+        color: white;
+    }
+
+    .json-display {
+        margin: 0;
+        padding: 1rem;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .json-display code {
+        background: none;
+        color: inherit;
+        font-family: inherit;
+        padding: 0;
+    }
+
+    /* JSON Syntax Highlighting */
+    .json-display {
+        /* JSON strings */
+        --json-string: #a3d977;
+        /* JSON numbers */
+        --json-number: #ffc777;
+        /* JSON booleans */
+        --json-boolean: #ff966c;
+        /* JSON null */
+        --json-null: #c53030;
+        /* JSON keys */
+        --json-key: #82aaff;
+        /* JSON punctuation */
+        --json-punctuation: #c792ea;
+    }
+
+    .card-property {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+    }
+
+    .card-property label {
+        font-weight: 600;
+        color: #374151;
+        min-width: 100px;
+        flex-shrink: 0;
+    }
+
+    .card-property span {
+        color: #6b7280;
+        flex: 1;
+    }
+
+    .capabilities-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .capability-tag {
+        background: #dbeafe;
+        color: #1e40af;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    /* Error Display */
+    .error-display {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        padding: 0.75rem;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .start-chat-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        background: #6366f1;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .start-chat-btn:hover {
+        background: #4f46e5;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .conversations-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .conversation-tabs {
+        display: flex;
+        gap: 0.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+    }
+
+    .conversation-tab {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        background: white;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+        white-space: nowrap;
+    }
+
+    .conversation-tab:hover {
+        border-color: #6366f1;
+        background: #f9fafb;
+    }
+
+    .conversation-tab.active {
+        background: #6366f1;
+        color: white;
+        border-color: #6366f1;
+    }
+
+    .tab-icon {
+        font-size: 1.25rem;
+    }
+
+    .tab-name {
+        font-weight: 500;
+    }
+
+    .tab-close {
+        margin-left: 0.5rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+        padding: 0.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .tab-close:hover {
+        opacity: 1;
+    }
+
+    .conversation-tab.active .tab-close {
+        color: white;
+    }
+
+    .chat-container {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 600px;
+    }
+
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem;
+        background: #f9fafb;
+    }
+
+    .message-wrapper {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    .message-wrapper.user {
+        flex-direction: row-reverse;
+    }
+
+    .message-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: #6366f1;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        flex-shrink: 0;
+    }
+
+    .message-bubble {
+        max-width: 70%;
+        background: white;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .message-wrapper.user .message-bubble {
+        background: #6366f1;
+        color: white;
+    }
+
+    .message-content {
+        line-height: 1.5;
+        word-wrap: break-word;
+    }
+
+    .message-meta {
+        font-size: 0.75rem;
+        opacity: 0.6;
+        margin-top: 0.5rem;
+    }
+
+    .message-bubble.streaming {
+        background: #e0e7ff;
+    }
+
+    .typing-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6366f1;
+        margin-left: 4px;
+        animation: pulse 1.4s infinite;
+    }
+
+    @@keyframes pulse {
+        0%, 60%, 100% {
+            opacity: 0.2;
+        }
+        30% {
+            opacity: 1;
+        }
+    }
+
+    @@keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .chat-input-container {
+        border-top: 1px solid #e5e7eb;
+        padding: 1rem;
+        background: white;
+    }
+
+    .chat-input-wrapper {
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .chat-input {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        font-size: 1rem;
+        transition: all 0.2s;
+    }
+
+    .chat-input:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .chat-input:disabled {
+        opacity: 0.5;
+        background: #f9fafb;
+    }
+
+    .send-button {
+        padding: 0.75rem 1rem;
+        background: #6366f1;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 50px;
+    }
+
+    .send-button:hover:not(:disabled) {
+        background: #4f46e5;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .send-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @@keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    @@media (max-width: 768px) {
+        .chat-app-container {
+            padding: 1rem;
+        }
+
+        .chat-title {
+            font-size: 2rem;
+        }
+
+        .message-bubble {
+            max-width: 85%;
+        }
+
+        .chat-container {
+            height: 500px;
+        }
+
+        .protocol-select-wrapper {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+
+        .protocol-info {
+            min-width: auto;
+        }
+
+        .discover-section {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .card-property {
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .card-property label {
+            min-width: auto;
+        }
+    }
+</style>
+
+@code {
+
+	private string currentMessage = "";
+	private bool isStreaming = false;
+	private bool isLoadingAgents = true;
+	private string currentStreamedMessage = "";
+	private string selectedAgentName = "";
+	private List<AgentDiscoveryClient.AgentDiscoveryCard> availableAgents = new();
+	private List<Conversation> conversations = new();
+	private Conversation? currentConversation;
+
+	// protocol
+	private Protocol selectedProtocol;
+
+	// a2a agent card
+	private bool isA2AExpanded = false;
+	private bool isDiscoveringCard = false;
+	private string? discoveredAgentCardJson = null;
+	private string? discoveryError = null;
+
+	private enum Protocol
+	{
+		A2A, // Agent-to-Agent protocol
+		OpenAIResponses,
+		OpenAIChatCompletions
+	}
+
+	private sealed class Conversation
+	{
+		public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
+		public string AgentName { get; set; } = "";
+		public List<ChatMessage> Messages { get; set; } = new();
+	}
+
+	protected override async Task OnInitializedAsync()
+	{
+		Logger.LogDebug("Initializing Agent Chat component");
+
+		// Load agents
+		try
+		{
+			availableAgents = await AgentClient.GetAgentsAsync();
+			Logger.LogInformation("Loaded {AgentCount} agents", availableAgents.Count);
+			Logger.LogInformation("Loaded Agents info: {AgentData}", JsonSerializer.Serialize(availableAgents, new JsonSerializerOptions() { WriteIndented = true }));
+
+			// Default to first agent and start a conversation
+			if (availableAgents.Any())
+			{
+				selectedAgentName = availableAgents.First().Name!;
+				StartNewConversation();
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.LogError(ex, "Failed to load agents");
+		}
+		finally
+		{
+			isLoadingAgents = false;
+		}
+
+		// Conversations start fresh on page load
+	}
+
+	private string GetAgentIcon(string agentName) => agentName?.ToLower() switch
+	{
+		"pirate" => "🏴‍☠️",
+		"knights-and-knaves" => "⚔️",
+		_ => "🤖"
+	};
+
+	private string GetAgentDisplayName(string agentName) => agentName?.ToLower() switch
+	{
+		"pirate" => "Pirate",
+		"knights-and-knaves" => "Knights & Knaves",
+		_ => agentName ?? "Agent"
+	};
+
+	private void ToggleA2AExpanded() => isA2AExpanded = !isA2AExpanded;
+
+	private async Task DiscoverAgentCard()
+	{
+		if (string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)
+			return;
+
+		isDiscoveringCard = true;
+		discoveryError = null;
+		discoveredAgentCardJson = null;
+		StateHasChanged();
+
+		try
+		{
+			Logger.LogInformation("Discovering agent card for agent: {AgentName}", selectedAgentName);
+			var agentCard = await A2AActorClient.GetAgentCardAsync(selectedAgentName);
+			if (agentCard is not null)
+			{
+				discoveredAgentCardJson = JsonSerializer.Serialize(agentCard, new JsonSerializerOptions() { WriteIndented = true });
+				Logger.LogInformation("Successfully discovered agent card for {AgentName}: {CardData}", selectedAgentName, discoveredAgentCardJson);
+			}
+			else
+			{
+				discoveryError = "No agent card found for this agent.";
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.LogError(ex, "Failed to discover agent card for {AgentName}", selectedAgentName);
+			discoveryError = $"Failed to discover agent card: {ex.Message}";
+		}
+		finally
+		{
+			isDiscoveringCard = false;
+			StateHasChanged();
+		}
+	}
+
+	private void StartNewConversation()
+	{
+		if (string.IsNullOrEmpty(selectedAgentName))
+			return;
+
+		var newConversation = new Conversation
+        {
+            AgentName = selectedAgentName
+        };
+
+		conversations.Add(newConversation);
+		currentConversation = newConversation;
+
+		Logger.LogInformation("Started new conversation with agent: {AgentName}, session: {SessionId}", 
+			newConversation.AgentName, newConversation.SessionId);
+
+		StateHasChanged();
+	}
+
+	private void SelectConversation(string sessionId)
+	{
+		currentConversation = conversations.FirstOrDefault(c => c.SessionId == sessionId);
+		if (currentConversation is not null)
+		{
+			selectedAgentName = currentConversation.AgentName;
+			Logger.LogDebug("Selected conversation with session: {SessionId}", sessionId);
+		}
+		StateHasChanged();
+	}
+
+	private void CloseConversation(string sessionId)
+	{
+		var conversationToRemove = conversations.FirstOrDefault(c => c.SessionId == sessionId);
+		if (conversationToRemove is not null)
+		{
+			conversations.Remove(conversationToRemove);
+
+			if (currentConversation?.SessionId == sessionId)
+			{
+				currentConversation = conversations.FirstOrDefault();
+				if (currentConversation is not null)
+				{
+					selectedAgentName = currentConversation.AgentName;
+				}
+			}
+
+			Logger.LogInformation("Closed conversation with session: {SessionId}", sessionId);
+		}
+		StateHasChanged();
+	}
+
+	private async Task SendMessage()
+	{
+		if (string.IsNullOrWhiteSpace(currentMessage) || isStreaming || currentConversation is null)
+			return;
+
+		var userMessage = currentMessage.Trim();
+		currentMessage = "";
+
+		Logger.LogInformation("User sending message: '{UserMessage}' to agent {AgentName} in session {SessionId}",
+			userMessage, currentConversation.AgentName, currentConversation.SessionId);
+
+		// Add user message to chat
+		currentConversation.Messages.Add(new ChatMessage(ChatRole.User, userMessage));
+		StateHasChanged();
+		await ScrollToBottom();
+
+		// Start streaming response
+		isStreaming = true;
+		currentStreamedMessage = "";
+		StateHasChanged();
+
+		StringBuilder responseContent = new();
+		var hasReceivedContent = false;
+
+		using var timeoutCts = new CancellationTokenSource(
+#if DEBUG
+            TimeSpan.FromSeconds(120)
+#else
+			TimeSpan.FromSeconds(20)
+#endif
+		);
+
+		try
+		{
+			// Select the appropriate client based on protocol
+			AgentClientBase agentClient = selectedProtocol switch
+			{
+				Protocol.OpenAIResponses => OpenAIResponsesAgentClient,
+				Protocol.OpenAIChatCompletions => OpenAIChatCompletionsAgentClient,
+				Protocol.A2A or _ => A2AActorClient
+			};
+
+            var messages = new List<ChatMessage> { new(ChatRole.User, userMessage) };
+
+            await foreach (var update in agentClient.RunStreamingAsync(
+                currentConversation.AgentName,
+                messages,
+                currentConversation.SessionId,
+                cancellationToken: timeoutCts.Token))
+            {
+                var content = update.Text ?? "";
+                if (!string.IsNullOrEmpty(content))
+                {
+                    hasReceivedContent = true;
+                    responseContent.Append(content);
+                    currentStreamedMessage = responseContent.ToString();
+                    StateHasChanged();
+                    await ScrollToBottom();
+
+                    Logger.LogDebug("Received streaming content: {ContentLength} characters", content.Length);
+                }
+            }
+
+            Logger.LogInformation("Streaming completed for session {SessionId}, total content length: {ContentLength}",
+                currentConversation.SessionId, responseContent.Length);
+
+            // Add the complete agent response to chat messages
+            if (responseContent.Length > 0)
+            {
+                currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, responseContent.ToString()));
+            }
+            else if (!hasReceivedContent)
+            {
+                Logger.LogWarning("No content received during streaming for session {SessionId}", currentConversation.SessionId);
+                currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "No response received from the agent."));
+            }
+            else
+            {
+                currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "Sorry, I couldn't generate a response."));
+            }
+        }
+        catch (OperationCanceledException) when (isStreaming)
+        {
+            Logger.LogWarning("Streaming operation timed out for session {SessionId}", currentConversation.SessionId);
+            currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, "Request timed out. Please try again."));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error occurred while processing message in session {SessionId}: {ErrorMessage}",
+                currentConversation.SessionId, ex.Message);
+            currentConversation.Messages.Add(new ChatMessage(ChatRole.Assistant, $"Error: {ex.Message}"));
+        }
+        finally
+        {
+            isStreaming = false;
+            currentStreamedMessage = "";
+            StateHasChanged();
+            await ScrollToBottom();
+        }
+    }
+
+    private bool ShouldPreventDefault = false;
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            ShouldPreventDefault = true;
+            await SendMessage();
+            ShouldPreventDefault = false;
+        }
+        else if (e.Key == "Escape")
+        {
+            currentMessage = ""; // Clear input on Escape
+            ShouldPreventDefault = true;
+            StateHasChanged();
+            ShouldPreventDefault = false; // Reset after clearing
+        }
+        else
+        {
+            ShouldPreventDefault = false;
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", "chat-messages");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to scroll to bottom");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("eval", @"
+                window.scrollToBottom = function(elementId) {
+                    const element = document.getElementById(elementId);
+                    if (element) {
+                        requestAnimationFrame(() => {
+                            element.scrollTop = element.scrollHeight;
+                        });
+                    }
+                };
+            ");
+        }
+    }
+}
