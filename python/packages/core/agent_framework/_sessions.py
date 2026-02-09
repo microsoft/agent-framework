@@ -1,5 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Unified context management types for the agent framework.
+
+This module provides the core types for the context provider pipeline:
+- SessionContext: Per-invocation state passed through providers
+- BaseContextProvider: Base class for context providers (renamed to ContextProvider in PR2)
+- BaseHistoryProvider: Base class for history storage providers (renamed to HistoryProvider in PR2)
+- AgentSession: Lightweight session state container
+- InMemoryHistoryProvider: Built-in in-memory history provider
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -12,16 +22,6 @@ from ._types import AgentResponse, ChatMessage
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
-
-"""Unified context management types for the agent framework.
-
-This module provides the core types for the context provider pipeline:
-- SessionContext: Per-invocation state passed through providers
-- BaseContextProvider: Base class for context providers (renamed to ContextProvider in PR2)
-- BaseHistoryProvider: Base class for history storage providers (renamed to HistoryProvider in PR2)
-- AgentSession: Lightweight session state container
-- InMemoryHistoryProvider: Built-in in-memory history provider
-"""
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}

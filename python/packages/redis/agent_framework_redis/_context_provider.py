@@ -13,7 +13,7 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 from agent_framework import ChatMessage
@@ -35,7 +35,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import TYPE_CHECKING, override  # type: ignore # pragma: no cover
+    from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 

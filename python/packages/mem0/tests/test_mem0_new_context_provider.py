@@ -57,10 +57,12 @@ class TestInit:
 
     def test_init_auto_creates_client_when_none(self) -> None:
         """When no client is provided, a default AsyncMemoryClient is created and flagged for closing."""
-        with patch("agent_framework_mem0._context_provider.AsyncMemoryClient") as mock_client_cls:
+        with (
+            patch("mem0.client.main.AsyncMemoryClient.__init__", return_value=None) as mock_init,
+            patch("mem0.client.main.AsyncMemoryClient._validate_api_key", return_value=None),
+        ):
             provider = _Mem0ContextProvider(source_id="mem0", api_key="test-key", user_id="u1")
-            mock_client_cls.assert_called_once_with(api_key="test-key")
-            assert provider.mem0_client is mock_client_cls.return_value
+            mock_init.assert_called_once_with(api_key="test-key")
             assert provider._should_close_client is True
 
     def test_provided_client_not_flagged_for_close(self, mock_mem0_client: AsyncMock) -> None:
