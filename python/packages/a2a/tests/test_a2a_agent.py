@@ -295,7 +295,7 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
 
     # Create ChatMessage with ErrorContent
     error_content = Content.from_error(message="Test error message")
-    message = ChatMessage("user", [error_content])
+    message = ChatMessage(role="user", contents=[error_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -310,7 +310,7 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
 
     # Create ChatMessage with UriContent
     uri_content = Content.from_uri(uri="http://example.com/file.pdf", media_type="application/pdf")
-    message = ChatMessage("user", [uri_content])
+    message = ChatMessage(role="user", contents=[uri_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -326,7 +326,7 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
 
     # Create ChatMessage with DataContent (base64 data URI)
     data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
-    message = ChatMessage("user", [data_content])
+    message = ChatMessage(role="user", contents=[data_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -340,20 +340,20 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
 def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with empty contents raises ValueError."""
     # Create ChatMessage with no contents
-    message = ChatMessage("user", [])
+    message = ChatMessage(role="user", contents=[])
 
     # Should raise ValueError for empty contents
     with raises(ValueError, match="ChatMessage.contents is empty"):
         a2a_agent._prepare_message_for_a2a(message)
 
 
-async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """Test run_stream() method with immediate Message response."""
+async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test run(stream=True) method with immediate Message response."""
     mock_a2a_client.add_message_response("msg-stream-123", "Streaming response from agent!", "agent")
 
     # Collect streaming updates
     updates: list[AgentResponseUpdate] = []
-    async for update in a2a_agent.run_stream("Hello agent"):
+    async for update in a2a_agent.run("Hello agent", stream=True):
         updates.append(update)
 
     # Verify streaming response

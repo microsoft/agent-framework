@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0", "watchdog>=3.0.0"]
+dev = ["pytest>=7.0.0", "watchdog>=3.0.0", "agent-framework-orchestrations"]
 all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
 
 [project.scripts]
@@ -49,7 +49,7 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
-pythonpath = ["tests"]
+pythonpath = ["tests/devui"]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

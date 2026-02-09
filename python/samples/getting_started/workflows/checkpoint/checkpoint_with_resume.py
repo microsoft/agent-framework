@@ -24,20 +24,24 @@ Prerequisites:
 """
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from random import random
-from typing import Any, override
+from typing import Any
 
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
-    SuperStepCompletedEvent,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 @dataclass
@@ -100,16 +104,14 @@ class WorkerExecutor(Executor):
 
 async def main():
     # Build workflow with checkpointing enabled
+    checkpoint_storage = InMemoryCheckpointStorage()
     workflow_builder = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="start", checkpoint_storage=checkpoint_storage)
         .register_executor(lambda: StartExecutor(id="start"), name="start")
         .register_executor(lambda: WorkerExecutor(id="worker"), name="worker")
-        .set_start_executor("start")
         .add_edge("start", "worker")
         .add_edge("worker", "worker")  # Self-loop for iterative processing
     )
-    checkpoint_storage = InMemoryCheckpointStorage()
-    workflow_builder = workflow_builder.with_checkpointing(checkpoint_storage=checkpoint_storage)
 
     # Run workflow with automatic checkpoint recovery
     latest_checkpoint: WorkflowCheckpoint | None = None
@@ -119,19 +121,19 @@ async def main():
         # Start from checkpoint or fresh execution
         print(f"\n** Workflow {workflow.id} started **")
         event_stream = (
-            workflow.run_stream(message=10)
+            workflow.run(message=10, stream=True)
             if latest_checkpoint is None
-            else workflow.run_stream(checkpoint_id=latest_checkpoint.checkpoint_id)
+            else workflow.run(checkpoint_id=latest_checkpoint.checkpoint_id, stream=True)
         )
 
         output: str | None = None
         async for event in event_stream:
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 output = event.data
                 break
-            if isinstance(event, SuperStepCompletedEvent) and random() < 0.5:
+            if event.type == "superstep_completed" and random() < 0.5:
                 # Randomly simulate system interruptions
-                # The `SuperStepCompletedEvent` ensures we only interrupt after
+                # The type="superstep_completed" event ensures we only interrupt after
                 # the current super-step is fully complete and checkpointed.
                 # If we interrupt mid-step, the workflow may resume from an earlier point.
                 print("\n** Simulating workflow interruption. Stopping execution. **")

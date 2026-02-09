@@ -210,28 +210,25 @@ async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages,
 // This middleware handles Human in the loop console interaction for any user approval required during function calling.
 async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
-    var response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
+    AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
-    var userInputRequests = response.UserInputRequests.ToList();
+    // For simplicity, we are assuming here that only function approvals are pending.
+    List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
 
-    while (userInputRequests.Count > 0)
+    while (approvalRequests.Count > 0)
     {
         // Ask the user to approve each function call request.
-        // For simplicity, we are assuming here that only function approval requests are being made.
-
         // Pass the user input responses back to the agent for further processing.
-        response.Messages = userInputRequests
-            .OfType<FunctionApprovalRequestContent>()
-            .Select(functionApprovalRequest =>
+        response.Messages = approvalRequests
+            .ConvertAll(functionApprovalRequest =>
             {
                 Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
                 return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
-            })
-            .ToList();
+            });
 
         response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
 
-        userInputRequests = response.UserInputRequests.ToList();
+        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
     }
 
     return response;

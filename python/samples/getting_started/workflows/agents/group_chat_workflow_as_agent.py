@@ -2,8 +2,9 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, GroupChatBuilder
+from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import GroupChatBuilder
 
 """
 Sample: Group Chat Orchestration
@@ -32,17 +33,16 @@ async def main() -> None:
         chat_client=OpenAIResponsesClient(),
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(
-            agent=OpenAIChatClient().as_agent(
-                name="Orchestrator",
-                instructions="You coordinate a team conversation to solve the user's task.",
-            )
-        )
-        .participants([researcher, writer])
-        .build()
-    )
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    workflow = GroupChatBuilder(
+        participants=[researcher, writer],
+        intermediate_outputs=True,
+        orchestrator_agent=OpenAIChatClient().as_agent(
+            name="Orchestrator",
+            instructions="You coordinate a team conversation to solve the user's task.",
+        ),
+    ).build()
 
     task = "Outline the core considerations for planning a community hackathon, and finish with a concise action plan."
 
@@ -54,6 +54,8 @@ async def main() -> None:
         agent_result = await workflow_agent.run(task)
 
         if agent_result.messages:
+            # The output should contain a message from the researcher, a message from the writer,
+            # and a final synthesized answer from the orchestrator.
             print("\n===== as_agent() Transcript =====")
             for i, msg in enumerate(agent_result.messages, start=1):
                 role_value = getattr(msg.role, "value", msg.role)

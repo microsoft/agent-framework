@@ -10,12 +10,66 @@ We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting
 - **Target Python version**: 3.10+
 - **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
 
+## Type Annotations
+
+### Future Annotations
+
+> **Note:** This convention is being adopted. See [#3578](https://github.com/microsoft/agent-framework/issues/3578) for progress.
+
+Use `from __future__ import annotations` at the top of files to enable postponed evaluation of annotations. This prevents the need for string-based type hints for forward references:
+
+```python
+# ✅ Preferred - use future annotations
+from __future__ import annotations
+
+class Agent:
+    def create_child(self) -> Agent:  # No quotes needed
+        ...
+
+# ❌ Avoid - string-based type hints
+class Agent:
+    def create_child(self) -> "Agent":  # Requires quotes without future annotations
+        ...
+```
+
+### TypeVar Naming Convention
+
+> **Note:** This convention is being adopted. See [#3594](https://github.com/microsoft/agent-framework/issues/3594) for progress.
+
+Use the suffix `T` for TypeVar names instead of a prefix:
+
+```python
+# ✅ Preferred - suffix T
+ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)
+AgentT = TypeVar("AgentT", bound=Agent)
+
+# ❌ Avoid - prefix T
+TChatResponse = TypeVar("TChatResponse", bound=ChatResponse)
+TAgent = TypeVar("TAgent", bound=Agent)
+```
+
+### Mapping Types
+
+> **Note:** This convention is being adopted. See [#3577](https://github.com/microsoft/agent-framework/issues/3577) for progress.
+
+Use `Mapping` instead of `MutableMapping` for input parameters when mutation is not required:
+
+```python
+# ✅ Preferred - Mapping for read-only access
+def process_config(config: Mapping[str, Any]) -> None:
+    ...
+
+# ❌ Avoid - MutableMapping when mutation isn't needed
+def process_config(config: MutableMapping[str, Any]) -> None:
+    ...
+```
+
 ## Function Parameter Guidelines
 
 To make the code easier to use and maintain:
 
-- **Positional parameters**: Only use for up to 3 fully expected parameters
-- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
+- **Positional parameters**: Only use for up to 3 fully expected parameters (this is not a hard rule, but a guideline there are instances where this does make sense to exceed)
+- **Keyword-only parameters**: Arguments after `*` in function signatures are keyword-only; prefer these for optional parameters
 - **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
 ```python
 def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
@@ -28,8 +82,19 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
     if isinstance(tool_mode, str):
         tool_mode = ChatToolMode(tool_mode)
 ```
-- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
-- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Avoid shadowing built-ins**: Do not use parameter names that shadow Python built-ins (e.g., use `next_handler` instead of `next`). See [#3583](https://github.com/microsoft/agent-framework/issues/3583) for progress.
+
+### Using `**kwargs`
+
+> **Note:** This convention is being adopted. See [#3642](https://github.com/microsoft/agent-framework/issues/3642) for progress.
+
+Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
+
+- **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
+- **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
+- **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
+- **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose
 
 ## Method Naming Inside Connectors
 
@@ -212,7 +277,7 @@ pip install agent-framework-core[all]
 # or (equivalently):
 pip install agent-framework
 
-# Install specific connector
+# Install specific connector (pulls in core as dependency)
 pip install agent-framework-azure-ai
 ```
 
@@ -234,10 +299,9 @@ They should contain:
     - Type and default values do not have to be specified, they will be pulled from the definition.
 - Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
 - Keyword arguments are specified after a header called `Keyword Args:`, with each argument being specified in the same format as `Args:`.
-- A header for exceptions can be added, called `Raises:`, but should only be used for:
-  - Agent Framework specific exceptions (e.g., `ServiceInitializationError`)
-  - Base exceptions that might be unexpected in the context
-  - Obvious exceptions like `ValueError` or `TypeError` do not need to be documented
+- A header for exceptions can be added, called `Raises:`, following these guidelines:
+  - **Always document** Agent Framework specific exceptions (e.g., `AgentInitializationError`, `AgentExecutionException`)
+  - **Only document** standard Python exceptions (TypeError, ValueError, KeyError, etc.) when the condition is non-obvious or provides value to API users
   - Format: `ExceptionType`: Explanation of the exception.
   - If a longer explanation is needed, it should be placed on the next line, indented by 4 spaces.
 - Code examples can be added using the `Examples:` header followed by `.. code-block:: python` directive.
@@ -328,6 +392,26 @@ def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
 
 If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
 
+## Public API and Exports
+
+### Explicit Exports
+
+> **Note:** This convention is being adopted. See [#3605](https://github.com/microsoft/agent-framework/issues/3605) for progress.
+
+Define `__all__` in each module to explicitly declare the public API. Avoid using `from module import *` in `__init__.py` files as it can impact performance and makes the public API unclear:
+
+```python
+# ✅ Preferred - explicit __all__ and imports
+__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+
+from ._agents import ChatAgent
+from ._types import ChatMessage, ChatResponse
+
+# ❌ Avoid - star imports
+from ._agents import *
+from ._types import *
+```
+
 ## Performance considerations
 
 ### Cache Expensive Computations
@@ -400,3 +484,56 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+## Test Organization
+
+### Test Directory Structure
+
+Test folders require specific organization to avoid pytest conflicts when running tests across packages:
+
+1. **No `__init__.py` in test folders**: Test directories should NOT contain `__init__.py` files. This can cause import conflicts when pytest collects tests across multiple packages.
+
+2. **File naming**: Files starting with `test_` are treated as test files by pytest. Do not use this prefix for helper modules or utilities. If you need shared test utilities, put them in `conftest.py` or a file with a different name pattern (e.g., `helpers.py`, `fixtures.py`).
+
+3. **Package-specific conftest location**: The `tests/conftest.py` path is reserved for the core package (`packages/core/tests/conftest.py`). Other packages must place their tests in a uniquely-named subdirectory:
+
+```plaintext
+# ✅ Correct structure for non-core packages
+packages/devui/
+├── tests/
+│   └── devui/           # Unique subdirectory matching package name
+│       ├── conftest.py  # Package-specific fixtures
+│       ├── test_server.py
+│       └── test_mapper.py
+
+packages/anthropic/
+├── tests/
+│   └── anthropic/       # Unique subdirectory
+│       ├── conftest.py
+│       └── test_client.py
+
+# ❌ Incorrect - will conflict with core package
+packages/devui/
+├── tests/
+│   ├── conftest.py      # Conflicts when running all tests
+│   ├── test_server.py
+│   └── test_helpers.py  # Bad name - looks like a test file
+
+# ✅ Core package can use tests/ directly
+packages/core/
+├── tests/
+│   ├── conftest.py      # Core's conftest.py
+│   ├── core/
+│   │   └── test_agents.py
+│   └── openai/
+│       └── test_client.py
+```
+
+4. **Keep the `tests/` folder**: Even when using a subdirectory, keep the `tests/` folder at the package root. Some test discovery commands and tooling rely on this convention.
+
+### Fixture Guidelines
+
+- Use `conftest.py` for shared fixtures within a test directory
+- Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
+- Import factory functions explicitly: `from conftest import create_test_request`
+- Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`

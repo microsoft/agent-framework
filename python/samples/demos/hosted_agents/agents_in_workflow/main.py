@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import ConcurrentBuilder
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_orchestrations import ConcurrentBuilder
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnknownVariableType]
 
@@ -31,7 +31,7 @@ def main():
     )
 
     # Build a concurrent workflow
-    workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
+    workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).build()
 
     # Convert the workflow to an agent
     workflow_agent = workflow.as_agent()

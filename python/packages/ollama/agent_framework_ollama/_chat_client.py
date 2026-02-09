@@ -4,28 +4,32 @@ import json
 import sys
 from collections.abc import (
     AsyncIterable,
+    Awaitable,
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     BaseChatClient,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     FunctionTool,
+    HostedWebSearchTool,
+    ResponseStream,
     ToolProtocol,
     UsageDetails,
     get_logger,
-    use_chat_middleware,
-    use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import (
@@ -33,7 +37,7 @@ from agent_framework.exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
@@ -55,6 +59,7 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 
@@ -283,11 +288,13 @@ class OllamaSettings(AFBaseSettings):
 logger = get_logger("agent_framework.ollama")
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOptions]):
-    """Ollama Chat completion class."""
+class OllamaChatClient(
+    ChatMiddlewareLayer[TOllamaChatOptions],
+    FunctionInvocationLayer[TOllamaChatOptions],
+    ChatTelemetryLayer[TOllamaChatOptions],
+    BaseChatClient[TOllamaChatOptions],
+):
+    """Ollama Chat completion class with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
 
@@ -297,6 +304,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         host: str | None = None,
         client: AsyncClient | None = None,
         model_id: str | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -308,6 +317,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
                 Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
             model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_MODEL_ID env variable.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
@@ -332,58 +343,59 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)
 
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
+        self.middleware = list(self.chat_middleware)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        # prepare
-        options_dict = self._prepare_options(messages, options)
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            # Streaming mode
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                validated_options = await self._validate_options(options)
+                options_dict = self._prepare_options(messages, validated_options)
+                try:
+                    response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
+                        stream=True,
+                        **options_dict,
+                        **kwargs,
+                    )
+                except Exception as ex:
+                    raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-        try:
-            # execute
-            response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
-                stream=False,
-                **options_dict,
-                **kwargs,
-            )
-        except Exception as ex:
-            raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
+                async for part in response_object:
+                    yield self._parse_streaming_response_from_ollama(part)
 
-        # process
-        return self._parse_response_from_ollama(response)
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        # prepare
-        options_dict = self._prepare_options(messages, options)
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            validated_options = await self._validate_options(options)
+            options_dict = self._prepare_options(messages, validated_options)
+            try:
+                response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
+                    stream=False,
+                    **options_dict,
+                    **kwargs,
+                )
+            except Exception as ex:
+                raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
 
-        try:
-            # execute
-            response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
-                stream=True,
-                **options_dict,
-                **kwargs,
-            )
-        except Exception as ex:
-            raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
+            return self._parse_response_from_ollama(response)
 
-        # process
-        async for part in response_object:
-            yield self._parse_streaming_response_from_ollama(part)
+        return _get_response()
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
         # Handle instructions by prepending to messages as system message
         instructions = options.get("instructions")
         if instructions:
@@ -429,12 +441,12 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
 
         # tools
         tools = options.get("tools")
-        if tools and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options
 
-    def _prepare_messages_for_ollama(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
+    def _prepare_messages_for_ollama(self, messages: Sequence[ChatMessage]) -> list[OllamaMessage]:
         ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
@@ -524,7 +536,7 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage("assistant", contents)],
+            messages=[ChatMessage(role="assistant", contents=contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(
@@ -552,6 +564,8 @@ class OllamaChatClient(BaseChatClient[TOllamaChatOptions], Generic[TOllamaChatOp
                 match tool:
                     case FunctionTool():
                         chat_tools.append(tool.to_json_schema_spec())
+                    case HostedWebSearchTool():
+                        raise ServiceInvalidRequestError("HostedWebSearchTool is not supported by the Ollama client.")
                     case _:
                         raise ServiceInvalidRequestError(
                             "Unsupported tool type '"

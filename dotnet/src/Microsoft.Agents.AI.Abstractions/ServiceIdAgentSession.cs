@@ -42,24 +42,24 @@ public abstract class ServiceIdAgentSession : AgentSession
     /// <summary>
     /// Initializes a new instance of the <see cref="ServiceIdAgentSession"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedSessionState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the session.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <exception cref="ArgumentException">The <paramref name="serializedSessionState"/> is not a JSON object.</exception>
-    /// <exception cref="JsonException">The <paramref name="serializedSessionState"/> is invalid or cannot be deserialized to the expected type.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="serializedState"/> is not a JSON object.</exception>
+    /// <exception cref="JsonException">The <paramref name="serializedState"/> is invalid or cannot be deserialized to the expected type.</exception>
     /// <remarks>
     /// This constructor enables restoration of a service-backed session from serialized state, typically used
     /// when deserializing session information that was previously saved or transmitted across application boundaries.
     /// </remarks>
     protected ServiceIdAgentSession(
-        JsonElement serializedSessionState,
+        JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        if (serializedSessionState.ValueKind != JsonValueKind.Object)
+        if (serializedState.ValueKind != JsonValueKind.Object)
         {
-            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedSessionState));
+            throw new ArgumentException("The serialized session state must be a JSON object.", nameof(serializedState));
         }
 
-        var state = serializedSessionState.Deserialize(
+        var state = serializedState.Deserialize(
             AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ServiceIdAgentSessionState))) as ServiceIdAgentSessionState;
 
         if (state?.ServiceSessionId is string serviceSessionId)
@@ -85,13 +85,9 @@ public abstract class ServiceIdAgentSession : AgentSession
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use for the serialization process.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state, containing the service session identifier.</returns>
-    /// <remarks>
-    /// The serialized state contains only the service session identifier, as all other conversation state
-    /// is maintained remotely by the backing service. This makes the serialized representation very lightweight.
-    /// </remarks>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
+    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
+    protected internal virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         var state = new ServiceIdAgentSessionState
         {

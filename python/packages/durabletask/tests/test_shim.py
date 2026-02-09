@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentProtocol, ChatMessage
+from agent_framework import ChatMessage, SupportsAgentRun
 from pydantic import BaseModel
 
 from agent_framework_durabletask import DurableAgentThread
@@ -77,7 +77,7 @@ class TestDurableAIAgentMessageNormalization:
 
     def test_run_accepts_chat_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and normalizes ChatMessage objects."""
-        chat_msg = ChatMessage("user", ["Test message"])
+        chat_msg = ChatMessage(role="user", text="Test message")
         test_agent.run(chat_msg)
 
         mock_executor.run_durable_agent.assert_called_once()
@@ -95,8 +95,8 @@ class TestDurableAIAgentMessageNormalization:
     def test_run_accepts_list_of_chat_messages(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and joins list of ChatMessage objects."""
         messages = [
-            ChatMessage("user", ["Message 1"]),
-            ChatMessage("assistant", ["Message 2"]),
+            ChatMessage(role="user", text="Message 1"),
+            ChatMessage(role="assistant", text="Message 2"),
         ]
         test_agent.run(messages)
 
@@ -142,15 +142,15 @@ class TestDurableAIAgentParameterFlow:
         assert kwargs["run_request"].response_format == ResponseFormatModel
 
 
-class TestDurableAIAgentProtocolCompliance:
-    """Test that DurableAIAgent implements AgentProtocol correctly."""
+class TestDurableAISupportsAgentRunCompliance:
+    """Test that DurableAIAgent implements SupportsAgentRun correctly."""
 
     def test_agent_implements_protocol(self, test_agent: DurableAIAgent[Any]) -> None:
-        """Verify DurableAIAgent implements AgentProtocol."""
-        assert isinstance(test_agent, AgentProtocol)
+        """Verify DurableAIAgent implements SupportsAgentRun."""
+        assert isinstance(test_agent, SupportsAgentRun)
 
     def test_agent_has_required_properties(self, test_agent: DurableAIAgent[Any]) -> None:
-        """Verify DurableAIAgent has all required AgentProtocol properties."""
+        """Verify DurableAIAgent has all required SupportsAgentRun properties."""
         assert hasattr(test_agent, "id")
         assert hasattr(test_agent, "name")
         assert hasattr(test_agent, "display_name")

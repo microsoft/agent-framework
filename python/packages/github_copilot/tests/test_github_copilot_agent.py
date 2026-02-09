@@ -294,7 +294,7 @@ class TestGitHubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        chat_message = ChatMessage("user", [Content.from_text("Hello")])
+        chat_message = ChatMessage(role="user", contents=[Content.from_text("Hello")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)
@@ -362,10 +362,10 @@ class TestGitHubCopilotAgentRun:
         mock_client.start.assert_called_once()
 
 
-class TestGitHubCopilotAgentRunStream:
-    """Test cases for run_stream method."""
+class TestGitHubCopilotAgentRunStreaming:
+    """Test cases for run(stream=True) method."""
 
-    async def test_run_stream_basic(
+    async def test_run_streaming_basic(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -384,7 +384,7 @@ class TestGitHubCopilotAgentRunStream:
 
         agent = GitHubCopilotAgent(client=mock_client)
         responses: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             responses.append(update)
 
         assert len(responses) == 1
@@ -392,7 +392,7 @@ class TestGitHubCopilotAgentRunStream:
         assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
 
-    async def test_run_stream_with_thread(
+    async def test_run_streaming_with_thread(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -409,12 +409,12 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
         thread = AgentThread()
 
-        async for _ in agent.run_stream("Hello", thread=thread):
+        async for _ in agent.run("Hello", thread=thread, stream=True):
             pass
 
         assert thread.service_thread_id == mock_session.session_id
 
-    async def test_run_stream_error(
+    async def test_run_streaming_error(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
@@ -431,16 +431,16 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
 
         with pytest.raises(ServiceException, match="session error"):
-            async for _ in agent.run_stream("Hello"):
+            async for _ in agent.run("Hello", stream=True):
                 pass
 
-    async def test_run_stream_auto_starts(
+    async def test_run_streaming_auto_starts(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         session_idle_event: SessionEvent,
     ) -> None:
-        """Test that run_stream auto-starts the agent if not started."""
+        """Test that run(stream=True) auto-starts the agent if not started."""
 
         def mock_on(handler: Any) -> Any:
             handler(session_idle_event)
@@ -451,7 +451,7 @@ class TestGitHubCopilotAgentRunStream:
         agent = GitHubCopilotAgent(client=mock_client)
         assert agent._started is False  # type: ignore
 
-        async for _ in agent.run_stream("Hello"):
+        async for _ in agent.run("Hello", stream=True):
             pass
 
         assert agent._started is True  # type: ignore

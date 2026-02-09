@@ -8,11 +8,10 @@ from typing_extensions import Never
 from agent_framework import (
     ChatMessage,
     Executor,
-    ExecutorCompletedEvent,
-    ExecutorInvokedEvent,
     Message,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     executor,
     handler,
     response_handler,
@@ -139,7 +138,7 @@ def test_executor_handlers_with_output_types():
 
 
 async def test_executor_invoked_event_contains_input_data():
-    """Test that ExecutorInvokedEvent contains the input message data."""
+    """Test that executor_invoked event (type='executor_invoked') contains the input message data."""
 
     class UpperCaseExecutor(Executor):
         @handler
@@ -154,10 +153,10 @@ async def test_executor_invoked_event_contains_input_data():
     upper = UpperCaseExecutor(id="upper")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(upper, collector).set_start_executor(upper).build()
+    workflow = WorkflowBuilder(start_executor=upper).add_edge(upper, collector).build()
 
     events = await workflow.run("hello world")
-    invoked_events = [e for e in events if isinstance(e, ExecutorInvokedEvent)]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
 
     assert len(invoked_events) == 2
 
@@ -171,7 +170,7 @@ async def test_executor_invoked_event_contains_input_data():
 
 
 async def test_executor_completed_event_contains_sent_messages():
-    """Test that ExecutorCompletedEvent contains the messages sent via ctx.send_message()."""
+    """Test that event (type='executor_completed') contains the messages sent via ctx.send_message()."""
 
     class MultiSenderExecutor(Executor):
         @handler
@@ -191,10 +190,10 @@ async def test_executor_completed_event_contains_sent_messages():
     sender = MultiSenderExecutor(id="sender")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(sender, collector).set_start_executor(sender).build()
+    workflow = WorkflowBuilder(start_executor=sender).add_edge(sender, collector).build()
 
     events = await workflow.run("hello")
-    completed_events = [e for e in events if isinstance(e, ExecutorCompletedEvent)]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     # Sender should have completed with the sent messages
     sender_completed = next(e for e in completed_events if e.executor_id == "sender")
@@ -210,9 +209,7 @@ async def test_executor_completed_event_contains_sent_messages():
 
 
 async def test_executor_completed_event_includes_yielded_outputs():
-    """Test that ExecutorCompletedEvent.data includes yielded outputs."""
-
-    from agent_framework import WorkflowOutputEvent
+    """Test that WorkflowEvent(type='executor_completed').data includes yielded outputs."""
 
     class YieldOnlyExecutor(Executor):
         @handler
@@ -220,18 +217,18 @@ async def test_executor_completed_event_includes_yielded_outputs():
             await ctx.yield_output(text.upper())
 
     executor = YieldOnlyExecutor(id="yielder")
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     events = await workflow.run("test")
-    completed_events = [e for e in events if isinstance(e, ExecutorCompletedEvent)]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     assert len(completed_events) == 1
     assert completed_events[0].executor_id == "yielder"
-    # Yielded outputs are now included in ExecutorCompletedEvent.data
+    # Yielded outputs are now included in executor_completed event (type='executor_completed').data
     assert completed_events[0].data == ["TEST"]
 
-    # Verify the output was also yielded as WorkflowOutputEvent
-    output_events = [e for e in events if isinstance(e, WorkflowOutputEvent)]
+    # Verify the output was also yielded as an output event (type='output')
+    output_events = [e for e in events if e.type == "output"]
     assert len(output_events) == 1
     assert output_events[0].data == "TEST"
 
@@ -263,13 +260,13 @@ async def test_executor_events_with_complex_message_types():
     processor = ProcessorExecutor(id="processor")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(processor, collector).set_start_executor(processor).build()
+    workflow = WorkflowBuilder(start_executor=processor).add_edge(processor, collector).build()
 
     input_request = Request(query="hello", limit=3)
     events = await workflow.run(input_request)
 
-    invoked_events = [e for e in events if isinstance(e, ExecutorInvokedEvent)]
-    completed_events = [e for e in events if isinstance(e, ExecutorCompletedEvent)]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     # Check processor invoked event has the Request object
     processor_invoked = next(e for e in invoked_events if e.executor_id == "processor")
@@ -531,25 +528,25 @@ def test_executor_response_handler_union_output_types():
 
 
 async def test_executor_invoked_event_data_not_mutated_by_handler():
-    """Test that ExecutorInvokedEvent.data captures original input, not mutated input."""
+    """Test that executor_invoked event (type='executor_invoked').data captures original input, not mutated input."""
 
     @executor(id="Mutator")
     async def mutator(messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
         # The handler mutates the input list by appending new messages
         original_len = len(messages)
-        messages.append(ChatMessage("assistant", ["Added by executor"]))
+        messages.append(ChatMessage(role="assistant", text="Added by executor"))
         await ctx.send_message(messages)
         # Verify mutation happened
         assert len(messages) == original_len + 1
 
-    workflow = WorkflowBuilder().set_start_executor(mutator).build()
+    workflow = WorkflowBuilder(start_executor=mutator).build()
 
     # Run with a single user message
-    input_messages = [ChatMessage("user", ["hello"])]
+    input_messages = [ChatMessage(role="user", text="hello")]
     events = await workflow.run(input_messages)
 
     # Find the invoked event for the Mutator executor
-    invoked_events = [e for e in events if isinstance(e, ExecutorInvokedEvent)]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
     assert len(invoked_events) == 1
     mutator_invoked = invoked_events[0]
 

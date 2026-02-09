@@ -34,7 +34,7 @@ async def main() -> None:
 
     if stream:
         print("Assistant: ", end="")
-        async for chunk in agent.run_stream(message):
+        async for chunk in agent.run(message, stream=True):
             if chunk.text:
                 print(chunk.text, end="")
         print("")

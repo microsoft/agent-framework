@@ -4,7 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import HostedFileSearchTool, HostedVectorStoreContent
+from agent_framework import Content, HostedFileSearchTool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import FileInfo, VectorStore
@@ -46,7 +46,7 @@ async def main() -> None:
             print(f"Created vector store, vector store ID: {vector_store.id}")
 
             # 2. Create file search tool with uploaded resources
-            file_search_tool = HostedFileSearchTool(inputs=[HostedVectorStoreContent(vector_store_id=vector_store.id)])
+            file_search_tool = HostedFileSearchTool(inputs=[Content.from_hosted_vector_store(vector_store_id=vector_store.id)])
 
             # 3. Create an agent with file search capabilities using the provider
             agent = await provider.create_agent(

@@ -19,7 +19,6 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    BaseChatClient,
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
@@ -53,7 +52,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
 
 def test_init_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -76,7 +75,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
         assert azure_chat_client.client.default_headers[key] == value
@@ -89,7 +88,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
     assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert isinstance(azure_chat_client, BaseChatClient)
+    assert isinstance(azure_chat_client, ChatClientProtocol)
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
@@ -574,8 +573,9 @@ async def test_get_streaming(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     azure_chat_client = AzureOpenAIChatClient()
-    async for msg in azure_chat_client.get_streaming_response(
+    async for msg in azure_chat_client.get_response(
         messages=chat_history,
+        stream=True,
     ):
         assert msg is not None
         assert msg.message_id is not None
@@ -585,7 +585,7 @@ async def test_get_streaming(
         stream=True,
         messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
-        # `OpenAIChatCompletionBase._inner_get_streaming_response`.
+        # `OpenAIChatCompletionBase.get_response(..., stream=True)`.
         # To ensure consistency, we align the arguments here accordingly.
         stream_options={"include_usage": True},
     )
@@ -623,7 +623,7 @@ async def test_streaming_with_none_delta(
     azure_chat_client = AzureOpenAIChatClient()
 
     results: list[ChatResponseUpdate] = []
-    async for msg in azure_chat_client.get_streaming_response(messages=chat_history):
+    async for msg in azure_chat_client.get_response(messages=chat_history, stream=True):
         results.append(msg)
 
     assert len(results) > 0
@@ -665,7 +665,7 @@ async def test_azure_openai_chat_client_response() -> None:
             "of climate change.",
         )
     )
-    messages.append(ChatMessage("user", ["who are Emily and David?"]))
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(messages=messages)
@@ -686,7 +686,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
-    messages.append(ChatMessage("user", ["who are Emily and David?"]))
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
     response = await azure_chat_client.get_response(
@@ -716,10 +716,10 @@ async def test_azure_openai_chat_client_streaming() -> None:
             "of climate change.",
         )
     )
-    messages.append(ChatMessage("user", ["who are Emily and David?"]))
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = azure_chat_client.get_streaming_response(messages=messages)
+    response = azure_chat_client.get_response(messages=messages, stream=True)
 
     full_message: str = ""
     async for chunk in response:
@@ -742,11 +742,12 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     assert isinstance(azure_chat_client, ChatClientProtocol)
 
     messages: list[ChatMessage] = []
-    messages.append(ChatMessage("user", ["who are Emily and David?"]))
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
 
     # Test that the client can be used to get a response
-    response = azure_chat_client.get_streaming_response(
+    response = azure_chat_client.get_response(
         messages=messages,
+        stream=True,
         options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
@@ -785,7 +786,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text

@@ -9,7 +9,7 @@ import pytest
 
 agentlightning = pytest.importorskip("agentlightning")
 
-from agent_framework import AgentExecutor, AgentRunEvent, ChatAgent, WorkflowBuilder, Workflow
+from agent_framework import AgentExecutor, AgentResponse, ChatAgent, WorkflowBuilder, Workflow
 from agent_framework_lab_lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import TracerTraceToTriplet
@@ -97,10 +97,7 @@ def workflow_two_agents():
 
             # Build workflow: analyzer -> advisor
             workflow = (
-                WorkflowBuilder()
-                .set_start_executor(analyzer_executor)
-                .add_edge(analyzer_executor, advisor_executor)
-                .build()
+                WorkflowBuilder(start_executor=analyzer_executor).add_edge(analyzer_executor, advisor_executor).build()
             )
 
             yield workflow
@@ -109,8 +106,8 @@ def workflow_two_agents():
 async def test_openai_workflow_two_agents(workflow_two_agents: Workflow):
     events = await workflow_two_agents.run("Please analyze the quarterly sales data")
 
-    # Get all AgentRunEvent data
-    agent_outputs = [event.data for event in events if isinstance(event, AgentRunEvent)]
+    # Get all output events with AgentResponse
+    agent_outputs = [event.data for event in events if event.type == "output" and isinstance(event.data, AgentResponse)]
 
     # Check that we have outputs from both agents
     assert len(agent_outputs) == 2

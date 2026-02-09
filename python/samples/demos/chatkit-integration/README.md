@@ -118,7 +118,7 @@ agent_messages = await converter.to_agent_input(user_message_item)
 
 # Running agent and streaming back to ChatKit
 async for event in stream_agent_response(
-    self.weather_agent.run_stream(agent_messages),
+    self.weather_agent.run(agent_messages, stream=True),
     thread_id=thread.id,
 ):
     yield event

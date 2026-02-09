@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent_framework import AgentProtocol, get_logger
+from agent_framework import SupportsAgentRun, get_logger
 from durabletask.worker import TaskHubGrpcWorker
 
 from ._callbacks import AgentResponseCallbackProtocol
@@ -60,12 +60,12 @@ class DurableAIAgentWorker:
         """
         self._worker = worker
         self._callback = callback
-        self._registered_agents: dict[str, AgentProtocol] = {}
+        self._registered_agents: dict[str, SupportsAgentRun] = {}
         logger.debug("[DurableAIAgentWorker] Initialized with worker type: %s", type(worker).__name__)
 
     def add_agent(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
     ) -> None:
         """Register an agent with the worker.
@@ -139,7 +139,7 @@ class DurableAIAgentWorker:
 
     def __create_agent_entity(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
     ) -> type[DurableTaskEntityStateProvider]:
         """Factory function to create a DurableEntity class configured with an agent.

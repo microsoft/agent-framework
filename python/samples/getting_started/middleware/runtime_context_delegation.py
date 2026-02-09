@@ -16,9 +16,9 @@ session data, etc.) to tools and sub-agents.
 
 Patterns Demonstrated:
 
-1. **Pattern 1: Single Agent with Middleware & Closure** (Lines 130-180)
+1. **Pattern 1: Single Agent with MiddlewareTypes & Closure** (Lines 130-180)
    - Best for: Single agent with multiple tools
-   - How: Middleware stores kwargs in container, tools access via closure
+   - How: MiddlewareTypes stores kwargs in container, tools access via closure
    - Pros: Simple, explicit state management
    - Cons: Requires container instance per agent
 
@@ -28,7 +28,7 @@ Patterns Demonstrated:
    - Pros: Automatic, works with nested delegation, clean separation
    - Cons: None - this is the recommended pattern for hierarchical agents
 
-3. **Pattern 3: Mixed - Hierarchical with Middleware** (Lines 250-300)
+3. **Pattern 3: Mixed - Hierarchical with MiddlewareTypes** (Lines 250-300)
    - Best for: Complex scenarios needing both delegation and state management
    - How: Combines automatic kwargs propagation with middleware processing
    - Pros: Maximum flexibility, can transform/validate context at each level
@@ -36,7 +36,7 @@ Patterns Demonstrated:
 
 Key Concepts:
 - Runtime Context: Session-specific data like API tokens, user IDs, tenant info
-- Middleware: Intercepts function calls to access/modify kwargs
+- MiddlewareTypes: Intercepts function calls to access/modify kwargs
 - Closure: Functions capturing variables from outer scope
 - kwargs Propagation: Automatic forwarding of runtime context through delegation chains
 """
@@ -56,7 +56,7 @@ class SessionContextContainer:
         context: FunctionInvocationContext,
         next: Callable[[FunctionInvocationContext], Awaitable[None]],
     ) -> None:
-        """Middleware that extracts runtime context from kwargs and stores in container.
+        """MiddlewareTypes that extracts runtime context from kwargs and stores in container.
 
         This middleware runs before tool execution and makes runtime context
         available to tools via the container instance.
@@ -68,7 +68,7 @@ class SessionContextContainer:
 
         # Log what we captured (for demonstration)
         if self.api_token or self.user_id:
-            print("[Middleware] Captured runtime context:")
+            print("[MiddlewareTypes] Captured runtime context:")
             print(f"  - API Token: {'[PRESENT]' if self.api_token else '[NOT PROVIDED]'}")
             print(f"  - User ID: {'[PRESENT]' if self.user_id else '[NOT PROVIDED]'}")
             print(f"  - Session Metadata Keys: {list(self.session_metadata.keys())}")
@@ -140,7 +140,7 @@ async def send_notification(
 async def pattern_1_single_agent_with_closure() -> None:
     """Pattern 1: Single agent with middleware and closure for runtime context."""
     print("\n" + "=" * 70)
-    print("PATTERN 1: Single Agent with Middleware & Closure")
+    print("PATTERN 1: Single Agent with MiddlewareTypes & Closure")
     print("=" * 70)
     print("Use case: Single agent with multiple tools sharing runtime context")
     print()
@@ -234,7 +234,7 @@ async def pattern_1_single_agent_with_closure() -> None:
 
     print(f"\nAgent: {result4.text}")
 
-    print("\n✓ Pattern 1 complete - Middleware & closure pattern works for single agents")
+    print("\n✓ Pattern 1 complete - MiddlewareTypes & closure pattern works for single agents")
 
 
 # Pattern 2: Hierarchical agents with automatic kwargs propagation
@@ -353,7 +353,7 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
 
 
 class AuthContextMiddleware:
-    """Middleware that validates and transforms runtime context."""
+    """MiddlewareTypes that validates and transforms runtime context."""
 
     def __init__(self) -> None:
         self.validated_tokens: list[str] = []
@@ -387,7 +387,7 @@ async def protected_operation(operation: Annotated[str, Field(description="Opera
 async def pattern_3_hierarchical_with_middleware() -> None:
     """Pattern 3: Hierarchical agents with middleware processing at each level."""
     print("\n" + "=" * 70)
-    print("PATTERN 3: Hierarchical with Middleware Processing")
+    print("PATTERN 3: Hierarchical with MiddlewareTypes Processing")
     print("=" * 70)
     print("Use case: Multi-level validation/transformation of runtime context")
     print()
@@ -433,7 +433,7 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     )
 
     print(f"\n[Validation Summary] Validated tokens: {len(auth_middleware.validated_tokens)}")
-    print("✓ Pattern 3 complete - Middleware can validate/transform context at each level")
+    print("✓ Pattern 3 complete - MiddlewareTypes can validate/transform context at each level")
 
 
 async def main() -> None:

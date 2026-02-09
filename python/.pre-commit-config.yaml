@@ -27,12 +27,6 @@ repos:
         name: Check Valid Python Samples
         types: ["python"]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
-  - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.1
-    hooks:
-      - id: nbqa-check-ast
-        name: Check Valid Python Notebooks
-        types: ["jupyter"]
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.20.0
     hooks:
@@ -47,6 +41,13 @@ repos:
         entry: uv --directory ./python run poe pre-commit-check
         language: system
         files: ^python/
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.5
+    hooks:
+      - id: bandit
+        name: Bandit Security Checks
+        args: ["-c", "python/pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18
@@ -56,10 +57,3 @@ repos:
         name: Update uv lockfile
         files: python/pyproject.toml
         args: [--project, python]
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.5
-    hooks:
-      - id: bandit
-        name: Bandit Security Checks
-        args: ["-c", "python/pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]

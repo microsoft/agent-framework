@@ -1,26 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatAgent,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessage,
     ChatMessageStoreProtocol,
+    ChatMiddlewareLayer,
     ContextProvider,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     HostedMCPTool,
-    Middleware,
+    MiddlewareTypes,
     ToolProtocol,
     get_logger,
-    use_chat_middleware,
-    use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
+from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
 from azure.core.credentials_async import AsyncTokenCredential
@@ -64,11 +66,21 @@ TAzureAIClientOptions = TypeVar(
 )
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
-    """Azure AI Agent client."""
+class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
+    """Raw Azure AI client without middleware, telemetry, or function invocation layers.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+
+        Use ``AzureAIClient`` instead for a fully-featured client with all layers applied.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -88,7 +100,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an Azure AI Agent client.
+        """Initialize a bare Azure AI client.
+
+        This is the core implementation without middleware, telemetry, or function invocation layers.
+        For most use cases, prefer :class:`AzureAIClient` which includes all standard layers.
 
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
@@ -379,8 +394,8 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
     @override
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[ChatMessage],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
@@ -468,13 +483,11 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         return transformed
 
     @override
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(
-        self, messages: MutableSequence[ChatMessage]
-    ) -> tuple[list[ChatMessage], str | None]:
+    def _prepare_messages_for_azure_ai(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
@@ -558,7 +571,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> ChatAgent[TAzureAIClientOptions]:
         """Convert this chat client to a ChatAgent.
@@ -595,5 +608,115 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             chat_message_store_factory=chat_message_store_factory,
             context_provider=context_provider,
             middleware=middleware,
+            **kwargs,
+        )
+
+
+class AzureAIClient(
+    ChatMiddlewareLayer[TAzureAIClientOptions],
+    FunctionInvocationLayer[TAzureAIClientOptions],
+    ChatTelemetryLayer[TAzureAIClientOptions],
+    RawAzureAIClient[TAzureAIClientOptions],
+    Generic[TAzureAIClientOptions],
+):
+    """Azure AI client with middleware, telemetry, and function invocation support.
+
+    This is the recommended client for most use cases. It includes:
+    - Chat middleware support for request/response interception
+    - OpenTelemetry-based telemetry for observability
+    - Automatic function/tool invocation handling
+
+    For a minimal implementation without these features, use :class:`RawAzureAIClient`.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_client: AIProjectClient | None = None,
+        agent_name: str | None = None,
+        agent_version: str | None = None,
+        agent_description: str | None = None,
+        conversation_id: str | None = None,
+        project_endpoint: str | None = None,
+        model_deployment_name: str | None = None,
+        credential: AsyncTokenCredential | None = None,
+        use_latest_version: bool | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize an Azure AI client with full layer support.
+
+        Keyword Args:
+            project_client: An existing AIProjectClient to use. If not provided, one will be created.
+            agent_name: The name to use when creating new agents or using existing agents.
+            agent_version: The version of the agent to use.
+            agent_description: The description to use when creating new agents.
+            conversation_id: Default conversation ID to use for conversations. Can be overridden by
+                conversation_id property when making a request.
+            project_endpoint: The Azure AI Project endpoint URL.
+                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+                Ignored when a project_client is passed.
+            model_deployment_name: The model deployment name to use for agent creation.
+                Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
+            credential: Azure async credential to use for authentication.
+            use_latest_version: Boolean flag that indicates whether to use latest agent version
+                if it exists in the service.
+            middleware: Optional sequence of chat middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+            kwargs: Additional keyword arguments passed to the parent class.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_azure_ai import AzureAIClient
+                from azure.identity.aio import DefaultAzureCredential
+
+                # Using environment variables
+                # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
+                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                credential = DefaultAzureCredential()
+                client = AzureAIClient(credential=credential)
+
+                # Or passing parameters directly
+                client = AzureAIClient(
+                    project_endpoint="https://your-project.cognitiveservices.azure.com",
+                    model_deployment_name="gpt-4",
+                    credential=credential,
+                )
+
+                # Or loading from a .env file
+                client = AzureAIClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework import ChatOptions
+
+
+                class MyOptions(ChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+        """
+        super().__init__(
+            project_client=project_client,
+            agent_name=agent_name,
+            agent_version=agent_version,
+            agent_description=agent_description,
+            conversation_id=conversation_id,
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            credential=credential,
+            use_latest_version=use_latest_version,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
             **kwargs,
         )

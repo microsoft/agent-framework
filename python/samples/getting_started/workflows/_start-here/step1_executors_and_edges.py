@@ -140,7 +140,7 @@ class ExclamationAdder(Executor):
         super().__init__(id=id)
 
     @handler(input=str, output=str)
-    async def add_exclamation(self, message: str, ctx: WorkflowContext) -> None:
+    async def add_exclamation(self, message, ctx) -> None:  # type: ignore
         """Add exclamation marks to the input.
 
         Note: The input=str and output=str are explicitly specified on @handler,
@@ -149,7 +149,7 @@ class ExclamationAdder(Executor):
         on @handler take precedence.
         """
         result = f"{message}!!!"
-        await ctx.send_message(result)
+        await ctx.send_message(result)  # type: ignore
 
 
 async def main():
@@ -160,10 +160,10 @@ async def main():
     upper_case = UpperCase(id="upper_case_executor")
 
     # Build the workflow using a fluent pattern:
-    # 1) add_edge(from_node, to_node) defines a directed edge upper_case -> reverse_text
-    # 2) set_start_executor(node) declares the entry point
+    # 1) start_executor=... in constructor declares the entry point
+    # 2) add_edge(from_node, to_node) defines a directed edge upper_case -> reverse_text
     # 3) build() finalizes and returns an immutable Workflow object
-    workflow1 = WorkflowBuilder().add_edge(upper_case, reverse_text).set_start_executor(upper_case).build()
+    workflow1 = WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
 
     # Run the workflow by sending the initial message to the start node.
     # The run(...) call returns an event collection; its get_outputs() method
@@ -181,10 +181,9 @@ async def main():
     # exclamation_adder uses @handler(input=str, output=str) to
     # explicitly declare types instead of relying on introspection.
     workflow2 = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=upper_case)
         .add_edge(upper_case, exclamation_adder)
         .add_edge(exclamation_adder, reverse_text)
-        .set_start_executor(upper_case)
         .build()
     )
 

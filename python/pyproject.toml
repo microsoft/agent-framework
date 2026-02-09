@@ -104,6 +104,7 @@ agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
+agent-framework-orchestrations = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -170,13 +171,13 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = 'packages/**/tests'
+testpaths = ['packages/**/tests', 'packages/**/ag_ui_tests']
 norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
-timeout = 120
+timeout = 60
 markers = [
     "azure: marks tests as Azure provider specific",
     "azure-ai: marks tests as Azure AI provider specific",
@@ -224,8 +225,11 @@ test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
+samples-lint = "ruff check samples --fix --exclude samples/autogen-migration,samples/semantic-kernel-migration --ignore E501,ASYNC,B901,TD002"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
+samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
+typing = ["pyright", "mypy"]
 # cleaning
 clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"
@@ -236,7 +240,7 @@ build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
-check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint"]
+check = ["fmt", "lint", "pyright", "mypy", "samples-lint", "samples-syntax", "test", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
 cmd = """
@@ -253,13 +257,14 @@ pytest --import-mode=importlib
 --cov=agent_framework_mem0
 --cov=agent_framework_purview
 --cov=agent_framework_redis
+--cov=agent_framework_orchestrations
 --cov-config=pyproject.toml
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
 """
 
 [tool.poe.tasks.all-tests]
@@ -269,7 +274,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/devui/**
 -rs
 -n logical --dist loadfile --dist worksteal
-packages/**/tests
+    packages/**/tests
 """
 
 [tool.poe.tasks.venv]
@@ -320,7 +325,9 @@ sequence = [
     { ref = "fmt" },
     { ref = "lint" },
     { ref = "pre-commit-pyright ${files}" },
-    { ref = "pre-commit-markdown-code-lint ${files}" }
+    { ref = "pre-commit-markdown-code-lint ${files}" },
+    { ref = "samples-lint" },
+    { ref = "samples-syntax" }
 ]
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 

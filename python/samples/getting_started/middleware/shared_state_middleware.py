@@ -14,7 +14,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Shared State Function-based Middleware Example
+Shared State Function-based MiddlewareTypes Example
 
 This sample demonstrates how to implement function-based middleware within a class to share state.
 The example includes:
@@ -88,7 +88,7 @@ class MiddlewareContainer:
 
 async def main() -> None:
     """Example demonstrating shared state function-based middleware."""
-    print("=== Shared State Function-based Middleware Example ===")
+    print("=== Shared State Function-based MiddlewareTypes Example ===")
 
     # Create middleware container with shared state
     middleware_container = MiddlewareContainer()

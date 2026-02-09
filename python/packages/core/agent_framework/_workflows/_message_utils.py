@@ -22,7 +22,7 @@ def normalize_messages_input(
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage("user", [messages])]
+        return [ChatMessage(role="user", text=messages)]
 
     if isinstance(messages, ChatMessage):
         return [messages]
@@ -30,7 +30,7 @@ def normalize_messages_input(
     normalized: list[ChatMessage] = []
     for item in messages:
         if isinstance(item, str):
-            normalized.append(ChatMessage("user", [item]))
+            normalized.append(ChatMessage(role="user", text=item))
         elif isinstance(item, ChatMessage):
             normalized.append(item)
         else:

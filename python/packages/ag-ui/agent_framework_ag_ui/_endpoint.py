@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from ag_ui.encoder import EventEncoder
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 from fastapi import FastAPI
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
-    agent: AgentProtocol | AgentFrameworkAgent,
+    agent: SupportsAgentRun | AgentFrameworkAgent,
     path: str = "/",
     state_schema: Any | None = None,
     predict_state_config: dict[str, dict[str, str]] | None = None,
@@ -34,7 +34,7 @@ def add_agent_framework_fastapi_endpoint(
 
     Args:
         app: The FastAPI application
-        agent: The agent to expose (can be raw AgentProtocol or wrapped)
+        agent: The agent to expose (can be raw SupportsAgentRun or wrapped)
         path: The endpoint path
         state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
@@ -47,7 +47,7 @@ def add_agent_framework_fastapi_endpoint(
             authentication checks, rate limiting, or other middleware-like behavior.
             Example: `dependencies=[Depends(verify_api_key)]`
     """
-    if isinstance(agent, AgentProtocol):
+    if isinstance(agent, SupportsAgentRun):
         wrapped_agent = AgentFrameworkAgent(
             agent=agent,
             state_schema=state_schema,

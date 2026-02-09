@@ -225,7 +225,7 @@ class RedisChatMessageStore:
         Example:
             .. code-block:: python
 
-                messages = [ChatMessage("user", ["Hello"]), ChatMessage("assistant", ["Hi there!"])]
+                messages = [ChatMessage(role="user", text="Hello"), ChatMessage(role="assistant", text="Hi there!")]
                 await store.add_messages(messages)
         """
         if not messages:

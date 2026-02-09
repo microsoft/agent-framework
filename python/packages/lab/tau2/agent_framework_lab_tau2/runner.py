@@ -288,8 +288,8 @@ class TaskRunner:
         # Creates a cyclic workflow: Orchestrator -> Assistant -> Orchestrator -> User -> Orchestrator...
         # The orchestrator acts as a message router that flips roles and routes to appropriate agent
         return (
-            WorkflowBuilder(max_iterations=10000)  # Unlimited - we control termination via should_not_stop
-            .set_start_executor(orchestrator)  # Orchestrator manages the conversation flow
+            # Orchestrator manages the conversation flow
+            WorkflowBuilder(max_iterations=10000, start_executor=orchestrator)
             .add_edge(orchestrator, self._assistant_executor)  # Route messages to assistant
             .add_edge(
                 self._assistant_executor, orchestrator, condition=self.should_not_stop
@@ -338,11 +338,11 @@ class TaskRunner:
         # Matches tau2's expected conversation start pattern
         logger.info(f"Starting workflow with hardcoded greeting: '{DEFAULT_FIRST_AGENT_MESSAGE}'")
 
-        first_message = ChatMessage("assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)
+        first_message = ChatMessage(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)
         initial_greeting = AgentExecutorResponse(
             executor_id=ASSISTANT_AGENT_ID,
             agent_response=AgentResponse(messages=[first_message]),
-            full_conversation=[ChatMessage("assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)],
+            full_conversation=[ChatMessage(role="assistant", text=DEFAULT_FIRST_AGENT_MESSAGE)],
         )
 
         # STEP 4: Execute the workflow and collect results

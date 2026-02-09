@@ -21,7 +21,7 @@ async def logging_middleware(
     context: FunctionInvocationContext,
     next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
-    """Middleware that logs tool invocations to show the delegation flow."""
+    """MiddlewareTypes that logs tool invocations to show the delegation flow."""
     print(f"[Calling tool: {context.function.name}]")
     print(f"[Request: {context.arguments}]")
 

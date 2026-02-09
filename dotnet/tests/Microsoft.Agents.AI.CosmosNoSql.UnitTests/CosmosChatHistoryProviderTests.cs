@@ -41,6 +41,9 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 [Collection("CosmosDB")]
 public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 {
+    private static readonly AIAgent s_mockAgent = new Moq.Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Moq.Mock<AgentSession>().Object;
+
     // Cosmos DB Emulator connection settings
     private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
@@ -214,7 +217,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], [])
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [message], [])
         {
             ResponseMessages = []
         };
@@ -226,7 +229,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var messages = await provider.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
@@ -293,7 +296,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new ChatMessage(ChatRole.Assistant, "Response message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, [])
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, [])
         {
             AIContextProviderMessages = aiContextProviderMessages,
             ResponseMessages = responseMessages
@@ -303,7 +306,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await provider.InvokedAsync(context);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
         Assert.Equal(5, messageList.Count);
@@ -327,7 +330,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var messages = await provider.InvokingAsync(invokingContext);
 
         // Assert
@@ -346,15 +349,15 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation1);
         using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation2);
 
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
+        var context2 = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
 
         // Act
-        var invokingContext1 = new ChatHistoryProvider.InvokingContext([]);
-        var invokingContext2 = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext1 = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
+        var invokingContext2 = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
 
         var messages1 = await store1.InvokingAsync(invokingContext1);
         var messages2 = await store2.InvokingAsync(invokingContext2);
@@ -391,11 +394,11 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         };
 
         // Act 1: Add messages
-        var invokedContext = new ChatHistoryProvider.InvokedContext(messages, []);
+        var invokedContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, []);
         await originalStore.InvokedAsync(invokedContext);
 
         // Act 2: Verify messages were added
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var retrievedMessages = await originalStore.InvokingAsync(invokingContext);
         var retrievedList = retrievedMessages.ToList();
         Assert.Equal(5, retrievedList.Count);
@@ -545,7 +548,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [message], []);
 
         // Act
         await provider.InvokedAsync(context);
@@ -554,7 +557,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var messages = await provider.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
@@ -602,7 +605,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new ChatMessage(ChatRole.User, "Third hierarchical message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, []);
 
         // Act
         await provider.InvokedAsync(context);
@@ -611,7 +614,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
@@ -637,8 +640,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
 
         // Add messages to both stores
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Message from user 1")], []);
+        var context2 = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Message from user 2")], []);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
@@ -647,8 +650,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Act & Assert
-        var invokingContext1 = new ChatHistoryProvider.InvokingContext([]);
-        var invokingContext2 = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext1 = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
+        var invokingContext2 = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
 
         var messages1 = await store1.InvokingAsync(invokingContext1);
         var messageList1 = messages1.ToList();
@@ -675,7 +678,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
 
-        var context = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Test serialization message")], []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test serialization message")], []);
         await originalStore.InvokedAsync(context);
 
         // Act - Serialize the provider state
@@ -693,7 +696,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert - The deserialized provider should have the same functionality
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var messages = await deserializedStore.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
@@ -717,8 +720,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         using var hierarchicalProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
 
         // Add messages to both
-        var simpleContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
-        var hierarchicalContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
+        var simpleContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
+        var hierarchicalContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
 
         await simpleProvider.InvokedAsync(simpleContext);
         await hierarchicalProvider.InvokedAsync(hierarchicalContext);
@@ -727,7 +730,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Act & Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
 
         var simpleMessages = await simpleProvider.InvokingAsync(invokingContext);
         var simpleMessageList = simpleMessages.ToList();
@@ -760,7 +763,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             await Task.Delay(10); // Small delay to ensure different timestamps
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
@@ -768,7 +771,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         // Act - Set max to 5 and retrieve
         provider.MaxMessagesToRetrieve = 5;
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
@@ -798,14 +801,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Act - No limit set (default null)
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 

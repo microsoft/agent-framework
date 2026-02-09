@@ -83,8 +83,8 @@ class TestScopedContentProcessor:
     async def test_process_messages_with_defaults(self, processor: ScopedContentProcessor) -> None:
         """Test process_messages with settings that have defaults."""
         messages = [
-            ChatMessage("user", ["Hello"]),
-            ChatMessage("assistant", ["Hi there"]),
+            ChatMessage(role="user", text="Hello"),
+            ChatMessage(role="assistant", text="Hi there"),
         ]
 
         with patch.object(processor, "_map_messages", return_value=([], None)) as mock_map:
@@ -98,7 +98,7 @@ class TestScopedContentProcessor:
         self, processor: ScopedContentProcessor, process_content_request_factory
     ) -> None:
         """Test process_messages returns True when content should be blocked."""
-        messages = [ChatMessage("user", ["Sensitive content"])]
+        messages = [ChatMessage(role="user", text="Sensitive content")]
 
         mock_request = process_content_request_factory("Sensitive content")
 
@@ -139,7 +139,7 @@ class TestScopedContentProcessor:
         """Test _map_messages gets token info when settings lack some defaults."""
         settings = PurviewSettings(app_name="Test App", tenant_id="12345678-1234-1234-1234-123456789012")
         processor = ScopedContentProcessor(mock_client, settings)
-        messages = [ChatMessage("user", ["Test"], message_id="msg-123")]
+        messages = [ChatMessage(role="user", text="Test", message_id="msg-123")]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
@@ -156,7 +156,7 @@ class TestScopedContentProcessor:
             return_value={"user_id": "test-user", "client_id": "test-client"}
         )
 
-        messages = [ChatMessage("user", ["Test"], message_id="msg-123")]
+        messages = [ChatMessage(role="user", text="Test", message_id="msg-123")]
 
         with pytest.raises(ValueError, match="Tenant id required"):
             await processor._map_messages(messages, Activity.UPLOAD_TEXT)
@@ -355,7 +355,7 @@ class TestScopedContentProcessor:
         )
         processor = ScopedContentProcessor(mock_client, settings)
 
-        messages = [ChatMessage("user", ["Test message"])]
+        messages = [ChatMessage(role="user", text="Test message")]
 
         requests, user_id = await processor._map_messages(
             messages, Activity.UPLOAD_TEXT, provided_user_id="32345678-1234-1234-1234-123456789012"
@@ -376,7 +376,7 @@ class TestScopedContentProcessor:
         )
         processor = ScopedContentProcessor(mock_client, settings)
 
-        messages = [ChatMessage("user", ["Test message"])]
+        messages = [ChatMessage(role="user", text="Test message")]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
@@ -479,7 +479,7 @@ class TestUserIdResolution:
         settings = PurviewSettings(app_name="Test App")  # No tenant_id or app_location
         processor = ScopedContentProcessor(mock_client, settings)
 
-        messages = [ChatMessage("user", ["Test"])]
+        messages = [ChatMessage(role="user", text="Test")]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
@@ -550,7 +550,7 @@ class TestUserIdResolution:
         """Test provided_user_id parameter is used as last resort."""
         processor = ScopedContentProcessor(mock_client, settings)
 
-        messages = [ChatMessage("user", ["Test"])]
+        messages = [ChatMessage(role="user", text="Test")]
 
         requests, user_id = await processor._map_messages(
             messages, Activity.UPLOAD_TEXT, provided_user_id="44444444-4444-4444-4444-444444444444"
@@ -562,7 +562,7 @@ class TestUserIdResolution:
         """Test invalid provided_user_id is ignored."""
         processor = ScopedContentProcessor(mock_client, settings)
 
-        messages = [ChatMessage("user", ["Test"])]
+        messages = [ChatMessage(role="user", text="Test")]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT, provided_user_id="not-a-guid")
 
@@ -577,8 +577,8 @@ class TestUserIdResolution:
             ChatMessage(
                 role="user", text="First", additional_properties={"user_id": "55555555-5555-5555-5555-555555555555"}
             ),
-            ChatMessage("assistant", ["Response"]),
-            ChatMessage("user", ["Second"]),
+            ChatMessage(role="assistant", text="Response"),
+            ChatMessage(role="user", text="Second"),
         ]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
@@ -594,7 +594,7 @@ class TestUserIdResolution:
         processor = ScopedContentProcessor(mock_client, settings)
 
         messages = [
-            ChatMessage("user", ["First"], author_name="Not a GUID"),
+            ChatMessage(role="user", text="First", author_name="Not a GUID"),
             ChatMessage(
                 role="assistant",
                 text="Response",
@@ -654,7 +654,7 @@ class TestScopedContentProcessorCaching:
             scope_identifier="scope-123", scopes=[]
         )
 
-        messages = [ChatMessage("user", ["Test"])]
+        messages = [ChatMessage(role="user", text="Test")]
 
         await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
 
@@ -676,7 +676,7 @@ class TestScopedContentProcessorCaching:
 
         mock_client.get_protection_scopes.side_effect = PurviewPaymentRequiredError("Payment required")
 
-        messages = [ChatMessage("user", ["Test"])]
+        messages = [ChatMessage(role="user", text="Test")]
 
         with pytest.raises(PurviewPaymentRequiredError):
             await processor.process_messages(

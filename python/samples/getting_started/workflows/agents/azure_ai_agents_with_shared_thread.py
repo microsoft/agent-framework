@@ -71,7 +71,7 @@ async def main() -> None:
         shared_thread.message_store = ChatMessageStore()
 
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor="writer")
             .register_agent(factory_func=lambda: writer, name="writer", agent_thread=shared_thread)
             .register_agent(factory_func=lambda: reviewer, name="reviewer", agent_thread=shared_thread)
             .register_executor(
@@ -79,7 +79,6 @@ async def main() -> None:
                 name="intercept_agent_response",
             )
             .add_chain(["writer", "intercept_agent_response", "reviewer"])
-            .set_start_executor("writer")
             .build()
         )
 

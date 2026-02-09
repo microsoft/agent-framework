@@ -3,16 +3,16 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import (
     Executor,
-    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowExecutor,
     handler,
     response_handler,
@@ -170,12 +170,11 @@ def build_resource_request_distribution_workflow() -> Workflow:
                 raise ValueError("Received more responses than expected")
 
     return (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="orchestrator")
         .register_executor(lambda: RequestDistribution("orchestrator"), name="orchestrator")
         .register_executor(lambda: ResourceRequester("resource_requester"), name="resource_requester")
         .register_executor(lambda: PolicyChecker("policy_checker"), name="policy_checker")
         .register_executor(lambda: ResultCollector("result_collector"), name="result_collector")
-        .set_start_executor("orchestrator")
         .add_edge("orchestrator", "resource_requester")
         .add_edge("orchestrator", "policy_checker")
         .add_edge("resource_requester", "result_collector")
@@ -192,7 +191,7 @@ class ResourceAllocator(Executor):
         super().__init__(id)
         self._cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     async def _handle_resource_request(self, request: ResourceRequest) -> ResourceResponse | None:
         """Allocates resources based on request and available cache."""
@@ -207,7 +206,7 @@ class ResourceAllocator(Executor):
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, ResourceRequest):
             return
 
@@ -246,14 +245,14 @@ class PolicyEngine(Executor):
             "disk": 1000,  # Liberal disk policy
         }
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @handler
     async def handle_subworkflow_request(
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, PolicyRequest):
             return
 
@@ -289,7 +288,7 @@ class PolicyEngine(Executor):
 async def main() -> None:
     # Build the main workflow
     main_workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="sub_workflow_executor")
         .register_executor(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
         .register_executor(lambda: PolicyEngine("policy_engine"), name="policy_engine")
         .register_executor(
@@ -303,7 +302,6 @@ async def main() -> None:
             ),
             name="sub_workflow_executor",
         )
-        .set_start_executor("sub_workflow_executor")
         .add_edge("sub_workflow_executor", "resource_allocator")
         .add_edge("resource_allocator", "sub_workflow_executor")
         .add_edge("sub_workflow_executor", "policy_engine")
@@ -347,7 +345,7 @@ async def main() -> None:
             else:
                 print(f"Unknown request info event data type: {type(event.data)}")
 
-        run_result = await main_workflow.send_responses(responses)
+        run_result = await main_workflow.run(responses=responses)
 
     outputs = run_result.get_outputs()
     if outputs:

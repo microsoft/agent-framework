@@ -25,10 +25,9 @@ def add(
 
 async def main():
     client = OpenAIResponsesClient()
-    if client.function_invocation_configuration is not None:
-        client.function_invocation_configuration.include_detailed_errors = True
-        client.function_invocation_configuration.max_iterations = 40
-        print(f"Function invocation configured as: \n{client.function_invocation_configuration.to_json(indent=2)}")
+    client.function_invocation_configuration["include_detailed_errors"] = True
+    client.function_invocation_configuration["max_iterations"] = 40
+    print(f"Function invocation configured as: \n{client.function_invocation_configuration}")
 
     agent = client.as_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
 

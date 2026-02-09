@@ -1,12 +1,14 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Client application for starting a multi-agent concurrent orchestration.
 
 This client connects to the Durable Task Scheduler and starts an orchestration
 that runs two agents (physicist and chemist) concurrently, then retrieves and
 displays the aggregated results.
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with both agents and orchestration registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -30,12 +32,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for client logging
-        
+
     Returns:
         Configured DurableTaskSchedulerClient instance
     """
@@ -58,7 +60,7 @@ def get_client(
 
 def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temperature?") -> None:
     """Run client to start and monitor the orchestration.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
         prompt: The prompt to send to both agents

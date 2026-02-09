@@ -7,8 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from agent_framework import AgentProtocol, Content
-from agent_framework._workflows._events import RequestInfoEvent
+from agent_framework import Content, SupportsAgentRun, Workflow
 
 from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
@@ -262,10 +261,11 @@ class AgentFrameworkExecutor:
                         yield event
                 elif entity_info.type == "workflow":
                     async for event in self._execute_workflow(entity_obj, request, trace_collector):
-                        # Log RequestInfoEvent for debugging HIL flow
-                        event_class = event.__class__.__name__ if hasattr(event, "__class__") else type(event).__name__
-                        if event_class == "RequestInfoEvent":
-                            logger.info("🔔 [EXECUTOR] RequestInfoEvent detected from workflow!")
+                        # Log request_info event (type='request_info') for debugging HIL flow
+                        if event.type == "request_info":
+                            logger.info(
+                                "🔔 [EXECUTOR] request_info event (type='request_info') detected from workflow!"
+                            )
                             logger.info(f"   request_id: {getattr(event, 'request_id', 'N/A')}")
                             logger.info(f"   source_executor_id: {getattr(event, 'source_executor_id', 'N/A')}")
                             logger.info(f"   request_type: {getattr(event, 'request_type', 'N/A')}")
@@ -285,7 +285,7 @@ class AgentFrameworkExecutor:
             yield {"type": "error", "message": str(e), "entity_id": entity_id}
 
     async def _execute_agent(
-        self, agent: AgentProtocol, request: AgentFrameworkRequest, trace_collector: Any
+        self, agent: SupportsAgentRun, request: AgentFrameworkRequest, trace_collector: Any
     ) -> AsyncGenerator[Any, None]:
         """Execute Agent Framework agent with trace collection and optional thread support.
 
@@ -326,37 +326,23 @@ class AgentFrameworkExecutor:
             # but is_connected stays True. Detect and reconnect before execution.
             await self._ensure_mcp_connections(agent)
 
-            # Check if agent supports streaming
-            if hasattr(agent, "run_stream") and callable(agent.run_stream):
-                # Use Agent Framework's native streaming with optional thread
+            # Agent must have run() method - use stream=True for streaming
+            if hasattr(agent, "run") and callable(agent.run):
+                # Use Agent Framework's run() with stream=True for streaming
                 if thread:
-                    async for update in agent.run_stream(user_message, thread=thread):
+                    async for update in agent.run(user_message, stream=True, thread=thread):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
                 else:
-                    async for update in agent.run_stream(user_message):
+                    async for update in agent.run(user_message, stream=True):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
                         yield update
-            elif hasattr(agent, "run") and callable(agent.run):
-                # Non-streaming agent - use run() and yield complete response
-                logger.info("Agent lacks run_stream(), using run() method (non-streaming)")
-                if thread:
-                    response = await agent.run(user_message, thread=thread)
-                else:
-                    response = await agent.run(user_message)
-
-                # Yield trace events before response
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
-
-                # Yield the complete response (mapper will convert to streaming events)
-                yield response
             else:
-                raise ValueError("Agent must implement either run() or run_stream() method")
+                raise ValueError("Agent must implement run() method")
 
             # Emit agent lifecycle completion event
             from .models._openai_custom import AgentCompletedEvent
@@ -374,7 +360,7 @@ class AgentFrameworkExecutor:
             yield {"type": "error", "message": f"Agent execution error: {e!s}"}
 
     async def _execute_workflow(
-        self, workflow: Any, request: AgentFrameworkRequest, trace_collector: Any
+        self, workflow: Workflow, request: AgentFrameworkRequest, trace_collector: Any
     ) -> AsyncGenerator[Any, None]:
         """Execute Agent Framework workflow with checkpoint support via conversation items.
 
@@ -426,7 +412,7 @@ class AgentFrameworkExecutor:
 
             # Get session-scoped checkpoint storage (InMemoryCheckpointStorage from conv_data)
             # Each conversation has its own storage instance, providing automatic session isolation.
-            # This storage is passed to workflow.run_stream() which sets it as runtime override,
+            # This storage is passed to workflow.run(stream=True) which sets it as runtime override,
             # ensuring all checkpoint operations (save/load) use THIS conversation's storage.
             # The framework guarantees runtime storage takes precedence over build-time storage.
             checkpoint_storage = self.checkpoint_manager.get_checkpoint_storage(conversation_id)
@@ -455,7 +441,7 @@ class AgentFrameworkExecutor:
                 if not checkpoint_id:
                     error_msg = (
                         "Cannot process HIL responses without a checkpoint. "
-                        "Workflows using HIL must be configured with .with_checkpointing() "
+                        "Workflows using HIL must be configured with checkpoint_storage in constructor"
                         "and a checkpoint must exist before sending responses."
                     )
                     logger.error(error_msg)
@@ -465,8 +451,6 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow with HIL responses for {len(hil_responses)} request(s)")
 
                 # Unwrap primitive responses if they're wrapped in {response: value} format
-                from ._utils import parse_input_for_type
-
                 unwrapped_responses = {}
                 for request_id, response_value in hil_responses.items():
                     if isinstance(response_value, dict) and "response" in response_value:
@@ -475,60 +459,17 @@ class AgentFrameworkExecutor:
 
                 hil_responses = unwrapped_responses
 
-                # NOTE: Two-step approach for stateless HTTP (framework limitation):
-                # 1. Restore checkpoint to load pending requests into workflow's in-memory state
-                # 2. Then send responses using send_responses_streaming
-                # Future: Framework should support run_stream(checkpoint_id, responses) in single call
-                # (checkpoint_id is guaranteed to exist due to earlier validation)
-                logger.debug(f"Restoring checkpoint {checkpoint_id} then sending HIL responses")
+                logger.debug(f"Restoring checkpoint {checkpoint_id} and sending HIL responses")
 
                 try:
-                    # Step 1: Restore checkpoint to populate workflow's in-memory pending requests
-                    restored = False
-                    async for _event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for event in workflow.run(
+                        stream=True,
+                        responses=hil_responses,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
-                        restored = True
-                        break  # Stop immediately after restoration, don't process events
-
-                    if not restored:
-                        raise RuntimeError("Checkpoint restoration did not yield any events")
-
-                    # Reset running flags so we can call send_responses_streaming
-                    if hasattr(workflow, "_is_running"):
-                        workflow._is_running = False
-                    if hasattr(workflow, "_runner") and hasattr(workflow._runner, "_running"):
-                        workflow._runner._running = False
-
-                    # Extract response types from restored workflow and convert responses to proper types
-                    try:
-                        if hasattr(workflow, "_runner") and hasattr(workflow._runner, "context"):
-                            runner_context = workflow._runner.context
-                            pending_requests_dict = await runner_context.get_pending_request_info_events()
-
-                            converted_responses = {}
-                            for request_id, response_value in hil_responses.items():
-                                if request_id in pending_requests_dict:
-                                    pending_request = pending_requests_dict[request_id]
-                                    if hasattr(pending_request, "response_type"):
-                                        response_type = pending_request.response_type
-                                        try:
-                                            response_value = parse_input_for_type(response_value, response_type)
-                                            logger.debug(
-                                                f"Converted HIL response for {request_id} to {type(response_value)}"
-                                            )
-                                        except Exception as e:
-                                            logger.warning(f"Failed to convert HIL response for {request_id}: {e}")
-
-                                converted_responses[request_id] = response_value
-
-                            hil_responses = converted_responses
-                    except Exception as e:
-                        logger.warning(f"Could not convert HIL responses to proper types: {e}")
-
-                    async for event in workflow.send_responses_streaming(hil_responses):
-                        # Enrich new RequestInfoEvents that may come from subsequent HIL requests
-                        if isinstance(event, RequestInfoEvent):
+                        # Enrich new request_info events that may come from subsequent HIL requests
+                        if event.type == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -545,10 +486,12 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow from checkpoint {checkpoint_id} in session {conversation_id}")
 
                 try:
-                    async for event in workflow.run_stream(
-                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    async for event in workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
                     ):
-                        if isinstance(event, RequestInfoEvent):
+                        if event.type == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -556,7 +499,7 @@ class AgentFrameworkExecutor:
 
                         yield event
 
-                        # Note: Removed break on RequestInfoEvent - continue yielding all events
+                        # Note: Removed break on request_info event (type='request_info') - continue yielding all events
                         # The workflow is already paused by ctx.request_info() in the framework
                         # DevUI should continue yielding events even during HIL pause
 
@@ -571,8 +514,8 @@ class AgentFrameworkExecutor:
 
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
 
-                async for event in workflow.run_stream(parsed_input, checkpoint_storage=checkpoint_storage):
-                    if isinstance(event, RequestInfoEvent):
+                async for event in workflow.run(parsed_input, stream=True, checkpoint_storage=checkpoint_storage):
+                    if event.type == "request_info":
                         self._enrich_request_info_event_with_response_schema(event, workflow)
 
                     for trace_event in trace_collector.get_pending_events():
@@ -580,7 +523,7 @@ class AgentFrameworkExecutor:
 
                     yield event
 
-                    # Note: Removed break on RequestInfoEvent - continue yielding all events
+                    # Note: Removed break on request_info event (type='request_info') - continue yielding all events
                     # The workflow is already paused by ctx.request_info() in the framework
                     # DevUI should continue yielding events even during HIL pause
 
@@ -760,7 +703,7 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(Content.from_text(text=""))
 
-        chat_message = ChatMessage("user", contents)
+        chat_message = ChatMessage(role="user", contents=contents)
 
         logger.info(f"Created ChatMessage with {len(contents)} contents:")
         for idx, content in enumerate(contents):
@@ -1025,10 +968,12 @@ class AgentFrameworkExecutor:
             return raw_input
 
     def _enrich_request_info_event_with_response_schema(self, event: Any, workflow: Any) -> None:
-        """Extract response type from workflow executor and attach response schema to RequestInfoEvent.
+        """Extract response type from workflow executor.
+
+        Attach response schema to request_info event (type='request_info').
 
         Args:
-            event: RequestInfoEvent to enrich
+            event: request_info event (type='request_info') to enrich
             workflow: Workflow object containing executors
         """
         try:
@@ -1039,7 +984,7 @@ class AgentFrameworkExecutor:
             request_type = getattr(event, "request_type", None)
 
             if not source_executor_id or not request_type:
-                logger.debug("RequestInfoEvent missing source_executor_id or request_type")
+                logger.debug("request_info event (type='request_info') missing source_executor_id or request_type")
                 return
 
             # Find the source executor in the workflow
@@ -1072,4 +1017,4 @@ class AgentFrameworkExecutor:
                 event._response_schema = response_schema
 
         except Exception as e:
-            logger.warning(f"Failed to enrich RequestInfoEvent with response schema: {e}")
+            logger.warning(f"Failed to enrich request_info event (type='request_info') with response schema: {e}")

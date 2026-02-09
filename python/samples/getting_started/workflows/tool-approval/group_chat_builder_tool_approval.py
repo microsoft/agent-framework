@@ -1,18 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Annotated
+from collections.abc import AsyncIterable
+from typing import Annotated, cast
 
 from agent_framework import (
-    AgentRunUpdateEvent,
+    ChatMessage,
     Content,
-    GroupChatBuilder,
-    GroupChatRequestSentEvent,
-    GroupChatState,
-    RequestInfoEvent,
+    WorkflowEvent,
     tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 
 """
 Sample: Group Chat Workflow with Tool Approval Requests
@@ -34,7 +33,7 @@ different agents have different levels of tool access.
 
 Demonstrate:
 - Using set_select_speakers_func with agents that have approval-required tools.
-- Handling RequestInfoEvent in group chat scenarios.
+- Handling request_info events (type='request_info') in group chat scenarios.
 - Multi-round group chat with tool approval interruption and resumption.
 
 Prerequisites:
@@ -44,7 +43,9 @@ Prerequisites:
 
 
 # 1. Define tools for different agents
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def run_tests(test_suite: Annotated[str, "Name of the test suite to run"]) -> str:
     """Run automated tests for the application."""
@@ -93,6 +94,36 @@ def select_next_speaker(state: GroupChatState) -> str:
     return "DevOpsEngineer"  # Subsequent speakers
 
 
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, Content] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+    requests: dict[str, Content] = {}
+    async for event in stream:
+        if event.type == "request_info" and isinstance(event.data, Content):
+            # We are only expecting tool approval requests in this sample
+            requests[event.request_id] = event.data
+        elif event.type == "output":
+            # The output of the workflow comes from the orchestrator and it's a list of messages
+            print("\n" + "=" * 60)
+            print("Workflow summary:")
+            outputs = cast(list[ChatMessage], event.data)
+            for msg in outputs:
+                speaker = msg.author_name or msg.role
+                print(f"[{speaker}]: {msg.text}")
+
+    responses: dict[str, Content] = {}
+    if requests:
+        for request_id, request in requests.items():
+            if request.type == "function_approval_request":
+                print("\n[APPROVAL REQUIRED]")
+                print(f"  Tool: {request.function_call.name}")  # type: ignore
+                print(f"  Arguments: {request.function_call.arguments}")  # type: ignore
+                print(f"Simulating human approval for: {request.function_call.name}")  # type: ignore
+                # Create approval response
+                responses[request_id] = request.to_function_approval_response(approved=True)
+
+    return responses if responses else None
+
+
 async def main() -> None:
     # 3. Create specialized agents
     chat_client = OpenAIChatClient()
@@ -117,85 +148,34 @@ async def main() -> None:
     )
 
     # 4. Build a group chat workflow with the selector function
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(selection_func=select_next_speaker)
-        .participants([qa_engineer, devops_engineer])
-        # Set a hard limit to 4 rounds
-        # First round: QAEngineer speaks
-        # Second round: DevOpsEngineer speaks (check staging + create rollback)
-        # Third round: DevOpsEngineer speaks with an approval request (deploy to production)
-        # Fourth round: DevOpsEngineer speaks again after approval
-        .with_max_rounds(4)
-        .build()
-    )
+    # max_rounds=4: Set a hard limit to 4 rounds
+    # First round: QAEngineer speaks
+    # Second round: DevOpsEngineer speaks (check staging + create rollback)
+    # Third round: DevOpsEngineer speaks with an approval request (deploy to production)
+    # Fourth round: DevOpsEngineer speaks again after approval
+    workflow = GroupChatBuilder(
+        participants=[qa_engineer, devops_engineer],
+        max_rounds=4,
+        selection_func=select_next_speaker,
+    ).build()
 
     # 5. Start the workflow
     print("Starting group chat workflow for software deployment...")
     print(f"Agents: {[qa_engineer.name, devops_engineer.name]}")
     print("-" * 60)
 
-    # Phase 1: Run workflow and collect all events (stream ends at IDLE or IDLE_WITH_PENDING_REQUESTS)
-    request_info_events: list[RequestInfoEvent] = []
-    # Keep track of the last response to format output nicely in streaming mode
-    last_response_id: str | None = None
-    async for event in workflow.run_stream(
-        "We need to deploy version 2.4.0 to production. Please coordinate the deployment."
-    ):
-        if isinstance(event, RequestInfoEvent):
-            request_info_events.append(event)
-            if isinstance(event.data, Content) and event.data.type == "function_approval_request":
-                print("\n[APPROVAL REQUIRED] From agent:", event.source_executor_id)
-                print(f"  Tool: {event.data.function_call.name}")
-                print(f"  Arguments: {event.data.function_call.arguments}")
-        elif isinstance(event, AgentRunUpdateEvent):
-            if not event.data.text:
-                continue  # Skip empty updates
-            response_id = event.data.response_id
-            if response_id != last_response_id:
-                if last_response_id is not None:
-                    print("\n")
-                print(f"- {event.executor_id}:", end=" ", flush=True)
-                last_response_id = response_id
-            print(event.data, end="", flush=True)
-        elif isinstance(event, GroupChatRequestSentEvent):
-            print(f"\n[REQUEST SENT ({event.round_index})] to agent: {event.participant_name}")
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run.
+    stream = workflow.run(
+        "We need to deploy version 2.4.0 to production. Please coordinate the deployment.", stream=True
+    )
 
-    # 6. Handle approval requests
-    if request_info_events:
-        for request_event in request_info_events:
-            if isinstance(request_event.data, Content) and request_event.data.type == "function_approval_request":
-                print("\n" + "=" * 60)
-                print("Human review required for production deployment!")
-                print("In a real scenario, you would review the deployment details here.")
-                print("Simulating approval for demo purposes...")
-                print("=" * 60)
-
-                # Create approval response
-                approval_response = request_event.data.to_function_approval_response(approved=True)
-
-                # Phase 2: Send approval and continue workflow
-                # Keep track of the response to format output nicely in streaming mode
-                last_response_id: str | None = None
-                async for event in workflow.send_responses_streaming({request_event.request_id: approval_response}):
-                    if isinstance(event, AgentRunUpdateEvent):
-                        if not event.data.text:
-                            continue  # Skip empty updates
-                        response_id = event.data.response_id
-                        if response_id != last_response_id:
-                            if last_response_id is not None:
-                                print("\n")
-                            print(f"- {event.executor_id}:", end=" ", flush=True)
-                            last_response_id = response_id
-                        print(event.data, end="", flush=True)
-                    elif isinstance(event, GroupChatRequestSentEvent):
-                        print(f"\n[REQUEST SENT ({event.round_index})] To agent: {event.participant_name}")
-
-                print("\n" + "-" * 60)
-                print("Deployment workflow completed successfully!")
-                print("All agents have finished their tasks.")
-    else:
-        print("\nWorkflow completed without requiring production deployment approval.")
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.run(stream=True, responses=pending_responses)
+        pending_responses = await process_event_stream(stream)
 
     """
     Sample Output:

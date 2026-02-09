@@ -28,11 +28,21 @@ namespace SampleApp
     {
         public override string? Name => "UpperCaseParrotAgent";
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => new(new CustomAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new CustomAgentSession(serializedSession, jsonSerializerOptions));
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            if (session is not CustomAgentSession typedSession)
+            {
+                throw new ArgumentException($"The provided session is not of type {nameof(CustomAgentSession)}.", nameof(session));
+            }
+
+            return typedSession.Serialize(jsonSerializerOptions);
+        }
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CustomAgentSession(serializedState, jsonSerializerOptions));
 
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
@@ -45,14 +55,14 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
             var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
@@ -77,14 +87,14 @@ namespace SampleApp
             }
 
             // Get existing messages from the store
-            var invokingContext = new ChatHistoryProvider.InvokingContext(messages);
+            var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
             var storeMessages = await typedSession.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(messages, storeMessages)
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, storeMessages)
             {
                 ResponseMessages = responseMessages
             };
@@ -136,6 +146,9 @@ namespace SampleApp
 
             internal CustomAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
                 : base(serializedSessionState, jsonSerializerOptions) { }
+
+            internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+                => base.Serialize(jsonSerializerOptions);
         }
     }
 }

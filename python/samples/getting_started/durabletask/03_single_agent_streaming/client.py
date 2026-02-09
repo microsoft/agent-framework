@@ -7,7 +7,7 @@ This client demonstrates:
 2. Streaming the response from Redis in real-time
 3. Handling reconnection and cursor-based resumption
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with the TravelPlanner agent registered
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
 - Redis must be running
@@ -59,12 +59,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional log handler for client logging
-        
+
     Returns:
         Configured DurableAIAgentClient instance
     """
@@ -89,7 +89,7 @@ def get_client(
 
 async def stream_from_redis(thread_id: str, cursor: str | None = None) -> None:
     """Stream agent responses from Redis.
-    
+
     Args:
         thread_id: The conversation/thread ID to stream from
         cursor: Optional cursor to resume from. If None, starts from beginning.
@@ -132,7 +132,7 @@ async def stream_from_redis(thread_id: str, cursor: str | None = None) -> None:
 
 def run_client(agent_client: DurableAIAgentClient) -> None:
     """Run client interactions with the TravelPlanner agent.
-    
+
     Args:
         agent_client: The DurableAIAgentClient instance
     """

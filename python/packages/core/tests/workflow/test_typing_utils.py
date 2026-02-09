@@ -5,7 +5,7 @@ from typing import Any, Generic, Optional, TypeVar, Union
 
 import pytest
 
-from agent_framework import RequestInfoEvent
+from agent_framework import WorkflowEvent
 from agent_framework._workflows._typing_utils import (
     deserialize_type,
     is_instance_of,
@@ -13,6 +13,7 @@ from agent_framework._workflows._typing_utils import (
     normalize_type_to_list,
     resolve_type_annotation,
     serialize_type,
+    try_coerce_to_type,
 )
 
 # region: normalize_type_to_list tests
@@ -308,18 +309,19 @@ def test_serialize_deserialize_roundtrip() -> None:
 
     # Test agent framework type roundtrip
 
-    serialized = serialize_type(RequestInfoEvent)
+    serialized = serialize_type(WorkflowEvent)
     deserialized = deserialize_type(serialized)
-    assert deserialized is RequestInfoEvent
+    assert deserialized is WorkflowEvent
 
-    # Verify we can instantiate the deserialized type
-    instance = deserialized(
+    # Verify we can instantiate the deserialized type via factory method
+    instance = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="executor_1",
         request_data="test",
         response_type=str,
     )
-    assert isinstance(instance, RequestInfoEvent)
+    assert isinstance(instance, WorkflowEvent)
+    assert instance.type == "request_info"
 
 
 def test_deserialize_type_error_handling() -> None:
@@ -419,3 +421,72 @@ def test_type_compatibility_complex() -> None:
     # Incompatible nested structure
     incompatible_target = list[dict[Union[str, bytes], int]]
     assert not is_type_compatible(source, incompatible_target)
+
+
+# region: try_coerce_to_type tests
+
+
+def test_coerce_already_correct_type() -> None:
+    """Values already matching the target type are returned as-is."""
+    assert try_coerce_to_type(42, int) == 42
+    assert try_coerce_to_type("hello", str) == "hello"
+    assert try_coerce_to_type(True, bool) is True
+
+
+def test_coerce_int_to_float() -> None:
+    """JSON integers should be coercible to float."""
+    result = try_coerce_to_type(1, float)
+    assert result == 1.0
+    assert isinstance(result, float)
+
+
+def test_coerce_dict_to_dataclass() -> None:
+    """Dicts (from JSON) should be coercible to dataclasses."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    result = try_coerce_to_type({"x": 1, "y": 2}, Point)
+    assert isinstance(result, Point)
+    assert result.x == 1
+    assert result.y == 2
+
+
+def test_coerce_dict_to_dataclass_bad_keys_returns_original() -> None:
+    """Dicts with wrong keys should return the original dict, not raise."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    original = {"a": 1, "b": 2}
+    result = try_coerce_to_type(original, Point)
+    assert result is original
+
+
+def test_coerce_non_concrete_target_returns_original() -> None:
+    """Union and other non-concrete types should return the original value."""
+    result = try_coerce_to_type(42, int | str)
+    assert result == 42
+
+    result = try_coerce_to_type({"x": 1}, Union[str, int])
+    assert result == {"x": 1}
+
+
+def test_coerce_unrelated_types_returns_original() -> None:
+    """Coercion between unrelated types should return the original value."""
+    assert try_coerce_to_type("hello", int) == "hello"
+    assert try_coerce_to_type(3.14, str) == 3.14
+    assert try_coerce_to_type([1, 2], dict) == [1, 2]
+
+
+def test_coerce_any_returns_original() -> None:
+    """Any target type should accept any value without coercion."""
+    assert try_coerce_to_type(42, Any) == 42
+    assert try_coerce_to_type({"k": "v"}, Any) == {"k": "v"}
+
+
+# endregion: try_coerce_to_type tests

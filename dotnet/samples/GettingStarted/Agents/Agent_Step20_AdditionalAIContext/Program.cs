@@ -65,7 +65,7 @@ Console.WriteLine(await agent.RunAsync("I need to make a dentist appointment for
 Console.WriteLine(await agent.RunAsync("I've taken Sally to soccer practice.", session) + "\n");
 
 // We can serialize the session, and it will contain both the chat history and the data that each AI context provider serialized.
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = agent.SerializeSession(session);
 // Let's print it to console to show the contents.
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, options: new JsonSerializerOptions() { WriteIndented = true, IndentSize = 2 }) + "\n");
 // The serialized session can be stored long term in a persistent store, but in this case we will just deserialize again and continue the conversation.
