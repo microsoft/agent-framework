@@ -121,9 +121,6 @@ async def test_multi_turn_function_tools_does_not_resubmit_old_results():
     turn2_request = requests_made[-1]  # Last request made (after function execution)
     turn2_input = turn2_request["input"]
 
-    # Count function_call_output items in turn 2
-    sum(1 for item in turn2_input if isinstance(item, dict) and item.get("type") == "function_call_output")
-
     # The key assertion: Turn 2 should only have NEW function outputs (from turn 2's function calls)
     # If it has function outputs from turn 1, that's the bug we're fixing
     # Since turn 2 likely also has a function call, we need to check that old outputs aren't there
