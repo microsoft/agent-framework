@@ -48,7 +48,7 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's as_tool() for hierarchical agents with streaming."""
-    from agent_framework import FunctionCallContent, FunctionResultContent
+    from agent_framework import Content
     from agent_framework.openai import OpenAIChatClient
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
@@ -78,7 +78,7 @@ async def run_agent_framework() -> None:
     print("[Agent Framework]")
 
     # Track accumulated function calls (they stream in incrementally)
-    accumulated_calls: dict[str, FunctionCallContent] = {}
+    accumulated_calls: dict[str, Content] = {}
 
     async for chunk in coordinator.run("Create a tagline for a coffee shop", stream=True):
         # Stream text tokens
@@ -88,7 +88,7 @@ async def run_agent_framework() -> None:
         # Process streaming function calls and results
         if chunk.contents:
             for content in chunk.contents:
-                if isinstance(content, FunctionCallContent):
+                if content.type == "function_call":
                     # Accumulate function call content as it streams in
                     call_id = content.call_id
                     if call_id in accumulated_calls:
@@ -105,7 +105,7 @@ async def run_agent_framework() -> None:
                     current_args = accumulated_calls[call_id].arguments
                     print(f"  Arguments: {current_args}", flush=True)
 
-                elif isinstance(content, FunctionResultContent):
+                elif content.type == "function_result":
                     # Tool result - shows writer's response
                     result_text = content.result if isinstance(content.result, str) else str(content.result)
                     if result_text.strip():

@@ -162,13 +162,12 @@ async def main() -> None:
     # then call the email assistant, then finalize.
     # If spam, go directly to the spam handler and finalize.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="spam_detection_agent")
         .register_agent(create_spam_detector_agent, name="spam_detection_agent")
         .register_agent(create_email_assistant_agent, name="email_assistant_agent")
         .register_executor(lambda: to_email_assistant_request, name="to_email_assistant_request")
         .register_executor(lambda: handle_email_response, name="send_email")
         .register_executor(lambda: handle_spam_classifier_response, name="handle_spam")
-        .set_start_executor("spam_detection_agent")
         # Not spam path: transform response -> request for assistant -> assistant -> send email
         .add_edge("spam_detection_agent", "to_email_assistant_request", condition=get_condition(False))
         .add_edge("to_email_assistant_request", "email_assistant_agent")

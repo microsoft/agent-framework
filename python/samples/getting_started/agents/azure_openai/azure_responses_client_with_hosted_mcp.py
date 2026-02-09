@@ -15,7 +15,7 @@ Azure OpenAI Responses Client, including user approval workflows for function ca
 """
 
 if TYPE_CHECKING:
-    from agent_framework import SupportsAgentRun, AgentThread
+    from agent_framework import AgentThread, SupportsAgentRun
 
 
 async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):

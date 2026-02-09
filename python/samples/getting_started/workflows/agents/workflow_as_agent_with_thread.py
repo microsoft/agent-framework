@@ -59,7 +59,7 @@ async def main() -> None:
         )
 
     # Build a sequential workflow: assistant -> summarizer
-    workflow = SequentialBuilder().register_participants([create_assistant, create_summarizer]).build()
+    workflow = SequentialBuilder(participant_factories=[create_assistant, create_summarizer]).build()
 
     # Wrap the workflow as an agent
     agent = workflow.as_agent(name="ConversationalWorkflowAgent")
@@ -130,7 +130,7 @@ async def demonstrate_thread_serialization() -> None:
             instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
         )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
     agent = workflow.as_agent(name="MemoryWorkflowAgent")
 
     # Create initial thread and have a conversation

@@ -14,7 +14,7 @@ The second reverses the text and yields the workflow output. Events are printed 
 Purpose:
 Show how to declare executors with the @executor decorator, connect them with WorkflowBuilder,
 pass intermediate values using ctx.send_message, and yield final output using ctx.yield_output().
-Demonstrate how streaming exposes executor_invoked events (type='executor_invoked') and 
+Demonstrate how streaming exposes executor_invoked events (type='executor_invoked') and
 executor_completed events (type='executor_completed') for observability.
 
 Prerequisites:
@@ -56,11 +56,10 @@ async def main():
     # Step 1: Build the workflow with the defined edges.
     # Order matters. upper_case_executor runs first, then reverse_text_executor.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="upper_case_executor")
         .register_executor(lambda: to_upper_case, name="upper_case_executor")
         .register_executor(lambda: reverse_text, name="reverse_text_executor")
         .add_edge("upper_case_executor", "reverse_text_executor")
-        .set_start_executor("upper_case_executor")
         .build()
     )
 

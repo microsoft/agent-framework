@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+
 from agent_framework import FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 
@@ -70,6 +72,5 @@ Result: {
 
 
 if __name__ == "__main__":
-    import asyncio
 
     asyncio.run(main())

@@ -73,12 +73,11 @@ async def main():
     # 4) set_start_executor(node) declares the entry point
     # 5) build() finalizes and returns an immutable Workflow object
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="UpperCase")
         .register_executor(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
         .register_executor(lambda: reverse_text, name="ReverseText")
         .register_agent(create_agent, name="DecoderAgent")
         .add_chain(["UpperCase", "ReverseText", "DecoderAgent"])
-        .set_start_executor("UpperCase")
         .build()
     )
 

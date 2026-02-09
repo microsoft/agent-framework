@@ -5,8 +5,8 @@
 This worker registers the TravelPlanner agent with the Durable Task Scheduler
 and uses RedisStreamCallback to persist streaming responses to Redis for reliable delivery.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 - Start Redis (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
@@ -145,7 +145,7 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
 
 def create_travel_agent() -> "ChatAgent":
     """Create the TravelPlanner agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured TravelPlanner agent with travel planning tools.
     """
@@ -174,12 +174,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional log handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -202,10 +202,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with the TravelPlanner agent and Redis streaming callback.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agent and callback registered
     """

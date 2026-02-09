@@ -32,7 +32,7 @@ async def main() -> None:
     print(f"Result: {result}\n")
 
     for message in result.messages:
-        code_blocks = [c for c in message.contents if c.type == "code_interpreter_tool_input"]
+        code_blocks = [c for c in message.contents if c.type == "code_interpreter_tool_call"]
         outputs = [c for c in message.contents if c.type == "code_interpreter_tool_result"]
         if code_blocks:
             code_inputs = code_blocks[0].inputs or []

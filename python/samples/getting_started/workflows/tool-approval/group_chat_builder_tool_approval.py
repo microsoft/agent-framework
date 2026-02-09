@@ -43,7 +43,9 @@ Prerequisites:
 
 
 # 1. Define tools for different agents
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def run_tests(test_suite: Annotated[str, "Name of the test suite to run"]) -> str:
     """Run automated tests for the application."""
@@ -146,18 +148,16 @@ async def main() -> None:
     )
 
     # 4. Build a group chat workflow with the selector function
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(selection_func=select_next_speaker)
-        .participants([qa_engineer, devops_engineer])
-        # Set a hard limit to 4 rounds
-        # First round: QAEngineer speaks
-        # Second round: DevOpsEngineer speaks (check staging + create rollback)
-        # Third round: DevOpsEngineer speaks with an approval request (deploy to production)
-        # Fourth round: DevOpsEngineer speaks again after approval
-        .with_max_rounds(4)
-        .build()
-    )
+    # max_rounds=4: Set a hard limit to 4 rounds
+    # First round: QAEngineer speaks
+    # Second round: DevOpsEngineer speaks (check staging + create rollback)
+    # Third round: DevOpsEngineer speaks with an approval request (deploy to production)
+    # Fourth round: DevOpsEngineer speaks again after approval
+    workflow = GroupChatBuilder(
+        participants=[qa_engineer, devops_engineer],
+        max_rounds=4,
+        selection_func=select_next_speaker,
+    ).build()
 
     # 5. Start the workflow
     print("Starting group chat workflow for software deployment...")
@@ -165,7 +165,7 @@ async def main() -> None:
     print("-" * 60)
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(
         "We need to deploy version 2.4.0 to production. Please coordinate the deployment.", stream=True
     )
@@ -174,7 +174,7 @@ async def main() -> None:
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
     """

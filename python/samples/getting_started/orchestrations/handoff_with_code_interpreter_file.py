@@ -163,10 +163,11 @@ async def main() -> None:
 
         async with create_agents(credential) as (triage, code_specialist):
             workflow = (
-                HandoffBuilder()
+                HandoffBuilder(
+                    termination_condition=lambda conv: sum(1 for msg in conv if msg.role == "user") >= 2,
+                )
                 .participants([triage, code_specialist])
                 .with_start_agent(triage)
-                .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") >= 2)
                 .build()
             )
 
@@ -191,7 +192,7 @@ async def main() -> None:
                 print(f"\nUser: {user_input}")
 
                 responses = {request.request_id: HandoffAgentUserRequest.create_response(user_input)}
-                events = await _drain(workflow.send_responses_streaming(responses))
+                events = await _drain(workflow.run(stream=True, responses=responses))
                 requests, file_ids = _handle_events(events)
                 all_file_ids.extend(file_ids)
                 input_index += 1

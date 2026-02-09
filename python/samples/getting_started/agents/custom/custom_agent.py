@@ -12,7 +12,7 @@ from agent_framework import (
     ChatMessage,
     Content,
     Role,
-    TextContent,
+    normalize_messages,
 )
 
 """
@@ -88,12 +88,14 @@ class EchoAgent(BaseAgent):
     ) -> AgentResponse:
         """Non-streaming implementation."""
         # Normalize input messages to a list
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         if not normalized_messages:
             response_message = ChatMessage(
                 role=Role.ASSISTANT,
-                contents=[Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
+                contents=[
+                    Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")
+                ],
             )
         else:
             # For simplicity, echo the last user message
@@ -120,7 +122,7 @@ class EchoAgent(BaseAgent):
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Streaming implementation."""
         # Normalize input messages to a list
-        normalized_messages = self._normalize_messages(messages)
+        normalized_messages = normalize_messages(messages)
 
         if not normalized_messages:
             response_text = "Hello! I'm a custom echo agent. Send me a message and I'll echo it back."

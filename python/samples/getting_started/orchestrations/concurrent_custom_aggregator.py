@@ -18,7 +18,7 @@ to synthesize a concise, consolidated summary from the experts' outputs.
 The workflow completes when all participants become idle.
 
 Demonstrates:
-- ConcurrentBuilder().participants([...]).with_aggregator(callback)
+- ConcurrentBuilder(participants=[...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
 - Aggregation implemented via an LLM call (chat_client.get_response)
 - Workflow output yielded with the synthesized summary string
@@ -87,7 +87,7 @@ async def main() -> None:
     #   • Custom callback    -> return value becomes workflow output (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
     workflow = (
-        ConcurrentBuilder().participants([researcher, marketer, legal]).with_aggregator(summarize_results).build()
+        ConcurrentBuilder(participants=[researcher, marketer, legal]).with_aggregator(summarize_results).build()
     )
 
     events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")

@@ -135,10 +135,8 @@ from agent_framework import WorkflowBuilder, FunctionExecutor
 def test_func(input: str) -> str:
     return f"Processed: {input}"
 
-builder = WorkflowBuilder()
 executor = FunctionExecutor(id="test_executor", func=test_func)
-builder.set_start_executor(executor)
-workflow = builder.build()
+workflow = WorkflowBuilder(start_executor=executor).build()
 """)
 
         discovery = EntityDiscovery(str(temp_path))
@@ -182,10 +180,8 @@ from agent_framework import WorkflowBuilder, FunctionExecutor
 def test_func(input: str) -> str:
     return f"Processed: {input}"
 
-builder = WorkflowBuilder()
 executor = FunctionExecutor(id="test_executor", func=test_func)
-builder.set_start_executor(executor)
-workflow = builder.build()
+workflow = WorkflowBuilder(start_executor=executor).build()
 """)
 
         # Create agent with agent.py
@@ -243,10 +239,8 @@ from agent_framework import WorkflowBuilder, FunctionExecutor
 def test_func(input: str) -> str:
     return "v1"
 
-builder = WorkflowBuilder()
 executor = FunctionExecutor(id="test_executor", func=test_func)
-builder.set_start_executor(executor)
-workflow = builder.build()
+workflow = WorkflowBuilder(start_executor=executor).build()
 """)
 
         discovery = EntityDiscovery(str(temp_path))
@@ -266,12 +260,9 @@ def test_func(input: str) -> str:
 def test_func2(input: str) -> str:
     return "v2_extra"
 
-builder = WorkflowBuilder()
 executor1 = FunctionExecutor(id="test_executor", func=test_func)
 executor2 = FunctionExecutor(id="test_executor2", func=test_func2)
-builder.set_start_executor(executor1)
-builder.add_edge(executor1, executor2)
-workflow = builder.build()
+workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 """)
 
         # Without invalidation, gets cached version
@@ -298,10 +289,8 @@ async def test_in_memory_entities_bypass_lazy_loading():
     def test_func(input: str) -> str:
         return f"Processed: {input}"
 
-    builder = WorkflowBuilder()
     executor = FunctionExecutor(id="test_executor", func=test_func)
-    builder.set_start_executor(executor)
-    workflow = builder.build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     discovery = EntityDiscovery()
 

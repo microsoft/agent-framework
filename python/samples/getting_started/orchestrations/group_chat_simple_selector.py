@@ -16,7 +16,7 @@ from azure.identity import AzureCliCredential
 Sample: Group Chat with a round-robin speaker selector
 
 What it does:
-- Demonstrates the with_orchestrator() API for GroupChat orchestration
+- Demonstrates the selection_func parameter for GroupChat orchestration
 - Uses a pure Python function to control speaker selection based on conversation state
 
 Prerequisites:
@@ -80,19 +80,26 @@ async def main() -> None:
     )
 
     # Build the group chat workflow
+    # termination_condition: stop after 6 messages (user task + one full rounds + 1)
+    # One round is expert -> verifier -> clarifier -> skeptic, after which the expert gets to respond again.
+    # This will end the conversation after the expert has spoken 2 times (one iteration loop)
+    # Note: it's possible that the expert gets it right the first time and the other participants
+    # have nothing to add, but for demo purposes we want to see at least one full round of interaction.
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
     workflow = (
-        GroupChatBuilder()
-        .participants([expert, verifier, clarifier, skeptic])
-        .with_orchestrator(selection_func=round_robin_selector)
+        GroupChatBuilder(
+            participants=[expert, verifier, clarifier, skeptic],
+            termination_condition=lambda conversation: len(conversation) >= 6,
+            intermediate_outputs=True,
+            selection_func=round_robin_selector,
+        )
         # Set a hard termination condition: stop after 6 messages (user task + one full rounds + 1)
         # One round is expert -> verifier -> clarifier -> skeptic, after which the expert gets to respond again.
         # This will end the conversation after the expert has spoken 2 times (one iteration loop)
         # Note: it's possible that the expert gets it right the first time and the other participants
         # have nothing to add, but for demo purposes we want to see at least one full round of interaction.
         .with_termination_condition(lambda conversation: len(conversation) >= 6)
-        # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowEvent with type "output" events
-        .with_intermediate_outputs()
         .build()
     )
 

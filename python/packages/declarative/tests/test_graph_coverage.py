@@ -2012,7 +2012,7 @@ class TestBuilderControlFlowCreation:
         # Create builder with minimal yaml definition
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         action_def = {
             "kind": "GotoAction",
@@ -2036,7 +2036,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         action_def = {
             "kind": "GotoAction",
@@ -2056,7 +2056,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         action_def = {
             "kind": "GotoAction",
@@ -2094,7 +2094,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
@@ -2124,7 +2124,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         action_def = {
             "kind": "BreakLoop",
@@ -2149,7 +2149,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
@@ -2179,7 +2179,7 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         action_def = {
             "kind": "ContinueLoop",
@@ -2203,7 +2203,7 @@ class TestBuilderEdgeWiring:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         # Create a mock source executor
         source = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "test"}}, id="source")
@@ -2236,7 +2236,7 @@ class TestBuilderEdgeWiring:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        wb = WorkflowBuilder(start_executor="dummy")
 
         source = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "source"}}, id="source")
         target = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "target"}}, id="target")

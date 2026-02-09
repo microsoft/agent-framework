@@ -72,6 +72,12 @@ from agent_framework.azure import AzureOpenAIChatClient, AzureAIAgentClient
 
 When modifying samples, update associated README files in the same or parent folders.
 
+### Samples Syntax Checking
+
+Run `uv run poe samples-syntax` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
+
+Some samples depend on external packages (e.g., `azure.ai.agentserver.agentframework`, `microsoft_agents`) that are not installed in the dev environment. These are excluded in `pyrightconfig.samples.json`. When adding or modifying these excluded samples, add them to the exclude list and manually verify they have no import errors from `agent_framework` packages by temporarily removing them from the exclude list and running the check.
+
 ## Package Documentation
 
 ### Core

@@ -5,7 +5,15 @@ from collections.abc import Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent, ChatContext, ChatMessage, ChatResponse, Role, chat_middleware, tool
+from agent_framework import (
+    ChatAgent,
+    ChatContext,
+    ChatMessage,
+    ChatResponse,
+    MiddlewareTermination,
+    chat_middleware,
+    tool,
+)
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -39,7 +47,7 @@ async def security_and_override_middleware(
                     context.result = ChatResponse(
                         messages=[
                             ChatMessage(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "
                                 "sensitive data.",
@@ -48,8 +56,7 @@ async def security_and_override_middleware(
                     )
 
                     # Set terminate flag to stop execution
-                    context.terminate = True
-                    return
+                    raise MiddlewareTermination
 
     # Continue to next middleware or AI execution
     await next(context)

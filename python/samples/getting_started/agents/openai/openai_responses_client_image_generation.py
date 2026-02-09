@@ -70,7 +70,7 @@ async def main() -> None:
     # Show information about the generated image
     for message in result.messages:
         for content in message.contents:
-            if content.type == "image_generation" and content.outputs:
+            if content.type == "image_generation_tool_result" and content.outputs:
                 for output in content.outputs:
                     if output.type in ("data", "uri") and output.uri:
                         show_image_info(output.uri)

@@ -165,15 +165,12 @@ from agent_framework.lab.tau2 import TaskRunner
 
 class WorkflowTaskRunner(TaskRunner):
     def build_conversation_workflow(self, assistant_agent, user_simulator_agent):
-        # Build a custom workflow
-        builder = WorkflowBuilder()
-
         # Create agent executors
         assistant_executor = AgentExecutor(assistant_agent, id="assistant_agent")
         user_executor = AgentExecutor(user_simulator_agent, id="user_simulator")
 
-        # Add workflow edges and conditions
-        builder.set_start_executor(assistant_executor)
+        # Build a custom workflow with start executor
+        builder = WorkflowBuilder(start_executor=assistant_executor)
         builder.add_edge(assistant_executor, user_executor)
         builder.add_edge(user_executor, assistant_executor, condition=self.should_not_stop)
 

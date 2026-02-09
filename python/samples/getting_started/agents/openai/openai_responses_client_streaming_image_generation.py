@@ -4,7 +4,7 @@ import asyncio
 import base64
 
 import anyio
-from agent_framework import Content, HostedImageGenerationTool
+from agent_framework import HostedImageGenerationTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """OpenAI Responses Client Streaming Image Generation Example

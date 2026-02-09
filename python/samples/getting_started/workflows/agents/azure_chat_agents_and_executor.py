@@ -110,8 +110,7 @@ async def main() -> None:
     )
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(research_agent)
+        WorkflowBuilder(start_executor=research_agent)
         .add_edge(research_agent, enrich_with_references)
         .add_edge(enrich_with_references, final_editor_agent)
         .build()

@@ -137,12 +137,6 @@ class DeclarativeWorkflowBuilder:
         Raises:
             ValueError: If no actions are defined (empty workflow), or validation fails
         """
-        builder = WorkflowBuilder(name=self._workflow_id)
-
-        # Enable checkpointing if storage is provided
-        if self._checkpoint_storage:
-            builder.with_checkpointing(self._checkpoint_storage)
-
         actions = self._yaml_def.get("actions", [])
         if not actions:
             # Empty workflow - raise an error since we need at least one executor
@@ -151,6 +145,13 @@ class DeclarativeWorkflowBuilder:
         # Validate workflow definition before building
         if self._validate:
             self._validate_workflow(actions)
+
+        # Use a placeholder for start_executor; it will be overwritten below via _set_start_executor
+        builder = WorkflowBuilder(
+            start_executor="_declarative_placeholder",
+            name=self._workflow_id,
+            checkpoint_storage=self._checkpoint_storage,
+        )
 
         # First pass: create all executors
         entry_executor = self._create_executors_for_actions(actions, builder)
@@ -164,11 +165,11 @@ class DeclarativeWorkflowBuilder:
                 # Create an entry passthrough node and wire to the structure's branches
                 entry_node = JoinExecutor({"kind": "Entry"}, id="_workflow_entry")
                 self._executors[entry_node.id] = entry_node
-                builder.set_start_executor(entry_node)
+                builder._set_start_executor(entry_node)
                 # Use _add_sequential_edge which knows how to wire to structures
                 self._add_sequential_edge(builder, entry_node, entry_executor)
             else:
-                builder.set_start_executor(entry_executor)
+                builder._set_start_executor(entry_executor)
         else:
             raise ValueError("Failed to create any executors from actions.")
 

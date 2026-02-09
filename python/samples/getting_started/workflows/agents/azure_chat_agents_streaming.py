@@ -40,7 +40,7 @@ async def main():
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
     # Agents adapt to workflow mode: run(stream=True) for incremental updates, run() for complete responses.
-    workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    workflow = WorkflowBuilder(start_executor=writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
     # Track the last author to format streaming output.
     last_author: str | None = None

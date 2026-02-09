@@ -233,11 +233,9 @@ async def main() -> None:
 
     # Build the workflow
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_processor)
+        WorkflowBuilder(start_executor=email_processor, output_executors=[conclude_workflow])
         .add_edge(email_processor, email_writer_agent)
         .add_edge(email_writer_agent, conclude_workflow)
-        .with_output_from([conclude_workflow])
         .build()
     )
 
@@ -249,7 +247,7 @@ async def main() -> None:
     )
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     events = await workflow.run(incoming_email)
     request_info_events = events.get_request_info_events()
 
@@ -276,7 +274,7 @@ async def main() -> None:
             print("Performing automatic approval for demo purposes...")
             responses[request_info_event.request_id] = data.to_function_approval_response(approved=True)
 
-        events = await workflow.send_responses(responses)
+        events = await workflow.run(responses=responses)
         request_info_events = events.get_request_info_events()
 
     # The output should only come from conclude_workflow executor and it's a single string

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,6 +37,25 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public abstract class ChatHistoryProvider
 {
+    private readonly string _sourceName;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatHistoryProvider"/> class.
+    /// </summary>
+    protected ChatHistoryProvider()
+    {
+        this._sourceName = this.GetType().FullName!;
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatHistoryProvider"/> class with the specified source name.
+    /// </summary>
+    /// <param name="sourceName">The source name to stamp on <see cref="ChatMessage.AdditionalProperties"/> for each messages produced by the <see cref="ChatHistoryProvider"/>.</param>
+    protected ChatHistoryProvider(string sourceName)
+    {
+        this._sourceName = sourceName;
+    }
+
     /// <summary>
     /// Called at the start of agent invocation to provide messages from the chat history as context for the next agent invocation.
     /// </summary>
@@ -65,7 +85,63 @@ public abstract class ChatHistoryProvider
     /// and context management.
     /// </para>
     /// </remarks>
-    public abstract ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default);
+    public async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        var messages = await this.InvokingCoreAsync(context, cancellationToken).ConfigureAwait(false);
+
+        return messages.Select(message =>
+        {
+            if (message.AdditionalProperties != null
+                // Check if the message was already tagged with this provider's source type
+                && message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out var messageSourceType)
+                && messageSourceType is AgentRequestMessageSourceType typedMessageSourceType
+                && typedMessageSourceType == AgentRequestMessageSourceType.ChatHistory
+                // Check if the message was already tagged with this provider's source
+                && message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out var messageSource)
+                && messageSource is string typedMessageSource
+                && typedMessageSource == this._sourceName)
+            {
+                return message;
+            }
+
+            message = message.Clone();
+            message.AdditionalProperties ??= new();
+            message.AdditionalProperties[AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.ChatHistory;
+            message.AdditionalProperties[AgentRequestMessageSource.AdditionalPropertiesKey] = this._sourceName;
+            return message;
+        });
+    }
+
+    /// <summary>
+    /// Called at the start of agent invocation to provide messages from the chat history as context for the next agent invocation.
+    /// </summary>
+    /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>
+    /// A task that represents the asynchronous operation. The task result contains a collection of <see cref="ChatMessage"/>
+    /// instances in ascending chronological order (oldest first).
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Messages are returned in chronological order to maintain proper conversation flow and context for the agent.
+    /// The oldest messages appear first in the collection, followed by more recent messages.
+    /// </para>
+    /// <para>
+    /// If the total message history becomes very large, implementations should apply appropriate strategies to manage
+    /// storage constraints, such as:
+    /// <list type="bullet">
+    /// <item><description>Truncating older messages while preserving recent context</description></item>
+    /// <item><description>Summarizing message groups to maintain essential context</description></item>
+    /// <item><description>Implementing sliding window approaches for message retention</description></item>
+    /// <item><description>Archiving old messages while keeping active conversation context</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Each <see cref="ChatHistoryProvider"/> instance should be associated with a single <see cref="AgentSession"/> to ensure proper message isolation
+    /// and context management.
+    /// </para>
+    /// </remarks>
+    protected abstract ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Called at the end of the agent invocation to add new messages to the chat history.
@@ -77,7 +153,7 @@ public abstract class ChatHistoryProvider
     /// <para>
     /// Messages should be added in the order they were generated to maintain proper chronological sequence.
     /// The <see cref="ChatHistoryProvider"/> is responsible for preserving message ordering and ensuring that subsequent calls to
-    /// <see cref="InvokingAsync"/> return messages in the correct chronological order.
+    /// <see cref="InvokingCoreAsync"/> return messages in the correct chronological order.
     /// </para>
     /// <para>
     /// Implementations may perform additional processing during message addition, such as:
@@ -92,7 +168,35 @@ public abstract class ChatHistoryProvider
     /// To check if the invocation was successful, inspect the <see cref="InvokedContext.InvokeException"/> property.
     /// </para>
     /// </remarks>
-    public abstract ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default);
+    public ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default) =>
+        this.InvokedCoreAsync(context, cancellationToken);
+
+    /// <summary>
+    /// Called at the end of the agent invocation to add new messages to the chat history.
+    /// </summary>
+    /// <param name="context">Contains the invocation context including request messages, response messages, and any exception that occurred.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous add operation.</returns>
+    /// <remarks>
+    /// <para>
+    /// Messages should be added in the order they were generated to maintain proper chronological sequence.
+    /// The <see cref="ChatHistoryProvider"/> is responsible for preserving message ordering and ensuring that subsequent calls to
+    /// <see cref="InvokingCoreAsync"/> return messages in the correct chronological order.
+    /// </para>
+    /// <para>
+    /// Implementations may perform additional processing during message addition, such as:
+    /// <list type="bullet">
+    /// <item><description>Validating message content and metadata</description></item>
+    /// <item><description>Applying storage optimizations or compression</description></item>
+    /// <item><description>Triggering background maintenance operations</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// This method is called regardless of whether the invocation succeeded or failed.
+    /// To check if the invocation was successful, inspect the <see cref="InvokedContext.InvokeException"/> property.
+    /// </para>
+    /// </remarks>
+    protected abstract ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
@@ -131,7 +235,7 @@ public abstract class ChatHistoryProvider
         => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
 
     /// <summary>
-    /// Contains the context information provided to <see cref="InvokingAsync(InvokingContext, CancellationToken)"/>.
+    /// Contains the context information provided to <see cref="InvokingCoreAsync(InvokingContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
     /// This class provides context about the invocation including the new messages that will be used.
@@ -177,7 +281,7 @@ public abstract class ChatHistoryProvider
     }
 
     /// <summary>
-    /// Contains the context information provided to <see cref="InvokedAsync(InvokedContext, CancellationToken)"/>.
+    /// Contains the context information provided to <see cref="InvokedCoreAsync(InvokedContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
     /// This class provides context about a completed agent invocation, including both the
@@ -192,18 +296,15 @@ public abstract class ChatHistoryProvider
         /// <param name="agent">The agent being invoked.</param>
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
-        /// <param name="chatHistoryProviderMessages">The messages retrieved from the <see cref="ChatHistoryProvider"/> for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
         public InvokedContext(
             AIAgent agent,
             AgentSession? session,
-            IEnumerable<ChatMessage> requestMessages,
-            IEnumerable<ChatMessage>? chatHistoryProviderMessages)
+            IEnumerable<ChatMessage> requestMessages)
         {
             this.Agent = Throw.IfNull(agent);
             this.Session = session;
             this.RequestMessages = Throw.IfNull(requestMessages);
-            this.ChatHistoryProviderMessages = chatHistoryProviderMessages;
         }
 
         /// <summary>
@@ -224,24 +325,6 @@ public abstract class ChatHistoryProvider
         /// This does not include any <see cref="ChatHistoryProvider"/> supplied messages.
         /// </value>
         public IEnumerable<ChatMessage> RequestMessages { get; set { field = Throw.IfNull(value); } }
-
-        /// <summary>
-        /// Gets the messages retrieved from the <see cref="ChatHistoryProvider"/> for this invocation, if any.
-        /// </summary>
-        /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances that were retrieved from the <see cref="ChatHistoryProvider"/>,
-        /// and were used by the agent as part of the invocation.
-        /// </value>
-        public IEnumerable<ChatMessage>? ChatHistoryProviderMessages { get; set; }
-
-        /// <summary>
-        /// Gets or sets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.
-        /// </summary>
-        /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances that were provided by the <see cref="AIContextProvider"/>,
-        /// and were used by the agent as part of the invocation.
-        /// </value>
-        public IEnumerable<ChatMessage>? AIContextProviderMessages { get; set; }
 
         /// <summary>
         /// Gets the collection of response messages generated during this invocation if the invocation succeeded.

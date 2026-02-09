@@ -488,7 +488,7 @@ async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         system_message="You are a reviewer. Provide constructive feedback.",
     )
 
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     discovery = EntityDiscovery(None)
     mapper = MessageMapper()
@@ -540,7 +540,7 @@ async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         system_message="You are a summarizer. Provide concise summaries.",
     )
 
-    workflow = ConcurrentBuilder().participants([researcher, analyst, summarizer]).build()
+    workflow = ConcurrentBuilder(participants=[researcher, analyst, summarizer]).build()
 
     discovery = EntityDiscovery(None)
     mapper = MessageMapper()

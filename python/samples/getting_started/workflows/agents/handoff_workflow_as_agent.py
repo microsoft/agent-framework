@@ -156,7 +156,7 @@ async def main() -> None:
     # - participants: All agents that can participate in the workflow
     # - with_start_agent: The triage agent is designated as the start agent, which means
     #   it receives all user input first and orchestrates handoffs to specialists
-    # - with_termination_condition: Custom logic to stop the request/response loop.
+    # - termination_condition: Custom logic to stop the request/response loop.
     #   Without this, the default behavior continues requesting user input until max_turns
     #   is reached. Here we use a custom condition that checks if the conversation has ended
     #   naturally (when one of the agents says something like "you're welcome").
@@ -164,14 +164,14 @@ async def main() -> None:
         HandoffBuilder(
             name="customer_support_handoff",
             participants=[triage, refund, order, support],
-        )
-        .with_start_agent(triage)
-        .with_termination_condition(
             # Custom termination: Check if one of the agents has provided a closing message.
             # This looks for the last message containing "welcome", which indicates the
             # conversation has concluded naturally.
-            lambda conversation: len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+            termination_condition=lambda conversation: (
+                len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+            ),
         )
+        .with_start_agent(triage)
         .build()
         .as_agent()  # Convert workflow to agent interface
     )

@@ -14,8 +14,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
-    Role,
-    TextContent,
+    MiddlewareTermination,
+    ResponseStream,
     chat_middleware,
     function_middleware,
     tool,
@@ -44,7 +44,7 @@ async def security_filter_middleware(
 
     # Check only the last message (most recent user input)
     last_message = context.messages[-1] if context.messages else None
-    if last_message and last_message.role == Role.USER and last_message.text:
+    if last_message and last_message.role == "user" and last_message.text:
         message_lower = last_message.text.lower()
         for term in blocked_terms:
             if term in message_lower:
@@ -56,26 +56,25 @@ async def security_filter_middleware(
 
                 if context.stream:
                     # Streaming mode: return async generator
-                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                    async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[Content.from_text(text=error_message)],
-                            role=Role.ASSISTANT,
+                            contents=[Content.from_text(text=msg)],
+                            role="assistant",
                         )
 
-                    context.result = blocked_stream()
+                    context.result = ResponseStream(blocked_stream(), finalizer=ChatResponse.from_updates)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
                         messages=[
                             ChatMessage(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 text=error_message,
                             )
                         ]
                     )
 
-                context.terminate = True
-                return
+                raise MiddlewareTermination
 
     await next(context)
 
@@ -93,8 +92,7 @@ async def atlantis_location_filter_middleware(
             "Blocked! Hold up right there!! Tell the user that "
             "'Atlantis is a special place, we must never ask about the weather there!!'"
         )
-        context.terminate = True
-        return
+        raise MiddlewareTermination
 
     await next(context)
 
