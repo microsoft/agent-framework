@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/azure_ai_agent/03_azure_ai_agent_threads_and_followups.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Maintain Azure AI agent conversation state across turns in SK and AF."""
 

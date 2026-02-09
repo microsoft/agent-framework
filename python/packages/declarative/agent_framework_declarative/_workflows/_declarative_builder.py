@@ -11,6 +11,8 @@ action definitions and creates a proper workflow graph with:
 - Loop edges for foreach
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from agent_framework._workflows import (

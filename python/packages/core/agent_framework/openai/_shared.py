@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy

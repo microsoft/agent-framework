@@ -18,6 +18,8 @@ This demonstrates the HYBRID pattern matching .NET AGUIClient implementation:
 This matches .NET pattern: thread maintains state, tools execute on appropriate side.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os

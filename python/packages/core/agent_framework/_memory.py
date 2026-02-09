@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
@@ -50,7 +52,7 @@ class Context:
         self,
         instructions: str | None = None,
         messages: Sequence[ChatMessage] | None = None,
-        tools: Sequence["ToolProtocol"] | None = None,
+        tools: Sequence[ToolProtocol] | None = None,
     ):
         """Create a new Context object.
 
@@ -61,7 +63,7 @@ class Context:
         """
         self.instructions = instructions
         self.messages: Sequence[ChatMessage] = messages or []
-        self.tools: Sequence["ToolProtocol"] = tools or []
+        self.tools: Sequence[ToolProtocol] = tools or []
 
 
 # region ContextProvider
@@ -151,7 +153,7 @@ class ContextProvider(ABC):
         """
         pass
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Enter the async context manager.
 
         Override this method to perform any setup operations when the context provider is entered.

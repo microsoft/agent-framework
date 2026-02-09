@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "azure-monitor-opentelemetry",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/getting_started/observability/agent_with_foundry_tracing.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio

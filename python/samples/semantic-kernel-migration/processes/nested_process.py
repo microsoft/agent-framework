@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/processes/nested_process.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Nested process comparison between Semantic Kernel Process Framework and Agent Framework sub-workflows."""
@@ -17,7 +26,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    
+
     handler,
 )
 from pydantic import BaseModel, Field

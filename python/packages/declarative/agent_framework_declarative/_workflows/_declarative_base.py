@@ -23,6 +23,8 @@ the full RecalcEngine API. We work around this by:
 See: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/PowerFx/
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from collections.abc import Mapping
@@ -148,7 +150,7 @@ class DeclarativeWorkflowState:
         """
         self._state = state
 
-    def initialize(self, inputs: "Mapping[str, Any] | None" = None) -> None:
+    def initialize(self, inputs: Mapping[str, Any] | None = None) -> None:
         """Initialize the declarative state with inputs.
 
         Args:
@@ -814,7 +816,7 @@ class DeclarativeActionExecutor(Executor):
 
     async def _ensure_state_initialized(
         self,
-        ctx: "WorkflowContext[Any, Any]",
+        ctx: WorkflowContext[Any, Any],
         trigger: Any,
     ) -> DeclarativeWorkflowState:
         """Ensure declarative state is initialized.
