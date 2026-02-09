@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -142,7 +144,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: ChatOptions[TResponseModelT],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
 
@@ -152,7 +154,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_contra | ChatOptions[None] | None" = None,
+        options: TOptions_contra | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -162,7 +164,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        options: TOptions_contra | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -171,7 +173,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        options: TOptions_contra | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
@@ -371,7 +373,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: ChatOptions[TResponseModelT],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
 
@@ -381,7 +383,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_co | ChatOptions[None] | None" = None,
+        options: TOptions_co | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -391,7 +393,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -400,7 +402,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
@@ -448,10 +450,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         default_options: TOptions_co | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence["MiddlewareTypes"] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a ChatAgent with this client.
 
         This is a convenience method that creates a ChatAgent instance with this

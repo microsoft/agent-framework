@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import AsyncIterable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
+from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
 
@@ -36,7 +38,49 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+# region: Connector Settings fixtures
+@fixture
+def exclude_list(request: Any) -> list[str]:
+    """Fixture that returns a list of environment variables to exclude."""
+    return request.param if hasattr(request, "param") else []
+
+
+@fixture
+def override_env_param_dict(request: Any) -> dict[str, str]:
+    """Fixture that returns a dict of environment variables to override."""
+    return request.param if hasattr(request, "param") else {}
+
+
+# These two fixtures are used for multiple things, also non-connector tests
+@fixture()
+def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
+    """Fixture to set environment variables for OllamaSettings."""
+
+    if exclude_list is None:
+        exclude_list = []
+
+    if override_env_param_dict is None:
+        override_env_param_dict = {}
+
+    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_MODEL_ID": "test"}
+
+    env_vars.update(override_env_param_dict)  # type: ignore
+
+    for key, value in env_vars.items():
+        if key in exclude_list:
+            monkeypatch.delenv(key, raising=False)  # type: ignore
+            continue
+        monkeypatch.setenv(key, value)  # type: ignore
+
+    return env_vars
+
+
+@fixture
+def chat_history() -> list[ChatMessage]:
+    return []
+
+
+@fixture
 def mock_streaming_chat_completion_response() -> AsyncStream[OllamaChatResponse]:
     response = OllamaChatResponse(
         message=OllamaMessage(content="test", role="assistant"),
@@ -47,7 +91,7 @@ def mock_streaming_chat_completion_response() -> AsyncStream[OllamaChatResponse]
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_streaming_chat_completion_response_reasoning() -> AsyncStream[OllamaChatResponse]:
     response = OllamaChatResponse(
         message=OllamaMessage(thinking="test", role="assistant"),
@@ -58,7 +102,7 @@ def mock_streaming_chat_completion_response_reasoning() -> AsyncStream[OllamaCha
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_response() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(content="test", role="assistant"),
@@ -69,7 +113,7 @@ def mock_chat_completion_response() -> OllamaChatResponse:
     )
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_response_reasoning() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(thinking="test", role="assistant"),
@@ -80,7 +124,7 @@ def mock_chat_completion_response_reasoning() -> OllamaChatResponse:
     )
 
 
-@pytest.fixture
+@fixture
 def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse]:
     ollama_tool_call = OllamaChatResponse(
         message=OllamaMessage(
@@ -95,7 +139,7 @@ def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_tool_call() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(

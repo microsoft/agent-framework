@@ -6,6 +6,8 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import uuid

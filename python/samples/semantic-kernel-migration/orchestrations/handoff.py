@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/handoff.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Side-by-side handoff orchestrations for Semantic Kernel and Agent Framework."""
 

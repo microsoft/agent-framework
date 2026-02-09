@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any, Generic
@@ -167,7 +169,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a new agent on the Azure AI service and return a local ChatAgent wrapper.
 
         Args:
@@ -269,7 +271,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Retrieve an existing agent from the Azure AI service and return a local ChatAgent wrapper.
 
         You must provide either name or reference. Use `as_agent()` if you already have
@@ -329,7 +331,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Wrap an SDK agent version object into a ChatAgent without making HTTP calls.
 
         Use this when you already have an AgentVersionDetails from a previous API call.
@@ -369,7 +371,7 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a ChatAgent from an AgentVersionDetails.
 
         Args:

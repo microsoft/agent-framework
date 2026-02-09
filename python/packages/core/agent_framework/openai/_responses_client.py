@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -1005,7 +1007,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
         options: dict[str, Any],
-    ) -> "ChatResponse":
+    ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
@@ -1045,7 +1047,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     for annotation in message_content.annotations:
                                         match annotation.type:
                                             case "file_path":
-                                                text_content.annotations.append(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
                                                     Annotation(
                                                         type="citation",
                                                         file_id=annotation.file_id,
@@ -1056,7 +1058,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                                     )
                                                 )
                                             case "file_citation":
-                                                text_content.annotations.append(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
                                                     Annotation(
                                                         type="citation",
                                                         url=annotation.filename,
@@ -1068,7 +1070,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                                     )
                                                 )
                                             case "url_citation":
-                                                text_content.annotations.append(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
                                                     Annotation(
                                                         type="citation",
                                                         title=annotation.title,
@@ -1084,7 +1086,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                                     )
                                                 )
                                             case "container_file_citation":
-                                                text_content.annotations.append(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
                                                     Annotation(
                                                         type="citation",
                                                         file_id=annotation.file_id,
@@ -1135,7 +1137,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list["Content"] = []
+                    outputs: list[Content] = []
                     if item_outputs := getattr(item, "outputs", None):
                         for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
@@ -1248,7 +1250,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             "raw_representation": response,
         }
 
-        if conversation_id := self._get_conversation_id(response, options.get("store")):
+        if conversation_id := self._get_conversation_id(response, options.get("store")):  # pyright: ignore[reportUnknownArgumentType]
             args["conversation_id"] = conversation_id
         if response.usage and (usage_details := self._parse_usage_from_openai(response.usage)):
             args["usage_details"] = usage_details
@@ -1419,13 +1421,13 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                         parsed_output: list[Content] | None = None
                         if result_output:
-                            normalized = (
+                            normalized = (  # pyright: ignore[reportUnknownVariableType]
                                 result_output
                                 if isinstance(result_output, Sequence)
                                 and not isinstance(result_output, (str, bytes, MutableMapping))
                                 else [result_output]
                             )
-                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]
+                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
                         contents.append(
                             Content.from_mcp_server_tool_result(
                                 call_id=call_id,
@@ -1646,7 +1648,7 @@ class OpenAIResponsesClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: (
-            Sequence["ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable"] | None
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,

@@ -6,7 +6,7 @@ import tempfile
 import urllib.request as urllib_request
 from pathlib import Path
 
-import aiofiles
+import aiofiles  # pyright: ignore[reportMissingModuleSource]
 from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 

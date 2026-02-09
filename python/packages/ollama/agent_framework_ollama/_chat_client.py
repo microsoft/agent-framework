@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import (
@@ -338,7 +340,7 @@ class OllamaChatClient(
         self.model_id = ollama_settings.model_id
         self.client = client or AsyncClient(host=ollama_settings.host)
         # Save Host URL for serialization with to_dict()
-        self.host = str(self.client._client.base_url)
+        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
         super().__init__(
             middleware=middleware,
@@ -572,5 +574,4 @@ class OllamaChatClient(
             else:
                 # Pass through all other tools unchanged
                 chat_tools.append(tool)
-        return chat_tools
         return chat_tools
