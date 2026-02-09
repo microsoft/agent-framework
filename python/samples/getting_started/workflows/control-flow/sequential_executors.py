@@ -7,7 +7,6 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
 from typing_extensions import Never
@@ -16,7 +15,7 @@ from typing_extensions import Never
 Sample: Sequential workflow with streaming.
 
 Two custom executors run in sequence. The first converts text to uppercase,
-the second reverses the text and completes the workflow. The run_stream loop prints events as they occur.
+the second reverses the text and completes the workflow. The streaming run loop prints events as they occur.
 
 Purpose:
 Show how to define explicit Executor classes with @handler methods, wire them in order with
@@ -64,20 +63,19 @@ async def main() -> None:
     # Step 1: Build the workflow graph.
     # Order matters. We connect upper_case_executor -> reverse_text_executor and set the start.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="upper_case_executor")
         .register_executor(lambda: UpperCaseExecutor(id="upper_case_executor"), name="upper_case_executor")
         .register_executor(lambda: ReverseTextExecutor(id="reverse_text_executor"), name="reverse_text_executor")
         .add_edge("upper_case_executor", "reverse_text_executor")
-        .set_start_executor("upper_case_executor")
         .build()
     )
 
     # Step 2: Stream events for a single input.
     # The stream will include executor invoke and completion events, plus workflow outputs.
     outputs: list[str] = []
-    async for event in workflow.run_stream("hello world"):
+    async for event in workflow.run("hello world", stream=True):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             outputs.append(cast(str, event.data))
 
     if outputs:

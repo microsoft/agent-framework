@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/magentic.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side Magentic orchestrations for Agent Framework and Semantic Kernel."""
@@ -6,8 +15,9 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, MagenticBuilder, WorkflowOutputEvent
+from agent_framework import ChatAgent, HostedCodeInterpreterTool
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
     Agent,
     ChatCompletionAgent,
@@ -144,11 +154,11 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         chat_client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
+    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
 
     final_text: str | None = None
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
             final_text = cast(str, event.data)
 
     return final_text

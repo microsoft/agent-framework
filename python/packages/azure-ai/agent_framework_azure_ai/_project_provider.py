@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any, Generic
@@ -9,7 +11,7 @@ from agent_framework import (
     ChatAgent,
     ContextProvider,
     FunctionTool,
-    Middleware,
+    MiddlewareTypes,
     ToolProtocol,
     get_logger,
     normalize_tools,
@@ -166,9 +168,9 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a new agent on the Azure AI service and return a local ChatAgent wrapper.
 
         Args:
@@ -268,9 +270,9 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Retrieve an existing agent from the Azure AI service and return a local ChatAgent wrapper.
 
         You must provide either name or reference. Use `as_agent()` if you already have
@@ -328,9 +330,9 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Wrap an SDK agent version object into a ChatAgent without making HTTP calls.
 
         Use this when you already have an AgentVersionDetails from a previous API call.
@@ -368,9 +370,9 @@ class AzureAIProjectAgentProvider(Generic[TOptions_co]):
         details: AgentVersionDetails,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
         default_options: TOptions_co | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a ChatAgent from an AgentVersionDetails.
 
         Args:

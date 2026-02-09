@@ -6,6 +6,8 @@ This module provides a clean abstraction layer for managing conversations
 while wrapping AgentFramework's AgentThread underneath.
 """
 
+from __future__ import annotations
+
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -303,7 +305,7 @@ class InMemoryConversationStore(ConversationStore):
             content = item.get("content", [])
             text = content[0].get("text", "") if content else ""
 
-            chat_msg = ChatMessage(role, [{"type": "text", "text": text}])
+            chat_msg = ChatMessage(role=role, text=text)  # type: ignore[arg-type]
             chat_messages.append(chat_msg)
 
         # Add messages to AgentThread
@@ -588,7 +590,7 @@ class InMemoryConversationStore(ConversationStore):
         return None
 
     def get_thread(self, conversation_id: str) -> AgentThread | None:
-        """Get AgentThread for execution - CRITICAL for agent.run_stream()."""
+        """Get AgentThread for execution - CRITICAL for agent.run()."""
         conv_data = self._conversations.get(conversation_id)
         return conv_data["thread"] if conv_data else None
 

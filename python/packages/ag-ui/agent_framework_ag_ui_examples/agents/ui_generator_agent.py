@@ -2,6 +2,8 @@
 
 """Example agent demonstrating Tool-based Generative UI (Feature 5)."""
 
+from __future__ import annotations
+
 import sys
 from typing import TYPE_CHECKING, Any, TypedDict
 

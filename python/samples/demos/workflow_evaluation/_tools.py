@@ -21,7 +21,7 @@ def search_hotels(
     guests: Annotated[int, Field(description="Number of guests.")] = 2,
 ) -> str:
     """Search for available hotels based on location and dates.
-    
+
     Returns:
         JSON string containing search results with hotel details including name, rating,
         price, distance to landmarks, amenities, and availability.
@@ -88,7 +88,7 @@ def get_hotel_details(
     hotel_name: Annotated[str, Field(description="Name of the hotel to get details for.")],
 ) -> str:
     """Get detailed information about a specific hotel.
-    
+
     Returns:
         JSON string containing detailed hotel information including description,
         check-in/out times, cancellation policy, reviews, and nearby attractions.
@@ -167,7 +167,7 @@ def search_flights(
     passengers: Annotated[int, Field(description="Number of passengers.")] = 1,
 ) -> str:
     """Search for available flights between two locations.
-    
+
     Returns:
         JSON string containing flight search results with details including flight numbers,
         airlines, departure/arrival times, prices, durations, and baggage allowances.
@@ -289,7 +289,7 @@ def get_flight_details(
     flight_number: Annotated[str, Field(description="Flight number (e.g., 'AF007' or 'DL264').")],
 ) -> str:
     """Get detailed information about a specific flight.
-    
+
     Returns:
         JSON string containing detailed flight information including airline, aircraft type,
         departure/arrival airports and times, gates, terminals, duration, and amenities.
@@ -331,7 +331,7 @@ def search_activities(
     category: Annotated[str | None, Field(description="Activity category (e.g., 'Sightseeing', 'Culture', 'Culinary').")] = None,
 ) -> str:
     """Search for available activities and attractions at a destination.
-    
+
     Returns:
         JSON string containing activity search results with details including name, category,
         duration, price, rating, description, availability, and booking requirements.
@@ -440,10 +440,7 @@ def search_activities(
             }
         ]
 
-        if category:
-            activities = [act for act in all_activities if act["category"] == category]
-        else:
-            activities = all_activities
+        activities = [act for act in all_activities if act["category"] == category] if category else all_activities
     else:
         activities = [
             {
@@ -473,7 +470,7 @@ def get_activity_details(
     activity_name: Annotated[str, Field(description="Name of the activity to get details for.")],
 ) -> str:
     """Get detailed information about a specific activity.
-    
+
     Returns:
         JSON string containing detailed activity information including description, duration,
         price, included items, meeting point, what to bring, cancellation policy, and reviews.
@@ -552,7 +549,7 @@ def confirm_booking(
     customer_info: Annotated[dict, Field(description="Customer information including name and email.")],
 ) -> str:
     """Confirm a booking reservation.
-    
+
     Returns:
         JSON string containing confirmation details including confirmation number,
         booking status, customer information, and next steps.
@@ -587,9 +584,9 @@ def check_hotel_availability(
     rooms: Annotated[int, Field(description="Number of rooms needed.")] = 1,
 ) -> str:
     """Check availability for hotel rooms.
-    
+
     Sample Date format: "December 15, 2025"
-    
+
     Returns:
         JSON string containing availability status, available rooms count, price per night,
         and last checked timestamp.
@@ -621,9 +618,9 @@ def check_flight_availability(
     passengers: Annotated[int, Field(description="Number of passengers.")] = 1,
 ) -> str:
     """Check availability for flight seats.
-    
+
     Sample Date format: "December 15, 2025"
-    
+
     Returns:
         JSON string containing availability status, available seats count, price per passenger,
         and last checked timestamp.
@@ -654,9 +651,9 @@ def check_activity_availability(
     participants: Annotated[int, Field(description="Number of participants.")] = 1,
 ) -> str:
     """Check availability for activity bookings.
-    
+
     Sample Date format: "December 16, 2025"
-    
+
     Returns:
         JSON string containing availability status, available spots count, price per person,
         and last checked timestamp.
@@ -688,7 +685,7 @@ def process_payment(
     booking_reference: Annotated[str, Field(description="Booking reference number for the payment.")],
 ) -> str:
     """Process payment for a booking.
-    
+
     Returns:
         JSON string containing payment result with transaction ID, status, amount, currency,
         payment method details, and receipt URL.
@@ -718,7 +715,7 @@ def validate_payment_method(
     payment_method: Annotated[dict, Field(description="Payment method to validate (type, number, expiry, cvv).")],
 ) -> str:
     """Validate payment method details.
-    
+
     Returns:
         JSON string containing validation result with is_valid flag, payment method type,
         validation messages, supported currencies, and processing fee information.

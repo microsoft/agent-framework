@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent_framework import HostedCodeInterpreterTool, HostedFileContent
+from agent_framework import Content, HostedCodeInterpreterTool
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 
 logger = logging.getLogger(__name__)
@@ -52,8 +52,8 @@ async def main() -> None:
     query = "Create a presentation about renewable energy with 5 slides"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
-    files: list[HostedFileContent] = []
-    async for chunk in agent.run_stream(query):
+    files: list[Content] = []
+    async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
             match content.type:
                 case "text":

@@ -290,7 +290,7 @@ export interface FullCheckpoint {
   workflow_id: string;
   timestamp: string;
   messages: Record<string, unknown[]>;
-  shared_state: Record<string, unknown>;
+  state: Record<string, unknown>;
   pending_request_info_events: Record<string, PendingRequestInfoEvent>;
   iteration_count: number;
   metadata: Record<string, unknown>;

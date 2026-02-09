@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentProtocol, AgentResponse, AgentThread, HostedMCPTool
+from agent_framework import AgentResponse, AgentThread, HostedMCPTool, SupportsAgentRun
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -15,7 +15,7 @@ servers, including user approval workflows for function call security.
 """
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread") -> AgentResponse:
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread") -> AgentResponse:
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 

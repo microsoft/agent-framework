@@ -312,7 +312,7 @@ class TestClaudeAgentRun:
 
 
 class TestClaudeAgentRunStream:
-    """Tests for ClaudeAgent run_stream method."""
+    """Tests for ClaudeAgent streaming run method."""
 
     @staticmethod
     async def _create_async_generator(items: list[Any]) -> Any:
@@ -332,7 +332,7 @@ class TestClaudeAgentRunStream:
         return mock_client
 
     async def test_run_stream_yields_updates(self) -> None:
-        """Test run_stream yields AgentResponseUpdate objects."""
+        """Test run(stream=True) yields AgentResponseUpdate objects."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -371,13 +371,68 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             updates: list[AgentResponseUpdate] = []
-            async for update in agent.run_stream("Hello"):
+            async for update in agent.run("Hello", stream=True):
                 updates.append(update)
-            # StreamEvent yields text deltas
+            # StreamEvent yields text deltas (2 events)
             assert len(updates) == 2
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+
+    async def test_run_stream_raises_on_assistant_message_error(self) -> None:
+        """Test run raises ServiceException when AssistantMessage has an error."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        messages = [
+            AssistantMessage(
+                content=[TextBlock(text="Error details from API")],
+                model="claude-sonnet",
+                error="invalid_request",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="error-session",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run("Hello", stream=True):
+                    pass
+            assert "Invalid request to Claude API" in str(exc_info.value)
+            assert "Error details from API" in str(exc_info.value)
+
+    async def test_run_stream_raises_on_result_message_error(self) -> None:
+        """Test run raises ServiceException when ResultMessage.is_error is True."""
+        from agent_framework.exceptions import ServiceException
+        from claude_agent_sdk import ResultMessage
+
+        messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Model 'claude-sonnet-4.5' not found",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(ServiceException) as exc_info:
+                async for _ in agent.run("Hello", stream=True):
+                    pass
+            assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
 
 
 # region Test ClaudeAgent Session Management
@@ -642,9 +697,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage("user", [Content.from_text(text="Hi")]),
-            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
-            ChatMessage("user", [Content.from_text(text="How are you?")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="Hi")]),
+            ChatMessage(role="assistant", contents=[Content.from_text(text="Hello!")]),
+            ChatMessage(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

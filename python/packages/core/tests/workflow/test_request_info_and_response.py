@@ -4,11 +4,10 @@ from dataclasses import dataclass
 
 from agent_framework import (
     FileCheckpointStorage,
-    RequestInfoEvent,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -179,12 +178,12 @@ class TestRequestInfoAndResponse:
     async def test_approval_workflow(self):
         """Test end-to-end workflow with approval request."""
         executor = ApprovalRequiredExecutor(id="approval_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # First run the workflow until it emits a request
-        request_info_event: RequestInfoEvent | None = None
-        async for event in workflow.run_stream("test operation"):
-            if isinstance(event, RequestInfoEvent):
+        request_info_event: WorkflowEvent | None = None
+        async for event in workflow.run("test operation", stream=True):
+            if event.type == "request_info":
                 request_info_event = event
 
         assert request_info_event is not None
@@ -193,8 +192,8 @@ class TestRequestInfoAndResponse:
 
         # Send response and continue workflow
         completed = False
-        async for event in workflow.send_responses_streaming({request_info_event.request_id: True}):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run(stream=True, responses={request_info_event.request_id: True}):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -204,12 +203,12 @@ class TestRequestInfoAndResponse:
     async def test_calculation_workflow(self):
         """Test end-to-end workflow with calculation request."""
         executor = CalculationExecutor(id="calc_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # First run the workflow until it emits a calculation request
-        request_info_event: RequestInfoEvent | None = None
-        async for event in workflow.run_stream("multiply 15.5 2.0"):
-            if isinstance(event, RequestInfoEvent):
+        request_info_event: WorkflowEvent | None = None
+        async for event in workflow.run("multiply 15.5 2.0", stream=True):
+            if event.type == "request_info":
                 request_info_event = event
 
         assert request_info_event is not None
@@ -220,8 +219,8 @@ class TestRequestInfoAndResponse:
         # Send response with calculated result
         calculated_result = 31.0
         completed = False
-        async for event in workflow.send_responses_streaming({request_info_event.request_id: calculated_result}):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run(stream=True, responses={request_info_event.request_id: calculated_result}):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -231,21 +230,21 @@ class TestRequestInfoAndResponse:
     async def test_multiple_requests_workflow(self):
         """Test workflow with multiple concurrent requests."""
         executor = MultiRequestExecutor(id="multi_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # Collect all request events by running the full stream
-        request_events: list[RequestInfoEvent] = []
-        async for event in workflow.run_stream("start batch"):
-            if isinstance(event, RequestInfoEvent):
+        request_events: list[WorkflowEvent] = []
+        async for event in workflow.run("start batch", stream=True):
+            if event.type == "request_info":
                 request_events.append(event)
 
         assert len(request_events) == 2
 
         # Find the approval and calculation requests
-        approval_event: RequestInfoEvent | None = next(
+        approval_event: WorkflowEvent | None = next(
             (e for e in request_events if isinstance(e.data, UserApprovalRequest)), None
         )
-        calc_event: RequestInfoEvent | None = next(
+        calc_event: WorkflowEvent | None = next(
             (e for e in request_events if isinstance(e.data, CalculationRequest)), None
         )
 
@@ -255,8 +254,8 @@ class TestRequestInfoAndResponse:
         # Send responses for both requests
         responses = {approval_event.request_id: True, calc_event.request_id: 50.0}
         completed = False
-        async for event in workflow.send_responses_streaming(responses):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run(stream=True, responses=responses):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -265,20 +264,20 @@ class TestRequestInfoAndResponse:
     async def test_denied_approval_workflow(self):
         """Test workflow when approval is denied."""
         executor = ApprovalRequiredExecutor(id="approval_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # First run the workflow until it emits a request
-        request_info_event: RequestInfoEvent | None = None
-        async for event in workflow.run_stream("sensitive operation"):
-            if isinstance(event, RequestInfoEvent):
+        request_info_event: WorkflowEvent | None = None
+        async for event in workflow.run("sensitive operation", stream=True):
+            if event.type == "request_info":
                 request_info_event = event
 
         assert request_info_event is not None
 
         # Deny the request
         completed = False
-        async for event in workflow.send_responses_streaming({request_info_event.request_id: False}):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run(stream=True, responses={request_info_event.request_id: False}):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -288,15 +287,15 @@ class TestRequestInfoAndResponse:
     async def test_workflow_state_with_pending_requests(self):
         """Test workflow state when waiting for responses."""
         executor = ApprovalRequiredExecutor(id="approval_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # Run workflow until idle with pending requests
-        request_info_event: RequestInfoEvent | None = None
+        request_info_event: WorkflowEvent | None = None
         idle_with_pending = False
-        async for event in workflow.run_stream("test operation"):
-            if isinstance(event, RequestInfoEvent):
+        async for event in workflow.run("test operation", stream=True):
+            if event.type == "request_info":
                 request_info_event = event
-            elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            elif event.type == "status" and event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
                 idle_with_pending = True
 
         assert request_info_event is not None
@@ -304,8 +303,8 @@ class TestRequestInfoAndResponse:
 
         # Continue with response
         completed = False
-        async for event in workflow.send_responses_streaming({request_info_event.request_id: True}):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run(stream=True, responses={request_info_event.request_id: True}):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -313,12 +312,12 @@ class TestRequestInfoAndResponse:
     async def test_invalid_calculation_input(self):
         """Test workflow handling of invalid calculation input."""
         executor = CalculationExecutor(id="calc_executor")
-        workflow = WorkflowBuilder().set_start_executor(executor).build()
+        workflow = WorkflowBuilder(start_executor=executor).build()
 
         # Send invalid input (no numbers)
         completed = False
-        async for event in workflow.run_stream("invalid input"):
-            if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+        async for event in workflow.run("invalid input", stream=True):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
                 completed = True
 
         assert completed
@@ -335,12 +334,12 @@ class TestRequestInfoAndResponse:
 
             # Create workflow with checkpointing enabled
             executor = ApprovalRequiredExecutor(id="approval_executor")
-            workflow = WorkflowBuilder().set_start_executor(executor).with_checkpointing(storage).build()
+            workflow = WorkflowBuilder(start_executor=executor, checkpoint_storage=storage).build()
 
             # Step 1: Run workflow to completion to ensure checkpoints are created
-            request_info_event: RequestInfoEvent | None = None
-            async for event in workflow.run_stream("checkpoint test operation"):
-                if isinstance(event, RequestInfoEvent):
+            request_info_event: WorkflowEvent | None = None
+            async for event in workflow.run("checkpoint test operation", stream=True):
+                if event.type == "request_info":
                     request_info_event = event
 
             # Verify request was emitted
@@ -373,19 +372,16 @@ class TestRequestInfoAndResponse:
 
             # Step 4: Create a fresh workflow and restore from checkpoint
             new_executor = ApprovalRequiredExecutor(id="approval_executor")
-            restored_workflow = WorkflowBuilder().set_start_executor(new_executor).with_checkpointing(storage).build()
+            restored_workflow = WorkflowBuilder(start_executor=new_executor, checkpoint_storage=storage).build()
 
             # Step 5: Resume from checkpoint and verify the request can be continued
             completed = False
-            restored_request_event: RequestInfoEvent | None = None
-            async for event in restored_workflow.run_stream(checkpoint_id=checkpoint_with_request.checkpoint_id):
+            restored_request_event: WorkflowEvent | None = None
+            async for event in restored_workflow.run(checkpoint_id=checkpoint_with_request.checkpoint_id, stream=True):
                 # Should re-emit the pending request info event
-                if isinstance(event, RequestInfoEvent) and event.request_id == request_info_event.request_id:
+                if event.type == "request_info" and event.request_id == request_info_event.request_id:
                     restored_request_event = event
-                elif (
-                    isinstance(event, WorkflowStatusEvent)
-                    and event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
-                ):
+                elif event.type == "status" and event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
                     completed = True
 
             assert completed, "Workflow should reach idle with pending requests state after restoration"
@@ -399,10 +395,13 @@ class TestRequestInfoAndResponse:
 
             # Step 6: Provide response to the restored request and complete the workflow
             final_completed = False
-            async for event in restored_workflow.send_responses_streaming({
-                request_info_event.request_id: True  # Approve the request
-            }):
-                if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+            async for event in restored_workflow.run(
+                stream=True,
+                responses={
+                    request_info_event.request_id: True  # Approve the request
+                },
+            ):
+                if event.type == "status" and event.state == WorkflowRunState.IDLE:
                     final_completed = True
 
             assert final_completed, "Workflow should complete after providing response to restored request"

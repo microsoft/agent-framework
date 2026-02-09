@@ -123,13 +123,12 @@ async def main() -> None:
 
     # Build a simple fan-out/fan-in workflow
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="dispatcher")
         .register_agent(create_researcher_agent, name="researcher")
         .register_agent(create_marketer_agent, name="marketer")
         .register_agent(create_legal_agent, name="legal")
         .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
         .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
-        .set_start_executor("dispatcher")
         .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])
         .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")
         .build()

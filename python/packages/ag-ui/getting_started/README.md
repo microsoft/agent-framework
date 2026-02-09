@@ -292,7 +292,6 @@ Create a file named `client.py`:
 import asyncio
 import os
 
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -323,7 +322,7 @@ async def main():
                 # Use metadata to maintain conversation continuity
                 metadata = {"thread_id": thread_id} if thread_id else None
 
-                async for update in client.get_streaming_response(message, metadata=metadata):
+                async for update in client.get_response(message, metadata=metadata, stream=True):
                     # Extract thread ID from first update
                     if not thread_id and update.additional_properties:
                         thread_id = update.additional_properties.get("thread_id")
@@ -333,7 +332,7 @@ async def main():
 
                     # Stream text content as it arrives
                     for content in update.contents:
-                        if isinstance(content, TextContent) and content.text:
+                        if content.type == "text" and content.text:
                             print(content.text, end="", flush=True)
 
                 print()  # New line after response
@@ -353,7 +352,7 @@ if __name__ == "__main__":
 - **`AGUIChatClient`**: Built-in client that implements the Agent Framework's `BaseChatClient` interface
 - **Automatic Event Handling**: The client automatically converts AG-UI events to Agent Framework types
 - **Thread Management**: Pass `thread_id` in metadata to maintain conversation context across requests
-- **Streaming Responses**: Use `get_streaming_response()` for real-time streaming or `get_response()` for non-streaming
+- **Streaming Responses**: Use `get_response(..., stream=True)` for real-time streaming or `get_response(..., stream=False)` for non-streaming
 - **Context Manager**: Use `async with` for automatic cleanup of HTTP connections
 - **Standard Interface**: Works with all Agent Framework patterns (ChatAgent, tools, etc.)
 - **Hybrid Tool Execution**: Supports both client-side and server-side tools executing together in the same conversation

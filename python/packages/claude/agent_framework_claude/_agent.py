@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import contextlib
 import sys
-from collections.abc import AsyncIterable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -23,15 +25,16 @@ from agent_framework import (
 from agent_framework._types import normalize_tools
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from claude_agent_sdk import (
-    ClaudeAgentOptions as SDKOptions,
-)
-from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeSDKClient,
     ResultMessage,
     SdkMcpTool,
     create_sdk_mcp_server,
 )
-from claude_agent_sdk.types import StreamEvent
+from claude_agent_sdk import (
+    ClaudeAgentOptions as SDKOptions,
+)
+from claude_agent_sdk.types import StreamEvent, TextBlock
 from pydantic import ValidationError
 
 from ._settings import ClaudeAgentSettings
@@ -99,13 +102,13 @@ class ClaudeAgentOptions(TypedDict, total=False):
     disallowed_tools: list[str]
     """Blocklist of tools. Claude cannot use these tools."""
 
-    mcp_servers: dict[str, "McpServerConfig"]
+    mcp_servers: dict[str, McpServerConfig]
     """MCP server configurations for external tools."""
 
-    permission_mode: "PermissionMode"
+    permission_mode: PermissionMode
     """Permission handling mode ("default", "acceptEdits", "plan", "bypassPermissions")."""
 
-    can_use_tool: "CanUseTool"
+    can_use_tool: CanUseTool
     """Permission callback for tool use."""
 
     max_turns: int
@@ -114,16 +117,16 @@ class ClaudeAgentOptions(TypedDict, total=False):
     max_budget_usd: float
     """Budget limit in USD."""
 
-    hooks: dict[str, list["HookMatcher"]]
+    hooks: dict[str, list[HookMatcher]]
     """Pre/post tool hooks."""
 
     add_dirs: list[str | Path]
     """Additional directories to add to context."""
 
-    sandbox: "SandboxSettings"
+    sandbox: SandboxSettings
     """Sandbox configuration for bash isolation."""
 
-    agents: dict[str, "AgentDefinition"]
+    agents: dict[str, AgentDefinition]
     """Custom agent definitions."""
 
     output_format: dict[str, Any]
@@ -132,7 +135,7 @@ class ClaudeAgentOptions(TypedDict, total=False):
     enable_file_checkpointing: bool
     """Enable file checkpointing for rewind."""
 
-    betas: list["SdkBeta"]
+    betas: list[SdkBeta]
     """Beta features to enable."""
 
 
@@ -174,7 +177,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         .. code-block:: python
 
             async with ClaudeAgent() as agent:
-                async for update in agent.run_stream("Write a poem"):
+                async for update in agent.run("Write a poem"):
                     print(update.text, end="", flush=True)
 
         With session management:
@@ -327,7 +330,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                 normalized = normalize_tools(tool)
                 self._custom_tools.extend(normalized)
 
-    async def __aenter__(self) -> "ClaudeAgent[TOptions]":
+    async def __aenter__(self) -> ClaudeAgent[TOptions]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -551,7 +554,59 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
+    @overload
     async def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        options: TOptions | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            thread: The conversation thread. If thread has service_thread_id set,
+                the agent will resume that session.
+            options: Runtime options (model, permission_mode can be changed per-request).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=True: An AsyncIterable[AgentResponseUpdate] for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        if stream:
+            return self._run_streaming(messages, thread=thread, options=options, **kwargs)
+        return self._run_non_streaming(messages, thread=thread, options=options, **kwargs)
+
+    async def _run_non_streaming(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -559,26 +614,13 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            thread: The conversation thread. If thread has service_thread_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            AgentResponse with the agent's response.
-        """
+        """Internal non-streaming implementation."""
         thread = thread or self.get_new_thread()
-        return await AgentResponse.from_agent_response_generator(
-            self.run_stream(messages, thread=thread, options=options, **kwargs)
+        return await AgentResponse.from_update_generator(
+            self._run_streaming(messages, thread=thread, options=options, **kwargs)
         )
 
-    async def run_stream(
+    async def _run_streaming(
         self,
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
@@ -586,20 +628,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         options: TOptions | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Stream the agent's response.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            thread: The conversation thread. If thread has service_thread_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            AgentResponseUpdate objects containing chunks of the response.
-        """
+        """Internal streaming implementation."""
         thread = thread or self.get_new_thread()
 
         # Ensure we're connected to the right session
@@ -639,7 +668,33 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                                 contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
                                 raw_representation=message,
                             )
+            elif isinstance(message, AssistantMessage):
+                # Handle AssistantMessage - check for API errors
+                # Note: In streaming mode, the content was already yielded via StreamEvent,
+                # so we only check for errors here, not re-emit content.
+                if message.error:
+                    # Map error types to descriptive messages
+                    error_messages = {
+                        "authentication_failed": "Authentication failed with Claude API",
+                        "billing_error": "Billing error with Claude API",
+                        "rate_limit": "Rate limit exceeded for Claude API",
+                        "invalid_request": "Invalid request to Claude API",
+                        "server_error": "Claude API server error",
+                        "unknown": "Unknown error from Claude API",
+                    }
+                    error_msg = error_messages.get(message.error, f"Claude API error: {message.error}")
+                    # Extract any error details from content blocks
+                    if message.content:
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                error_msg = f"{error_msg}: {block.text}"
+                                break
+                    raise ServiceException(error_msg)
             elif isinstance(message, ResultMessage):
+                # Check for errors in result message
+                if message.is_error:
+                    error_msg = message.result or "Unknown error from Claude API"
+                    raise ServiceException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
 
         # Update thread with session ID

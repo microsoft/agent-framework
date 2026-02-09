@@ -64,7 +64,7 @@ def decode_chat_messages(payload: Iterable[dict[str, Any]]) -> list[ChatMessage]
                 additional[key] = decode_checkpoint_value(value)
 
         restored.append(
-            ChatMessage(
+            ChatMessage(  # type: ignore[call-overload]
                 role=role,
                 contents=contents,
                 author_name=item.get("author_name"),

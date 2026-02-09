@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Host multiple Azure OpenAI agents inside a single Azure Functions app.
 
 Components used in this sample:

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/concurrent_basic.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side concurrent orchestrations for Agent Framework and Semantic Kernel."""
@@ -6,7 +15,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowOutputEvent
+from agent_framework import ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
@@ -87,11 +96,11 @@ async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]
         name="chemistry",
     )
 
-    workflow = ConcurrentBuilder().participants([physics, chemistry]).build()
+    workflow = ConcurrentBuilder(participants=[physics, chemistry]).build()
 
     outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
             outputs.append(cast(list[ChatMessage], event.data))
 
     return outputs

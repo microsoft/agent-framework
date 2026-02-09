@@ -63,15 +63,16 @@ async def main() -> None:
     thread_id = "azure_test_thread"
 
     # Factory for creating Azure Redis chat message store
-    chat_message_store_factory = lambda: RedisChatMessageStore(
-        credential_provider=credential_provider,
-        host=redis_host,
-        port=10000,
-        ssl=True,
-        thread_id=thread_id,
-        key_prefix="chat_messages",
-        max_messages=100,
-    )
+    def chat_message_store_factory():
+        return RedisChatMessageStore(
+            credential_provider=credential_provider,
+            host=redis_host,
+            port=10000,
+            ssl=True,
+            thread_id=thread_id,
+            key_prefix="chat_messages",
+            max_messages=100,
+        )
 
     # Create chat client
     client = OpenAIChatClient()

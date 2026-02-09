@@ -1,11 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting a writer agent with human-in-the-loop orchestration.
 
 This worker registers a WriterAgent and an orchestration function that implements
 a human-in-the-loop review workflow. The orchestration pauses for external events
 (human approval/rejection) with timeout handling, and iterates based on feedback.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -54,7 +56,7 @@ class HumanApproval(BaseModel):
 
 def create_writer_agent() -> "ChatAgent":
     """Create the Writer agent using Azure OpenAI.
-    
+
     Returns:
         ChatAgent: The configured Writer agent
     """
@@ -73,7 +75,7 @@ def create_writer_agent() -> "ChatAgent":
 
 def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) -> str:
     """Activity function to notify user for approval.
-    
+
     Args:
         context: The activity context
         content: The generated content dictionary
@@ -88,7 +90,7 @@ def notify_user_for_approval(context: ActivityContext, content: dict[str, str]) 
 
 def publish_content(context: ActivityContext, content: dict[str, str]) -> str:
     """Activity function to publish approved content.
-    
+
     Args:
         context: The activity context
         content: The generated content dictionary
@@ -105,7 +107,7 @@ def content_generation_hitl_orchestration(
     payload_raw: Any
 ) -> Generator[Task[Any], Any, dict[str, str]]:
     """Human-in-the-loop orchestration for content generation with approval workflow.
-    
+
     This orchestration:
     1. Generates initial content using WriterAgent
     2. Loops up to max_review_attempts times:
@@ -115,14 +117,14 @@ def content_generation_hitl_orchestration(
        d. If rejected: incorporates feedback and regenerates
        e. If timeout: raises TimeoutError
     3. Raises RuntimeError if max attempts exhausted
-    
+
     Args:
         context: The orchestration context
         payload_raw: The input payload
-        
+
     Returns:
         dict: Result with published content
-        
+
     Raises:
         ValueError: If input is invalid or agent returns no content
         TimeoutError: If human approval times out
@@ -285,12 +287,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -313,10 +315,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents, orchestrations, and activities registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents, orchestrations, and activities registered
     """

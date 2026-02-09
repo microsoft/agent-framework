@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import MutableSequence, Sequence
@@ -541,7 +543,7 @@ class RedisProvider(ContextProvider):
         )
 
         return Context(
-            messages=[ChatMessage("user", [f"{self.context_prompt}\n{line_separated_memories}"])]
+            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )

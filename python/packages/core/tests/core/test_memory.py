@@ -69,7 +69,7 @@ class TestContext:
 
     def test_context_with_values(self) -> None:
         """Test Context can be initialized with values."""
-        messages = [ChatMessage("user", ["Test message"])]
+        messages = [ChatMessage(role="user", text="Test message")]
         context = Context(instructions="Test instructions", messages=messages)
         assert context.instructions == "Test instructions"
         assert len(context.messages) == 1
@@ -89,15 +89,15 @@ class TestContextProvider:
     async def test_invoked(self) -> None:
         """Test invoked is called."""
         provider = MockContextProvider()
-        message = ChatMessage("user", ["Test message"])
+        message = ChatMessage(role="user", text="Test message")
         await provider.invoked(message)
         assert provider.invoked_called
         assert provider.new_messages == message
 
     async def test_invoking(self) -> None:
         """Test invoking is called and returns context."""
-        provider = MockContextProvider(messages=[ChatMessage("user", ["Context message"])])
-        message = ChatMessage("user", ["Test message"])
+        provider = MockContextProvider(messages=[ChatMessage(role="user", text="Context message")])
+        message = ChatMessage(role="user", text="Test message")
         context = await provider.invoking(message)
         assert provider.invoking_called
         assert provider.model_invoking_messages == message
@@ -114,7 +114,7 @@ class TestContextProvider:
     async def test_base_invoked_does_nothing(self) -> None:
         """Test that base ContextProvider.invoked does nothing by default."""
         provider = MinimalContextProvider()
-        message = ChatMessage("user", ["Test"])
+        message = ChatMessage(role="user", text="Test")
         await provider.invoked(message)
         await provider.invoked(message, response_messages=message)
         await provider.invoked(message, invoke_exception=Exception("test"))

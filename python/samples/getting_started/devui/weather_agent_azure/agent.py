@@ -14,6 +14,8 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
+    MiddlewareTermination,
+    ResponseStream,
     chat_middleware,
     function_middleware,
     tool,
@@ -52,15 +54,15 @@ async def security_filter_middleware(
                     "or other sensitive data."
                 )
 
-                if context.is_streaming:
+                if context.stream:
                     # Streaming mode: return async generator
-                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                    async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[Content.from_text(text=error_message)],
+                            contents=[Content.from_text(text=msg)],
                             role="assistant",
                         )
 
-                    context.result = blocked_stream()
+                    context.result = ResponseStream(blocked_stream(), finalizer=ChatResponse.from_updates)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
@@ -72,8 +74,7 @@ async def security_filter_middleware(
                         ]
                     )
 
-                context.terminate = True
-                return
+                raise MiddlewareTermination
 
     await next(context)
 
@@ -91,8 +92,7 @@ async def atlantis_location_filter_middleware(
             "Blocked! Hold up right there!! Tell the user that "
             "'Atlantis is a special place, we must never ask about the weather there!!'"
         )
-        context.terminate = True
-        return
+        raise MiddlewareTermination
 
     await next(context)
 

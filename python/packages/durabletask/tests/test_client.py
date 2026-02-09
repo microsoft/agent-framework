@@ -9,7 +9,7 @@ Run with: pytest tests/test_client.py -v
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 
 from agent_framework_durabletask import DurableAgentThread, DurableAIAgentClient
 from agent_framework_durabletask._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
@@ -46,7 +46,7 @@ class TestDurableAIAgentClientGetAgent:
         agent = agent_client.get_agent("assistant")
 
         assert isinstance(agent, DurableAIAgent)
-        assert isinstance(agent, AgentProtocol)
+        assert isinstance(agent, SupportsAgentRun)
 
     def test_get_agent_shim_has_correct_name(self, agent_client: DurableAIAgentClient) -> None:
         """Verify retrieved agent has the correct name."""

@@ -111,7 +111,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         Assert.Contains("Paris", result1.Text);
         Assert.Contains("Vienna", result2.Text);
 
-        var chatHistory = await this.Fixture.GetChatHistoryAsync(session);
+        var chatHistory = await this.Fixture.GetChatHistoryAsync(agent, session);
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));

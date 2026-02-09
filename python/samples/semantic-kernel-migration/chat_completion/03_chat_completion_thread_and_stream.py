@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/chat_completion/03_chat_completion_thread_and_stream.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Compare conversation threading and streaming responses for chat agents.
 
@@ -53,9 +62,10 @@ async def run_agent_framework() -> None:
     print("[AF]", first.text)
 
     print("[AF][stream]", end=" ")
-    async for chunk in chat_agent.run_stream(
+    async for chunk in chat_agent.run(
         "Draft a 2 sentence blurb.",
         thread=thread,
+        stream=True,
     ):
         if chunk.text:
             print(chunk.text, end="", flush=True)

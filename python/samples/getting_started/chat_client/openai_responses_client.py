@@ -30,16 +30,16 @@ def get_weather(
 async def main() -> None:
     client = OpenAIResponsesClient()
     message = "What's the weather in Amsterdam and in Paris?"
-    stream = False
+    stream = True
     print(f"User: {message}")
+    print("Assistant: ", end="")
+    response = client.get_response(message, stream=stream, options={"tools": get_weather})
     if stream:
-        print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
-            if chunk.text:
-                print(chunk.text, end="")
-        print("")
+        # TODO: review names of the methods, could be related to things like HTTP clients?
+        response.with_transform_hook(lambda chunk: print(chunk.text, end=""))
+        await response.get_final_response()
     else:
-        response = await client.get_response(message, tools=get_weather)
+        response = await response
         print(f"Assistant: {response}")
 
 

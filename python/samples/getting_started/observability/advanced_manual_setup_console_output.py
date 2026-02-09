@@ -107,7 +107,7 @@ async def run_chat_client() -> None:
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")
-    async for chunk in client.get_streaming_response(message, tools=get_weather):
+    async for chunk in client.get_response(message, tools=get_weather, stream=True):
         if str(chunk):
             print(str(chunk), end="")
     print("")

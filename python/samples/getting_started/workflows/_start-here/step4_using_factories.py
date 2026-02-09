@@ -3,12 +3,11 @@
 import asyncio
 
 from agent_framework import (
-    AgentResponse,
+    AgentResponseUpdate,
     ChatAgent,
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     executor,
     handler,
 )
@@ -74,29 +73,30 @@ async def main():
     # 4) set_start_executor(node) declares the entry point
     # 5) build() finalizes and returns an immutable Workflow object
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="UpperCase")
         .register_executor(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
         .register_executor(lambda: reverse_text, name="ReverseText")
-        .register_agent(create_agent, name="DecoderAgent", output_response=True)
+        .register_agent(create_agent, name="DecoderAgent")
         .add_chain(["UpperCase", "ReverseText", "DecoderAgent"])
-        .set_start_executor("UpperCase")
         .build()
     )
 
-    output: AgentResponse | None = None
-    async for event in workflow.run_stream("hello world"):
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponse):
-            output = event.data
-
-    if output:
-        print(f"Decoded output: {output.text}")
-    else:
-        print("No output received.")
+    first_update = True
+    async for event in workflow.run("hello world", stream=True):
+        # The outputs of the workflow are whatever the agents produce. So the events are expected to
+        # contain `AgentResponseUpdate` from the agents in the workflow.
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            update = event.data
+            if first_update:
+                print(f"{update.author_name}: {update.text}", end="", flush=True)
+                first_update = False
+            else:
+                print(update.text, end="", flush=True)
 
     """
     Sample Output:
 
-    HELLO WORLD
+    decoder: HELLO WORLD
     """
 
 

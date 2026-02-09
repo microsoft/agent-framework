@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Chain two runs of a single agent inside a Durable Functions orchestration.
 
 Components used in this sample:

@@ -13,7 +13,7 @@ to demonstrate mid-execution cancellation using asyncio tasks.
 
 Purpose:
 Show how to cancel a running workflow by wrapping it in an asyncio.Task. This pattern
-works with both workflow.run() and workflow.run_stream(). Useful for implementing
+works with both workflow.run() stream=True and stream=False. Useful for implementing
 timeouts, graceful shutdown, or A2A executors that need cancellation support.
 
 Prerequisites:
@@ -51,13 +51,12 @@ async def step3(text: str, ctx: WorkflowContext[Never, str]) -> None:
 def build_workflow():
     """Build a simple 3-step sequential workflow (~6 seconds total)."""
     return (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="step1")
         .register_executor(lambda: step1, name="step1")
         .register_executor(lambda: step2, name="step2")
         .register_executor(lambda: step3, name="step3")
         .add_edge("step1", "step2")
         .add_edge("step2", "step3")
-        .set_start_executor("step1")
         .build()
     )
 

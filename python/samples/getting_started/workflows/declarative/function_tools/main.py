@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from agent_framework import FileCheckpointStorage, RequestInfoEvent, WorkflowOutputEvent, tool
+from agent_framework import FileCheckpointStorage, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
@@ -90,20 +90,20 @@ async def main():
     while True:
         if pending_request_id:
             response = ExternalInputResponse(user_input=user_input)
-            stream = workflow.send_responses_streaming({pending_request_id: response})
+            stream = workflow.run(stream=True, responses={pending_request_id: response})
         else:
-            stream = workflow.run_stream({"userInput": user_input})
+            stream = workflow.run({"userInput": user_input}, stream=True)
 
         pending_request_id = None
         first_response = True
 
         async for event in stream:
-            if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, str):
+            if event.type == "output" and isinstance(event.data, str):
                 if first_response:
                     print("MenuAgent: ", end="")
                     first_response = False
                 print(event.data, end="", flush=True)
-            elif isinstance(event, RequestInfoEvent) and isinstance(event.data, ExternalInputRequest):
+            elif event.type == "request_info" and isinstance(event.data, ExternalInputRequest):
                 pending_request_id = event.request_id
 
         print()

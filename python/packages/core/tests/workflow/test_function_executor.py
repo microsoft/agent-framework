@@ -236,7 +236,7 @@ class TestFunctionExecutor:
         assert reverse_spec["output_types"] == [Any]  # First parameter is Any
         assert reverse_spec["workflow_output_types"] == [str]  # Second parameter is str
 
-        workflow = WorkflowBuilder().add_edge(to_upper, reverse_text).set_start_executor(to_upper).build()
+        workflow = WorkflowBuilder(start_executor=to_upper).add_edge(to_upper, reverse_text).build()
 
         # Run workflow
         events = await workflow.run("hello world")
@@ -345,7 +345,7 @@ class TestFunctionExecutor:
 
         # Since single-parameter functions can't send messages,
         # they're typically used as terminal nodes or for side effects
-        WorkflowBuilder().set_start_executor(double_value).build()
+        WorkflowBuilder(start_executor=double_value).build()
 
         # For testing purposes, we can check that the handler is registered correctly
         assert double_value.can_handle(Message(data=5, source_id="mock"))

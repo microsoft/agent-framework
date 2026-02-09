@@ -1,11 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Client application for starting a human-in-the-loop content generation orchestration.
 
 This client connects to the Durable Task Scheduler and demonstrates the HITL pattern
 by starting an orchestration, sending approval/rejection events, and monitoring progress.
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with the agent, orchestration, and activities registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -34,12 +36,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for client logging
-        
+
     Returns:
         Configured DurableTaskSchedulerClient instance
     """
@@ -64,7 +66,7 @@ def _log_completion_result(
     metadata: OrchestrationState | None,
 ) -> None:
     """Log the orchestration completion result.
-    
+
     Args:
         metadata: The orchestration metadata
     """
@@ -94,7 +96,7 @@ def _wait_and_log_completion(
     timeout: int = 60
 ) -> None:
     """Wait for orchestration completion and log the result.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
         instance_id: The orchestration instance ID
@@ -116,7 +118,7 @@ def send_approval(
     feedback: str = ""
 ) -> None:
     """Send approval or rejection event to the orchestration.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
         instance_id: The orchestration instance ID
@@ -148,14 +150,14 @@ def wait_for_notification(
     timeout_seconds: int = 10
 ) -> bool:
     """Wait for the orchestration to reach a notification point.
-    
+
     Polls the orchestration status until it appears to be waiting for approval.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
         instance_id: The orchestration instance ID
         timeout_seconds: Maximum time to wait
-        
+
     Returns:
         True if notification detected, False if timeout
     """
@@ -202,7 +204,7 @@ def wait_for_notification(
 
 def run_interactive_client(client: DurableTaskSchedulerClient) -> None:
     """Run an interactive client that prompts for user input and handles approval workflow.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
     """

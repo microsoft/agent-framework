@@ -6,15 +6,13 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
-import aiofiles
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
     WorkflowContext,  # Per run context with shared state and messaging
-    WorkflowOutputEvent,  # Event emitted when workflow yields output
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
-    )
+)
 from typing_extensions import Never
 
 """
@@ -26,7 +24,7 @@ It also demonstrates WorkflowViz for graph visualization.
 
 Purpose:
 Show how to:
-- Partition input once and coordinate parallel mappers with shared state.
+- Partition input once and coordinate parallel mappers with workflow state.
 - Implement map, shuffle, and reduce executors that pass file paths instead of large payloads.
 - Use fan out and fan in edges to express parallelism and joins.
 - Persist intermediate results to disk to bound memory usage for large inputs.
@@ -34,13 +32,12 @@ Show how to:
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, fan out and fan in edges, events, and streaming runs.
-- aiofiles installed for async file I/O.
 - Write access to a tmp directory next to this script.
 - A source text at resources/long_text.txt.
 - Optional for SVG export: install graphviz.
 
 Installation:
-    pip install agent-framework aiofiles graphviz
+    pip install agent-framework graphviz
 """
 
 # Define the temporary directory for storing intermediate results
@@ -49,8 +46,8 @@ TEMP_DIR = os.path.join(DIR, "tmp")
 # Ensure the temporary directory exists
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Define a key for the shared state to store the data to be processed
-SHARED_STATE_DATA_KEY = "data_to_be_processed"
+# Define a key for the workflow state to store the data to be processed
+STATE_DATA_KEY = "data_to_be_processed"
 
 
 class SplitCompleted:
@@ -69,17 +66,17 @@ class Split(Executor):
 
     @handler
     async def split(self, data: str, ctx: WorkflowContext[SplitCompleted]) -> None:
-        """Tokenize input and assign contiguous index ranges to each mapper via shared state.
+        """Tokenize input and assign contiguous index ranges to each mapper via workflow state.
 
         Args:
             data: The raw text to process.
-            ctx: Workflow context to persist shared state and send messages.
+            ctx: Workflow context to persist state and send messages.
         """
         # Process data into a list of words and remove empty lines or words.
         word_list = self._preprocess(data)
 
         # Store tokenized words once so all mappers can read by index.
-        await ctx.set_shared_state(SHARED_STATE_DATA_KEY, word_list)
+        ctx.set_state(STATE_DATA_KEY, word_list)
 
         # Divide indices into contiguous slices for each mapper.
         map_executor_count = len(self._map_executor_ids)
@@ -90,8 +87,8 @@ class Split(Executor):
             start_index = i * chunk_size
             end_index = start_index + chunk_size if i < map_executor_count - 1 else len(word_list)
 
-            # The mapper reads its slice from shared state keyed by its own executor id.
-            await ctx.set_shared_state(self._map_executor_ids[i], (start_index, end_index))
+            # The mapper reads its slice from workflow state keyed by its own executor id.
+            ctx.set_state(self._map_executor_ids[i], (start_index, end_index))
             await ctx.send_message(SplitCompleted(), self._map_executor_ids[i])
 
         tasks = [asyncio.create_task(_process_chunk(i)) for i in range(map_executor_count)]
@@ -119,18 +116,18 @@ class Map(Executor):
 
         Args:
             _: SplitCompleted marker indicating maps can begin.
-            ctx: Workflow context for shared state access and messaging.
+            ctx: Workflow context for workflow state access and messaging.
         """
         # Retrieve tokens and our assigned slice.
-        data_to_be_processed: list[str] = await ctx.get_shared_state(SHARED_STATE_DATA_KEY)
-        chunk_start, chunk_end = await ctx.get_shared_state(self.id)
+        data_to_be_processed: list[str] = ctx.get_state(STATE_DATA_KEY)
+        chunk_start, chunk_end = ctx.get_state(self.id)
 
         results = [(item, 1) for item in data_to_be_processed[chunk_start:chunk_end]]
 
         # Write this mapper's results as simple text lines for easy debugging.
         file_path = os.path.join(TEMP_DIR, f"map_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{item}: {count}\n" for item, count in results])
+        with open(file_path, "w") as f:
+            f.writelines([f"{item}: {count}\n" for item, count in results])
 
         await ctx.send_message(MapCompleted(file_path))
 
@@ -164,8 +161,8 @@ class Shuffle(Executor):
         async def _process_chunk(chunk: list[tuple[str, list[int]]], index: int) -> None:
             """Write one grouped partition for reducer index and notify that reducer."""
             file_path = os.path.join(TEMP_DIR, f"shuffle_results_{index}.txt")
-            async with aiofiles.open(file_path, "w") as f:
-                await f.writelines([f"{key}: {value}\n" for key, value in chunk])
+            with open(file_path, "w") as f:
+                f.writelines([f"{key}: {value}\n" for key, value in chunk])
             await ctx.send_message(ShuffleCompleted(file_path, self._reducer_ids[index]))
 
         tasks = [asyncio.create_task(_process_chunk(chunk, i)) for i, chunk in enumerate(chunks)]
@@ -180,9 +177,9 @@ class Shuffle(Executor):
         # Load all intermediate pairs.
         map_results: list[tuple[str, int]] = []
         for result in data:
-            async with aiofiles.open(result.file_path, "r") as f:
+            with open(result.file_path) as f:
                 map_results.extend([
-                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in await f.readlines()
+                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in f.readlines()
                 ])
 
         # Group values by token.
@@ -231,8 +228,8 @@ class Reduce(Executor):
             return
 
         # Read grouped values from the shuffle output.
-        async with aiofiles.open(data.file_path, "r") as f:
-            lines = await f.readlines()
+        with open(data.file_path) as f:
+            lines = f.readlines()
 
         # Sum values per key. Values are serialized Python lists like [1, 1, ...].
         reduced_results: dict[str, int] = defaultdict(int)
@@ -242,8 +239,8 @@ class Reduce(Executor):
 
         # Persist our partition totals.
         file_path = os.path.join(TEMP_DIR, f"reduced_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
+        with open(file_path, "w") as f:
+            f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
 
         await ctx.send_message(ReduceCompleted(file_path))
 
@@ -262,7 +259,7 @@ async def main():
 
     # Step 1: Create the workflow builder and register executors.
     workflow_builder = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="split_data_executor")
         .register_executor(lambda: Map(id="map_executor_0"), name="map_executor_0")
         .register_executor(lambda: Map(id="map_executor_1"), name="map_executor_1")
         .register_executor(lambda: Map(id="map_executor_2"), name="map_executor_2")
@@ -286,7 +283,7 @@ async def main():
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        workflow_builder.set_start_executor("split_data_executor")
+        workflow_builder
         .add_fan_out_edges(
             "split_data_executor",
             ["map_executor_0", "map_executor_1", "map_executor_2"],
@@ -325,13 +322,13 @@ async def main():
         print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
 
     # Step 3: Open the text file and read its content.
-    async with aiofiles.open(os.path.join(DIR, "../resources", "long_text.txt"), "r") as f:
-        raw_text = await f.read()
+    with open(os.path.join(DIR, "../resources", "long_text.txt")) as f:
+        raw_text = f.read()
 
     # Step 4: Run the workflow with the raw text as input.
-    async for event in workflow.run_stream(raw_text):
+    async for event in workflow.run(raw_text, stream=True):
         print(f"Event: {event}")
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             print(f"Final Output: {event.data}")
 
 

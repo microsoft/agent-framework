@@ -9,7 +9,6 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     Executor,
-    ExecutorCompletedEvent,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -127,7 +126,7 @@ async def main():
     # Step 1: Build the workflow with the defined edges.
     # This time we are creating a loop in the workflow.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="guess_number")
         .register_executor(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
         .register_agent(create_judge_agent, name="judge_agent")
         .register_executor(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
@@ -136,14 +135,13 @@ async def main():
         .add_edge("submit_judge", "judge_agent")
         .add_edge("judge_agent", "parse_judge")
         .add_edge("parse_judge", "guess_number")
-        .set_start_executor("guess_number")
         .build()
     )
 
     # Step 2: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_stream(NumberSignal.INIT):
-        if isinstance(event, ExecutorCompletedEvent) and event.executor_id == "guess_number":
+    async for event in workflow.run(NumberSignal.INIT, stream=True):
+        if event.type == "executor_completed" and event.executor_id == "guess_number":
             iterations += 1
         print(f"Event: {event}")
 

@@ -14,10 +14,10 @@ OpenAI Responses Client, including user approval workflows for function call sec
 """
 
 if TYPE_CHECKING:
-    from agent_framework import AgentProtocol, AgentThread
+    from agent_framework import AgentThread, SupportsAgentRun
 
 
-async def handle_approvals_without_thread(query: str, agent: "AgentProtocol"):
+async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
     from agent_framework import ChatMessage
 
@@ -29,17 +29,17 @@ async def handle_approvals_without_thread(query: str, agent: "AgentProtocol"):
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
             )
-            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
+            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs)
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread"):
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 
@@ -62,7 +62,7 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
     return result
 
 
-async def handle_approvals_with_thread_streaming(query: str, agent: "AgentProtocol", thread: "AgentThread"):
+async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 
@@ -70,8 +70,8 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "AgentProtoc
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(ChatMessage("user", [query]))
-        async for update in agent.run_stream(new_input, thread=thread, store=True):
+        new_input.append(ChatMessage(role="user", text=query))
+        async for update in agent.run(new_input, thread=thread, stream=True, options={"store": True}):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
                     print(

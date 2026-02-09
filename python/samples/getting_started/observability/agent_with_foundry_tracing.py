@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "azure-monitor-opentelemetry",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/getting_started/observability/agent_with_foundry_tracing.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
@@ -87,10 +96,7 @@ async def main():
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

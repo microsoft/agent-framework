@@ -2,6 +2,8 @@
 
 """AG-UI server example with server-side tools."""
 
+from __future__ import annotations
+
 import logging
 import os
 
@@ -112,7 +114,7 @@ def get_time_zone(location: str) -> str:
 # - get_time_zone: SERVER-ONLY tool (only server has this)
 # - get_weather: CLIENT-ONLY tool (client provides this, server should NOT include it)
 # The client will send get_weather tool metadata so the LLM knows about it,
-# and @use_function_invocation on AGUIChatClient will execute it client-side.
+# and the function invocation mixin on AGUIChatClient will execute it client-side.
 # This matches the .NET AG-UI hybrid execution pattern.
 agent = ChatAgent(
     name="AGUIAssistant",

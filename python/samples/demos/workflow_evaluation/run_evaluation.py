@@ -29,7 +29,7 @@ def print_section(title: str):
 
 async def run_workflow():
     """Execute the multi-agent travel planning workflow.
-    
+
     Returns:
         Dictionary containing workflow data with agent response IDs
     """

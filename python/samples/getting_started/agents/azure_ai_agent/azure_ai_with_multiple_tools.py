@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework import (
-    AgentProtocol,
     AgentThread,
     HostedMCPTool,
     HostedWebSearchTool,
+    SupportsAgentRun,
     tool,
 )
 from agent_framework.azure import AzureAIAgentsProvider
@@ -43,7 +43,7 @@ def get_time() -> str:
     return f"The current UTC time is {current_time.strftime('%Y-%m-%d %H:%M:%S')}."
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread"):
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import ChatMessage
 

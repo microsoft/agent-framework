@@ -5,9 +5,9 @@ import asyncio
 from agent_framework import (
     ChatAgent,
     HostedCodeInterpreterTool,
-    MagenticBuilder,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
 
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
@@ -29,8 +29,6 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        # Feel free to explore with other agents that support web search, for example,
-        # the `OpenAIResponseAgent` or `AzureAgentProtocol` with bing grounding.
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
@@ -52,17 +50,16 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    workflow = (
-        MagenticBuilder()
-        .participants([researcher_agent, coder_agent])
-        .with_manager(
-            agent=manager_agent,
-            max_round_count=10,
-            max_stall_count=3,
-            max_reset_count=2,
-        )
-        .build()
-    )
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    workflow = MagenticBuilder(
+        participants=[researcher_agent, coder_agent],
+        intermediate_outputs=True,
+        manager_agent=manager_agent,
+        max_round_count=10,
+        max_stall_count=3,
+        max_reset_count=2,
+    ).build()
 
     task = (
         "I am preparing a report on the energy efficiency of different machine learning model architectures. "
@@ -80,9 +77,17 @@ async def main() -> None:
         # Wrap the workflow as an agent for composition scenarios
         print("\nWrapping workflow as an agent and running...")
         workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
-        async for response in workflow_agent.run_stream(task):
+
+        last_response_id: str | None = None
+        async for update in workflow_agent.run(task, stream=True):
             # Fallback for any other events with text
-            print(response.text, end="", flush=True)
+            if last_response_id != update.response_id:
+                if last_response_id is not None:
+                    print()  # Newline between different responses
+                print(f"{update.author_name}: ", end="", flush=True)
+                last_response_id = update.response_id
+            else:
+                print(update.text, end="", flush=True)
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")

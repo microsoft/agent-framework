@@ -9,7 +9,7 @@ Run with: pytest tests/test_orchestration_context.py -v
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 
 from agent_framework_durabletask import DurableAgentThread
 from agent_framework_durabletask._orchestration_context import DurableAIAgentOrchestrationContext
@@ -36,7 +36,7 @@ class TestDurableAIAgentOrchestrationContextGetAgent:
         agent = agent_context.get_agent("assistant")
 
         assert isinstance(agent, DurableAIAgent)
-        assert isinstance(agent, AgentProtocol)
+        assert isinstance(agent, SupportsAgentRun)
 
     def test_get_agent_shim_has_correct_name(self, agent_context: DurableAIAgentOrchestrationContext) -> None:
         """Verify retrieved agent has the correct name."""

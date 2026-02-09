@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from unittest.mock import MagicMock
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
@@ -78,8 +79,24 @@ def test_to_azure_ai_agent_tools_code_interpreter() -> None:
 def test_to_azure_ai_agent_tools_web_search_missing_connection() -> None:
     """Test HostedWebSearchTool raises without connection info."""
     tool = HostedWebSearchTool()
-    with pytest.raises(ServiceInitializationError, match="Bing search tool requires"):
-        to_azure_ai_agent_tools([tool])
+    # Clear any environment variables that could provide connection info
+    with patch.dict(
+        os.environ,
+        {"BING_CONNECTION_ID": "", "BING_CUSTOM_CONNECTION_ID": "", "BING_CUSTOM_INSTANCE_NAME": ""},
+        clear=False,
+    ):
+        # Also need to unset the keys if they exist
+        env_backup = {}
+        for key in ["BING_CONNECTION_ID", "BING_CUSTOM_CONNECTION_ID", "BING_CUSTOM_INSTANCE_NAME"]:
+            env_backup[key] = os.environ.pop(key, None)
+        try:
+            with pytest.raises(ServiceInitializationError, match="Bing search tool requires"):
+                to_azure_ai_agent_tools([tool])
+        finally:
+            # Restore environment
+            for key, value in env_backup.items():
+                if value is not None:
+                    os.environ[key] = value
 
 
 def test_to_azure_ai_agent_tools_dict_passthrough() -> None:

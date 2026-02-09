@@ -18,6 +18,9 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class InMemoryChatHistoryProviderTests
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
+
     [Fact]
     public void Constructor_Throws_ForNullReducer() =>
         // Arrange & Act & Assert
@@ -51,7 +54,8 @@ public class InMemoryChatHistoryProviderTests
     {
         var requestMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, "Hello")
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.System, "additional context") { AdditionalProperties = new() { { AgentRequestMessageSourceType.AdditionalPropertiesKey, AgentRequestMessageSourceType.ChatHistory } } },
         };
         var responseMessages = new List<ChatMessage>
         {
@@ -61,16 +65,11 @@ public class InMemoryChatHistoryProviderTests
         {
             new(ChatRole.System, "original instructions")
         };
-        var aiContextProviderMessages = new List<ChatMessage>()
-        {
-            new(ChatRole.System, "additional context")
-        };
 
         var provider = new InMemoryChatHistoryProvider();
         provider.Add(providerMessages[0]);
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, providerMessages)
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages)
         {
-            AIContextProviderMessages = aiContextProviderMessages,
             ResponseMessages = responseMessages
         };
         await provider.InvokedAsync(context, CancellationToken.None);
@@ -87,7 +86,7 @@ public class InMemoryChatHistoryProviderTests
     {
         var provider = new InMemoryChatHistoryProvider();
 
-        var context = new ChatHistoryProvider.InvokedContext([], []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, []);
         await provider.InvokedAsync(context, CancellationToken.None);
 
         Assert.Empty(provider);
@@ -102,7 +101,7 @@ public class InMemoryChatHistoryProviderTests
             new ChatMessage(ChatRole.Assistant, "Test2")
         };
 
-        var context = new ChatHistoryProvider.InvokingContext([]);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
         var result = (await provider.InvokingAsync(context, CancellationToken.None)).ToList();
 
         Assert.Equal(2, result.Count);
@@ -183,7 +182,7 @@ public class InMemoryChatHistoryProviderTests
         var provider = new InMemoryChatHistoryProvider();
         var messages = new List<ChatMessage>();
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages);
         await provider.InvokedAsync(context, CancellationToken.None);
 
         Assert.Empty(provider);
@@ -520,7 +519,7 @@ public class InMemoryChatHistoryProviderTests
         var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded);
 
         // Act
-        var context = new ChatHistoryProvider.InvokedContext(originalMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, originalMessages);
         await provider.InvokedAsync(context, CancellationToken.None);
 
         // Assert
@@ -556,7 +555,7 @@ public class InMemoryChatHistoryProviderTests
         }
 
         // Act
-        var invokingContext = new ChatHistoryProvider.InvokingContext(Array.Empty<ChatMessage>());
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, Array.Empty<ChatMessage>());
         var result = (await provider.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
@@ -579,7 +578,7 @@ public class InMemoryChatHistoryProviderTests
         var provider = new InMemoryChatHistoryProvider(reducerMock.Object, InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
 
         // Act
-        var context = new ChatHistoryProvider.InvokedContext(originalMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, originalMessages);
         await provider.InvokedAsync(context, CancellationToken.None);
 
         // Assert
@@ -605,7 +604,7 @@ public class InMemoryChatHistoryProviderTests
         };
 
         // Act
-        var invokingContext = new ChatHistoryProvider.InvokingContext(Array.Empty<ChatMessage>());
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, Array.Empty<ChatMessage>());
         var result = (await provider.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
@@ -627,7 +626,7 @@ public class InMemoryChatHistoryProviderTests
         {
             new(ChatRole.Assistant, "Hi there!")
         };
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, [])
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages)
         {
             ResponseMessages = responseMessages,
             InvokeException = new InvalidOperationException("Test exception")

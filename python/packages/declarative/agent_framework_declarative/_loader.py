@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -138,7 +140,7 @@ class AgentFactory:
             agent = factory.create_agent_from_yaml_path("agent.yaml")
 
             # Run the agent
-            async for event in agent.run_stream("Hello!"):
+            async for event in agent.run("Hello!", stream=True):
                 print(event)
 
         .. code-block:: python
@@ -300,7 +302,7 @@ class AgentFactory:
                 agent = factory.create_agent_from_yaml_path("agents/support_agent.yaml")
 
                 # Execute the agent
-                async for event in agent.run_stream("Help me with my order"):
+                async for event in agent.run("Help me with my order", stream=True):
                     print(event)
 
             .. code-block:: python

@@ -28,7 +28,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var typedSession = (ChatClientAgentSession)session;
 
@@ -37,7 +37,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await typedSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(

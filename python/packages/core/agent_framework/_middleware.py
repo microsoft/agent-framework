@@ -1,50 +1,101 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import contextlib
 import inspect
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from enum import Enum
-from functools import update_wrapper
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, overload
 
-from ._serialization import SerializationMixin
-from ._types import AgentResponse, AgentResponseUpdate, ChatMessage, normalize_messages, prepare_messages
+from ._clients import ChatClientProtocol
+from ._types import (
+    AgentResponse,
+    AgentResponseUpdate,
+    ChatMessage,
+    ChatResponse,
+    ChatResponseUpdate,
+    ResponseStream,
+    prepare_messages,
+)
 from .exceptions import MiddlewareException
 
-if TYPE_CHECKING:
-    from pydantic import BaseModel
-
-    from ._agents import AgentProtocol
-    from ._clients import ChatClientProtocol
-    from ._threads import AgentThread
-    from ._tools import FunctionTool
-    from ._types import ChatResponse, ChatResponseUpdate
-
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._agents import SupportsAgentRun
+    from ._clients import ChatClientProtocol
+    from ._threads import AgentThread
+    from ._tools import FunctionTool
+    from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
+
+    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+
 __all__ = [
+    "AgentContext",
     "AgentMiddleware",
+    "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
-    "AgentRunContext",
+    "ChatAndFunctionMiddlewareTypes",
     "ChatContext",
     "ChatMiddleware",
+    "ChatMiddlewareLayer",
+    "ChatMiddlewareTypes",
     "FunctionInvocationContext",
     "FunctionMiddleware",
-    "Middleware",
+    "FunctionMiddlewareTypes",
+    "MiddlewareException",
+    "MiddlewareTermination",
+    "MiddlewareType",
+    "MiddlewareTypes",
     "agent_middleware",
     "chat_middleware",
     "function_middleware",
-    "use_agent_middleware",
-    "use_chat_middleware",
 ]
 
-TAgent = TypeVar("TAgent", bound="AgentProtocol")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
+AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 TContext = TypeVar("TContext")
+TUpdate = TypeVar("TUpdate")
+
+
+class _EmptyAsyncIterator(Generic[TUpdate]):
+    """Empty async iterator that yields nothing.
+
+    Used when middleware terminates without setting a result,
+    and we need to provide an empty stream.
+    """
+
+    def __aiter__(self) -> _EmptyAsyncIterator[TUpdate]:
+        return self
+
+    async def __anext__(self) -> TUpdate:
+        raise StopAsyncIteration
+
+
+def _empty_async_iterable() -> AsyncIterable[Any]:
+    """Create an empty async iterable that yields nothing."""
+    return _EmptyAsyncIterator()
+
+
+class MiddlewareTermination(MiddlewareException):
+    """Control-flow exception to terminate middleware execution early."""
+
+    result: Any = None  # Optional result to return when terminating
+
+    def __init__(self, message: str = "Middleware terminated execution.", *, result: Any = None) -> None:
+        super().__init__(message, log_level=None)
+        self.result = result
 
 
 class MiddlewareType(str, Enum):
@@ -58,7 +109,7 @@ class MiddlewareType(str, Enum):
     CHAT = "chat"
 
 
-class AgentRunContext(SerializationMixin):
+class AgentContext:
     """Context object for agent middleware invocations.
 
     This context is passed through the agent middleware pipeline and contains all information
@@ -68,28 +119,27 @@ class AgentRunContext(SerializationMixin):
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
         thread: The agent thread for this invocation, if any.
-        is_streaming: Whether this is a streaming invocation.
+        options: The options for the agent invocation as a dict.
+        stream: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between agent middleware.
         result: Agent execution result. Can be observed after calling ``next()``
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be AgentResponse.
-                For streaming: should be AsyncIterable[AgentResponseUpdate].
-        terminate: A flag indicating whether to terminate execution after current middleware.
-                When set to True, execution will stop as soon as control returns to framework.
+                For streaming: should be ResponseStream[AgentResponseUpdate, AgentResponse].
         kwargs: Additional keyword arguments passed to the agent run method.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentRunContext
+            from agent_framework import AgentMiddleware, AgentContext
 
 
             class LoggingMiddleware(AgentMiddleware):
-                async def process(self, context: AgentRunContext, next):
+                async def process(self, context: AgentContext, next):
                     print(f"Agent: {context.agent.name}")
                     print(f"Messages: {len(context.messages)}")
                     print(f"Thread: {context.thread}")
-                    print(f"Streaming: {context.is_streaming}")
+                    print(f"Streaming: {context.stream}")
 
                     # Store metadata
                     context.metadata["start_time"] = time.time()
@@ -101,42 +151,54 @@ class AgentRunContext(SerializationMixin):
                     print(f"Result: {context.result}")
     """
 
-    INJECTABLE: ClassVar[set[str]] = {"agent", "thread", "result"}
-
     def __init__(
         self,
-        agent: "AgentProtocol",
+        *,
+        agent: SupportsAgentRun,
         messages: list[ChatMessage],
-        thread: "AgentThread | None" = None,
-        is_streaming: bool = False,
-        metadata: dict[str, Any] | None = None,
-        result: AgentResponse | AsyncIterable[AgentResponseUpdate] | None = None,
-        terminate: bool = False,
-        kwargs: dict[str, Any] | None = None,
+        thread: AgentThread | None = None,
+        options: Mapping[str, Any] | None = None,
+        stream: bool = False,
+        metadata: Mapping[str, Any] | None = None,
+        result: AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None = None,
+        kwargs: Mapping[str, Any] | None = None,
+        stream_transform_hooks: Sequence[
+            Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
+        ]
+        | None = None,
+        stream_result_hooks: Sequence[Callable[[AgentResponse], AgentResponse | Awaitable[AgentResponse]]]
+        | None = None,
+        stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
-        """Initialize the AgentRunContext.
+        """Initialize the AgentContext.
 
         Args:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
             thread: The agent thread for this invocation, if any.
-            is_streaming: Whether this is a streaming invocation.
+            options: The options for the agent invocation as a dict.
+            stream: Whether this is a streaming invocation.
             metadata: Metadata dictionary for sharing data between agent middleware.
             result: Agent execution result.
-            terminate: A flag indicating whether to terminate execution after current middleware.
             kwargs: Additional keyword arguments passed to the agent run method.
+            stream_transform_hooks: Hooks to transform streamed updates.
+            stream_result_hooks: Hooks to process the final result after streaming.
+            stream_cleanup_hooks: Hooks to run after streaming completes.
         """
         self.agent = agent
         self.messages = messages
         self.thread = thread
-        self.is_streaming = is_streaming
+        self.options = options
+        self.stream = stream
         self.metadata = metadata if metadata is not None else {}
         self.result = result
-        self.terminate = terminate
         self.kwargs = kwargs if kwargs is not None else {}
+        self.stream_transform_hooks = list(stream_transform_hooks or [])
+        self.stream_result_hooks = list(stream_result_hooks or [])
+        self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
 
 
-class FunctionInvocationContext(SerializationMixin):
+class FunctionInvocationContext:
     """Context object for function middleware invocations.
 
     This context is passed through the function middleware pipeline and contains all information
@@ -148,8 +210,7 @@ class FunctionInvocationContext(SerializationMixin):
         metadata: Metadata dictionary for sharing data between function middleware.
         result: Function execution result. Can be observed after calling ``next()``
                 to see the actual execution result or can be set to override the execution result.
-        terminate: A flag indicating whether to terminate execution after current middleware.
-                When set to True, execution will stop as soon as control returns to framework.
+
         kwargs: Additional keyword arguments passed to the chat method that invoked this function.
 
     Examples:
@@ -165,24 +226,19 @@ class FunctionInvocationContext(SerializationMixin):
 
                     # Validate arguments
                     if not self.validate(context.arguments):
-                        context.result = {"error": "Validation failed"}
-                        context.terminate = True
-                        return
+                        raise MiddlewareTermination("Validation failed")
 
                     # Continue execution
                     await next(context)
     """
 
-    INJECTABLE: ClassVar[set[str]] = {"function", "arguments", "result"}
-
     def __init__(
         self,
-        function: "FunctionTool[Any, Any]",
-        arguments: "BaseModel",
-        metadata: dict[str, Any] | None = None,
+        function: FunctionTool[Any, Any],
+        arguments: BaseModel,
+        metadata: Mapping[str, Any] | None = None,
         result: Any = None,
-        terminate: bool = False,
-        kwargs: dict[str, Any] | None = None,
+        kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -191,18 +247,16 @@ class FunctionInvocationContext(SerializationMixin):
             arguments: The validated arguments for the function.
             metadata: Metadata dictionary for sharing data between function middleware.
             result: Function execution result.
-            terminate: A flag indicating whether to terminate execution after current middleware.
             kwargs: Additional keyword arguments passed to the chat method that invoked this function.
         """
         self.function = function
         self.arguments = arguments
         self.metadata = metadata if metadata is not None else {}
         self.result = result
-        self.terminate = terminate
         self.kwargs = kwargs if kwargs is not None else {}
 
 
-class ChatContext(SerializationMixin):
+class ChatContext:
     """Context object for chat middleware invocations.
 
     This context is passed through the chat middleware pipeline and contains all information
@@ -212,15 +266,16 @@ class ChatContext(SerializationMixin):
         chat_client: The chat client being invoked.
         messages: The messages being sent to the chat client.
         options: The options for the chat request as a dict.
-        is_streaming: Whether this is a streaming invocation.
+        stream: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between chat middleware.
         result: Chat execution result. Can be observed after calling ``next()``
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be ChatResponse.
-                For streaming: should be AsyncIterable[ChatResponseUpdate].
-        terminate: A flag indicating whether to terminate execution after current middleware.
-                When set to True, execution will stop as soon as control returns to framework.
+                For streaming: should be ResponseStream[ChatResponseUpdate, ChatResponse].
         kwargs: Additional keyword arguments passed to the chat client.
+        stream_transform_hooks: Hooks applied to transform each streamed update.
+        stream_result_hooks: Hooks applied to the finalized response (after finalizer).
+        stream_cleanup_hooks: Hooks executed after stream consumption (before finalizer).
 
     Examples:
         .. code-block:: python
@@ -245,18 +300,21 @@ class ChatContext(SerializationMixin):
                         context.metadata["output_tokens"] = self.count_tokens(context.result)
     """
 
-    INJECTABLE: ClassVar[set[str]] = {"chat_client", "result"}
-
     def __init__(
         self,
-        chat_client: "ChatClientProtocol",
-        messages: "MutableSequence[ChatMessage]",
+        chat_client: ChatClientProtocol,
+        messages: Sequence[ChatMessage],
         options: Mapping[str, Any] | None,
-        is_streaming: bool = False,
-        metadata: dict[str, Any] | None = None,
-        result: "ChatResponse | AsyncIterable[ChatResponseUpdate] | None" = None,
-        terminate: bool = False,
-        kwargs: dict[str, Any] | None = None,
+        stream: bool = False,
+        metadata: Mapping[str, Any] | None = None,
+        result: ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None = None,
+        kwargs: Mapping[str, Any] | None = None,
+        stream_transform_hooks: Sequence[
+            Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
+        ]
+        | None = None,
+        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
 
@@ -264,28 +322,32 @@ class ChatContext(SerializationMixin):
             chat_client: The chat client being invoked.
             messages: The messages being sent to the chat client.
             options: The options for the chat request as a dict.
-            is_streaming: Whether this is a streaming invocation.
+            stream: Whether this is a streaming invocation.
             metadata: Metadata dictionary for sharing data between chat middleware.
             result: Chat execution result.
-            terminate: A flag indicating whether to terminate execution after current middleware.
             kwargs: Additional keyword arguments passed to the chat client.
+            stream_transform_hooks: Transform hooks to apply to each streamed update.
+            stream_result_hooks: Result hooks to apply to the finalized streaming response.
+            stream_cleanup_hooks: Cleanup hooks to run after streaming completes.
         """
         self.chat_client = chat_client
         self.messages = messages
         self.options = options
-        self.is_streaming = is_streaming
+        self.stream = stream
         self.metadata = metadata if metadata is not None else {}
         self.result = result
-        self.terminate = terminate
         self.kwargs = kwargs if kwargs is not None else {}
+        self.stream_transform_hooks = list(stream_transform_hooks or [])
+        self.stream_result_hooks = list(stream_result_hooks or [])
+        self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
 
 
 class AgentMiddleware(ABC):
     """Abstract base class for agent middleware that can intercept agent invocations.
 
     Agent middleware allows you to intercept and modify agent invocations before and after
-    execution. You can inspect messages, modify context, override results, or terminate
-    execution early.
+    execution. You can inspect messages, modify context, override results, or raise
+    ``MiddlewareTermination`` to terminate execution early.
 
     Note:
         AgentMiddleware is an abstract base class. You must subclass it and implement
@@ -294,14 +356,14 @@ class AgentMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentRunContext, ChatAgent
+            from agent_framework import AgentMiddleware, AgentContext, ChatAgent
 
 
             class RetryMiddleware(AgentMiddleware):
                 def __init__(self, max_retries: int = 3):
                     self.max_retries = max_retries
 
-                async def process(self, context: AgentRunContext, next):
+                async def process(self, context: AgentContext, next):
                     for attempt in range(self.max_retries):
                         await next(context)
                         if context.result and not context.result.is_error:
@@ -316,15 +378,15 @@ class AgentMiddleware(ABC):
     @abstractmethod
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         """Process an agent invocation.
 
         Args:
             context: Agent invocation context containing agent, messages, and metadata.
-                    Use context.is_streaming to determine if this is a streaming call.
-                    Middleware can set context.result to override execution, or observe
+                    Use context.stream to determine if this is a streaming call.
+                    MiddlewareTypes can set context.result to override execution, or observe
                     the actual execution result after calling next().
                     For non-streaming: AgentResponse
                     For streaming: AsyncIterable[AgentResponseUpdate]
@@ -332,7 +394,7 @@ class AgentMiddleware(ABC):
                   Does not return anything - all data flows through the context.
 
         Note:
-            Middleware should not return anything. All data manipulation should happen
+            MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling next() for actual results.
         """
@@ -366,8 +428,7 @@ class FunctionMiddleware(ABC):
                     # Check cache
                     if cache_key in self.cache:
                         context.result = self.cache[cache_key]
-                        context.terminate = True
-                        return
+                        raise MiddlewareTermination()
 
                     # Execute function
                     await next(context)
@@ -391,13 +452,13 @@ class FunctionMiddleware(ABC):
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
-                    Middleware can set context.result to override execution, or observe
+                    MiddlewareTypes can set context.result to override execution, or observe
                     the actual execution result after calling next().
             next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 
         Note:
-            Middleware should not return anything. All data manipulation should happen
+            MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling next() for actual results.
         """
@@ -429,7 +490,7 @@ class ChatMiddleware(ABC):
                     # Add system prompt to messages
                     from agent_framework import ChatMessage
 
-                    context.messages.insert(0, ChatMessage("system", [self.system_prompt]))
+                    context.messages.insert(0, ChatMessage(role="system", text=self.system_prompt))
 
                     # Continue execution
                     await next(context)
@@ -453,16 +514,16 @@ class ChatMiddleware(ABC):
 
         Args:
             context: Chat invocation context containing chat client, messages, options, and metadata.
-                    Use context.is_streaming to determine if this is a streaming call.
-                    Middleware can set context.result to override execution, or observe
+                    Use context.stream to determine if this is a streaming call.
+                    MiddlewareTypes can set context.result to override execution, or observe
                     the actual execution result after calling next().
                     For non-streaming: ChatResponse
-                    For streaming: AsyncIterable[ChatResponseUpdate]
+                    For streaming: ResponseStream[ChatResponseUpdate, ChatResponse]
             next: Function to call the next middleware or final chat execution.
                   Does not return anything - all data flows through the context.
 
         Note:
-            Middleware should not return anything. All data manipulation should happen
+            MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling next() for actual results.
         """
@@ -470,16 +531,23 @@ class ChatMiddleware(ABC):
 
 
 # Pure function type definitions for convenience
-AgentMiddlewareCallable = Callable[[AgentRunContext, Callable[[AgentRunContext], Awaitable[None]]], Awaitable[None]]
+AgentMiddlewareCallable = Callable[[AgentContext, Callable[[AgentContext], Awaitable[None]]], Awaitable[None]]
+AgentMiddlewareTypes: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
 
 FunctionMiddlewareCallable = Callable[
     [FunctionInvocationContext, Callable[[FunctionInvocationContext], Awaitable[None]]], Awaitable[None]
 ]
+FunctionMiddlewareTypes: TypeAlias = FunctionMiddleware | FunctionMiddlewareCallable
 
 ChatMiddlewareCallable = Callable[[ChatContext, Callable[[ChatContext], Awaitable[None]]], Awaitable[None]]
+ChatMiddlewareTypes: TypeAlias = ChatMiddleware | ChatMiddlewareCallable
+
+ChatAndFunctionMiddlewareTypes: TypeAlias = (
+    FunctionMiddleware | FunctionMiddlewareCallable | ChatMiddleware | ChatMiddlewareCallable
+)
 
 # Type alias for all middleware types
-Middleware: TypeAlias = (
+MiddlewareTypes: TypeAlias = (
     AgentMiddleware
     | AgentMiddlewareCallable
     | FunctionMiddleware
@@ -487,16 +555,13 @@ Middleware: TypeAlias = (
     | ChatMiddleware
     | ChatMiddlewareCallable
 )
-AgentMiddlewareTypes: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
-
-# region Middleware type markers for decorators
 
 
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware.
 
     This decorator explicitly identifies a function as agent middleware,
-    which processes AgentRunContext objects.
+    which processes AgentContext objects.
 
     Args:
         func: The middleware function to mark as agent middleware.
@@ -507,11 +572,11 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     Examples:
         .. code-block:: python
 
-            from agent_framework import agent_middleware, AgentRunContext, ChatAgent
+            from agent_framework import agent_middleware, AgentContext, ChatAgent
 
 
             @agent_middleware
-            async def logging_middleware(context: AgentRunContext, next):
+            async def logging_middleware(context: AgentContext, next):
                 print(f"Before: {context.agent.name}")
                 await next(context)
                 print(f"After: {context.result}")
@@ -656,94 +721,6 @@ class BaseMiddlewarePipeline(ABC):
         elif callable(middleware):
             self._middleware.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
 
-    def _create_handler_chain(
-        self,
-        final_handler: Callable[[Any], Awaitable[Any]],
-        result_container: dict[str, Any],
-        result_key: str = "result",
-    ) -> Callable[[Any], Awaitable[None]]:
-        """Create a chain of middleware handlers.
-
-        Args:
-            final_handler: The final handler to execute.
-            result_container: Container to store the result.
-            result_key: Key to use in the result container.
-
-        Returns:
-            The first handler in the chain.
-        """
-
-        def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
-            if index >= len(self._middleware):
-
-                async def final_wrapper(c: Any) -> None:
-                    # Execute actual handler and populate context for observability
-                    result = await final_handler(c)
-                    result_container[result_key] = result
-                    c.result = result
-
-                return final_wrapper
-
-            middleware = self._middleware[index]
-            next_handler = create_next_handler(index + 1)
-
-            async def current_handler(c: Any) -> None:
-                await middleware.process(c, next_handler)
-
-            return current_handler
-
-        return create_next_handler(0)
-
-    def _create_streaming_handler_chain(
-        self,
-        final_handler: Callable[[Any], Any],
-        result_container: dict[str, Any],
-        result_key: str = "result_stream",
-    ) -> Callable[[Any], Awaitable[None]]:
-        """Create a chain of middleware handlers for streaming operations.
-
-        Args:
-            final_handler: The final handler to execute.
-            result_container: Container to store the result.
-            result_key: Key to use in the result container.
-
-        Returns:
-            The first handler in the chain.
-        """
-
-        def create_next_handler(index: int) -> Callable[[Any], Awaitable[None]]:
-            if index >= len(self._middleware):
-
-                async def final_wrapper(c: Any) -> None:
-                    # If terminate was set, skip execution
-                    if c.terminate:
-                        return
-
-                    # Execute actual handler and populate context for observability
-                    # Note: final_handler might not be awaitable for streaming cases
-                    try:
-                        result = await final_handler(c)
-                    except TypeError:
-                        # Handle non-awaitable case (e.g., generator functions)
-                        result = final_handler(c)
-                    result_container[result_key] = result
-                    c.result = result
-
-                return final_wrapper
-
-            middleware = self._middleware[index]
-            next_handler = create_next_handler(index + 1)
-
-            async def current_handler(c: Any) -> None:
-                await middleware.process(c, next_handler)
-                # If terminate is set, don't continue the pipeline
-                if c.terminate:
-                    return
-
-            return current_handler
-
-        return create_next_handler(0)
-
 
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain.
@@ -752,7 +729,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the agent invocation and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middleware: Sequence[AgentMiddlewareTypes] | None = None):
+    def __init__(self, *middleware: AgentMiddlewareTypes):
         """Initialize the agent middleware pipeline.
 
         Args:
@@ -775,103 +752,54 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
 
     async def execute(
         self,
-        agent: "AgentProtocol",
-        messages: list[ChatMessage],
-        context: AgentRunContext,
-        final_handler: Callable[[AgentRunContext], Awaitable[AgentResponse]],
-    ) -> AgentResponse | None:
-        """Execute the agent middleware pipeline for non-streaming.
+        context: AgentContext,
+        final_handler: Callable[
+            [AgentContext], Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]
+        ],
+    ) -> AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None:
+        """Execute the agent middleware pipeline for streaming or non-streaming.
 
         Args:
-            agent: The agent being invoked.
-            messages: The messages to send to the agent.
             context: The agent invocation context.
             final_handler: The final handler that performs the actual agent execution.
 
         Returns:
             The agent response after processing through all middleware.
         """
-        # Update context with agent and messages
-        context.agent = agent
-        context.messages = messages
-        context.is_streaming = False
-
         if not self._middleware:
-            return await final_handler(context)
-
-        # Store the final result
-        result_container: dict[str, AgentResponse | None] = {"result": None}
-
-        # Custom final handler that handles termination and result override
-        async def agent_final_handler(c: AgentRunContext) -> AgentResponse:
-            # If terminate was set, return the result (which might be None)
-            if c.terminate:
-                if c.result is not None and isinstance(c.result, AgentResponse):
-                    return c.result
-                return AgentResponse()
-            # Execute actual handler and populate context for observability
-            return await final_handler(c)
-
-        first_handler = self._create_handler_chain(agent_final_handler, result_container, "result")
-        await first_handler(context)
-
-        # Return the result from result container or overridden result
-        if context.result is not None and isinstance(context.result, AgentResponse):
+            context.result = final_handler(context)  # type: ignore[assignment]
+            if isinstance(context.result, Awaitable):
+                context.result = await context.result
             return context.result
 
-        # If no result was set (next() not called), return empty AgentResponse
-        response = result_container.get("result")
-        if response is None:
-            return AgentResponse()
-        return response
+        def create_next_handler(index: int) -> Callable[[AgentContext], Awaitable[None]]:
+            if index >= len(self._middleware):
 
-    async def execute_stream(
-        self,
-        agent: "AgentProtocol",
-        messages: list[ChatMessage],
-        context: AgentRunContext,
-        final_handler: Callable[[AgentRunContext], AsyncIterable[AgentResponseUpdate]],
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Execute the agent middleware pipeline for streaming.
+                async def final_wrapper(c: AgentContext) -> None:
+                    c.result = final_handler(c)  # type: ignore[assignment]
+                    if inspect.isawaitable(c.result):
+                        c.result = await c.result
 
-        Args:
-            agent: The agent being invoked.
-            messages: The messages to send to the agent.
-            context: The agent invocation context.
-            final_handler: The final handler that performs the actual agent streaming execution.
+                return final_wrapper
 
-        Yields:
-            Agent response updates after processing through all middleware.
-        """
-        # Update context with agent and messages
-        context.agent = agent
-        context.messages = messages
-        context.is_streaming = True
+            async def current_handler(c: AgentContext) -> None:
+                # MiddlewareTermination bubbles up to execute() to skip post-processing
+                await self._middleware[index].process(c, create_next_handler(index + 1))
 
-        if not self._middleware:
-            async for update in final_handler(context):
-                yield update
-            return
+            return current_handler
 
-        # Store the final result
-        result_container: dict[str, AsyncIterable[AgentResponseUpdate] | None] = {"result_stream": None}
+        first_handler = create_next_handler(0)
+        with contextlib.suppress(MiddlewareTermination):
+            await first_handler(context)
 
-        first_handler = self._create_streaming_handler_chain(final_handler, result_container, "result_stream")
-        await first_handler(context)
-
-        # Yield from the result stream in result container or overridden result
-        if context.result is not None and hasattr(context.result, "__aiter__"):
-            async for update in context.result:  # type: ignore
-                yield update
-            return
-
-        result_stream = result_container["result_stream"]
-        if result_stream is None:
-            # If no result stream was set (next() not called), yield nothing
-            return
-
-        async for update in result_stream:
-            yield update
+        if context.result and isinstance(context.result, ResponseStream):
+            for hook in context.stream_transform_hooks:
+                context.result.with_transform_hook(hook)
+            for result_hook in context.stream_result_hooks:
+                context.result.with_result_hook(result_hook)
+            for cleanup_hook in context.stream_cleanup_hooks:
+                context.result.with_cleanup_hook(cleanup_hook)
+        return context.result
 
 
 class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
@@ -881,7 +809,7 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the function invocation and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middleware: Sequence[FunctionMiddleware | FunctionMiddlewareCallable] | None = None):
+    def __init__(self, *middleware: FunctionMiddlewareTypes):
         """Initialize the function middleware pipeline.
 
         Args:
@@ -894,7 +822,7 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             for mdlware in middleware:
                 self._register_middleware(mdlware)
 
-    def _register_middleware(self, middleware: FunctionMiddleware | FunctionMiddlewareCallable) -> None:
+    def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.
 
         Args:
@@ -904,47 +832,42 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
     async def execute(
         self,
-        function: Any,
-        arguments: "BaseModel",
         context: FunctionInvocationContext,
         final_handler: Callable[[FunctionInvocationContext], Awaitable[Any]],
     ) -> Any:
         """Execute the function middleware pipeline.
 
         Args:
-            function: The function being invoked.
-            arguments: The validated arguments for the function.
             context: The function invocation context.
             final_handler: The final handler that performs the actual function execution.
 
         Returns:
             The function result after processing through all middleware.
         """
-        # Update context with function and arguments
-        context.function = function
-        context.arguments = arguments
-
         if not self._middleware:
             return await final_handler(context)
 
-        # Store the final result
-        result_container: dict[str, Any] = {"result": None}
+        def create_next_handler(index: int) -> Callable[[FunctionInvocationContext], Awaitable[None]]:
+            if index >= len(self._middleware):
 
-        # Custom final handler that handles pre-existing results
-        async def function_final_handler(c: FunctionInvocationContext) -> Any:
-            # If terminate was set, skip execution and return the result (which might be None)
-            if c.terminate:
-                return c.result
-            # Execute actual handler and populate context for observability
-            return await final_handler(c)
+                async def final_wrapper(c: FunctionInvocationContext) -> None:
+                    c.result = final_handler(c)
+                    if inspect.isawaitable(c.result):
+                        c.result = await c.result
 
-        first_handler = self._create_handler_chain(function_final_handler, result_container, "result")
+                return final_wrapper
+
+            async def current_handler(c: FunctionInvocationContext) -> None:
+                # MiddlewareTermination bubbles up to execute() to skip post-processing
+                await self._middleware[index].process(c, create_next_handler(index + 1))
+
+            return current_handler
+
+        first_handler = create_next_handler(0)
+        # Don't suppress MiddlewareTermination - let it propagate to signal loop termination
         await first_handler(context)
 
-        # Return the result from result container or overridden result
-        if context.result is not None:
-            return context.result
-        return result_container["result"]
+        return context.result
 
 
 class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
@@ -954,7 +877,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
     to process the chat request and pass control to the next middleware in the chain.
     """
 
-    def __init__(self, middleware: Sequence[ChatMiddleware | ChatMiddlewareCallable] | None = None):
+    def __init__(self, *middleware: ChatMiddlewareTypes):
         """Initialize the chat middleware pipeline.
 
         Args:
@@ -967,7 +890,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             for mdlware in middleware:
                 self._register_middleware(mdlware)
 
-    def _register_middleware(self, middleware: ChatMiddleware | ChatMiddlewareCallable) -> None:
+    def _register_middleware(self, middleware: ChatMiddlewareTypes) -> None:
         """Register a chat middleware item.
 
         Args:
@@ -977,107 +900,309 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
     async def execute(
         self,
-        chat_client: "ChatClientProtocol",
-        messages: "MutableSequence[ChatMessage]",
-        options: Mapping[str, Any] | None,
         context: ChatContext,
-        final_handler: Callable[[ChatContext], Awaitable["ChatResponse"]],
-        **kwargs: Any,
-    ) -> "ChatResponse":
+        final_handler: Callable[
+            [ChatContext], Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]
+        ],
+    ) -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
         """Execute the chat middleware pipeline.
 
         Args:
-            chat_client: The chat client being invoked.
-            messages: The messages being sent to the chat client.
-            options: The options for the chat request as a dict.
             context: The chat invocation context.
             final_handler: The final handler that performs the actual chat execution.
-            **kwargs: Additional keyword arguments.
 
         Returns:
             The chat response after processing through all middleware.
         """
-        # Update context with chat client, messages, and options
-        context.chat_client = chat_client
-        context.messages = messages
-        if options:
-            context.options = options
-
         if not self._middleware:
-            return await final_handler(context)
+            context.result = final_handler(context)  # type: ignore[assignment]
+            if isinstance(context.result, Awaitable):
+                context.result = await context.result
+            if context.stream and not isinstance(context.result, ResponseStream):
+                raise ValueError("Streaming agent middleware requires a ResponseStream result.")
+            return context.result
 
-        # Store the final result
-        result_container: dict[str, Any] = {"result": None}
+        def create_next_handler(index: int) -> Callable[[ChatContext], Awaitable[None]]:
+            if index >= len(self._middleware):
 
-        # Custom final handler that handles pre-existing results
-        async def chat_final_handler(c: ChatContext) -> "ChatResponse":
-            # If terminate was set, skip execution and return the result (which might be None)
-            if c.terminate:
-                return c.result  # type: ignore
-            # Execute actual handler and populate context for observability
-            return await final_handler(c)
+                async def final_wrapper(c: ChatContext) -> None:
+                    c.result = final_handler(c)  # type: ignore[assignment]
+                    if inspect.isawaitable(c.result):
+                        c.result = await c.result
 
-        first_handler = self._create_handler_chain(chat_final_handler, result_container, "result")
-        await first_handler(context)
+                return final_wrapper
 
-        # Return the result from result container or overridden result
-        if context.result is not None:
-            return context.result  # type: ignore
-        return result_container["result"]  # type: ignore
+            async def current_handler(c: ChatContext) -> None:
+                # MiddlewareTermination bubbles up to execute() to skip post-processing
+                await self._middleware[index].process(c, create_next_handler(index + 1))
 
-    async def execute_stream(
+            return current_handler
+
+        first_handler = create_next_handler(0)
+        with contextlib.suppress(MiddlewareTermination):
+            await first_handler(context)
+
+        if context.result and isinstance(context.result, ResponseStream):
+            for hook in context.stream_transform_hooks:
+                context.result.with_transform_hook(hook)
+            for result_hook in context.stream_result_hooks:
+                context.result.with_result_hook(result_hook)
+            for cleanup_hook in context.stream_cleanup_hooks:
+                context.result.with_cleanup_hook(cleanup_hook)
+        return context.result
+
+
+# Covariant for chat client options
+TOptions_co = TypeVar(
+    "TOptions_co",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+    covariant=True,
+)
+
+
+class ChatMiddlewareLayer(Generic[TOptions_co]):
+    """Layer for chat clients to apply chat middleware around response generation."""
+
+    def __init__(
         self,
-        chat_client: "ChatClientProtocol",
-        messages: "MutableSequence[ChatMessage]",
-        options: Mapping[str, Any] | None,
-        context: ChatContext,
-        final_handler: Callable[[ChatContext], AsyncIterable["ChatResponseUpdate"]],
+        *,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable["ChatResponseUpdate"]:
-        """Execute the chat middleware pipeline for streaming.
+    ) -> None:
+        middleware_list = categorize_middleware(*(middleware or []))
+        self.chat_middleware = middleware_list["chat"]
+        if "function_middleware" in kwargs and middleware_list["function"]:
+            raise ValueError("Cannot specify 'function_middleware' and 'middleware' at the same time.")
+        kwargs["function_middleware"] = middleware_list["function"]
+        super().__init__(**kwargs)
 
-        Args:
-            chat_client: The chat client being invoked.
-            messages: The messages being sent to the chat client.
-            options: The options for the chat request as a dict.
-            context: The chat invocation context.
-            final_handler: The final handler that performs the actual streaming chat execution.
-            **kwargs: Additional keyword arguments.
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: ChatOptions[TResponseModelT],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
 
-        Yields:
-            Chat response updates after processing through all middleware.
-        """
-        # Update context with chat client, messages, and options
-        context.chat_client = chat_client
-        context.messages = messages
-        if options:
-            context.options = options
-        context.is_streaming = True
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[False] = ...,
+        options: TOptions_co | ChatOptions[None] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
 
-        if not self._middleware:
-            async for update in final_handler(context):
-                yield update
-            return
+    @overload
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: Literal[True],
+        options: TOptions_co | ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
-        # Store the final result stream
-        result_container: dict[str, Any] = {"result_stream": None}
+    def get_response(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        *,
+        stream: bool = False,
+        options: TOptions_co | ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Execute the chat pipeline if middleware is configured."""
+        super_get_response = super().get_response  # type: ignore[misc]
 
-        first_handler = self._create_streaming_handler_chain(final_handler, result_container, "result_stream")
-        await first_handler(context)
+        call_middleware = kwargs.pop("middleware", [])
+        middleware = categorize_middleware(call_middleware)
+        kwargs["function_middleware"] = middleware["function"]
 
-        # Yield from the result stream in result container or overridden result
-        if context.result is not None and hasattr(context.result, "__aiter__"):
-            async for update in context.result:  # type: ignore
-                yield update
-            return
+        pipeline = ChatMiddlewarePipeline(
+            *self.chat_middleware,
+            *middleware["chat"],
+        )
+        if not pipeline.has_middlewares:
+            return super_get_response(  # type: ignore[no-any-return]
+                messages=messages,
+                stream=stream,
+                options=options,
+                **kwargs,
+            )
 
-        result_stream = result_container["result_stream"]
-        if result_stream is None:
-            # If no result stream was set (next() not called), yield nothing
-            return
+        context = ChatContext(
+            chat_client=self,  # type: ignore[arg-type]
+            messages=prepare_messages(messages),
+            options=options,
+            stream=stream,
+            kwargs=kwargs,
+        )
 
-        async for update in result_stream:
-            yield update
+        async def _execute() -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
+            return await pipeline.execute(
+                context=context,
+                final_handler=self._middleware_handler,
+            )
+
+        if stream:
+            # For streaming, wrap execution in ResponseStream.from_awaitable
+            async def _execute_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+                result = await _execute()
+                if result is None:
+                    # Create empty stream if middleware terminated without setting result
+                    return ResponseStream(_empty_async_iterable())
+                if isinstance(result, ResponseStream):
+                    return result
+                # If result is ChatResponse (shouldn't happen for streaming), raise error
+                raise ValueError("Expected ResponseStream for streaming, got ChatResponse")
+
+            return ResponseStream.from_awaitable(_execute_stream())
+
+        # For non-streaming, return the coroutine directly
+        return _execute()  # type: ignore[return-value]
+
+    def _middleware_handler(
+        self, context: ChatContext
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Internal middleware handler to adapt to pipeline."""
+        return super().get_response(  # type: ignore[misc, no-any-return]
+            messages=context.messages,
+            stream=context.stream,
+            options=context.options or {},
+            **context.kwargs,
+        )
+
+
+class AgentMiddlewareLayer:
+    """Layer for agents to apply agent middleware around run execution."""
+
+    def __init__(
+        self,
+        *args: Any,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        middleware_list = categorize_middleware(middleware)
+        self.agent_middleware = middleware_list["agent"]
+        # Pass middleware to super so BaseAgent can store it for dynamic rebuild
+        super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
+        # Note: We intentionally don't extend chat_client's middleware lists here.
+        # Chat and function middleware is passed to the chat client at runtime via kwargs
+        # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        options: ChatOptions[TResponseModelT],
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[False] = ...,
+        thread: AgentThread | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        options: ChatOptions[None] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        options: ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        options: ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """MiddlewareTypes-enabled unified run method."""
+        # Re-categorize self.middleware at runtime to support dynamic changes
+        base_middleware = getattr(self, "middleware", None) or []
+        base_middleware_list = categorize_middleware(base_middleware)
+        run_middleware_list = categorize_middleware(middleware)
+        pipeline = AgentMiddlewarePipeline(*base_middleware_list["agent"], *run_middleware_list["agent"])
+
+        # Combine base and run-level function/chat middleware for forwarding to chat client
+        combined_function_chat_middleware = (
+            base_middleware_list["function"]
+            + base_middleware_list["chat"]
+            + run_middleware_list["function"]
+            + run_middleware_list["chat"]
+        )
+        combined_kwargs = dict(kwargs)
+        combined_kwargs["middleware"] = combined_function_chat_middleware if combined_function_chat_middleware else None
+
+        # Execute with middleware if available
+        if not pipeline.has_middlewares:
+            return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
+
+        context = AgentContext(
+            agent=self,  # type: ignore[arg-type]
+            messages=prepare_messages(messages),  # type: ignore[arg-type]
+            thread=thread,
+            options=options,
+            stream=stream,
+            kwargs=combined_kwargs,
+        )
+
+        async def _execute() -> AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None:
+            return await pipeline.execute(
+                context=context,
+                final_handler=self._middleware_handler,
+            )
+
+        if stream:
+            # For streaming, wrap execution in ResponseStream.from_awaitable
+            async def _execute_stream() -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+                result = await _execute()
+                if result is None:
+                    # Create empty stream if middleware terminated without setting result
+                    return ResponseStream(_empty_async_iterable())
+                if isinstance(result, ResponseStream):
+                    return result
+                # If result is AgentResponse (shouldn't happen for streaming), convert to stream
+                raise ValueError("Expected ResponseStream for streaming, got AgentResponse")
+
+            return ResponseStream.from_awaitable(_execute_stream())
+
+        # For non-streaming, return the coroutine directly
+        return _execute()  # type: ignore[return-value]
+
+    def _middleware_handler(
+        self, context: AgentContext
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        return super().run(  # type: ignore[misc, no-any-return]
+            context.messages,
+            stream=context.stream,
+            thread=context.thread,
+            options=context.options,
+            **context.kwargs,
+        )
 
 
 def _determine_middleware_type(middleware: Any) -> MiddlewareType:
@@ -1106,7 +1231,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
             first_param = params[0]
             if hasattr(first_param.annotation, "__name__"):
                 annotation_name = first_param.annotation.__name__
-                if annotation_name == "AgentRunContext":
+                if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":
                     param_type = MiddlewareType.FUNCTION
@@ -1115,7 +1240,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         else:
             # Not enough parameters - can't be valid middleware
             raise MiddlewareException(
-                f"Middleware function must have at least 2 parameters (context, next), "
+                f"MiddlewareTypes function must have at least 2 parameters (context, next), "
                 f"but {middleware.__name__} has {len(params)}"
             )
     except Exception as e:
@@ -1128,7 +1253,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         # Both decorator and parameter type specified - they must match
         if decorator_type != param_type:
             raise MiddlewareException(
-                f"Middleware type mismatch: decorator indicates '{decorator_type.value}' "
+                f"MiddlewareTypes type mismatch: decorator indicates '{decorator_type.value}' "
                 f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
             )
         return decorator_type
@@ -1145,341 +1270,8 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
     raise MiddlewareException(
         f"Cannot determine middleware type for function {middleware.__name__}. "
         f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
-        f"or specify parameter types (AgentRunContext, FunctionInvocationContext, or ChatContext)."
+        f"or specify parameter types (AgentContext, FunctionInvocationContext, or ChatContext)."
     )
-
-
-# Decorator for adding middleware support to agent classes
-def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
-    """Class decorator that adds middleware support to an agent class.
-
-    This decorator adds middleware functionality to any agent class.
-    It wraps the ``run()`` and ``run_stream()`` methods to provide middleware execution.
-
-    The middleware execution can be terminated at any point by setting the
-    ``context.terminate`` property to True. Once set, the pipeline will stop executing
-    further middleware as soon as control returns to the pipeline.
-
-    Note:
-        This decorator is already applied to built-in agent classes. You only need to use
-        it if you're creating custom agent implementations.
-
-    Args:
-        agent_class: The agent class to add middleware support to.
-
-    Returns:
-        The modified agent class with middleware support.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import use_agent_middleware
-
-
-            @use_agent_middleware
-            class CustomAgent:
-                async def run(self, messages, **kwargs):
-                    # Agent implementation
-                    pass
-
-                async def run_stream(self, messages, **kwargs):
-                    # Streaming implementation
-                    pass
-    """
-    # Store original methods
-    original_run = agent_class.run  # type: ignore[attr-defined]
-    original_run_stream = agent_class.run_stream  # type: ignore[attr-defined]
-
-    def _build_middleware_pipelines(
-        agent_level_middlewares: Sequence[Middleware] | None,
-        run_level_middlewares: Sequence[Middleware] | None = None,
-    ) -> tuple[AgentMiddlewarePipeline, FunctionMiddlewarePipeline, list[ChatMiddleware | ChatMiddlewareCallable]]:
-        """Build fresh agent and function middleware pipelines from the provided middleware lists.
-
-        Args:
-            agent_level_middlewares: Agent-level middleware (executed first)
-            run_level_middlewares: Run-level middleware (executed after agent middleware)
-        """
-        middleware = categorize_middleware(*(agent_level_middlewares or ()), *(run_level_middlewares or ()))
-
-        return (
-            AgentMiddlewarePipeline(middleware["agent"]),  # type: ignore[arg-type]
-            FunctionMiddlewarePipeline(middleware["function"]),  # type: ignore[arg-type]
-            middleware["chat"],  # type: ignore[return-value]
-        )
-
-    async def middleware_enabled_run(
-        self: Any,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: Any = None,
-        middleware: Sequence[Middleware] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse:
-        """Middleware-enabled run method."""
-        # Build fresh middleware pipelines from current middleware collection and run-level middleware
-        agent_middleware = getattr(self, "middleware", None)
-
-        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middleware)
-
-        # Add function middleware pipeline to kwargs if available
-        if function_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = function_pipeline
-
-        # Pass chat middleware through kwargs for run-level application
-        if chat_middlewares:
-            kwargs["middleware"] = chat_middlewares
-
-        normalized_messages = normalize_messages(messages)
-
-        # Execute with middleware if available
-        if agent_pipeline.has_middlewares:
-            context = AgentRunContext(
-                agent=self,  # type: ignore[arg-type]
-                messages=normalized_messages,
-                thread=thread,
-                is_streaming=False,
-                kwargs=kwargs,
-            )
-
-            async def _execute_handler(ctx: AgentRunContext) -> AgentResponse:
-                return await original_run(self, ctx.messages, thread=thread, **ctx.kwargs)  # type: ignore
-
-            result = await agent_pipeline.execute(
-                self,  # type: ignore[arg-type]
-                normalized_messages,
-                context,
-                _execute_handler,
-            )
-
-            return result if result else AgentResponse()
-
-        # No middleware, execute directly
-        return await original_run(self, normalized_messages, thread=thread, **kwargs)  # type: ignore[return-value]
-
-    def middleware_enabled_run_stream(
-        self: Any,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: Any = None,
-        middleware: Sequence[Middleware] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Middleware-enabled run_stream method."""
-        # Build fresh middleware pipelines from current middleware collection and run-level middleware
-        agent_middleware = getattr(self, "middleware", None)
-        agent_pipeline, function_pipeline, chat_middlewares = _build_middleware_pipelines(agent_middleware, middleware)
-
-        # Add function middleware pipeline to kwargs if available
-        if function_pipeline.has_middlewares:
-            kwargs["_function_middleware_pipeline"] = function_pipeline
-
-        # Pass chat middleware through kwargs for run-level application
-        if chat_middlewares:
-            kwargs["middleware"] = chat_middlewares
-
-        normalized_messages = normalize_messages(messages)
-
-        # Execute with middleware if available
-        if agent_pipeline.has_middlewares:
-            context = AgentRunContext(
-                agent=self,  # type: ignore[arg-type]
-                messages=normalized_messages,
-                thread=thread,
-                is_streaming=True,
-                kwargs=kwargs,
-            )
-
-            async def _execute_stream_handler(ctx: AgentRunContext) -> AsyncIterable[AgentResponseUpdate]:
-                async for update in original_run_stream(self, ctx.messages, thread=thread, **ctx.kwargs):  # type: ignore[misc]
-                    yield update
-
-            async def _stream_generator() -> AsyncIterable[AgentResponseUpdate]:
-                async for update in agent_pipeline.execute_stream(
-                    self,  # type: ignore[arg-type]
-                    normalized_messages,
-                    context,
-                    _execute_stream_handler,
-                ):
-                    yield update
-
-            return _stream_generator()
-
-        # No middleware, execute directly
-        return original_run_stream(self, normalized_messages, thread=thread, **kwargs)  # type: ignore
-
-    agent_class.run = update_wrapper(middleware_enabled_run, original_run)  # type: ignore
-    agent_class.run_stream = update_wrapper(middleware_enabled_run_stream, original_run_stream)  # type: ignore
-
-    return agent_class
-
-
-def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClient]:
-    """Class decorator that adds middleware support to a chat client class.
-
-    This decorator adds middleware functionality to any chat client class.
-    It wraps the ``get_response()`` and ``get_streaming_response()`` methods to provide middleware execution.
-
-    Note:
-        This decorator is already applied to built-in chat client classes. You only need to use
-        it if you're creating custom chat client implementations.
-
-    Args:
-        chat_client_class: The chat client class to add middleware support to.
-
-    Returns:
-        The modified chat client class with middleware support.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import use_chat_middleware
-
-
-            @use_chat_middleware
-            class CustomChatClient:
-                async def get_response(self, messages, **kwargs):
-                    # Chat client implementation
-                    pass
-
-                async def get_streaming_response(self, messages, **kwargs):
-                    # Streaming implementation
-                    pass
-    """
-    # Store original methods
-    original_get_response = chat_client_class.get_response
-    original_get_streaming_response = chat_client_class.get_streaming_response
-
-    async def middleware_enabled_get_response(
-        self: Any,
-        messages: Any,
-        *,
-        options: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Middleware-enabled get_response method."""
-        # Check if middleware is provided at call level or instance level
-        call_middleware = kwargs.pop("middleware", None)
-        instance_middleware = getattr(self, "middleware", None)
-
-        # Merge all middleware and separate by type
-        middleware = categorize_middleware(instance_middleware, call_middleware)
-        chat_middleware_list = middleware["chat"]  # type: ignore[assignment]
-
-        # Extract function middleware for the function invocation pipeline
-        function_middleware_list = middleware["function"]
-
-        # Pass function middleware to function invocation system if present
-        if function_middleware_list:
-            kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(function_middleware_list)  # type: ignore[arg-type]
-
-        # If no chat middleware, use original method
-        if not chat_middleware_list:
-            return await original_get_response(
-                self,
-                messages,
-                options=options,  # type: ignore[arg-type]
-                **kwargs,
-            )
-
-        # Create pipeline and execute with middleware
-        pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
-        context = ChatContext(
-            chat_client=self,
-            messages=prepare_messages(messages),
-            options=options,
-            is_streaming=False,
-            kwargs=kwargs,
-        )
-
-        async def final_handler(ctx: ChatContext) -> Any:
-            return await original_get_response(
-                self,
-                list(ctx.messages),
-                options=ctx.options,  # type: ignore[arg-type]
-                **ctx.kwargs,
-            )
-
-        return await pipeline.execute(
-            chat_client=self,
-            messages=context.messages,
-            options=options,
-            context=context,
-            final_handler=final_handler,
-            **kwargs,
-        )
-
-    def middleware_enabled_get_streaming_response(
-        self: Any,
-        messages: Any,
-        *,
-        options: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Middleware-enabled get_streaming_response method."""
-
-        async def _stream_generator() -> Any:
-            # Check if middleware is provided at call level or instance level
-            call_middleware = kwargs.pop("middleware", None)
-            instance_middleware = getattr(self, "middleware", None)
-
-            # Merge all middleware and separate by type
-            middleware = categorize_middleware(instance_middleware, call_middleware)
-            chat_middleware_list = middleware["chat"]
-            function_middleware_list = middleware["function"]
-
-            # Pass function middleware to function invocation system if present
-            if function_middleware_list:
-                kwargs["_function_middleware_pipeline"] = FunctionMiddlewarePipeline(function_middleware_list)
-
-            # If no chat middleware, use original method
-            if not chat_middleware_list:
-                async for update in original_get_streaming_response(
-                    self,
-                    messages,
-                    options=options,  # type: ignore[arg-type]
-                    **kwargs,
-                ):
-                    yield update
-                return
-
-            # Create pipeline and execute with middleware
-            pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
-            context = ChatContext(
-                chat_client=self,
-                messages=prepare_messages(messages),
-                options=options or {},
-                is_streaming=True,
-                kwargs=kwargs,
-            )
-
-            def final_handler(ctx: ChatContext) -> Any:
-                return original_get_streaming_response(
-                    self,
-                    list(ctx.messages),
-                    options=ctx.options,  # type: ignore[arg-type]
-                    **ctx.kwargs,
-                )
-
-            async for update in pipeline.execute_stream(
-                chat_client=self,
-                messages=context.messages,
-                options=options or {},
-                context=context,
-                final_handler=final_handler,
-                **kwargs,
-            ):
-                yield update
-
-        return _stream_generator()
-
-    # Replace methods
-    chat_client_class.get_response = update_wrapper(middleware_enabled_get_response, original_get_response)  # type: ignore
-    chat_client_class.get_streaming_response = update_wrapper(  # type: ignore
-        middleware_enabled_get_streaming_response, original_get_streaming_response
-    )
-
-    return chat_client_class
 
 
 class MiddlewareDict(TypedDict):
@@ -1489,7 +1281,7 @@ class MiddlewareDict(TypedDict):
 
 
 def categorize_middleware(
-    *middleware_sources: Middleware | None,
+    *middleware_sources: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
 ) -> MiddlewareDict:
     """Categorize middleware from multiple sources into agent, function, and chat types.
 
@@ -1532,57 +1324,3 @@ def categorize_middleware(
             result["agent"].append(middleware)
 
     return result
-
-
-def create_function_middleware_pipeline(
-    *middleware_sources: Middleware,
-) -> FunctionMiddlewarePipeline | None:
-    """Create a function middleware pipeline from multiple middleware sources.
-
-    Args:
-        *middleware_sources: Variable number of middleware sources.
-
-    Returns:
-        A FunctionMiddlewarePipeline if function middleware is found, None otherwise.
-    """
-    function_middlewares = categorize_middleware(*middleware_sources)["function"]
-    return FunctionMiddlewarePipeline(function_middlewares) if function_middlewares else None  # type: ignore[arg-type]
-
-
-def extract_and_merge_function_middleware(
-    chat_client: Any, kwargs: dict[str, Any]
-) -> "FunctionMiddlewarePipeline | None":
-    """Extract function middleware from chat client and merge with existing pipeline in kwargs.
-
-    Args:
-        chat_client: The chat client instance to extract middleware from.
-        kwargs: Dictionary containing middleware and pipeline information.
-
-    Returns:
-        A FunctionMiddlewarePipeline if function middleware is found, None otherwise.
-    """
-    # Check if a pipeline was already created by use_chat_middleware
-    existing_pipeline: FunctionMiddlewarePipeline | None = kwargs.get("_function_middleware_pipeline")
-
-    # Get middleware sources
-    client_middleware = getattr(chat_client, "middleware", None)
-    run_level_middleware = kwargs.get("middleware")
-
-    # If we have an existing pipeline but no additional middleware sources, return it directly
-    if existing_pipeline and not client_middleware and not run_level_middleware:
-        return existing_pipeline
-
-    # If we have an existing pipeline with additional middleware, we need to merge
-    # Extract existing pipeline middleware if present - cast to list[Middleware] for type compatibility
-    existing_middleware: list[Middleware] | None = list(existing_pipeline._middleware) if existing_pipeline else None
-
-    # Create combined pipeline from all sources using existing helper
-    combined_pipeline = create_function_middleware_pipeline(
-        *(client_middleware or ()), *(run_level_middleware or ()), *(existing_middleware or ())
-    )
-
-    # If we have an existing pipeline but combined is None (no new middleware), return existing
-    if existing_pipeline and combined_pipeline is None:
-        return existing_pipeline
-
-    return combined_pipeline
