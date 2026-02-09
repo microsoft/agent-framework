@@ -640,7 +640,7 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
             name: The name of the function.
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
-                Default is that approval is required.
+                Default is that approval is NOT required (``"never_require"``).
             max_invocations: The maximum number of times this function can be invoked.
                 If None, there is no limit. Should be at least 1.
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
@@ -652,7 +652,13 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
                 actual implementation exists elsewhere (e.g., client-side rendering).
             input_model: The Pydantic model that defines the input parameters for the function.
                 This can also be a JSON schema dictionary.
-                If not provided, it will be inferred from the function signature.
+                If not provided and ``func`` is not ``None``, it will be inferred from
+                the function signature. When ``func`` is ``None`` and ``input_model`` is
+                not provided, the tool will use an empty input model (no parameters) in
+                its JSON schema. For declaration-only tools that should declare
+                parameters, explicitly provide ``input_model`` (either a Pydantic
+                ``BaseModel`` or a JSON schema dictionary) so the model can reason about
+                the expected arguments.
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
@@ -1295,7 +1301,7 @@ def tool(
         description: A description of the function. If not provided, the function's
             docstring will be used.
         approval_mode: Whether or not approval is required to run this tool.
-            Default is that approval is required.
+            Default is that approval is NOT required (``"never_require"``).
         max_invocations: The maximum number of times this function can be invoked.
             If None, there is no limit, should be at least 1.
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.

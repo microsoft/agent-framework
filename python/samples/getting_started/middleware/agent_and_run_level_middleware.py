@@ -31,8 +31,9 @@ The example shows:
 3. Run-level context middleware for specific use cases (high priority, debugging)
 4. Run-level caching middleware for expensive operations
 
-Middleware Execution Order:
-    When both agent-level and run-level middleware are configured, they execute in this order:
+Agent Middleware Execution Order:
+    When both agent-level and run-level *agent* middleware are configured, they execute
+    in this order:
 
     1. Agent-level middleware (outermost) - executes first, in the order they were registered
     2. Run-level middleware (innermost) - executes next, in the order they were passed to run()
@@ -45,6 +46,11 @@ Middleware Execution Order:
     - Agent middleware wraps ALL run middleware and the agent
     - Run middleware wraps only the agent for that specific run
     - Each middleware can modify the context before AND after calling next()
+
+    Note: Function and chat middleware (e.g., ``function_logging_middleware``) execute
+    during tool invocation *inside* the agent execution, not in the outer agent-middleware
+    chain shown above. They follow the same ordering principle: agent-level function/chat
+    middleware runs before run-level function/chat middleware.
 """
 
 
