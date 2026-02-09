@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <PackageTags>aspire integration hosting agent-framework devui ai agents</PackageTags>
+    <Description>Microsoft Agent Framework DevUI support for Aspire.</Description>
+    <!-- Suppress analyzer warnings for Aspire integration code -->
+    <NoWarn>$(NoWarn);CA1873;RCS1061;VSTHRD002</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" />
+  </ItemGroup>
+
+</Project>
