@@ -7,7 +7,7 @@ to other specialized agents based on the task requirements.
 
 import asyncio
 
-from agent_framework import WorkflowEvent
+from agent_framework import AgentResponseUpdate, WorkflowEvent
 from orderedmultidict import Any
 
 
@@ -99,7 +99,6 @@ async def run_autogen() -> None:
 async def run_agent_framework() -> None:
     """Agent Framework's HandoffBuilder for agent coordination."""
     from agent_framework import (
-        AgentResponseUpdate,
         WorkflowRunState,
     )
     from agent_framework.openai import OpenAIChatClient
@@ -138,10 +137,10 @@ async def run_agent_framework() -> None:
         HandoffBuilder(
             name="support_handoff",
             participants=[triage_agent, billing_agent, tech_support],
+            termination_condition=lambda conv: sum(1 for msg in conv if msg.role == "user") > 3,
         )
         .with_start_agent(triage_agent)
         .add_handoff(triage_agent, [billing_agent, tech_support])
-        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") > 3)
         .build()
     )
 
@@ -193,7 +192,7 @@ async def run_agent_framework() -> None:
         current_executor = None
         stream_line_open = False
 
-        async for event in workflow.send_responses_streaming(responses):
+        async for event in workflow.run(stream=True, responses=responses):
             if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 # Print executor name header when switching to a new agent
                 if current_executor != event.executor_id:

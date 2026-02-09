@@ -441,7 +441,7 @@ class AgentFrameworkExecutor:
                 if not checkpoint_id:
                     error_msg = (
                         "Cannot process HIL responses without a checkpoint. "
-                        "Workflows using HIL must be configured with .with_checkpointing() "
+                        "Workflows using HIL must be configured with checkpoint_storage in constructor"
                         "and a checkpoint must exist before sending responses."
                     )
                     logger.error(error_msg)
@@ -451,8 +451,6 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow with HIL responses for {len(hil_responses)} request(s)")
 
                 # Unwrap primitive responses if they're wrapped in {response: value} format
-                from ._utils import parse_input_for_type
-
                 unwrapped_responses = {}
                 for request_id, response_value in hil_responses.items():
                     if isinstance(response_value, dict) and "response" in response_value:
@@ -461,62 +459,16 @@ class AgentFrameworkExecutor:
 
                 hil_responses = unwrapped_responses
 
-                # NOTE: Two-step approach for stateless HTTP (framework limitation):
-                # 1. Restore checkpoint to load pending requests into workflow's in-memory state
-                # 2. Then send responses using send_responses_streaming
-                # Future: Framework should support run(stream=True, checkpoint_id, responses) in single call
-                # (checkpoint_id is guaranteed to exist due to earlier validation)
-                logger.debug(f"Restoring checkpoint {checkpoint_id} then sending HIL responses")
+                logger.debug(f"Restoring checkpoint {checkpoint_id} and sending HIL responses")
 
                 try:
-                    # Step 1: Restore checkpoint to populate workflow's in-memory pending requests
-                    restored = False
-                    async for _event in workflow.run(
+                    async for event in workflow.run(
                         stream=True,
+                        responses=hil_responses,
                         checkpoint_id=checkpoint_id,
                         checkpoint_storage=checkpoint_storage,
                     ):
-                        restored = True
-                        break  # Stop immediately after restoration, don't process events
-
-                    if not restored:
-                        raise RuntimeError("Checkpoint restoration did not yield any events")
-
-                    # Reset running flags so we can call send_responses_streaming
-                    if hasattr(workflow, "_is_running"):
-                        workflow._is_running = False
-                    if hasattr(workflow, "_runner") and hasattr(workflow._runner, "_running"):
-                        workflow._runner._running = False
-
-                    # Extract response types from restored workflow and convert responses to proper types
-                    try:
-                        if hasattr(workflow, "_runner") and hasattr(workflow._runner, "context"):
-                            runner_context = workflow._runner.context
-                            pending_requests_dict = await runner_context.get_pending_request_info_events()
-
-                            converted_responses = {}
-                            for request_id, response_value in hil_responses.items():
-                                if request_id in pending_requests_dict:
-                                    pending_request = pending_requests_dict[request_id]
-                                    if hasattr(pending_request, "response_type"):
-                                        response_type = pending_request.response_type
-                                        try:
-                                            response_value = parse_input_for_type(response_value, response_type)
-                                            logger.debug(
-                                                f"Converted HIL response for {request_id} to {type(response_value)}"
-                                            )
-                                        except Exception as e:
-                                            logger.warning(f"Failed to convert HIL response for {request_id}: {e}")
-
-                                converted_responses[request_id] = response_value
-
-                            hil_responses = converted_responses
-                    except Exception as e:
-                        logger.warning(f"Could not convert HIL responses to proper types: {e}")
-
-                    async for event in workflow.send_responses_streaming(hil_responses):
-                        # Enrich new request_info events (type='request_info')
-                        # that may come from subsequent HIL requests
+                        # Enrich new request_info events that may come from subsequent HIL requests
                         if event.type == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 

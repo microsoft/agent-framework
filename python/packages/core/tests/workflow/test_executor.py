@@ -153,7 +153,7 @@ async def test_executor_invoked_event_contains_input_data():
     upper = UpperCaseExecutor(id="upper")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(upper, collector).set_start_executor(upper).build()
+    workflow = WorkflowBuilder(start_executor=upper).add_edge(upper, collector).build()
 
     events = await workflow.run("hello world")
     invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
@@ -190,7 +190,7 @@ async def test_executor_completed_event_contains_sent_messages():
     sender = MultiSenderExecutor(id="sender")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(sender, collector).set_start_executor(sender).build()
+    workflow = WorkflowBuilder(start_executor=sender).add_edge(sender, collector).build()
 
     events = await workflow.run("hello")
     completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
@@ -217,7 +217,7 @@ async def test_executor_completed_event_includes_yielded_outputs():
             await ctx.yield_output(text.upper())
 
     executor = YieldOnlyExecutor(id="yielder")
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     events = await workflow.run("test")
     completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
@@ -260,7 +260,7 @@ async def test_executor_events_with_complex_message_types():
     processor = ProcessorExecutor(id="processor")
     collector = CollectorExecutor(id="collector")
 
-    workflow = WorkflowBuilder().add_edge(processor, collector).set_start_executor(processor).build()
+    workflow = WorkflowBuilder(start_executor=processor).add_edge(processor, collector).build()
 
     input_request = Request(query="hello", limit=3)
     events = await workflow.run(input_request)
@@ -539,7 +539,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
         # Verify mutation happened
         assert len(messages) == original_len + 1
 
-    workflow = WorkflowBuilder().set_start_executor(mutator).build()
+    workflow = WorkflowBuilder(start_executor=mutator).build()
 
     # Run with a single user message
     input_messages = [ChatMessage(role="user", text="hello")]

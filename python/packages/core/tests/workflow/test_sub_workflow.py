@@ -167,8 +167,7 @@ def create_email_validation_workflow() -> Workflow:
     email_domain_validator = EmailDomainValidator()
 
     return (
-        WorkflowBuilder()
-        .set_start_executor(email_format_validator)
+        WorkflowBuilder(start_executor=email_format_validator)
         .add_edge(email_format_validator, email_domain_validator)
         .build()
     )
@@ -184,8 +183,7 @@ async def test_basic_sub_workflow() -> None:
     workflow_executor = WorkflowExecutor(validation_workflow, "email_validation_workflow")
 
     main_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(parent)
+        WorkflowBuilder(start_executor=parent)
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
         .build()
@@ -201,9 +199,11 @@ async def test_basic_sub_workflow() -> None:
     assert request_events[0].data.domain == "example.com"
 
     # Send response through the main workflow
-    await main_workflow.send_responses({
-        request_events[0].request_id: True  # Domain is approved
-    })
+    await main_workflow.run(
+        responses={
+            request_events[0].request_id: True  # Domain is approved
+        }
+    )
 
     # Check result
     assert parent.result is not None
@@ -221,8 +221,7 @@ async def test_sub_workflow_with_interception():
     workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
 
     main_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(parent)
+        WorkflowBuilder(start_executor=parent)
         .add_edge(parent, workflow_executor)
         .add_edge(workflow_executor, parent)
         .build()
@@ -245,9 +244,11 @@ async def test_sub_workflow_with_interception():
     assert request_events[0].data.domain == "unknown.com"
 
     # Send external response
-    await main_workflow.send_responses({
-        request_events[0].request_id: False  # Domain not approved
-    })
+    await main_workflow.run(
+        responses={
+            request_events[0].request_id: False  # Domain not approved
+        }
+    )
     assert parent.result is not None
     assert parent.result.email == "user@unknown.com"
     assert parent.result.is_valid is False
@@ -336,8 +337,7 @@ async def test_workflow_scoped_interception() -> None:
     executor_b = WorkflowExecutor(workflow_b, "workflow_b")
 
     main_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(parent)
+        WorkflowBuilder(start_executor=parent)
         .add_edge(parent, executor_a)
         .add_edge(parent, executor_b)
         .add_edge(executor_a, parent)
@@ -418,8 +418,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
     workflow_executor = WorkflowExecutor(validation_workflow, "email_workflow")
 
     main_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(processor)
+        WorkflowBuilder(start_executor=processor)
         .add_edge(processor, workflow_executor)
         .add_edge(workflow_executor, processor)
         .build()
@@ -447,7 +446,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
 
     # Send responses for all requests (approve all domains)
     responses = {event.request_id: True for event in request_events}
-    await main_workflow.send_responses(responses)
+    await main_workflow.run(responses=responses)
 
     # All results should be collected
     assert len(processor.results) == len(emails)
@@ -560,16 +559,14 @@ class CheckpointTestCoordinator(Executor):
 def _build_checkpoint_test_workflow(storage: InMemoryCheckpointStorage) -> Workflow:
     """Build the main workflow with checkpointing for testing."""
     two_step_executor = TwoStepSubWorkflowExecutor()
-    sub_workflow = WorkflowBuilder().set_start_executor(two_step_executor).build()
+    sub_workflow = WorkflowBuilder(start_executor=two_step_executor).build()
     sub_workflow_executor = WorkflowExecutor(sub_workflow, id="sub_workflow_executor")
 
     coordinator = CheckpointTestCoordinator()
     return (
-        WorkflowBuilder()
-        .set_start_executor(coordinator)
+        WorkflowBuilder(start_executor=coordinator, checkpoint_storage=storage)
         .add_edge(coordinator, sub_workflow_executor)
         .add_edge(sub_workflow_executor, coordinator)
-        .with_checkpointing(storage)
         .build()
     )
 
@@ -613,7 +610,7 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     assert resumed_first_request_id == first_request_id
 
     request_events: list[WorkflowEvent] = []
-    async for event in workflow2.send_responses_streaming({resumed_first_request_id: "first_answer"}):
+    async for event in workflow2.run(stream=True, responses={resumed_first_request_id: "first_answer"}):
         if event.type == "request_info":
             request_events.append(event)
 

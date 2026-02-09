@@ -11,6 +11,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Context,
+    ContextProvider,
     ResponseStream,
     WorkflowEvent,
     resolve_agent_id,
@@ -138,9 +140,11 @@ async def test_handoff():
     # Without explicitly defining handoffs, the builder will create connections
     # between all agents.
     workflow = (
-        HandoffBuilder(participants=[triage, specialist, escalation])
+        HandoffBuilder(
+            participants=[triage, specialist, escalation],
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
+        )
         .with_start_agent(triage)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -164,7 +168,15 @@ async def test_autonomous_mode_yields_output_without_user_request():
     specialist = MockHandoffAgent(name="specialist")
 
     workflow = (
-        HandoffBuilder(participants=[triage, specialist])
+        HandoffBuilder(
+            participants=[triage, specialist],
+            # This termination condition ensures the workflow runs through both agents.
+            # First message is the user message to triage, second is triage's response, which
+            # is a handoff to specialist, third is specialist's response that should not request
+            # user input due to autonomous mode. Fourth message will come from the specialist
+            # again and will trigger termination.
+            termination_condition=lambda conv: len(conv) >= 4,
+        )
         .with_start_agent(triage)
         # Since specialist has no handoff, the specialist will be generating normal responses.
         # With autonomous mode, this should continue until the termination condition is met.
@@ -172,12 +184,6 @@ async def test_autonomous_mode_yields_output_without_user_request():
             agents=[specialist],
             turn_limits={resolve_agent_id(specialist): 1},
         )
-        # This termination condition ensures the workflow runs through both agents.
-        # First message is the user message to triage, second is triage's response, which
-        # is a handoff to specialist, third is specialist's response that should not request
-        # user input due to autonomous mode. Fourth message will come from the specialist
-        # again and will trigger termination.
-        .with_termination_condition(lambda conv: len(conv) >= 4)
         .build()
     )
 
@@ -200,10 +206,9 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     worker = MockHandoffAgent(name="worker")
 
     workflow = (
-        HandoffBuilder(participants=[triage, worker])
+        HandoffBuilder(participants=[triage, worker], termination_condition=lambda conv: False)
         .with_start_agent(triage)
         .with_autonomous_mode(agents=[worker], turn_limits={resolve_agent_id(worker): 2})
-        .with_termination_condition(lambda conv: False)
         .build()
     )
 
@@ -244,9 +249,8 @@ async def test_handoff_async_termination_condition() -> None:
     worker = MockHandoffAgent(name="worker")
 
     workflow = (
-        HandoffBuilder(participants=[coordinator, worker])
+        HandoffBuilder(participants=[coordinator, worker], termination_condition=async_termination)
         .with_start_agent(coordinator)
-        .with_termination_condition(async_termination)
         .build()
     )
 
@@ -255,9 +259,9 @@ async def test_handoff_async_termination_condition() -> None:
     assert requests
 
     events = await _drain(
-        workflow.send_responses_streaming({
-            requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]
-        })
+        workflow.run(
+            stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]}
+        )
     )
     outputs = [ev for ev in events if ev.type == "output"]
     assert len(outputs) == 1
@@ -301,6 +305,48 @@ async def test_tool_choice_preserved_from_agent_config():
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
     assert last_tool_choice == {"mode": "required"}, f"Expected 'required', got {last_tool_choice}"
+
+
+async def test_context_provider_preserved_during_handoff():
+    """Verify that context_provider is preserved when cloning agents in handoff workflows."""
+    # Track whether context provider methods were called
+    provider_calls: list[str] = []
+
+    class TestContextProvider(ContextProvider):
+        """A test context provider that tracks its invocations."""
+
+        async def invoking(self, messages: Sequence[ChatMessage], **kwargs: Any) -> Context:
+            provider_calls.append("invoking")
+            return Context(instructions="Test context from provider.")
+
+    # Create context provider
+    context_provider = TestContextProvider()
+
+    # Create a mock chat client
+    mock_client = MockChatClient(name="test_agent")
+
+    # Create agent with context provider using proper constructor
+    agent = ChatAgent(
+        chat_client=mock_client,
+        name="test_agent",
+        id="test_agent",
+        context_provider=context_provider,
+    )
+
+    # Verify the original agent has the context provider
+    assert agent.context_provider is context_provider, "Original agent should have context provider"
+
+    # Build handoff workflow - this should clone the agent and preserve context_provider
+    workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
+
+    # Run workflow with a simple message to trigger context provider
+    await _drain(workflow.run("Test message", stream=True))
+
+    # Verify context provider was invoked during the workflow execution
+    assert len(provider_calls) > 0, (
+        "Context provider should be called during workflow execution, "
+        "indicating it was properly preserved during agent cloning"
+    )
 
 
 # region Participant Factory Tests
@@ -493,9 +539,11 @@ async def test_handoff_with_participant_factories():
         return MockHandoffAgent(name="specialist")
 
     workflow = (
-        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        HandoffBuilder(
+            participant_factories={"triage": create_triage, "specialist": create_specialist},
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
+        )
         .with_start_agent("triage")
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -508,7 +556,7 @@ async def test_handoff_with_participant_factories():
 
     # Follow-up message
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
+        workflow.run(stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
     )
     outputs = [ev for ev in events if ev.type == "output"]
     assert outputs
@@ -563,12 +611,12 @@ async def test_handoff_with_participant_factories_and_add_handoff():
                 "triage": create_triage,
                 "specialist_a": create_specialist_a,
                 "specialist_b": create_specialist_b,
-            }
+            },
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 3,
         )
         .with_start_agent("triage")
         .add_handoff("triage", ["specialist_a", "specialist_b"])
         .add_handoff("specialist_a", ["specialist_b"])
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 3)
         .build()
     )
 
@@ -582,7 +630,9 @@ async def test_handoff_with_participant_factories_and_add_handoff():
 
     # Second user message - specialist_a hands off to specialist_b
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]})
+        workflow.run(
+            stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]}
+        )
     )
     requests = [ev for ev in events if ev.type == "request_info"]
     assert requests
@@ -604,10 +654,12 @@ async def test_handoff_participant_factories_with_checkpointing():
         return MockHandoffAgent(name="specialist")
 
     workflow = (
-        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        HandoffBuilder(
+            participant_factories={"triage": create_triage, "specialist": create_specialist},
+            checkpoint_storage=storage,
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
+        )
         .with_start_agent("triage")
-        .with_checkpointing(storage)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == "user") >= 2)
         .build()
     )
 
@@ -617,7 +669,7 @@ async def test_handoff_participant_factories_with_checkpointing():
     assert requests
 
     events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
+        workflow.run(stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
     )
     outputs = [ev for ev in events if ev.type == "output"]
     assert outputs, "Should have workflow output after termination condition is met"

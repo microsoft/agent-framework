@@ -110,8 +110,7 @@ async def test_workflow_run_streaming() -> None:
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
         .build()
@@ -132,11 +131,9 @@ async def test_workflow_run_stream_not_completed():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(max_iterations=5, start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .set_max_iterations(5)
         .build()
     )
 
@@ -151,8 +148,7 @@ async def test_workflow_run():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
         .build()
@@ -170,11 +166,9 @@ async def test_workflow_run_not_completed():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(max_iterations=5, start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .set_max_iterations(5)
         .build()
     )
 
@@ -189,7 +183,7 @@ async def test_fan_out():
     executor_c = IncrementExecutor(id="executor_c", limit=2)  # This executor will not complete the workflow
 
     workflow = (
-        WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
+        WorkflowBuilder(start_executor=executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
     events = await workflow.run(NumberMessage(data=0))
@@ -214,7 +208,7 @@ async def test_fan_out_multiple_completed_events():
     executor_c = IncrementExecutor(id="executor_c", limit=1)
 
     workflow = (
-        WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
+        WorkflowBuilder(start_executor=executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
     events = await workflow.run(NumberMessage(data=0))
@@ -239,8 +233,7 @@ async def test_fan_in():
     aggregator = AggregatorExecutor(id="aggregator")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_fan_out_edges(executor_a, [executor_b, executor_c])
         .add_fan_in_edges([executor_b, executor_c], aggregator)
         .build()
@@ -276,10 +269,8 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
 
         # Build workflow with checkpointing - should not raise any errors
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
@@ -295,9 +286,8 @@ async def test_workflow_checkpointing_not_enabled_for_external_restore(
     """Test that external checkpoint restoration fails when workflow doesn't support checkpointing."""
     # Build workflow WITHOUT checkpointing
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=simple_executor)
         .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-        .set_start_executor(simple_executor)
         .build()
     )
 
@@ -315,9 +305,8 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(
 ):
     # Build workflow WITHOUT checkpointing
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=simple_executor)
         .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-        .set_start_executor(simple_executor)
         .build()
     )
 
@@ -340,10 +329,8 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
@@ -376,14 +363,14 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(
 
         # Create a workflow WITHOUT checkpointing
         workflow_without_checkpointing = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+            WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
         )
 
         # Resume from checkpoint using external storage parameter
         try:
             events: list[WorkflowEvent] = []
             async for event in workflow_without_checkpointing.run(
-                checkpoint_id=checkpoint_id, checkpoint_storage=storage
+                checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True
             ):
                 events.append(event)
                 if len(events) >= 2:  # Limit to avoid infinite loops
@@ -411,10 +398,8 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
@@ -452,10 +437,8 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
@@ -512,10 +495,8 @@ async def test_workflow_multiple_runs_no_state_collision():
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=state_executor, checkpoint_storage=storage)
             .add_edge(state_executor, state_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(state_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
@@ -552,9 +533,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(
         storage = FileCheckpointStorage(temp_dir)
 
         # Build workflow WITHOUT checkpointing at build time
-        workflow = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
-        )
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
         # Run with runtime checkpoint storage - should create checkpoints
         test_message = Message(data="runtime checkpoint test", source_id="test", target_id=None)
@@ -575,7 +554,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(
 
         # Create new workflow instance (still without build-time checkpointing)
         workflow_resume = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+            WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
         )
 
         # Resume from checkpoint using runtime checkpoint storage
@@ -602,10 +581,8 @@ async def test_workflow_checkpoint_runtime_overrides_buildtime(
 
         # Build workflow with build-time checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=buildtime_storage)
             .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(buildtime_storage)
             .build()
         )
 
@@ -643,8 +620,7 @@ async def test_comprehensive_edge_groups_workflow():
     # 3. FanOut: fanout_hub -> [parallel_1, parallel_2]
     # 4. FanIn: [parallel_1, parallel_2] -> aggregator
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(router)
+        WorkflowBuilder(start_executor=router)
         # Switch-case routing based on message data
         .add_switch_case_edge_group(
             router,
@@ -713,8 +689,7 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
     # Simple cycle: A -> B -> A, A exits when limit reached
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)  # A -> B
         .add_edge(executor_b, executor_a)  # B -> A (creates cycle)
         .build()
@@ -746,7 +721,7 @@ async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
     # Create a simple workflow that takes some time to execute
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create a task that will run the workflow
     async def run_workflow():
@@ -778,7 +753,7 @@ async def test_workflow_concurrent_execution_prevention_streaming():
     """Test that concurrent workflow streaming executions are prevented."""
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create an async generator that will consume the stream slowly
     async def consume_stream_slowly():
@@ -814,7 +789,7 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     """Test that concurrent executions are prevented across different execution methods."""
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Start a streaming execution
     async def consume_stream():
@@ -884,7 +859,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
-    workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
+    workflow = WorkflowBuilder(start_executor=agent_exec).build()
 
     # Test non-streaming mode with run()
     result = await workflow.run("test message")
@@ -934,7 +909,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
 async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
     """Test that stream properly validate parameter combinations."""
-    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)
 
@@ -952,11 +927,11 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
             pass
 
     # Invalid: none of message or checkpoint_id
-    with pytest.raises(ValueError, match="Must provide either"):
+    with pytest.raises(ValueError, match="Must provide at least one of"):
         await workflow.run()
 
     # Invalid: none of message or checkpoint_id (streaming)
-    with pytest.raises(ValueError, match="Must provide either"):
+    with pytest.raises(ValueError, match="Must provide at least one of"):
         async for _ in workflow.run(stream=True):
             pass
 
@@ -965,7 +940,7 @@ async def test_workflow_run_stream_parameter_validation(
     simple_executor: Executor,
 ) -> None:
     """Test stream=True specific parameter validation scenarios."""
-    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
     test_message = Message(data="test", source_id="test", target_id=None)
 
@@ -1014,7 +989,7 @@ async def test_output_executors_empty_yields_all_outputs() -> None:
     executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
 
     # Build workflow with a -> b
-    workflow = WorkflowBuilder().set_start_executor(executor_a).add_edge(executor_a, executor_b).build()
+    workflow = WorkflowBuilder(start_executor=executor_a).add_edge(executor_a, executor_b).build()
 
     result = await workflow.run(NumberMessage(data=0))
     outputs = result.get_outputs()
@@ -1037,10 +1012,8 @@ async def test_output_executors_filters_outputs_non_streaming() -> None:
 
     # Build workflow with a -> b
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_b])
         .add_edge(executor_a, executor_b)
-        .with_output_from([executor_b])
         .build()
     )
 
@@ -1064,10 +1037,8 @@ async def test_output_executors_filters_outputs_streaming() -> None:
 
     # Build workflow with a -> b
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_a])
         .add_edge(executor_a, executor_b)
-        .with_output_from([executor_a])
         .build()
     )
 
@@ -1092,11 +1063,9 @@ async def test_output_executors_with_multiple_specified_executors() -> None:
 
     # Build workflow with a -> b -> c
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_a, executor_c])
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_c)
-        .with_output_from([executor_a, executor_c])
         .build()
     )
 
@@ -1114,7 +1083,7 @@ async def test_output_executors_with_nonexistent_executor_id() -> None:
     """Test that specifying a non-existent executor ID doesn't break the workflow."""
     executor_a = OutputProducerExecutor(id="executor_a", output_value=42)
 
-    workflow = WorkflowBuilder().set_start_executor(executor_a).build()
+    workflow = WorkflowBuilder(start_executor=executor_a).build()
 
     # Set output_executors to an ID that doesn't exist
     workflow._output_executors = ["nonexistent_executor"]  # type: ignore
@@ -1157,11 +1126,9 @@ async def test_output_executors_filtering_with_fan_in() -> None:
 
     # Build fan-in workflow: start -> [a, b] -> aggregator
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_start)
+        WorkflowBuilder(start_executor=executor_start, output_executors=[aggregator])
         .add_fan_out_edges(executor_start, [executor_a, executor_b])
         .add_fan_in_edges([executor_a, executor_b], aggregator)
-        .with_output_from([aggregator])
         .build()
     )
 
@@ -1174,11 +1141,11 @@ async def test_output_executors_filtering_with_fan_in() -> None:
     assert outputs[0] == 40
 
 
-async def test_output_executors_filtering_with_send_responses() -> None:
-    """Test output filtering works correctly with send_responses method."""
+async def test_output_executors_filtering_with_run_responses() -> None:
+    """Test output filtering works correctly with run(responses=...) method."""
     executor = MockExecutorRequestApproval(id="approval_executor")
 
-    workflow = WorkflowBuilder().set_start_executor(executor).with_output_from([executor]).build()
+    workflow = WorkflowBuilder(start_executor=executor, output_executors=[executor]).build()
 
     # Run workflow which will request approval
     result = await workflow.run(NumberMessage(data=42))
@@ -1189,7 +1156,7 @@ async def test_output_executors_filtering_with_send_responses() -> None:
 
     # Send approval response
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
-    response_result = await workflow.send_responses(responses)
+    response_result = await workflow.run(responses=responses)
     outputs = response_result.get_outputs()
 
     # Output should be yielded since approval_executor is in output_executors
@@ -1197,11 +1164,11 @@ async def test_output_executors_filtering_with_send_responses() -> None:
     assert outputs[0] == 42
 
 
-async def test_output_executors_filtering_with_send_responses_streaming() -> None:
-    """Test output filtering works correctly with send_responses_streaming method."""
+async def test_output_executors_filtering_with_run_responses_streaming() -> None:
+    """Test output filtering works correctly with run(responses=..., stream=True) method."""
     executor = MockExecutorRequestApproval(id="approval_executor")
 
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Run workflow which will request approval
     events_list: list[WorkflowEvent] = []
@@ -1218,7 +1185,7 @@ async def test_output_executors_filtering_with_send_responses_streaming() -> Non
     # Send approval response via streaming
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
     output_events: list[WorkflowEvent] = []
-    async for event in workflow.send_responses_streaming(responses):
+    async for event in workflow.run(responses=responses, stream=True):
         if event.type == "output":
             output_events.append(event)
 

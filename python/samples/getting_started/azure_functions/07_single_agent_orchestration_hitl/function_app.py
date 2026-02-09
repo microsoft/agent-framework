@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Iterate on generated content with a human-in-the-loop Durable orchestration.
 
 Components used in this sample:

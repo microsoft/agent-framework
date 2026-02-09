@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Host a single Azure OpenAI-powered agent inside Azure Functions.
 
 Components used in this sample:

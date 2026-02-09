@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Multi-Agent Orchestration with Conditionals Sample - Durable Task Integration
 
 This sample demonstrates conditional orchestration logic with two agents:
@@ -7,8 +9,8 @@ This sample demonstrates conditional orchestration logic with two agents:
 The orchestration branches based on spam detection results, calling different
 activity functions to handle spam or send legitimate email responses.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 

@@ -84,7 +84,7 @@ async def main() -> None:
     upper_case = UpperCaseExecutor()
     reverse_text = ReverseTextExecutor()
 
-    workflow = WorkflowBuilder().add_edge(upper_case, reverse_text).set_start_executor(upper_case).build()
+    workflow = WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
 
     print("Running workflow with executor I/O observation...\n")
 

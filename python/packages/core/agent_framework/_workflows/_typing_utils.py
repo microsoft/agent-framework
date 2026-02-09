@@ -177,6 +177,54 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     return isinstance(data, target_type)
 
 
+def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
+    """Try to coerce data to the target type.
+
+    Attempts lightweight type coercion for common cases where raw data
+    (e.g., from JSON deserialization) needs to be converted to the expected type.
+
+    Returns the coerced value if successful, or the original value if coercion
+    is not needed or not possible.
+
+    Args:
+        data: The data to coerce.
+        target_type: The type to coerce to.
+
+    Returns:
+        The coerced value, or the original value if coercion fails.
+    """
+    # If already the right type, return as-is
+    if is_instance_of(data, target_type):
+        return data
+
+    # Can't coerce to non-concrete targets (Union, generic, etc.)
+    if not isinstance(target_type, type):
+        return data
+
+    # int -> float (JSON integers for float fields)
+    if isinstance(data, int) and target_type is float:
+        return float(data)
+
+    # dict -> dataclass
+    if isinstance(data, dict):
+        from dataclasses import is_dataclass
+
+        if is_dataclass(target_type):
+            try:
+                return target_type(**data)
+            except (TypeError, ValueError):
+                return data
+
+        # dict -> Pydantic model
+        if hasattr(target_type, "model_validate"):
+            try:
+                return target_type.model_validate(data)
+            except Exception:
+                return data
+
+    return data
+
+
 def serialize_type(t: type) -> str:
     """Serialize a type to a string.
 

@@ -65,7 +65,7 @@ async def main() -> None:
     )
 
     # 2) Build a concurrent workflow
-    workflow = ConcurrentBuilder().participants([researcher, marketer, legal]).build()
+    workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).build()
 
     # 3) Expose the concurrent workflow as an agent for easy reuse
     agent = workflow.as_agent(name="ConcurrentWorkflowAgent")

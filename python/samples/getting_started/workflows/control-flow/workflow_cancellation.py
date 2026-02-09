@@ -51,13 +51,12 @@ async def step3(text: str, ctx: WorkflowContext[Never, str]) -> None:
 def build_workflow():
     """Build a simple 3-step sequential workflow (~6 seconds total)."""
     return (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="step1")
         .register_executor(lambda: step1, name="step1")
         .register_executor(lambda: step2, name="step2")
         .register_executor(lambda: step3, name="step3")
         .add_edge("step1", "step2")
         .add_edge("step2", "step3")
-        .set_start_executor("step1")
         .build()
     )
 

@@ -132,11 +132,10 @@ class AgentApprovalExecutor(WorkflowExecutor):
         request_info_executor = AgentRequestInfoExecutor(id="agent_request_info_executor")
 
         return (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=agent_executor)
             # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)
             .add_edge(request_info_executor, agent_executor)
-            .set_start_executor(agent_executor)
             .build()
         )
 

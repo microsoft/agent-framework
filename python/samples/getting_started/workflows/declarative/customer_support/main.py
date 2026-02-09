@@ -251,7 +251,7 @@ async def main() -> None:
             # Continue workflow with user response
             print(f"\n{YELLOW}WORKFLOW:{RESET} Restore\n")
             response = AgentExternalInputResponse(user_input=user_input)
-            stream = workflow.send_responses_streaming({pending_request_id: response})
+            stream = workflow.run(stream=True, responses={pending_request_id: response})
             pending_request_id = None
         else:
             # Start workflow

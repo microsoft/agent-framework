@@ -88,7 +88,7 @@ async def main() -> None:
     )
 
     # Build a simple sequential workflow
-    workflow = SequentialBuilder().participants([agent]).build()
+    workflow = SequentialBuilder(participants=[agent]).build()
 
     # Define custom context that will flow to tools via kwargs
     custom_data = {

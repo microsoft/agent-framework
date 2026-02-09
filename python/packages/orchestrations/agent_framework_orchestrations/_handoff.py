@@ -309,7 +309,7 @@ class HandoffAgentExecutor(AgentExecutor):
             name=agent.name,
             description=agent.description,
             chat_message_store_factory=agent.chat_message_store_factory,
-            context_providers=agent.context_provider,
+            context_provider=agent.context_provider,
             middleware=middleware,
             default_options=cloned_options,  # type: ignore[arg-type]
         )
@@ -577,6 +577,8 @@ class HandoffBuilder:
         participants: Sequence[SupportsAgentRun] | None = None,
         participant_factories: Mapping[str, Callable[[], SupportsAgentRun]] | None = None,
         description: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        termination_condition: TerminationCondition | None = None,
     ) -> None:
         r"""Initialize a HandoffBuilder for creating conversational handoff workflows.
 
@@ -599,6 +601,9 @@ class HandoffBuilder:
                                    created by this builder.
             description: Optional human-readable description explaining the workflow's
                          purpose. Useful for documentation and observability.
+            checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
+            termination_condition: Optional callable that receives the full conversation and returns True
+                (or awaitable True) if the workflow should terminate.
         """
         self._name = name
         self._description = description
@@ -617,7 +622,7 @@ class HandoffBuilder:
         self._handoff_config: dict[str, set[HandoffConfiguration]] = {}
 
         # Checkpoint related members
-        self._checkpoint_storage: CheckpointStorage | None = None
+        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
 
         # Autonomous mode related
         self._autonomous_mode: bool = False
@@ -626,7 +631,9 @@ class HandoffBuilder:
         self._autonomous_mode_enabled_agents: list[str] = []
 
         # Termination related members
-        self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = None
+        self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = (
+            termination_condition
+        )
 
     def register_participants(
         self, participant_factories: Mapping[str, Callable[[], SupportsAgentRun]]
@@ -1060,7 +1067,9 @@ class HandoffBuilder:
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
-        ).set_start_executor(start_executor)
+            start_executor=start_executor,
+            checkpoint_storage=self._checkpoint_storage,
+        )
 
         # Add the appropriate edges
         # In handoff workflows, all executors are connected, making a fully connected graph.
@@ -1075,10 +1084,6 @@ class HandoffBuilder:
                 builder = builder.add_fan_out_edges(executor, targets)
             elif len(targets) == 1:
                 builder = builder.add_edge(executor, targets[0])
-
-        # Configure checkpointing if enabled
-        if self._checkpoint_storage:
-            builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()
 

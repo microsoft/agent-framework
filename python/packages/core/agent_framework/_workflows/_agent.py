@@ -340,25 +340,22 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        # Determine the execution mode based on state
+        # Determine the execution mode based on state.
+        # The streaming flag controls the workflow's internal streaming mode,
+        # which affects executor behavior (e.g. AgentExecutor emits different event
+        # types in streaming vs non-streaming mode).
         if bool(self.pending_requests):
-            # This is a continuation - send function responses back
             function_responses = self._process_pending_requests(input_messages)
-
             if streaming:
-                async for event in self.workflow.send_responses_streaming(function_responses):
+                async for event in self.workflow.run(responses=function_responses, stream=True, **kwargs):
                     yield event
             else:
-                workflow_result = await self.workflow.send_responses(function_responses)
-                for event in workflow_result:
+                for event in await self.workflow.run(responses=function_responses, **kwargs):
                     yield event
 
         elif checkpoint_id is not None:
-            # Resume from checkpoint - don't prepend thread history since workflow state
-            # is being restored from the checkpoint
             if streaming:
                 async for event in self.workflow.run(
-                    message=None,
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
@@ -366,19 +363,15 @@ class WorkflowAgent(BaseAgent):
                 ):
                     yield event
             else:
-                workflow_result = await self.workflow.run(
-                    message=None,
+                for event in await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     **kwargs,
-                )
-                for event in workflow_result:
+                ):
                     yield event
 
         else:
-            # Initial run - build conversation from thread history
             conversation_messages = await self._build_conversation_messages(thread, input_messages)
-
             if streaming:
                 async for event in self.workflow.run(
                     message=conversation_messages,
@@ -388,12 +381,11 @@ class WorkflowAgent(BaseAgent):
                 ):
                     yield event
             else:
-                workflow_result = await self.workflow.run(
+                for event in await self.workflow.run(
                     message=conversation_messages,
                     checkpoint_storage=checkpoint_storage,
                     **kwargs,
-                )
-                for event in workflow_result:
+                ):
                     yield event
 
     # endregion Run Methods

@@ -175,10 +175,12 @@ async def test_workflow_streaming_execution():
     def process_input(input_data: str) -> str:
         return f"Processed: {input_data}"
 
-    builder = WorkflowBuilder(name="Test Workflow", description="Test workflow for execution")
     start_executor = FunctionExecutor(id="process", func=process_input)
-    builder.set_start_executor(start_executor)
-    workflow = builder.build()
+    workflow = WorkflowBuilder(
+        name="Test Workflow",
+        description="Test workflow for execution",
+        start_executor=start_executor,
+    ).build()
 
     # Create executor and register workflow
     discovery = EntityDiscovery(None)
@@ -213,10 +215,12 @@ async def test_workflow_sync_execution():
     def echo(text: str) -> str:
         return f"Echo: {text}"
 
-    builder = WorkflowBuilder(name="Echo Workflow", description="Simple echo workflow")
     start_executor = FunctionExecutor(id="echo", func=echo)
-    builder.set_start_executor(start_executor)
-    workflow = builder.build()
+    workflow = WorkflowBuilder(
+        name="Echo Workflow",
+        description="Simple echo workflow",
+        start_executor=start_executor,
+    ).build()
 
     # Create executor and register workflow
     discovery = EntityDiscovery(None)
@@ -308,10 +312,12 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
         system_message="You are a test assistant.",
     )
 
-    builder = WorkflowBuilder(name="Serialization Test Workflow", description="Test workflow")
     agent_executor = AgentExecutor(id="agent_node", agent=agent)
-    builder.set_start_executor(agent_executor)
-    workflow = builder.build()
+    workflow = WorkflowBuilder(
+        name="Serialization Test Workflow",
+        description="Test workflow",
+        start_executor=agent_executor,
+    ).build()
 
     # Create executor and register
     discovery = EntityDiscovery(None)
@@ -420,11 +426,11 @@ async def test_executor_parse_structured_extracts_input_for_string_workflow():
         async def process(self, text: str, ctx: WorkflowContext[Any, Any]) -> None:
             await ctx.yield_output(f"Got: {text}")
 
-    workflow = (
-        WorkflowBuilder(name="String Workflow", description="Accepts string")
-        .set_start_executor(StringInputExecutor(id="str_exec"))
-        .build()
-    )
+    workflow = WorkflowBuilder(
+        name="String Workflow",
+        description="Accepts string",
+        start_executor=StringInputExecutor(id="str_exec"),
+    ).build()
 
     executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
 
@@ -445,11 +451,11 @@ async def test_executor_parse_raw_string_for_string_workflow():
         async def process(self, text: str, ctx: WorkflowContext[Any, Any]) -> None:
             await ctx.yield_output(f"Got: {text}")
 
-    workflow = (
-        WorkflowBuilder(name="String Workflow", description="Accepts string")
-        .set_start_executor(StringInputExecutor(id="str_exec"))
-        .build()
-    )
+    workflow = WorkflowBuilder(
+        name="String Workflow",
+        description="Accepts string",
+        start_executor=StringInputExecutor(id="str_exec"),
+    ).build()
 
     executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
 
@@ -490,11 +496,11 @@ async def test_executor_parse_stringified_json_workflow_input():
             await ctx.yield_output(f"Got: {data.input}")
 
     # Build workflow with Pydantic input type
-    workflow = (
-        WorkflowBuilder(name="Pydantic Workflow", description="Accepts Pydantic input")
-        .set_start_executor(PydanticInputExecutor(id="pydantic_exec"))
-        .build()
-    )
+    workflow = WorkflowBuilder(
+        name="Pydantic Workflow",
+        description="Accepts Pydantic input",
+        start_executor=PydanticInputExecutor(id="pydantic_exec"),
+    ).build()
 
     executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
 
@@ -689,11 +695,11 @@ async def test_full_pipeline_workflow_output_event_serialization():
             await ctx.yield_output({"final": "result", "data": [1, 2, 3]})
 
     # Build workflow
-    workflow = (
-        WorkflowBuilder(name="Output Workflow", description="Tests yield_output")
-        .set_start_executor(OutputtingExecutor(id="outputter"))
-        .build()
-    )
+    workflow = WorkflowBuilder(
+        name="Output Workflow",
+        description="Tests yield_output",
+        start_executor=OutputtingExecutor(id="outputter"),
+    ).build()
 
     # Create DevUI executor and register workflow
     discovery = EntityDiscovery(None)

@@ -4,13 +4,12 @@ import asyncio
 import random
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     BaseChatClient,
     ChatMessage,
     ChatMiddlewareLayer,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -22,9 +21,9 @@ from agent_framework._clients import TOptions_co
 from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    pass
 else:
-    from typing_extensions import TypeVar
+    pass
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -37,13 +36,6 @@ Custom Chat Client Implementation Example
 This sample demonstrates implementing a custom chat client and optionally composing
 middleware, telemetry, and function invocation layers explicitly.
 """
-
-TOptions_co = TypeVar(
-    "TOptions_co",
-    bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
-    covariant=True,
-)
 
 
 class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):

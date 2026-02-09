@@ -28,7 +28,7 @@ class FailingExecutor(Executor):
 
 async def test_executor_failed_and_workflow_failed_events_streaming():
     failing = FailingExecutor(id="f")
-    wf: Workflow = WorkflowBuilder().set_start_executor(failing).build()
+    wf: Workflow = WorkflowBuilder(start_executor=failing).build()
 
     events: list[object] = []
     with pytest.raises(RuntimeError, match="boom"):
@@ -86,7 +86,7 @@ async def test_executor_failed_event_from_second_executor_in_chain():
     """Test that executor_failed event is emitted when a non-start executor fails."""
     passthrough = PassthroughExecutor(id="passthrough")
     failing = FailingExecutor(id="failing")
-    wf: Workflow = WorkflowBuilder().set_start_executor(passthrough).add_edge(passthrough, failing).build()
+    wf: Workflow = WorkflowBuilder(start_executor=passthrough).add_edge(passthrough, failing).build()
 
     events: list[object] = []
     with pytest.raises(RuntimeError, match="boom"):
@@ -131,7 +131,7 @@ class Requester(Executor):
 async def test_idle_with_pending_requests_status_streaming():
     simple_executor = SimpleExecutor(id="simple")
     requester = Requester(id="req")
-    wf = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
+    wf = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, requester).build()
 
     events = [ev async for ev in wf.run("start", stream=True)]  # Consume stream fully
 
@@ -153,7 +153,7 @@ class Completer(Executor):
 
 async def test_completed_status_streaming():
     c = Completer(id="c")
-    wf = WorkflowBuilder().set_start_executor(c).build()
+    wf = WorkflowBuilder(start_executor=c).build()
     events = [ev async for ev in wf.run("ok", stream=True)]  # no raise
     # Last status should be IDLE
     status = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "status"]
@@ -163,7 +163,7 @@ async def test_completed_status_streaming():
 
 async def test_started_and_completed_event_origins():
     c = Completer(id="c-origin")
-    wf = WorkflowBuilder().set_start_executor(c).build()
+    wf = WorkflowBuilder(start_executor=c).build()
     events = [ev async for ev in wf.run("payload", stream=True)]
 
     started = next(e for e in events if isinstance(e, WorkflowEvent) and e.type == "started")
@@ -181,21 +181,21 @@ async def test_started_and_completed_event_origins():
 async def test_non_streaming_final_state_helpers():
     # Completed case
     c = Completer(id="c")
-    wf1 = WorkflowBuilder().set_start_executor(c).build()
+    wf1 = WorkflowBuilder(start_executor=c).build()
     result1: WorkflowRunResult = await wf1.run("done")
     assert result1.get_final_state() == WorkflowRunState.IDLE
 
     # Idle-with-pending-request case
     simple_executor = SimpleExecutor(id="simple")
     requester = Requester(id="req")
-    wf2 = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
+    wf2 = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, requester).build()
     result2: WorkflowRunResult = await wf2.run("start")
     assert result2.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
 
 async def test_run_includes_status_events_completed():
     c = Completer(id="c2")
-    wf = WorkflowBuilder().set_start_executor(c).build()
+    wf = WorkflowBuilder(start_executor=c).build()
     result: WorkflowRunResult = await wf.run("ok")
     timeline = result.status_timeline()
     assert timeline, "Expected status timeline in non-streaming run() results"
@@ -205,7 +205,7 @@ async def test_run_includes_status_events_completed():
 async def test_run_includes_status_events_idle_with_requests():
     simple_executor = SimpleExecutor(id="simple")
     requester = Requester(id="req2")
-    wf = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
+    wf = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, requester).build()
     result: WorkflowRunResult = await wf.run("start")
     timeline = result.status_timeline()
     assert timeline, "Expected status timeline in non-streaming run() results"

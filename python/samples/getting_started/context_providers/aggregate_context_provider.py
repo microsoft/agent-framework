@@ -211,7 +211,7 @@ class PreferencesContextProvider(ContextProvider):
         msgs = [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
 
         for msg in msgs:
-            content = msg.content if hasattr(msg, "content") else ""
+            content = msg.text if hasattr(msg, "text") else ""
             # Very simple extraction - in production, use LLM-based extraction
             if isinstance(content, str) and "prefer" in content.lower() and ":" in content:
                 parts = content.split(":")

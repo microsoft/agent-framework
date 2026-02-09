@@ -78,10 +78,15 @@ async def main() -> None:
 
     # Build the workflow with autonomous mode
     # In autonomous mode, agents continue iterating until they invoke a handoff tool
+    # termination_condition: Terminate after coordinator provides 5 assistant responses
     workflow = (
         HandoffBuilder(
             name="autonomous_iteration_handoff",
             participants=[coordinator, research_agent, summary_agent],
+            termination_condition=lambda conv: sum(
+                1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant"
+            )
+            >= 5,
         )
         .with_start_agent(coordinator)
         .add_handoff(coordinator, [research_agent, summary_agent])
@@ -97,10 +102,6 @@ async def main() -> None:
                 resolve_agent_id(research_agent): 10,
                 resolve_agent_id(summary_agent): 5,
             }
-        )
-        .with_termination_condition(
-            # Terminate after coordinator provides 5 assistant responses
-            lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant") >= 5
         )
         .build()
     )

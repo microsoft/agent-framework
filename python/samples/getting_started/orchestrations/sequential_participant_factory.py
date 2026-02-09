@@ -70,7 +70,7 @@ async def run_workflow(workflow: Workflow, query: str) -> None:
 
 async def main() -> None:
     # 1) Create a builder with participant factories
-    builder = SequentialBuilder().register_participants([
+    builder = SequentialBuilder(participant_factories=[
         lambda: Accumulate("accumulator"),
         create_agent,
     ])

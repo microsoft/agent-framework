@@ -288,8 +288,8 @@ class TaskRunner:
         # Creates a cyclic workflow: Orchestrator -> Assistant -> Orchestrator -> User -> Orchestrator...
         # The orchestrator acts as a message router that flips roles and routes to appropriate agent
         return (
-            WorkflowBuilder(max_iterations=10000)  # Unlimited - we control termination via should_not_stop
-            .set_start_executor(orchestrator)  # Orchestrator manages the conversation flow
+            # Orchestrator manages the conversation flow
+            WorkflowBuilder(max_iterations=10000, start_executor=orchestrator)
             .add_edge(orchestrator, self._assistant_executor)  # Route messages to assistant
             .add_edge(
                 self._assistant_executor, orchestrator, condition=self.should_not_stop

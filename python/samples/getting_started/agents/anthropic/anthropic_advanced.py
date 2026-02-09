@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import HostedMCPTool, HostedWebSearchTool, TextReasoningContent, UsageContent
+from agent_framework import HostedMCPTool, HostedWebSearchTool
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 
 """
@@ -40,9 +40,9 @@ async def main() -> None:
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
-            if isinstance(content, TextReasoningContent):
+            if content.type == "text_reasoning":
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)
-            if isinstance(content, UsageContent):
+            if content.type == "usage":
                 print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)
         if chunk.text:
             print(chunk.text, end="", flush=True)

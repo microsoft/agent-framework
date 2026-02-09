@@ -88,7 +88,7 @@ async def main() -> None:
     )
 
     # Build the inner (sub) workflow with the agent
-    inner_workflow = SequentialBuilder().participants([inner_agent]).build()
+    inner_workflow = SequentialBuilder(participants=[inner_agent]).build()
 
     # Wrap the inner workflow in a WorkflowExecutor to use it as a sub-workflow
     subworkflow_executor = WorkflowExecutor(
@@ -97,7 +97,7 @@ async def main() -> None:
     )
 
     # Build the outer (parent) workflow containing the sub-workflow
-    outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
+    outer_workflow = SequentialBuilder(participants=[subworkflow_executor]).build()
 
     # Define custom context that will flow through to the sub-workflow's agent
     user_token = {

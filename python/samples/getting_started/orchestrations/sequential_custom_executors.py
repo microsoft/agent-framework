@@ -66,7 +66,7 @@ async def main() -> None:
 
     # 2) Build sequential workflow: content -> summarizer
     summarizer = Summarizer(id="summarizer")
-    workflow = SequentialBuilder().participants([content, summarizer]).build()
+    workflow = SequentialBuilder(participants=[content, summarizer]).build()
 
     # 3) Run workflow and extract final conversation
     events = await workflow.run("Explain the benefits of budget eBikes for commuters.")
