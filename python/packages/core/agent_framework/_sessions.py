@@ -23,6 +23,54 @@ This module provides the core types for the context provider pipeline:
 - InMemoryHistoryProvider: Built-in in-memory history provider
 """
 
+# Registry of known types for state deserialization
+_STATE_TYPE_REGISTRY: dict[str, type] = {}
+
+
+def _register_state_type(cls: type) -> None:
+    """Register a type for automatic deserialization in session state."""
+    type_id: str = getattr(cls, "_get_type_identifier", lambda: cls.__name__.lower())()
+    _STATE_TYPE_REGISTRY[type_id] = cls
+
+
+def _serialize_value(value: Any) -> Any:
+    """Serialize a single value, handling objects with to_dict()."""
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, dict):
+        return {str(k): _serialize_value(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    return value
+
+
+def _deserialize_value(value: Any) -> Any:
+    """Deserialize a single value, restoring registered types."""
+    if isinstance(value, dict) and "type" in value:
+        type_id = str(value["type"])  # pyright: ignore[reportUnknownArgumentType]
+        cls = _STATE_TYPE_REGISTRY.get(type_id)
+        if cls is not None and hasattr(cls, "from_dict"):
+            return cls.from_dict(value)  # type: ignore[union-attr]
+    if isinstance(value, list):
+        return [_deserialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, dict):
+        return {str(k): _deserialize_value(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    return value
+
+
+def _serialize_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Deep-serialize a state dict, converting SerializationProtocol objects to dicts."""
+    return {k: _serialize_value(v) for k, v in state.items()}
+
+
+def _deserialize_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Deep-deserialize a state dict, restoring SerializationProtocol objects."""
+    return {k: _deserialize_value(v) for k, v in state.items()}
+
+
+# Register known types
+_register_state_type(ChatMessage)
+
 
 class SessionContext:
     """Per-invocation state passed through the context provider pipeline.
@@ -183,6 +231,7 @@ class BaseContextProvider:
 
     async def before_run(
         self,
+        *,
         agent: SupportsAgentRun,
         session: AgentSession,
         context: SessionContext,
@@ -202,6 +251,7 @@ class BaseContextProvider:
 
     async def after_run(
         self,
+        *,
         agent: SupportsAgentRun,
         session: AgentSession,
         context: SessionContext,
@@ -273,11 +323,12 @@ class BaseHistoryProvider(BaseContextProvider):
         self.store_context_from = list(store_context_from) if store_context_from else None
 
     @abstractmethod
-    async def get_messages(self, session_id: str | None) -> list[ChatMessage]:
+    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[ChatMessage]:
         """Retrieve stored messages for this session.
 
         Args:
             session_id: The session ID to retrieve messages for.
+            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
 
         Returns:
             List of stored messages.
@@ -285,12 +336,13 @@ class BaseHistoryProvider(BaseContextProvider):
         ...
 
     @abstractmethod
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage], **kwargs: Any) -> None:
         """Persist messages for this session.
 
         Args:
             session_id: The session ID to store messages for.
             messages: The messages to persist.
+            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
         """
         ...
 
@@ -304,17 +356,19 @@ class BaseHistoryProvider(BaseContextProvider):
 
     async def before_run(
         self,
+        *,
         agent: SupportsAgentRun,
         session: AgentSession,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
-        history = await self.get_messages(context.session_id)
+        history = await self.get_messages(context.session_id, state=state)
         context.extend_messages(self.source_id, history)
 
     async def after_run(
         self,
+        *,
         agent: SupportsAgentRun,
         session: AgentSession,
         context: SessionContext,
@@ -328,7 +382,7 @@ class BaseHistoryProvider(BaseContextProvider):
         if self.store_responses and context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
         if messages_to_store:
-            await self.save_messages(context.session_id, messages_to_store)
+            await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
 class AgentSession:
@@ -365,17 +419,25 @@ class AgentSession:
         return self._session_id
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize session to a plain dict for storage/transfer."""
+        """Serialize session to a plain dict for storage/transfer.
+
+        Values in ``state`` that implement ``SerializationProtocol`` (i.e. have
+        ``to_dict``/``from_dict``) are serialized automatically. Built-in types
+        (str, int, float, bool, None, list, dict) are kept as-is.
+        """
         return {
             "type": "session",
             "session_id": self._session_id,
             "service_session_id": self.service_session_id,
-            "state": self.state,
+            "state": _serialize_state(self.state),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentSession:
         """Restore session from a previously serialized dict.
+
+        Values in ``state`` that were serialized via ``SerializationProtocol``
+        (containing a ``type`` key) are restored to their original types.
 
         Args:
             data: Dict from a previous ``to_dict()`` call.
@@ -387,55 +449,47 @@ class AgentSession:
             session_id=data["session_id"],
             service_session_id=data.get("service_session_id"),
         )
-        session.state = data.get("state", {})
+        session.state = _deserialize_state(data.get("state", {}))
         return session
 
 
 class InMemoryHistoryProvider(BaseHistoryProvider):
     """Built-in history provider that stores messages in session.state.
 
-    Messages are stored in ``state[source_id]["messages"]`` as a list
-    of serialized ChatMessage dicts, making the session natively serializable.
+    Messages are stored in ``state[source_id]["messages"]`` as a list of
+    ``ChatMessage`` objects. Serialization to/from dicts is handled by
+    ``AgentSession.to_dict()``/``from_dict()`` using ``SerializationProtocol``.
+
+    This provider holds no instance state — all data lives in the session's
+    state dict, passed as a named ``state`` parameter to ``get_messages``/``save_messages``.
 
     This is the default provider auto-added by the agent when no providers
     are configured and ``conversation_id`` or ``store=True`` is set.
     """
 
-    async def get_messages(self, session_id: str | None) -> list[ChatMessage]:
-        """Retrieve messages from session state. Requires state to be set via before_run."""
-        return self._current_messages
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[ChatMessage]:
+        """Retrieve messages from session state."""
+        if state is None:
+            return []
+        my_state = state.get(self.source_id, {})
+        return list(my_state.get("messages", []))
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[ChatMessage],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages to session state."""
-        state = self._current_state
+        if state is None:
+            return
         my_state = state.setdefault(self.source_id, {})
         existing = my_state.get("messages", [])
-        my_state["messages"] = [*existing, *[m.to_dict() for m in messages]]
-
-    async def before_run(
-        self,
-        agent: SupportsAgentRun,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Load history from session state into context."""
-        self._current_state = state
-        my_state = state.get(self.source_id, {})
-        raw_messages = my_state.get("messages", [])
-        self._current_messages = [ChatMessage.from_dict(m) for m in raw_messages]
-        context.extend_messages(self.source_id, self._current_messages)
-
-    async def after_run(
-        self,
-        agent: SupportsAgentRun,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Store messages to session state."""
-        self._current_state = state
-        await super().after_run(agent, session, context, state)
+        my_state["messages"] = [*existing, *messages]
 
 
 __all__ = [
