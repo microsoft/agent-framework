@@ -1,0 +1,28 @@
+# Unique identifier/name for this agent
+name: agents-in-workflow
+# Brief description of what this agent does
+description: >
+  A workflow agent that responds to product launch strategy inquiries by concurrently leveraging insights from three specialized agents.
+metadata:
+  # Categorization tags for organizing and discovering agents
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Workflows
+template:
+  name: agents-in-workflow
+  # The type of agent - "hosted" for HOBO, "container" for COBO
+  kind: hosted
+  protocols:
+    - protocol: responses
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+      value: "{{chat}}"
+resources:
+  - kind: model
+    id: gpt-4o-mini
+    name: chat
