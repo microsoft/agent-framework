@@ -14,7 +14,7 @@ Progressive samples that build up from a simple agent to a hosted application.
 ## Prerequisites
 
 ```bash
-pip install agent-framework[openai]
+pip install agent-framework --pre
 ```
 
 Set your environment variables:
