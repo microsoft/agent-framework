@@ -43,7 +43,7 @@ async def test_resume_fails_when_graph_mismatch() -> None:
     # Run once to create checkpoints
     _ = [event async for event in workflow.run("hello", stream=True)]  # noqa: F841
 
-    checkpoints = await storage.list(workflow.name)
+    checkpoints = await storage.list_checkpoints(workflow.name)
     assert checkpoints, "expected at least one checkpoint to be created"
     target_checkpoint = checkpoints[-1]
 
@@ -66,7 +66,7 @@ async def test_resume_succeeds_when_graph_matches() -> None:
     workflow = build_workflow(storage, finish_id="finish")
     _ = [event async for event in workflow.run("hello", stream=True)]  # noqa: F841
 
-    checkpoints = sorted(await storage.list(workflow.name), key=lambda c: c.timestamp)
+    checkpoints = sorted(await storage.list_checkpoints(workflow.name), key=lambda c: c.timestamp)
     target_checkpoint = checkpoints[0]
 
     resumed_workflow = build_workflow(storage, finish_id="finish")

@@ -100,33 +100,33 @@ async def test_memory_checkpoint_storage_list():
     await storage.save(checkpoint3)
 
     # Test list_ids for workflow-1
-    workflow1_checkpoint_ids = await storage.list_ids("workflow-1")
+    workflow1_checkpoint_ids = await storage.list_checkpoint_ids("workflow-1")
     assert len(workflow1_checkpoint_ids) == 2
     assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
     assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
 
     # Test list for workflow-1 (returns objects)
-    workflow1_checkpoints = await storage.list("workflow-1")
+    workflow1_checkpoints = await storage.list_checkpoints("workflow-1")
     assert len(workflow1_checkpoints) == 2
     assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
     assert {cp.checkpoint_id for cp in workflow1_checkpoints} == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
     # Test list_ids for workflow-2
-    workflow2_checkpoint_ids = await storage.list_ids("workflow-2")
+    workflow2_checkpoint_ids = await storage.list_checkpoint_ids("workflow-2")
     assert len(workflow2_checkpoint_ids) == 1
     assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
 
     # Test list for workflow-2 (returns objects)
-    workflow2_checkpoints = await storage.list("workflow-2")
+    workflow2_checkpoints = await storage.list_checkpoints("workflow-2")
     assert len(workflow2_checkpoints) == 1
     assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
 
     # Test list_ids for non-existent workflow
-    empty_checkpoint_ids = await storage.list_ids("nonexistent-workflow")
+    empty_checkpoint_ids = await storage.list_checkpoint_ids("nonexistent-workflow")
     assert len(empty_checkpoint_ids) == 0
 
     # Test list for non-existent workflow
-    empty_checkpoints = await storage.list("nonexistent-workflow")
+    empty_checkpoints = await storage.list_checkpoints("nonexistent-workflow")
     assert len(empty_checkpoints) == 0
 
 
@@ -203,25 +203,25 @@ async def test_file_checkpoint_storage_list():
         await storage.save(checkpoint3)
 
         # Test list_ids for workflow-1
-        workflow1_checkpoint_ids = await storage.list_ids("workflow-1")
+        workflow1_checkpoint_ids = await storage.list_checkpoint_ids("workflow-1")
         assert len(workflow1_checkpoint_ids) == 2
         assert checkpoint1.checkpoint_id in workflow1_checkpoint_ids
         assert checkpoint2.checkpoint_id in workflow1_checkpoint_ids
 
         # Test list for workflow-1 (returns objects)
-        workflow1_checkpoints = await storage.list("workflow-1")
+        workflow1_checkpoints = await storage.list_checkpoints("workflow-1")
         assert len(workflow1_checkpoints) == 2
         assert all(isinstance(cp, WorkflowCheckpoint) for cp in workflow1_checkpoints)
         checkpoint_ids = {cp.checkpoint_id for cp in workflow1_checkpoints}
         assert checkpoint_ids == {checkpoint1.checkpoint_id, checkpoint2.checkpoint_id}
 
         # Test list_ids for workflow-2
-        workflow2_checkpoint_ids = await storage.list_ids("workflow-2")
+        workflow2_checkpoint_ids = await storage.list_checkpoint_ids("workflow-2")
         assert len(workflow2_checkpoint_ids) == 1
         assert checkpoint3.checkpoint_id in workflow2_checkpoint_ids
 
         # Test list for workflow-2 (returns objects)
-        workflow2_checkpoints = await storage.list("workflow-2")
+        workflow2_checkpoints = await storage.list_checkpoints("workflow-2")
         assert len(workflow2_checkpoints) == 1
         assert workflow2_checkpoints[0].checkpoint_id == checkpoint3.checkpoint_id
 
@@ -273,7 +273,7 @@ async def test_file_checkpoint_storage_corrupted_file():
             f.write("{ invalid json }")
 
         # list should handle the corrupted file gracefully
-        checkpoints = await storage.list("any-workflow")
+        checkpoints = await storage.list_checkpoints("any-workflow")
         assert checkpoints == []
 
 
@@ -323,12 +323,12 @@ def test_checkpoint_storage_protocol_compliance():
             assert callable(storage.save)
             assert hasattr(storage, "load")
             assert callable(storage.load)
-            assert hasattr(storage, "list")
-            assert callable(storage.list)
+            assert hasattr(storage, "list_checkpoints")
+            assert callable(storage.list_checkpoints)
             assert hasattr(storage, "delete")
             assert callable(storage.delete)
-            assert hasattr(storage, "list_ids")
-            assert callable(storage.list_ids)
+            assert hasattr(storage, "list_checkpoint_ids")
+            assert callable(storage.list_checkpoint_ids)
             assert hasattr(storage, "get_latest")
             assert callable(storage.get_latest)
 
@@ -440,7 +440,7 @@ async def test_file_checkpoint_storage_list_ids_corrupted_file():
             f.write("{ invalid json }")
 
         # list_ids should handle the corrupted file gracefully
-        checkpoint_ids = await storage.list_ids("test-workflow")
+        checkpoint_ids = await storage.list_checkpoint_ids("test-workflow")
         assert len(checkpoint_ids) == 1
         assert checkpoint.checkpoint_id in checkpoint_ids
 
@@ -450,7 +450,7 @@ async def test_file_checkpoint_storage_list_ids_empty():
         storage = FileCheckpointStorage(temp_dir)
 
         # Test list_ids on empty storage
-        checkpoint_ids = await storage.list_ids("any-workflow")
+        checkpoint_ids = await storage.list_checkpoint_ids("any-workflow")
         assert checkpoint_ids == []
 
 
@@ -493,7 +493,7 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
     _ = [event async for event in workflow.run("hello", stream=True)]
 
     # Get all checkpoints sorted by timestamp
-    checkpoints = sorted(await storage.list(workflow.name), key=lambda c: c.timestamp)
+    checkpoints = sorted(await storage.list_checkpoints(workflow.name), key=lambda c: c.timestamp)
 
     # Should have multiple checkpoints (one initial + one per superstep)
     assert len(checkpoints) >= 2, f"Expected at least 2 checkpoints, got {len(checkpoints)}"

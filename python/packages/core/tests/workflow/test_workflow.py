@@ -544,7 +544,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(
         assert result.get_final_state() == WorkflowRunState.IDLE
 
         # Verify checkpoints were created
-        checkpoints = await storage.list(workflow.name)
+        checkpoints = await storage.list_checkpoints(workflow.name)
         assert len(checkpoints) > 0
 
         # Find a superstep checkpoint to resume from
@@ -594,8 +594,8 @@ async def test_workflow_checkpoint_runtime_overrides_buildtime(
         assert result is not None
 
         # Verify checkpoints were created in runtime storage, not build-time storage
-        buildtime_checkpoints = await buildtime_storage.list(workflow.name)
-        runtime_checkpoints = await runtime_storage.list(workflow.name)
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"

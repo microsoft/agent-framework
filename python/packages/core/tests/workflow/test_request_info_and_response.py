@@ -349,7 +349,7 @@ class TestRequestInfoAndResponse:
             assert request_info_event.source_executor_id == "approval_executor"
 
             # Step 2: List checkpoints to find the one with our pending request
-            checkpoints = await storage.list(workflow.name)
+            checkpoints = await storage.list_checkpoints(workflow.name)
             assert len(checkpoints) > 0, "No checkpoints were created during workflow execution"
 
             # Find the checkpoint with our pending request
