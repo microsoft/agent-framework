@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-import pickle  # noqa: S403
+import pickle  # nosec  # noqa: S403
 from typing import Any
 
 from agent_framework import get_logger
@@ -146,7 +146,7 @@ def _pickle_to_base64(value: Any) -> str:
 def _base64_to_unpickle(encoded: str) -> Any:
     """Decode base64 string and unpickle."""
     pickled = base64.b64decode(encoded.encode("ascii"))
-    return pickle.loads(pickled)  # noqa: S301
+    return pickle.loads(pickled)  # nosec  # noqa: S301
 
 
 def _type_to_key(t: type) -> str:
