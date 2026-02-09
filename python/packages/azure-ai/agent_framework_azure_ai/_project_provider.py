@@ -47,7 +47,7 @@ else:
 logger = get_logger("agent_framework.azure")
 
 
-# Type variable for options - allows typed ChatAgent[TOptions] returns
+# Type variable for options - allows typed ChatAgent[OptionsT] returns
 # Default matches AzureAIClient's default options type
 OptionsCoT = TypeVar(
     "OptionsCoT",

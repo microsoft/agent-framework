@@ -33,7 +33,7 @@ else:
 
 __all__ = ["OpenAIAssistantProvider"]
 
-# Type variable for options - allows typed ChatAgent[TOptions] returns
+# Type variable for options - allows typed OpenAIAssistantProvider[OptionsCoT] returns
 # Default matches OpenAIAssistantsClient's default options type
 OptionsCoT = TypeVar(
     "OptionsCoT",

@@ -38,7 +38,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
-# Type variable for options - allows typed ChatAgent[TOptions] returns
+# Type variable for options - allows typed ChatAgent[OptionsCoT] returns
 # Default matches AzureAIAgentClient's default options type
 OptionsCoT = TypeVar(
     "OptionsCoT",
