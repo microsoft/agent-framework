@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from random import randint
 from typing import Annotated
 
@@ -12,6 +13,10 @@ Step 2: Add Tools to Your Agent
 
 Give your agent the ability to call functions.
 The @tool decorator makes any function available to the agent.
+
+Environment variables:
+  OPENAI_API_KEY              — Your OpenAI API key
+  OPENAI_RESPONSES_MODEL_ID   — Model to use (e.g. "gpt-4o")
 
 For more on tools, see: ../02-agents/tools/
 For docs: https://learn.microsoft.com/agent-framework/get-started/add-tools
@@ -31,7 +36,11 @@ def get_weather(
 
 
 # <create_agent_with_tools>
-agent = OpenAIResponsesClient().as_agent(
+client = OpenAIResponsesClient(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+)
+agent = client.as_agent(
     name="WeatherAgent",
     instructions="You are a helpful weather agent.",
     tools=get_weather,

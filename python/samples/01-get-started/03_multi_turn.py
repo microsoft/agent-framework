@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import AgentThread
 from agent_framework.openai import OpenAIResponsesClient
@@ -10,13 +11,21 @@ Step 3: Multi-Turn Conversations
 
 Use AgentThread to maintain conversation context across multiple exchanges.
 
+Environment variables:
+  OPENAI_API_KEY              — Your OpenAI API key
+  OPENAI_RESPONSES_MODEL_ID   — Model to use (e.g. "gpt-4o")
+
 For more on conversations, see: ../02-agents/conversations/
 For docs: https://learn.microsoft.com/agent-framework/get-started/multi-turn
 """
 
 
 # <create_agent>
-agent = OpenAIResponsesClient().as_agent(
+client = OpenAIResponsesClient(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+)
+agent = client.as_agent(
     name="Assistant",
     instructions="You are a helpful assistant. Be concise.",
 )
