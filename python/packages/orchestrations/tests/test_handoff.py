@@ -675,7 +675,7 @@ async def test_handoff_participant_factories_with_checkpointing():
     assert outputs, "Should have workflow output after termination condition is met"
 
     # List checkpoints - just verify they were created
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow.name)
     assert checkpoints, "Checkpoints should be created during workflow execution"
 
 

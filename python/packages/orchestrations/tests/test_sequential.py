@@ -224,14 +224,10 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    resume_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
-    )
+    resume_checkpoint = checkpoints[0]
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents), checkpoint_storage=storage).build()
@@ -267,14 +263,10 @@ async def test_sequential_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    resume_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
-    )
+    resume_checkpoint = checkpoints[0]
 
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents)).build()
@@ -318,8 +310,8 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -346,14 +338,10 @@ async def test_sequential_register_participants_with_checkpointing() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
-
-    resume_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
-    )
+    resume_checkpoint = checkpoints[0]
 
     wf_resume = SequentialBuilder(
         participant_factories=[create_agent1, create_agent2], checkpoint_storage=storage

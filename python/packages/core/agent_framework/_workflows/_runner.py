@@ -91,8 +91,8 @@ class Runner:
 
             # Create the first checkpoint. Checkpoints are usually considered to be created at the end of an iteration,
             # we can think of the first checkpoint as being created at the end of a "superstep 0" which captures the
-            # initial state before any iterations have run. This is only needed if it's not a resume from checkpoint
-            # scenario, since if we are resuming, the caller should have already created a checkpoint to resume from.
+            # states after which the start executor has run.  Note that we execute the start executor outside of the
+            # main iteration loop.
             if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
                 previous_checkpoint_id = await self._create_checkpoint_if_enabled(previous_checkpoint_id)
 
