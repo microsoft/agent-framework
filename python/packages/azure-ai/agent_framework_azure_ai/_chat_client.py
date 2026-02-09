@@ -372,11 +372,35 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        return McpTool(
+        mcp_tool = McpTool(
             server_label=name.replace(" ", "_"),
             server_url=url or "",
             allowed_tools=list(allowed_tools) if allowed_tools else [],
         )
+
+        # Set approval mode if provided
+        # The SDK's set_approval_mode() accepts dict at runtime even though type hints say str.
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                if approval_mode == "never_require":
+                    mcp_tool.set_approval_mode("never")
+                elif approval_mode == "always_require":
+                    mcp_tool.set_approval_mode("always")
+                else:
+                    mcp_tool.set_approval_mode(approval_mode)
+            elif isinstance(approval_mode, dict):
+                # Handle dict-based approval mode (per-tool approval settings)
+                if "never_require_approval" in approval_mode:
+                    mcp_tool.set_approval_mode({"never": {"tool_names": approval_mode["never_require_approval"]}})  # type: ignore[arg-type]
+                elif "always_require_approval" in approval_mode:
+                    mcp_tool.set_approval_mode({"always": {"tool_names": approval_mode["always_require_approval"]}})  # type: ignore[arg-type]
+
+        # Set headers if provided
+        if headers:
+            for key, value in headers.items():
+                mcp_tool.update_headers(key, value)
+
+        return mcp_tool
 
     # endregion
 
@@ -1217,12 +1241,22 @@ class AzureAIAgentClient(
     def _prepare_mcp_resources(self, tools: Sequence[Any]) -> list[dict[str, Any]]:
         """Prepare MCP tool resources for approval mode configuration.
 
-        Filters McpTool instances and extracts their server_label for resource configuration.
+        Extracts MCP resources from McpTool instances including server_label,
+        require_approval, and headers.
         """
         mcp_resources: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, McpTool):
-                mcp_resources.append({"server_label": tool.server_label})
+                # Use the resources property which includes all config (approval, headers)
+                tool_resources = tool.resources
+                if tool_resources and tool_resources.mcp:
+                    for mcp_resource in tool_resources.mcp:
+                        resource_dict: dict[str, Any] = {"server_label": mcp_resource.server_label}
+                        if mcp_resource.require_approval:
+                            resource_dict["require_approval"] = mcp_resource.require_approval
+                        if mcp_resource.headers:
+                            resource_dict["headers"] = mcp_resource.headers
+                        mcp_resources.append(resource_dict)
         return mcp_resources
 
     def _prepare_messages(

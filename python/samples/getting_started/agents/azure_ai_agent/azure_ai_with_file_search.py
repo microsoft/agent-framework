@@ -45,7 +45,7 @@ async def main() -> None:
             print(f"Created vector store, vector store ID: {vector_store.id}")
 
             # 2. Create a client to access hosted tool factory methods
-            client = AzureAIAgentClient(agents_client=agents_client)
+            client = AzureAIAgentClient(credential=credential)
             file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
 
             # 3. Create an agent with file search capabilities

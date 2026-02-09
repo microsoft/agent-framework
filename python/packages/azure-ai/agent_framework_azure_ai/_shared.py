@@ -139,6 +139,9 @@ def to_azure_ai_agent_tools(
             tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
         elif isinstance(tool, ToolDefinition):
             tool_definitions.append(tool)
+        elif isinstance(tool, McpTool):
+            # Handle McpTool SDK type from get_mcp_tool()
+            tool_definitions.extend(tool.definitions)
         elif isinstance(tool, AgentsFileSearchTool):
             # Handle FileSearchTool from get_file_search_tool()
             tool_definitions.extend(tool.definitions)

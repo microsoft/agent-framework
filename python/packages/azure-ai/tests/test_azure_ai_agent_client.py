@@ -720,60 +720,53 @@ async def test_azure_ai_chat_client_prepare_options_mcp_never_require(mock_agent
     """Test _prepare_options with MCP dict tool having never_require approval mode."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(name="Test MCP Tool", url="https://example.com/mcp")
-    mcp_tool["require_approval"] = "never"
+    # Create MCP tool with approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require"
+    )
 
     messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
-    with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
-        mock_mcp_tool_instance = MagicMock()
-        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
-        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
 
-        run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    # Verify tool_resources is created with correct MCP approval structure
+    assert "tool_resources" in run_options, f"Expected 'tool_resources' in run_options keys: {list(run_options.keys())}"
+    assert "mcp" in run_options["tool_resources"]
+    assert len(run_options["tool_resources"]["mcp"]) == 1
 
-        # Verify tool_resources is created with correct MCP approval structure
-        assert "tool_resources" in run_options, (
-            f"Expected 'tool_resources' in run_options keys: {list(run_options.keys())}"
-        )
-        assert "mcp" in run_options["tool_resources"]
-        assert len(run_options["tool_resources"]["mcp"]) == 1
-
-        mcp_resource = run_options["tool_resources"]["mcp"][0]
-        assert mcp_resource["server_label"] == "Test_MCP_Tool"
-        assert mcp_resource["require_approval"] == "never"
+    mcp_resource = run_options["tool_resources"]["mcp"][0]
+    assert mcp_resource["server_label"] == "Test_MCP_Tool"
+    assert mcp_resource["require_approval"] == "never"
 
 
 async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents_client: MagicMock) -> None:
     """Test _prepare_options with MCP dict tool having headers."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # Test with headers
+    # Test with headers - create MCP tool with all options
     headers = {"Authorization": "Bearer DUMMY_TOKEN", "X-API-Key": "DUMMY_KEY"}
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(name="Test MCP Tool", url="https://example.com/mcp")
-    mcp_tool["headers"] = headers
-    mcp_tool["require_approval"] = "never"
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP Tool",
+        url="https://example.com/mcp",
+        headers=headers,
+        approval_mode="never_require",
+    )
 
     messages = [ChatMessage(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
-    with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
-        mock_mcp_tool_instance = MagicMock()
-        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
-        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
 
-        run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    # Verify tool_resources is created with headers
+    assert "tool_resources" in run_options
+    assert "mcp" in run_options["tool_resources"]
+    assert len(run_options["tool_resources"]["mcp"]) == 1
 
-        # Verify tool_resources is created with headers
-        assert "tool_resources" in run_options
-        assert "mcp" in run_options["tool_resources"]
-        assert len(run_options["tool_resources"]["mcp"]) == 1
-
-        mcp_resource = run_options["tool_resources"]["mcp"][0]
-        assert mcp_resource["server_label"] == "Test_MCP_Tool"
-        assert mcp_resource["require_approval"] == "never"
-        assert mcp_resource["headers"] == headers
+    mcp_resource = run_options["tool_resources"]["mcp"][0]
+    assert mcp_resource["server_label"] == "Test_MCP_Tool"
+    assert mcp_resource["require_approval"] == "never"
+    assert mcp_resource["headers"] == headers
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_grounding(
@@ -2044,9 +2037,12 @@ def test_azure_ai_chat_client_prepare_mcp_resources_with_dict_approval_mode(
     """Test _prepare_mcp_resources with dict-based approval mode (always_require_approval)."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # MCP tool with dict-based approval mode
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(name="Test MCP", url="https://example.com/mcp")
-    mcp_tool["require_approval"] = {"always": {"tool_names": ["tool1", "tool2"]}}
+    # MCP tool with dict-based approval mode - use approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode={"always_require_approval": ["tool1", "tool2"]},
+    )
 
     result = chat_client._prepare_mcp_resources([mcp_tool])  # type: ignore
 
@@ -2061,9 +2057,12 @@ def test_azure_ai_chat_client_prepare_mcp_resources_with_never_require_dict(
     """Test _prepare_mcp_resources with dict-based approval mode (never_require_approval)."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # MCP tool with never require approval
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(name="Test MCP", url="https://example.com/mcp")
-    mcp_tool["require_approval"] = {"never": {"tool_names": ["safe_tool"]}}
+    # MCP tool with never require approval - use approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP",
+        url="https://example.com/mcp",
+        approval_mode={"never_require_approval": ["safe_tool"]},
+    )
 
     result = chat_client._prepare_mcp_resources([mcp_tool])  # type: ignore
 
@@ -2161,14 +2160,16 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_dict_passthrough(
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_unsupported_type(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai raises error for unsupported tool type."""
+    """Test _prepare_tools_for_azure_ai passes through unsupported tool types."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Pass an unsupported tool type
+    # Pass an unsupported tool type - it should be passed through unchanged
     class UnsupportedTool:
         pass
 
     unsupported_tool = UnsupportedTool()
 
-    with pytest.raises(ServiceInitializationError, match="Unsupported tool type"):
-        await chat_client._prepare_tools_for_azure_ai([unsupported_tool])  # type: ignore
+    # Unsupported tools are now passed through unchanged (server will reject if invalid)
+    tool_definitions = await chat_client._prepare_tools_for_azure_ai([unsupported_tool])  # type: ignore
+    assert len(tool_definitions) == 1
+    assert tool_definitions[0] is unsupported_tool
