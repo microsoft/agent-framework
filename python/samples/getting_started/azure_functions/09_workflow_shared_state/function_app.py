@@ -34,11 +34,10 @@ from agent_framework import (
     executor,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
-
-from agent_framework_azurefunctions import AgentFunctionApp
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +223,7 @@ def _create_workflow() -> Workflow:
     #   store_email -> spam_detection_agent -> to_detection_result -> branch:
     #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
     #     True  -> handle_spam
-    workflow = (
+    return (
         WorkflowBuilder(start_executor=store_email)
         .add_edge(store_email, spam_detection_agent)
         .add_edge(spam_detection_agent, to_detection_result)
@@ -234,8 +233,6 @@ def _create_workflow() -> Workflow:
         .add_edge(email_assistant_agent, finalize_and_send)
         .build()
     )
-
-    return workflow
 
 
 # ============================================================================
@@ -254,30 +251,28 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
         # Azure Functions mode with Durable Functions
         # SharedState is enabled by default, which this sample requires for storing emails
         workflow = _create_workflow()
-        app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
-        return app
-    else:
-        # Pure MAF mode with DevUI for local development
-        from pathlib import Path
+        return AgentFunctionApp(workflow=workflow, enable_health_check=True)
+    # Pure MAF mode with DevUI for local development
+    from pathlib import Path
 
-        from agent_framework.devui import serve
-        from dotenv import load_dotenv
+    from agent_framework.devui import serve
+    from dotenv import load_dotenv
 
-        env_path = Path(__file__).parent / ".env"
-        load_dotenv(dotenv_path=env_path)
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
 
-        logger.info("Starting Workflow Shared State Sample in MAF mode")
-        logger.info("Available at: http://localhost:8096")
-        logger.info("\nThis workflow demonstrates:")
-        logger.info("- Shared state to decouple large payloads from messages")
-        logger.info("- Structured agent outputs with Pydantic models")
-        logger.info("- Conditional routing based on detection results")
-        logger.info("\nFlow: store_email -> spam_detection -> branch (spam/not spam)")
+    logger.info("Starting Workflow Shared State Sample in MAF mode")
+    logger.info("Available at: http://localhost:8096")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Shared state to decouple large payloads from messages")
+    logger.info("- Structured agent outputs with Pydantic models")
+    logger.info("- Conditional routing based on detection results")
+    logger.info("\nFlow: store_email -> spam_detection -> branch (spam/not spam)")
 
-        workflow = _create_workflow()
-        serve(entities=[workflow], port=8096, auto_open=True)
+    workflow = _create_workflow()
+    serve(entities=[workflow], port=8096, auto_open=True)
 
-        return None
+    return None
 
 
 # Default: Azure Functions mode
