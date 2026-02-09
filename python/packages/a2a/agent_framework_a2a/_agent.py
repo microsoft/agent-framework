@@ -290,7 +290,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 When True, they are yielded with a continuation token.
         """
         async for item in a2a_stream:
-            if isinstance(item, Message):
+            if isinstance(item, A2AMessage):
+                # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentResponseUpdate(
                     contents=contents,
