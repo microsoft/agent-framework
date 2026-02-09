@@ -43,10 +43,11 @@ async def main():
     print("=== OpenAI Streaming Image Generation Example ===\n")
 
     # Create agent with streaming image generation enabled
-    agent = OpenAIResponsesClient().as_agent(
+    client = OpenAIResponsesClient()
+    agent = client.as_agent(
         instructions="You are a helpful agent that can generate images.",
         tools=[
-            OpenAIResponsesClient.get_image_generation_tool(
+            client.get_image_generation_tool(
                 size="1024x1024",
                 quality="high",
                 partial_images=3,

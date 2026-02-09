@@ -24,15 +24,17 @@ To set up Bing Grounding:
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with Bing Grounding search."""
-    # 1. Create Bing Grounding search tool using static method
-    # The connection ID will be automatically picked up from environment variable
-    bing_search_tool = AzureAIAgentClient.get_web_search_tool()
-
-    # 2. Use AzureAIAgentsProvider for agent creation and management
+    # Use AzureAIAgentsProvider for agent creation and management
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        # Create Bing Grounding search tool using instance method
+        # The connection ID will be automatically picked up from environment variable
+        bing_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="BingSearchAgent",
             instructions=(

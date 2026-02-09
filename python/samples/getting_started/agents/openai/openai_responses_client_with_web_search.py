@@ -14,13 +14,15 @@ for direct real-time information retrieval and current data access.
 
 
 async def main() -> None:
+    client = OpenAIResponsesClient()
+
     # Create web search tool with location context
-    web_search_tool = OpenAIResponsesClient.get_web_search_tool(
+    web_search_tool = client.get_web_search_tool(
         user_location={"city": "Seattle", "country": "US"},
     )
 
     agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         instructions="You are a helpful assistant that can search the web for current information.",
         tools=[web_search_tool],
     )

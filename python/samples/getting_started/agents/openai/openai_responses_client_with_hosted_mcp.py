@@ -94,8 +94,9 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a thread."""
     print("=== Mcp with approvals and without thread ===")
 
+    client = OpenAIResponsesClient()
     # Create MCP tool with specific approval mode
-    mcp_tool = OpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we don't require approval for microsoft_docs_search tool calls
@@ -104,7 +105,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     )
 
     async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=mcp_tool,
@@ -126,8 +127,9 @@ async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
 
+    client = OpenAIResponsesClient()
     # Create MCP tool that never requires approval
-    mcp_tool = OpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we don't require approval for any function calls
@@ -135,7 +137,7 @@ async def run_hosted_mcp_without_approval() -> None:
     )
 
     async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=mcp_tool,
@@ -157,8 +159,9 @@ async def run_hosted_mcp_with_thread() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
 
+    client = OpenAIResponsesClient()
     # Create MCP tool that always requires approval
-    mcp_tool = OpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we require approval for all function calls
@@ -166,7 +169,7 @@ async def run_hosted_mcp_with_thread() -> None:
     )
 
     async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=mcp_tool,
@@ -189,8 +192,9 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
 
+    client = OpenAIResponsesClient()
     # Create MCP tool that always requires approval
-    mcp_tool = OpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we require approval for all function calls
@@ -198,7 +202,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     )
 
     async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=mcp_tool,

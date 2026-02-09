@@ -54,10 +54,11 @@ async def main() -> None:
     print("=== OpenAI Responses Image Generation Agent Example ===")
 
     # Create an agent with customized image generation options
-    agent = OpenAIResponsesClient().as_agent(
+    client = OpenAIResponsesClient()
+    agent = client.as_agent(
         instructions="You are a helpful AI that can generate images.",
         tools=[
-            OpenAIResponsesClient.get_image_generation_tool(
+            client.get_image_generation_tool(
                 size="1024x1024",
                 output_format="webp",
             )

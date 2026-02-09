@@ -535,7 +535,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
         project_connection_id: str | None = None,
-    ) -> Any:
+    ) -> dict[str, Any]:
         """Create a hosted MCP tool configuration for Azure AI.
 
         This configures an MCP (Model Context Protocol) server that will be called

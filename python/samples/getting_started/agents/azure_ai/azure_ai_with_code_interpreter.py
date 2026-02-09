@@ -19,13 +19,14 @@ for Python code execution and mathematical problem solving.
 async def main() -> None:
     """Example showing how to use the code interpreter tool with AzureAIProjectAgentProvider."""
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
-
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="MyCodeInterpreterAgent",
             instructions="You are a helpful assistant that can write and execute Python code to solve problems.",

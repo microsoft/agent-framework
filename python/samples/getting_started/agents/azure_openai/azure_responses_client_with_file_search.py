@@ -53,8 +53,8 @@ async def main() -> None:
 
     file_id, vector_store_id = await create_vector_store(client)
 
-    # Create file search tool using static method
-    file_search_tool = AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store_id])
+    # Create file search tool using instance method
+    file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store_id])
 
     agent = ChatAgent(
         chat_client=client,

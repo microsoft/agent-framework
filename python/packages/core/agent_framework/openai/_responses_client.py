@@ -29,7 +29,6 @@ from openai.types.responses.tool_param import (
     CodeInterpreterContainerCodeInterpreterToolAuto,
     ImageGeneration,
     Mcp,
-    ToolParam,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, ValidationError
@@ -380,13 +379,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
     # region Prep methods
 
-    def _prepare_tools_for_openai(
-        self, tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None
-    ) -> list[ToolParam | dict[str, Any]]:
+    def _prepare_tools_for_openai(self, tools: Sequence[Any] | None) -> list[Any]:
         """Prepare tools for the OpenAI Responses API.
 
-        Handles FunctionTool instances and passes through dict-based tools directly.
-        Dict-based tools are returned from static factory methods like get_code_interpreter_tool().
+        Converts FunctionTool to Responses API format. All other tools pass through unchanged.
 
         Args:
             tools: Sequence of tools to prepare.
@@ -394,12 +390,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         Returns:
             List of tool parameters ready for the OpenAI API.
         """
-        response_tools: list[ToolParam | dict[str, Any]] = []
         if not tools:
-            return response_tools
+            return []
+        response_tools: list[Any] = []
         for tool in tools:
             if isinstance(tool, FunctionTool):
-                # Handle FunctionTool instances
                 params = tool.parameters()
                 params["additionalProperties"] = False
                 response_tools.append(
@@ -411,13 +406,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         description=tool.description,
                     )
                 )
-            elif isinstance(tool, (dict, MutableMapping)):
-                # Pass through dict-based tools directly (from static factory methods)
-                tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                response_tools.append(tool_dict)
             else:
-                # Log unsupported tool types
-                logger.debug("Unsupported tool passed (type: %s), skipping", type(tool))
+                # Pass through all other tools (dicts, SDK types) unchanged
+                response_tools.append(tool)
         return response_tools
 
     # region Hosted Tool Factory Methods

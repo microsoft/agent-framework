@@ -35,15 +35,16 @@ async def main() -> None:
     """Example showing how to use the code interpreter tool with Azure AI."""
     print("=== Azure AI Agent with Code Interpreter Example ===")
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="CodingAgent",
             instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),

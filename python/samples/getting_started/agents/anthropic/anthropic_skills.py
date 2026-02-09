@@ -34,7 +34,7 @@ async def main() -> None:
     agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
-        tools=AnthropicClient.get_code_interpreter_tool(),
+        tools=client.get_code_interpreter_tool(),
         default_options={
             "max_tokens": 20000,
             "thinking": {"type": "enabled", "budget_tokens": 10000},

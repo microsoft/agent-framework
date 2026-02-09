@@ -4,7 +4,6 @@ import asyncio
 
 from agent_framework import AgentResponseUpdate, ChatAgent, ChatResponseUpdate
 from agent_framework.azure import AzureOpenAIAssistantsClient
-from azure.identity import AzureCliCredential
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
     RunStepDelta,
@@ -45,12 +44,13 @@ async def main() -> None:
     print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
 
     # Create code interpreter tool using static method
-    code_interpreter_tool = AzureOpenAIAssistantsClient.get_code_interpreter_tool()
+    client = AzureOpenAIAssistantsClient()
+    code_interpreter_tool = client.get_code_interpreter_tool()
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+        chat_client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=[code_interpreter_tool],
     ) as agent:

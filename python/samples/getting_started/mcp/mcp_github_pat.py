@@ -42,10 +42,11 @@ async def github_mcp_example() -> None:
         "Authorization": f"Bearer {github_pat}",
     }
 
-    # 4. Create MCP tool with authentication using static method
+    # 4. Create agent with the GitHub MCP tool using instance method
     # The MCP tool manages the connection to the MCP server and makes its tools available
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
-    github_mcp_tool = OpenAIResponsesClient.get_mcp_tool(
+    client = OpenAIResponsesClient()
+    github_mcp_tool = client.get_mcp_tool(
         server_label="GitHub",
         server_url="https://api.githubcopilot.com/mcp/",
         headers=auth_headers,
@@ -54,7 +55,7 @@ async def github_mcp_example() -> None:
 
     # 5. Create agent with the GitHub MCP tool
     async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         name="GitHubAgent",
         instructions=(
             "You are a helpful assistant that can help users interact with GitHub. "

@@ -31,14 +31,15 @@ async def main() -> None:
         chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+    # Create code interpreter tool using instance method
+    coder_client = OpenAIResponsesClient()
+    code_interpreter_tool = coder_client.get_code_interpreter_tool()
 
     coder_agent = ChatAgent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIResponsesClient(),
+        chat_client=coder_client,
         tools=code_interpreter_tool,
     )
 

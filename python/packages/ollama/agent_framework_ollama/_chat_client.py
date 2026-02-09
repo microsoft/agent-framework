@@ -7,7 +7,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from itertools import chain
@@ -555,16 +554,23 @@ class OllamaChatClient(
             resp.append(fcc)
         return resp
 
-    def _prepare_tools_for_ollama(self, tools: list[FunctionTool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
-        chat_tools: list[dict[str, Any]] = []
+    def _prepare_tools_for_ollama(self, tools: list[Any]) -> list[Any]:
+        """Prepare tools for the Ollama API.
+
+        Converts FunctionTool to JSON schema format. All other tools pass through unchanged.
+
+        Args:
+            tools: List of tools to prepare.
+
+        Returns:
+            List of tool definitions ready for the Ollama API.
+        """
+        chat_tools: list[Any] = []
         for tool in tools:
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
             else:
-                # Check for unsupported hosted tool types
-                tool_type = tool.get("type") if isinstance(tool, dict) else None
-                if tool_type in ("web_search", "web_search_preview"):
-                    raise ServiceInvalidRequestError("Web search tools are not supported by the Ollama client.")
-                # Pass through dict-based tools (e.g., hosted tools from factory methods)
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                # Pass through all other tools unchanged
+                chat_tools.append(tool)
+        return chat_tools
         return chat_tools

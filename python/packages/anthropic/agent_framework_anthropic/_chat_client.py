@@ -688,6 +688,9 @@ class AnthropicClient(
     def _prepare_tools_for_anthropic(self, options: Mapping[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
+        Converts FunctionTool to Anthropic format. MCP tools are routed to separate
+        mcp_servers parameter. All other tools pass through unchanged.
+
         Args:
             options: The options dict containing tools and tool choice settings.
 
@@ -701,8 +704,8 @@ class AnthropicClient(
 
         # Process tools
         if tools:
-            tool_list: list[MutableMapping[str, Any]] = []
-            mcp_server_list: list[MutableMapping[str, Any]] = []
+            tool_list: list[Any] = []
+            mcp_server_list: list[Any] = []
             for tool in tools:
                 if isinstance(tool, FunctionTool):
                     tool_list.append({
@@ -711,29 +714,22 @@ class AnthropicClient(
                         "description": tool.description,
                         "input_schema": tool.parameters(),
                     })
-                elif isinstance(tool, MutableMapping):
-                    # Handle dict-based tools from static factory methods
-                    tool_dict = tool if isinstance(tool, dict) else dict(tool)
-
-                    if tool_dict.get("type") == "mcp":
-                        # MCP servers must be routed to separate mcp_servers parameter
-                        server_def: dict[str, Any] = {
-                            "type": "url",
-                            "name": tool_dict.get("server_label", ""),
-                            "url": tool_dict.get("server_url", ""),
-                        }
-                        if allowed_tools := tool_dict.get("allowed_tools"):
-                            server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
-                        headers = tool_dict.get("headers")
-                        if isinstance(headers, dict) and (auth := headers.get("authorization")):
-                            server_def["authorization_token"] = auth
-                        mcp_server_list.append(server_def)
-                    else:
-                        # Pass through all other dict-based tools directly
-                        # (e.g., web_search_20250305, code_execution_20250825)
-                        tool_list.append(tool_dict)
+                elif isinstance(tool, MutableMapping) and tool.get("type") == "mcp":
+                    # MCP servers must be routed to separate mcp_servers parameter
+                    server_def: dict[str, Any] = {
+                        "type": "url",
+                        "name": tool.get("server_label", ""),
+                        "url": tool.get("server_url", ""),
+                    }
+                    if allowed_tools := tool.get("allowed_tools"):
+                        server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
+                    headers = tool.get("headers")
+                    if isinstance(headers, dict) and (auth := headers.get("authorization")):
+                        server_def["authorization_token"] = auth
+                    mcp_server_list.append(server_def)
                 else:
-                    logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
+                    # Pass through all other tools (dicts, SDK types) unchanged
+                    tool_list.append(tool)
 
             if tool_list:
                 result["tools"] = tool_list

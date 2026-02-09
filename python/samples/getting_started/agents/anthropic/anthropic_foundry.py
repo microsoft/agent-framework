@@ -27,16 +27,18 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    # Create MCP tool configuration using static method
-    mcp_tool = AnthropicClient.get_mcp_tool(
+    client = AnthropicClient(anthropic_client=AsyncAnthropicFoundry())
+
+    # Create MCP tool configuration using instance method
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft_Learn_MCP",
         url="https://learn.microsoft.com/api/mcp",
     )
 
-    # Create web search tool configuration using static method
-    web_search_tool = AnthropicClient.get_web_search_tool()
+    # Create web search tool configuration using instance method
+    web_search_tool = client.get_web_search_tool()
 
-    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).as_agent(
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[mcp_tool, web_search_tool],

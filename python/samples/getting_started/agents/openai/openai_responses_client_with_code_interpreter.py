@@ -20,10 +20,11 @@ async def main() -> None:
     """Example showing how to use the code interpreter tool with OpenAI Responses."""
     print("=== OpenAI Responses Agent with Code Interpreter Example ===")
 
+    client = OpenAIResponsesClient()
     agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=OpenAIResponsesClient.get_code_interpreter_tool(),
+        tools=client.get_code_interpreter_tool(),
     )
 
     query = "Use code to get the factorial of 100?"

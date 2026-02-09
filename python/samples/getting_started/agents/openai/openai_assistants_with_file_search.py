@@ -42,12 +42,13 @@ async def main() -> None:
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
+    chat_client = OpenAIAssistantsClient(client=client)
 
     agent = await provider.create_agent(
         name="SearchAssistant",
         model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that searches files in a knowledge base.",
-        tools=[OpenAIAssistantsClient.get_file_search_tool()],
+        tools=[chat_client.get_file_search_tool()],
     )
 
     try:

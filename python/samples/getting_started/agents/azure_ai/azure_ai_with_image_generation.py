@@ -22,21 +22,23 @@ Pre-requisites:
 
 
 async def main() -> None:
-    # Create image generation tool using static method
-    image_gen_tool = AzureAIClient.get_image_generation_tool(
-        model="gpt-image-1",
-        size="1024x1024",
-        output_format="png",
-        quality="low",
-        background="opaque",
-    )
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        # Create image generation tool using instance method
+        image_gen_tool = client.get_image_generation_tool(
+            model="gpt-image-1",
+            size="1024x1024",
+            output_format="png",
+            quality="low",
+            background="opaque",
+        )
+
         agent = await provider.create_agent(
             name="ImageGenAgent",
             instructions="Generate images based on user requirements.",

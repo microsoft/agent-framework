@@ -20,13 +20,15 @@ async def main() -> None:
     """Example showing how to use the code interpreter tool with Azure OpenAI Responses."""
     print("=== Azure OpenAI Responses Agent with Code Interpreter Example ===")
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureOpenAIResponsesClient.get_code_interpreter_tool()
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+
+    # Create code interpreter tool using instance method
+    code_interpreter_tool = client.get_code_interpreter_tool()
+
     agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        chat_client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=[code_interpreter_tool],
     )

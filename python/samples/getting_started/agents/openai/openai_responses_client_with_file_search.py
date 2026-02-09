@@ -49,7 +49,7 @@ async def main() -> None:
     agent = ChatAgent(
         chat_client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
-        tools=[OpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store_id])],
+        tools=[client.get_file_search_tool(vector_store_ids=[vector_store_id])],
     )
 
     if stream:

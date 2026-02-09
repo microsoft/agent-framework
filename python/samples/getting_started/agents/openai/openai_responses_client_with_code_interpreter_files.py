@@ -66,10 +66,11 @@ async def main() -> None:
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
     # Create agent using OpenAI Responses client
+    client = OpenAIResponsesClient()
     agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+        chat_client=client,
         instructions="You are a helpful assistant that can analyze data files using Python code.",
-        tools=OpenAIResponsesClient.get_code_interpreter_tool(file_ids=[file_id]),
+        tools=client.get_code_interpreter_tool(file_ids=[file_id]),
     )
 
     # Test the code interpreter with the uploaded file

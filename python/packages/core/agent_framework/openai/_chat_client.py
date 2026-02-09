@@ -271,11 +271,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[FunctionTool | MutableMapping[str, Any]]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
-        Handles FunctionTool instances and passes through dict-based tools directly.
-        Web search tool is handled specially via web_search_options parameter.
+        Converts FunctionTool to JSON schema format. Web search tools are routed
+        to web_search_options parameter. All other tools pass through unchanged.
 
         Args:
             tools: Sequence of tools to prepare.
@@ -283,28 +283,23 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         Returns:
             Dict containing tools and optionally web_search_options.
         """
-        chat_tools: list[dict[str, Any]] = []
+        chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
         for tool in tools:
             if isinstance(tool, FunctionTool):
-                # Handle FunctionTool instances
                 chat_tools.append(tool.to_json_schema_spec())
-            elif isinstance(tool, (dict, MutableMapping)):
-                # Handle dict-based tools (from static factory methods)
-                tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                if tool_dict.get("type") == "web_search":
-                    # Web search is handled via web_search_options, not tools array
-                    web_search_options = {k: v for k, v in tool_dict.items() if k != "type"}
-                else:
-                    chat_tools.append(tool_dict)
+            elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
+                # Web search is handled via web_search_options, not tools array
+                web_search_options = {k: v for k, v in tool.items() if k != "type"}
             else:
-                chat_tools.append(tool)  # type: ignore[arg-type]
-        ret_dict: dict[str, Any] = {}
+                # Pass through all other tools (dicts, SDK types) unchanged
+                chat_tools.append(tool)
+        result: dict[str, Any] = {}
         if chat_tools:
-            ret_dict["tools"] = chat_tools
+            result["tools"] = chat_tools
         if web_search_options is not None:
-            ret_dict["web_search_options"] = web_search_options
-        return ret_dict
+            result["web_search_options"] = web_search_options
+        return result
 
     def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist

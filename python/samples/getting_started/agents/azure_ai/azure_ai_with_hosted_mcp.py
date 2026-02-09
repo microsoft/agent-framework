@@ -59,19 +59,21 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
 
 async def run_hosted_mcp_without_approval() -> None:
     """Example showing MCP Tools without approval."""
-    # Create MCP tool using static method
-    mcp_tool = AzureAIClient.get_mcp_tool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-        approval_mode="never_require",
-    )
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        # Create MCP tool using instance method
+        mcp_tool = client.get_mcp_tool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+            approval_mode="never_require",
+        )
+
         agent = await provider.create_agent(
             name="MyLearnDocsAgent",
             instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
@@ -88,19 +90,21 @@ async def run_hosted_mcp_with_approval_and_thread() -> None:
     """Example showing MCP Tools with approvals using a thread."""
     print("=== MCP with approvals and with thread ===")
 
-    # Create MCP tool using static method
-    mcp_tool = AzureAIClient.get_mcp_tool(
-        name="api-specs",
-        url="https://gitmcp.io/Azure/azure-rest-api-specs",
-        approval_mode="always_require",
-    )
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        # Create MCP tool using instance method
+        mcp_tool = client.get_mcp_tool(
+            name="api-specs",
+            url="https://gitmcp.io/Azure/azure-rest-api-specs",
+            approval_mode="always_require",
+        )
+
         agent = await provider.create_agent(
             name="MyApiSpecsAgent",
             instructions="You are a helpful agent that can use MCP tools to assist users.",

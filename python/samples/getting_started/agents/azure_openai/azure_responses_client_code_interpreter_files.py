@@ -75,12 +75,14 @@ async def main() -> None:
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
-    # Create code interpreter tool with file access
-    code_interpreter_tool = AzureOpenAIResponsesClient.get_code_interpreter_tool(file_ids=[file_id])
-
     # Create agent using Azure OpenAI Responses client
+    client = AzureOpenAIResponsesClient(credential=credential)
+
+    # Create code interpreter tool with file access
+    code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])
+
     agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=client,
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=[code_interpreter_tool],
     )

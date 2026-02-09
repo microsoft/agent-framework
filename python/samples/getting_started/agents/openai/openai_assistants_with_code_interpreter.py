@@ -47,12 +47,13 @@ async def main() -> None:
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
+    chat_client = OpenAIAssistantsClient(client=client)
 
     agent = await provider.create_agent(
         name="CodeHelper",
         model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=[OpenAIAssistantsClient.get_code_interpreter_tool()],
+        tools=[chat_client.get_code_interpreter_tool()],
     )
 
     try:

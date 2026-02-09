@@ -539,14 +539,14 @@ class SupportsCodeInterpreterTool(Protocol):
     """
 
     @staticmethod
-    def get_code_interpreter_tool(**kwargs: Any) -> dict[str, Any]:
+    def get_code_interpreter_tool(**kwargs: Any) -> Any:
         """Create a code interpreter tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration dict ready to pass to ChatAgent.
+            A tool configuration ready to pass to ChatAgent.
         """
         ...
 
@@ -569,14 +569,14 @@ class SupportsWebSearchTool(Protocol):
     """
 
     @staticmethod
-    def get_web_search_tool(**kwargs: Any) -> dict[str, Any]:
+    def get_web_search_tool(**kwargs: Any) -> Any:
         """Create a web search tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration dict ready to pass to ChatAgent.
+            A tool configuration ready to pass to ChatAgent.
         """
         ...
 
@@ -599,14 +599,14 @@ class SupportsImageGenerationTool(Protocol):
     """
 
     @staticmethod
-    def get_image_generation_tool(**kwargs: Any) -> dict[str, Any]:
+    def get_image_generation_tool(**kwargs: Any) -> Any:
         """Create an image generation tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration dict ready to pass to ChatAgent.
+            A tool configuration ready to pass to ChatAgent.
         """
         ...
 
@@ -629,7 +629,7 @@ class SupportsMCPTool(Protocol):
     """
 
     @staticmethod
-    def get_mcp_tool(**kwargs: Any) -> dict[str, Any]:
+    def get_mcp_tool(**kwargs: Any) -> Any:
         """Create an MCP tool configuration.
 
         Keyword Args:
@@ -637,7 +637,7 @@ class SupportsMCPTool(Protocol):
                 name and url for the MCP server.
 
         Returns:
-            A tool configuration dict ready to pass to ChatAgent.
+            A tool configuration ready to pass to ChatAgent.
         """
         ...
 
@@ -660,14 +660,14 @@ class SupportsFileSearchTool(Protocol):
     """
 
     @staticmethod
-    def get_file_search_tool(**kwargs: Any) -> dict[str, Any]:
+    def get_file_search_tool(**kwargs: Any) -> Any:
         """Create a file search tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration dict ready to pass to ChatAgent.
+            A tool configuration ready to pass to ChatAgent.
         """
         ...
 

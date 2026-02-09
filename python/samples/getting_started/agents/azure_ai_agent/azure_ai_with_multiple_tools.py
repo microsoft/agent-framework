@@ -69,17 +69,19 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
 async def main() -> None:
     """Example showing multiple tools for an Azure AI Agent."""
 
-    # Create tools using static methods
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-    )
-    web_search_tool = AzureAIAgentClient.get_web_search_tool()
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        # Create tools using instance methods
+        mcp_tool = client.get_mcp_tool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+        )
+        web_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",

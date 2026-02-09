@@ -337,7 +337,7 @@ class AzureAIAgentClient(
         approval_mode: str | dict[str, list[str]] | None = None,
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> McpTool:
         """Create a hosted MCP tool configuration for Azure AI Agents.
 
         This configures an MCP (Model Context Protocol) server that will be called
@@ -359,7 +359,7 @@ class AzureAIAgentClient(
             headers: HTTP headers to include in requests to the MCP server.
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            An McpTool instance ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -372,34 +372,11 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        result: dict[str, Any] = {
-            "type": "mcp",
-            "server_label": name.replace(" ", "_"),
-            "server_url": url or "",
-        }
-
-        if description:
-            result["server_description"] = description
-
-        if headers:
-            result["headers"] = headers
-
-        if allowed_tools:
-            result["allowed_tools"] = allowed_tools
-
-        if approval_mode:
-            if isinstance(approval_mode, str):
-                result["require_approval"] = "always" if approval_mode == "always_require" else "never"
-            else:
-                require_approval: dict[str, Any] = {}
-                if always_require := approval_mode.get("always_require_approval"):
-                    require_approval["always"] = {"tool_names": always_require}
-                if never_require := approval_mode.get("never_require_approval"):
-                    require_approval["never"] = {"tool_names": never_require}
-                if require_approval:
-                    result["require_approval"] = require_approval
-
-        return result
+        return McpTool(
+            server_label=name.replace(" ", "_"),
+            server_url=url or "",
+            allowed_tools=list(allowed_tools) if allowed_tools else [],
+        )
 
     # endregion
 
@@ -1237,33 +1214,15 @@ class AzureAIAgentClient(
 
         return tool_definitions
 
-    def _prepare_mcp_resources(self, tools: Sequence[FunctionTool | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _prepare_mcp_resources(self, tools: Sequence[Any]) -> list[dict[str, Any]]:
         """Prepare MCP tool resources for approval mode configuration.
 
-        Handles dict-based MCP tools from get_mcp_tool() factory method.
+        Filters McpTool instances and extracts their server_label for resource configuration.
         """
         mcp_resources: list[dict[str, Any]] = []
-
         for tool in tools:
-            if isinstance(tool, (dict, MutableMapping)):
-                tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                if tool_dict.get("type") != "mcp":
-                    continue
-
-                server_label = tool_dict.get("server_label")
-                if not server_label:
-                    continue
-
-                mcp_resource: dict[str, Any] = {"server_label": server_label}
-
-                if headers := tool_dict.get("headers"):
-                    mcp_resource["headers"] = headers
-
-                if require_approval := tool_dict.get("require_approval"):
-                    mcp_resource["require_approval"] = require_approval
-
-                mcp_resources.append(mcp_resource)
-
+            if isinstance(tool, McpTool):
+                mcp_resources.append({"server_label": tool.server_label})
         return mcp_resources
 
     def _prepare_messages(
@@ -1325,11 +1284,13 @@ class AzureAIAgentClient(
         return additional_messages, instructions, required_action_results
 
     async def _prepare_tools_for_azure_ai(
-        self, tools: Sequence[FunctionTool | MutableMapping[str, Any]], run_options: dict[str, Any] | None = None
-    ) -> list[ToolDefinition | dict[str, Any]]:
+        self, tools: Sequence[Any], run_options: dict[str, Any] | None = None
+    ) -> list[Any]:
         """Prepare tool definitions for the Azure AI Agents API.
 
-        Handles FunctionTool instances and dict-based tools from static factory methods.
+        Converts FunctionTool to JSON schema format. SDK types (ToolDefinition, McpTool,
+        FileSearchTool) are unpacked. Bing tools are converted to SDK types.
+        All other tools pass through unchanged.
 
         Args:
             tools: Sequence of tools to prepare.
@@ -1338,56 +1299,36 @@ class AzureAIAgentClient(
         Returns:
             List of tool definitions ready for the Azure AI API.
         """
-        tool_definitions: list[ToolDefinition | dict[str, Any]] = []
+        tool_definitions: list[Any] = []
         for tool in tools:
             if isinstance(tool, FunctionTool):
-                tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                tool_definitions.append(tool.to_json_schema_spec())
             elif isinstance(tool, ToolDefinition):
                 tool_definitions.append(tool)
+            elif isinstance(tool, McpTool):
+                tool_definitions.extend(tool.definitions)
             elif isinstance(tool, FileSearchTool):
-                # Handle FileSearchTool from get_file_search_tool()
                 tool_definitions.extend(tool.definitions)
                 if run_options is not None and "tool_resources" not in run_options:
                     run_options["tool_resources"] = tool.resources
-            elif isinstance(tool, (dict, MutableMapping)):
-                # Handle dict-based tools from static factory methods
-                tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                tool_type = tool_dict.get("type")
-
+            elif isinstance(tool, MutableMapping):
+                tool_type = tool.get("type")
                 if tool_type == "bing_grounding":
-                    connection_id = tool_dict.get("connection_id")
-                    if not connection_id:
-                        raise ServiceInitializationError("Bing grounding tool requires 'connection_id'.")
-                    config_args = {k: v for k, v in tool_dict.items() if k not in ("type", "connection_id") and v}
-                    bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    # Convert to SDK type
+                    config_args = {k: v for k, v in tool.items() if k not in ("type",) and v}
+                    bing_search = BingGroundingTool(**config_args)
                     tool_definitions.extend(bing_search.definitions)
                 elif tool_type == "bing_custom_search":
-                    connection_id = tool_dict.get("connection_id")
-                    instance_name = tool_dict.get("instance_name")
-                    if not connection_id or not instance_name:
-                        raise ServiceInitializationError(
-                            "Bing custom search tool requires 'connection_id' and 'instance_name'."
-                        )
-                    config_args = {
-                        k: v for k, v in tool_dict.items() if k not in ("type", "connection_id", "instance_name") and v
-                    }
-                    bing_custom_search = BingCustomSearchTool(
-                        connection_id=connection_id, instance_name=instance_name, **config_args
-                    )
+                    # Convert to SDK type
+                    config_args = {k: v for k, v in tool.items() if k not in ("type",) and v}
+                    bing_custom_search = BingCustomSearchTool(**config_args)
                     tool_definitions.extend(bing_custom_search.definitions)
-                elif tool_type == "mcp":
-                    server_label = tool_dict.get("server_label")
-                    server_url = tool_dict.get("server_url")
-                    if not server_label or not server_url:
-                        raise ServiceInitializationError("MCP tool requires 'server_label' and 'server_url'.")
-                    allowed_tools = tool_dict.get("allowed_tools", [])
-                    mcp_tool = McpTool(server_label=server_label, server_url=server_url, allowed_tools=allowed_tools)
-                    tool_definitions.extend(mcp_tool.definitions)
                 else:
-                    # Pass through other dict-based tools directly
-                    tool_definitions.append(tool_dict)
+                    # Pass through other dict-based tools unchanged
+                    tool_definitions.append(tool)
             else:
-                raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
+                # Pass through all other tools (SDK types, etc.) unchanged
+                tool_definitions.append(tool)
         return tool_definitions
 
     def _prepare_tool_outputs_for_azure_ai(

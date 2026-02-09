@@ -95,9 +95,10 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a thread."""
     print("=== Mcp with approvals and without thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
 
     # Create MCP tool with specific approval settings
-    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we don't require approval for microsoft_docs_search tool calls
@@ -108,7 +109,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
@@ -130,9 +131,10 @@ async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
 
     # Create MCP tool without approval requirements
-    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we don't require approval for any function calls
@@ -144,7 +146,7 @@ async def run_hosted_mcp_without_approval() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
@@ -166,9 +168,10 @@ async def run_hosted_mcp_with_thread() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
 
     # Create MCP tool with always require approval
-    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we require approval for all function calls
@@ -178,7 +181,7 @@ async def run_hosted_mcp_with_thread() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
@@ -201,9 +204,10 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
 
     # Create MCP tool with always require approval
-    mcp_tool = AzureOpenAIResponsesClient.get_mcp_tool(
+    mcp_tool = client.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         # we require approval for all function calls
@@ -213,7 +217,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        chat_client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],

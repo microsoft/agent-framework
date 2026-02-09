@@ -24,14 +24,15 @@ The test flow:
 async def main() -> None:
     """Test file generation and retrieval with code interpreter."""
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
-
     async with (
         AzureCliCredential() as credential,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
         AzureAIAgentsProvider(agents_client=agents_client) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="CodeInterpreterAgent",
             instructions=(

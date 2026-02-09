@@ -18,15 +18,17 @@ Pre-requisites:
 
 
 async def main() -> None:
-    # Create web search tool using static method
-    web_search_tool = AzureAIClient.get_web_search_tool()
-
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        # Create web search tool using instance method
+        web_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="WebsearchAgent",
             instructions="You are a helpful assistant that can search the web",

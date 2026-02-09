@@ -26,13 +26,14 @@ async def non_streaming_example() -> None:
     """Example of extracting file annotations from non-streaming response."""
     print("=== Non-Streaming Response Example ===")
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
-
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
@@ -65,13 +66,14 @@ async def streaming_example() -> None:
     """Example of extracting file annotations from streaming response."""
     print("\n=== Streaming Response Example ===")
 
-    # Create code interpreter tool using static method
-    code_interpreter_tool = AzureAIClient.get_code_interpreter_tool()
-
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
