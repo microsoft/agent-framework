@@ -228,28 +228,28 @@ uv run poe prek-install
 
 ### Code Quality and Formatting
 
-Each of the following tasks are designed to run against both the main `agent-framework` package and the extension packages, ensuring consistent code quality across the project.
+Each of the following tasks run against both the main `agent-framework` package and the extension packages in parallel, ensuring consistent code quality across the project.
 
 #### `fmt` (format)
-Format code using ruff:
+Format code using ruff (runs in parallel across all packages):
 ```bash
 uv run poe fmt
 ```
 
 #### `lint`
-Run linting checks and fix issues:
+Run linting checks and fix issues (runs in parallel across all packages):
 ```bash
 uv run poe lint
 ```
 
 #### `pyright`
-Run Pyright type checking:
+Run Pyright type checking (runs in parallel across all packages):
 ```bash
 uv run poe pyright
 ```
 
 #### `mypy`
-Run MyPy type checking:
+Run MyPy type checking (runs in parallel across all packages):
 ```bash
 uv run poe mypy
 ```
@@ -270,8 +270,14 @@ uv run poe markdown-code-lint
 
 ### Comprehensive Checks
 
+#### `check-packages`
+Run all package-level quality checks (format, lint, pyright, mypy) in parallel across all packages. This runs the full cross-product of (package × check) concurrently:
+```bash
+uv run poe check-packages
+```
+
 #### `check`
-Run all quality checks (format, lint, pyright, mypy, test, markdown lint):
+Run all quality checks including package checks, samples, tests and markdown lint:
 ```bash
 uv run poe check
 ```
@@ -279,7 +285,7 @@ uv run poe check
 ### Testing
 
 #### `test`
-Run unit tests with coverage by invoking the `test` task in each package sequentially:
+Run unit tests with coverage by invoking the `test` task in each package in parallel:
 ```bash
 uv run poe test
 ```
@@ -327,7 +333,7 @@ uv run poe publish
 
 ## Prek Hooks
 
-Prek hooks run automatically on commit and execute a subset of the checks on changed files only. You can also run all checks using prek directly:
+Prek hooks run automatically on commit and execute a subset of the checks on changed files only. Package-level checks (fmt, lint, pyright) run in parallel but only for packages with changed files. Markdown and sample checks are skipped when no relevant files were changed. If the `core` package is changed, all packages are checked. You can also run all checks using prek directly:
 
 ```bash
 uv run prek run -a

@@ -229,7 +229,8 @@ build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
-check = ["fmt", "lint", "pyright", "mypy", "samples-lint", "samples-syntax", "test", "markdown-code-lint"]
+check-packages = "python scripts/run_tasks_in_packages_if_exists.py fmt lint pyright mypy"
+check = ["check-packages", "samples-lint", "samples-syntax", "test", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
 cmd = """
@@ -279,7 +280,36 @@ sequence = [
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
 [tool.poe.tasks.prek-pyright]
-cmd = "uv run python scripts/run_tasks_in_changed_packages.py pyright ${files}"
+cmd = "uv run python scripts/run_tasks_in_changed_packages.py pyright --files ${files}"
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+[tool.poe.tasks.prek-check-packages]
+cmd = "uv run python scripts/run_tasks_in_changed_packages.py fmt lint pyright --files ${files}"
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+[tool.poe.tasks.prek-markdown-code-lint]
+cmd = """uv run python scripts/check_md_code_blocks.py ${files} --no-glob
+    --exclude cookiecutter-agent-framework-lab --exclude tau2
+    --exclude packages/devui/frontend --exclude context_providers/azure_ai_search"""
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+[tool.poe.tasks.prek-samples-check]
+shell = """
+HAS_SAMPLES=false
+for f in ${files}; do
+    case "$f" in
+        samples/*) HAS_SAMPLES=true; break ;;
+    esac
+done
+if [ "$HAS_SAMPLES" = true ]; then
+    echo "Sample files changed, running samples checks..."
+    uv run ruff check samples --fix --exclude samples/autogen-migration,samples/semantic-kernel-migration --ignore E501,ASYNC,B901,TD002
+    uv run pyright -p pyrightconfig.samples.json --warnings
+else
+    echo "No sample files changed, skipping samples checks"
+fi
+"""
+interpreter = "bash"
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
 
@@ -301,18 +331,15 @@ else
                     echo ".")
 fi
 echo "Changed files: $CHANGED_FILES"
-uv run python scripts/run_tasks_in_changed_packages.py mypy $CHANGED_FILES
+uv run python scripts/run_tasks_in_changed_packages.py mypy --files $CHANGED_FILES
 """
 interpreter = "bash"
 
 [tool.poe.tasks.prek-check]
 sequence = [
-    { ref = "fmt" },
-    { ref = "lint" },
-    { ref = "prek-pyright ${files}" },
-    { ref = "markdown-code-lint" },
-    { ref = "samples-lint" },
-    { ref = "samples-syntax" }
+    { ref = "prek-check-packages ${files}" },
+    { ref = "prek-markdown-code-lint ${files}" },
+    { ref = "prek-samples-check ${files}" }
 ]
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 

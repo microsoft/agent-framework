@@ -13,7 +13,7 @@ env:
 
 jobs:
   prek:
-    name: Checks
+    name: Prek Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
@@ -47,6 +47,33 @@ jobs:
         name: Run Prek Hooks
         with:
           extra-args: --cd python --all-files
+
+  mypy:
+    name: Mypy Checks
+    if: "!cancelled()"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ./python
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run Mypy
         env:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}

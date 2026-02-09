@@ -1,76 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import glob
+"""Run poe task(s) across all workspace packages, in parallel by default."""
+
+import argparse
 import sys
 from pathlib import Path
 
-import tomli
-from poethepoet.app import PoeThePoet
-from rich import print
-
-
-def discover_projects(workspace_pyproject_file: Path) -> list[Path]:
-    with workspace_pyproject_file.open("rb") as f:
-        data = tomli.load(f)
-
-    projects = data["tool"]["uv"]["workspace"]["members"]
-    exclude = data["tool"]["uv"]["workspace"].get("exclude", [])
-
-    all_projects: list[Path] = []
-    for project in projects:
-        if "*" in project:
-            globbed = glob.glob(str(project), root_dir=workspace_pyproject_file.parent)
-            globbed_paths = [Path(p) for p in globbed]
-            all_projects.extend(globbed_paths)
-        else:
-            all_projects.append(Path(project))
-
-    for project in exclude:
-        if "*" in project:
-            globbed = glob.glob(str(project), root_dir=workspace_pyproject_file.parent)
-            globbed_paths = [Path(p) for p in globbed]
-            all_projects = [p for p in all_projects if p not in globbed_paths]
-        else:
-            all_projects = [p for p in all_projects if p != Path(project)]
-
-    return all_projects
-
-
-def extract_poe_tasks(file: Path) -> set[str]:
-    with file.open("rb") as f:
-        data = tomli.load(f)
-
-    tasks = set(data.get("tool", {}).get("poe", {}).get("tasks", {}).keys())
-
-    # Check if there is an include too
-    include: str | None = data.get("tool", {}).get("poe", {}).get("include", None)
-    if include:
-        include_file = file.parent / include
-        if include_file.exists():
-            tasks = tasks.union(extract_poe_tasks(include_file))
-
-    return tasks
+from task_runner import build_work_items, discover_projects, run_tasks
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run poe task(s) across all workspace packages, in parallel by default."
+    )
+    parser.add_argument("tasks", nargs="+", help="Task name(s) to run across packages")
+    parser.add_argument("--seq", action="store_true", help="Run sequentially instead of in parallel")
+    args = parser.parse_args()
+
     pyproject_file = Path(__file__).parent.parent / "pyproject.toml"
+    workspace_root = pyproject_file.parent
     projects = discover_projects(pyproject_file)
 
-    if len(sys.argv) < 2:
-        print("Please provide a task name")
-        sys.exit(1)
-
-    task_name = sys.argv[1]
-    for project in projects:
-        tasks = extract_poe_tasks(project / "pyproject.toml")
-        if task_name in tasks:
-            print(f"Running task {task_name} in {project}")
-            app = PoeThePoet(cwd=project)
-            result = app(cli_args=sys.argv[1:])
-            if result:
-                sys.exit(result)
-        else:
-            print(f"Task {task_name} not found in {project}")
+    work_items = build_work_items(projects, args.tasks)
+    run_tasks(work_items, workspace_root, sequential=args.seq)
 
 
 if __name__ == "__main__":
