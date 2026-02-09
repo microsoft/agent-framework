@@ -646,7 +646,10 @@ class FunctionTool(BaseTool, Generic[ArgsT, ReturnT]):
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
                 If None, there is no limit. Should be at least 1.
             additional_properties: Additional properties to set on the function.
-            func: The function to wrap.
+            func: The function to wrap. When ``None``, creates a declaration-only tool
+                that has no implementation. Declaration-only tools are useful when you want
+                the agent to reason about tool usage without executing them, or when the
+                actual implementation exists elsewhere (e.g., client-side rendering).
             input_model: The Pydantic model that defines the input parameters for the function.
                 This can also be a JSON schema dictionary.
                 If not provided, it will be inferred from the function signature.
@@ -1280,7 +1283,11 @@ def tool(
     ``Field`` class for more advanced configuration.
 
     Args:
-        func: The function to decorate.
+        func: The function to decorate. This parameter enables the decorator to be used
+            both with and without parentheses: ``@tool`` directly decorates the function,
+            while ``@tool()`` or ``@tool(name="custom")`` returns a decorator. For
+            declaration-only tools (no implementation), use :class:`FunctionTool` directly
+            with ``func=None``—see the example below.
 
     Keyword Args:
         name: The name of the function. If not provided, the function's ``__name__``
@@ -1340,6 +1347,20 @@ def tool(
                 '''Get weather asynchronously.'''
                 # Simulate async operation
                 return f"Weather in {location}"
+
+
+            # Declaration-only tool (no implementation)
+            # Use FunctionTool directly when you need a tool declaration without
+            # an executable function. The agent can request this tool, but it won't
+            # be executed automatically. Useful for testing agent reasoning or when
+            # the implementation is handled externally (e.g., client-side rendering).
+            from agent_framework import FunctionTool
+
+            declaration_only_tool = FunctionTool(
+                name="get_current_time",
+                description="Get the current time in ISO 8601 format.",
+                func=None,  # Explicitly no implementation - makes declaration_only=True
+            )
 
     """
 

@@ -31,7 +31,20 @@ The example shows:
 3. Run-level context middleware for specific use cases (high priority, debugging)
 4. Run-level caching middleware for expensive operations
 
-Execution order: Agent middleware (outermost) -> Run middleware (innermost) -> Agent execution
+Middleware Execution Order:
+    When both agent-level and run-level middleware are configured, they execute in this order:
+
+    1. Agent-level middleware (outermost) - executes first, in the order they were registered
+    2. Run-level middleware (innermost) - executes next, in the order they were passed to run()
+    3. Agent execution - the actual agent logic runs last
+
+    For example, with agent middleware [A1, A2] and run middleware [R1, R2]:
+        Request  -> A1 -> A2 -> R1 -> R2 -> Agent -> R2 -> R1 -> A2 -> A1 -> Response
+
+    This means:
+    - Agent middleware wraps ALL run middleware and the agent
+    - Run middleware wraps only the agent for that specific run
+    - Each middleware can modify the context before AND after calling next()
 """
 
 
