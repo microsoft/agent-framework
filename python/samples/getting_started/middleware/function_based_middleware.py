@@ -27,7 +27,7 @@ The example includes:
 
 Function-based middleware is ideal for simple, stateless operations and provides a more
 lightweight approach compared to class-based middleware. Both agent and function middleware
-can be implemented as async functions that accept context and next parameters.
+can be implemented as async functions that accept context and call_next parameters.
 """
 
 
@@ -43,7 +43,7 @@ def get_weather(
 
 async def security_agent_middleware(
     context: AgentContext,
-    next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query
@@ -53,16 +53,16 @@ async def security_agent_middleware(
         query = last_message.text
         if "password" in query.lower() or "secret" in query.lower():
             print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
-            # Simply don't call next() to prevent execution
+            # Simply don't call call_next() to prevent execution
             return
 
     print("[SecurityAgentMiddleware] Security check passed.")
-    await next(context)
+    await call_next(context)
 
 
 async def logging_function_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
     """Function middleware that logs function calls."""
     function_name = context.function.name
@@ -70,7 +70,7 @@ async def logging_function_middleware(
 
     start_time = time.time()
 
-    await next(context)
+    await call_next(context)
 
     end_time = time.time()
     duration = end_time - start_time

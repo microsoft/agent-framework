@@ -48,11 +48,11 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def weather_override_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+async def weather_override_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
     """Chat middleware that overrides weather results for both streaming and non-streaming cases."""
 
     # Let the original agent execution complete first
-    await next(context)
+    await call_next(context)
 
     # Check if there's a result to override (agent called weather function)
     if context.result is not None:
@@ -83,9 +83,9 @@ async def weather_override_middleware(context: ChatContext, next: Callable[[Chat
             context.result = ChatResponse(messages=[ChatMessage(role="assistant", text=custom_message)])
 
 
-async def validate_weather_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+async def validate_weather_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
     """Chat middleware that simulates result validation for both streaming and non-streaming cases."""
-    await next(context)
+    await call_next(context)
 
     validation_note = "Validation: weather data verified."
 
@@ -103,9 +103,9 @@ async def validate_weather_middleware(context: ChatContext, next: Callable[[Chat
         context.result.messages.append(ChatMessage(role="assistant", text=validation_note))
 
 
-async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
     """Agent middleware that validates chat middleware effects and cleans the result."""
-    await next(context)
+    await call_next(context)
 
     if context.result is None:
         return
