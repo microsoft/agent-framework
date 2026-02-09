@@ -449,6 +449,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/UnitTests/">
+    <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
