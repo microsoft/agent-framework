@@ -87,9 +87,9 @@ def serialize_value(value: Any) -> Any:
     # Handle dataclasses ourselves so that nested Pydantic models get the
     # PYDANTIC_MARKER treatment instead of being str()'d by core encoding.
     if is_dataclass(value) and not isinstance(value, type):
-        cls = type(value)
+        dc_cls = type(value)
         return {
-            DATACLASS_MARKER: f"{cls.__module__}:{cls.__name__}",
+            DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
             **{field.name: serialize_value(getattr(value, field.name)) for field in dc_fields(value)},
         }
 
