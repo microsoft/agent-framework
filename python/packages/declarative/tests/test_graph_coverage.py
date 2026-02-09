@@ -1036,83 +1036,6 @@ class TestAgentExecutorsCoverage:
         parsed = state.get("Local.Parsed")
         assert parsed == {"status": "ok", "count": 42}
 
-    async def test_invoke_tool_executor_not_found(self, mock_context, mock_state):
-        """Test InvokeToolExecutor when tool not found."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            InvokeToolExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "MissingTool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool 'MissingTool' not found in registry"}
-
-    async def test_invoke_tool_executor_sync_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with synchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def my_tool(x: int, y: int) -> int:
-            return x + y
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"add": my_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "add",
-            "parameters": {"x": 5, "y": 3},
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == 8
-
-    async def test_invoke_tool_executor_async_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with asynchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        async def my_async_tool(input: str) -> str:
-            return f"Processed: {input}"
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"process": my_async_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "process",
-            "input": "test data",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == "Processed: test data"
-
 
 # ---------------------------------------------------------------------------
 # Control Flow Executors Tests - Additional coverage
@@ -1910,33 +1833,6 @@ class TestAgentExternalLoopCoverage:
         mock_context.yield_output.assert_called_with("Direct string response")
         result = state.get("Local.result")
         assert result == "Direct string response"
-
-    async def test_invoke_tool_with_error(self, mock_context, mock_state):
-        """Test InvokeToolExecutor handles tool errors."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def failing_tool(**kwargs):
-            raise ValueError("Tool error")
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"bad_tool": failing_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "bad_tool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool error"}
 
 
 # ---------------------------------------------------------------------------

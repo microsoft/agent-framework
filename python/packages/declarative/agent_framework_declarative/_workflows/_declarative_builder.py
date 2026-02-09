@@ -11,6 +11,7 @@ action definitions and creates a proper workflow graph with:
 - Loop edges for foreach
 """
 
+import logging
 from typing import Any
 
 from agent_framework._workflows import (
@@ -36,6 +37,10 @@ from ._executors_control_flow import (
     SwitchEvaluatorExecutor,
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
+from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
+
+logger = logging.getLogger(__name__)
+
 
 # Combined mapping of all action kinds to executor classes
 ALL_ACTION_EXECUTORS = {
@@ -43,6 +48,7 @@ ALL_ACTION_EXECUTORS = {
     **CONTROL_FLOW_EXECUTORS,
     **AGENT_ACTION_EXECUTORS,
     **EXTERNAL_INPUT_EXECUTORS,
+    **TOOL_ACTION_EXECUTORS,
 }
 
 # Action kinds that terminate control flow (no fall-through to successor)
@@ -66,6 +72,7 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "RequestHumanInput": ["variable"],
     "WaitForHumanInput": ["variable"],
     "EmitEvent": ["event"],
+    "InvokeFunctionTool": ["functionName"],
 }
 
 # Alternate field names that satisfy required field requirements
@@ -106,6 +113,7 @@ class DeclarativeWorkflowBuilder:
         yaml_definition: dict[str, Any],
         workflow_id: str | None = None,
         agents: dict[str, Any] | None = None,
+        tools: dict[str, Any] | None = None,
         checkpoint_storage: Any | None = None,
         validate: bool = True,
     ):
@@ -115,6 +123,7 @@ class DeclarativeWorkflowBuilder:
             yaml_definition: The parsed YAML workflow definition
             workflow_id: Optional ID for the workflow (defaults to name from YAML)
             agents: Registry of agent instances by name (for InvokeAzureAgent actions)
+            tools: Registry of tool/function instances by name (for InvokeFunctionTool actions)
             checkpoint_storage: Optional checkpoint storage for pause/resume support
             validate: Whether to validate the workflow definition before building (default: True)
         """
@@ -123,6 +132,7 @@ class DeclarativeWorkflowBuilder:
         self._executors: dict[str, Any] = {}  # id -> executor
         self._action_index = 0  # Counter for generating unique IDs
         self._agents = agents or {}  # Agent registry for agent executors
+        self._tools = tools or {}  # Tool registry for tool executors
         self._checkpoint_storage = checkpoint_storage
         self._pending_gotos: list[tuple[Any, str]] = []  # (goto_executor, target_id)
         self._validate = validate
@@ -405,8 +415,13 @@ class DeclarativeWorkflowBuilder:
         executor_class = ALL_ACTION_EXECUTORS.get(kind)
 
         if executor_class is None:
-            # Unknown action type - skip with warning
-            # In production, might want to log this
+            # Unknown action type - log warning and skip
+            logger.warning(
+                "Unknown action kind '%s' encountered at index %d - action will be skipped. Available action kinds: %s",
+                kind,
+                self._action_index,
+                list(ALL_ACTION_EXECUTORS.keys()),
+            )
             return None
 
         # Create the executor with ID
@@ -419,10 +434,12 @@ class DeclarativeWorkflowBuilder:
             action_id = f"{parent_id}_{kind}_{self._action_index}" if parent_id else f"{kind}_{self._action_index}"
         self._action_index += 1
 
-        # Pass agents to agent-related executors
+        # Pass agents/tools to specialized executors
         executor: Any
         if kind in ("InvokeAzureAgent",):
             executor = InvokeAzureAgentExecutor(action_def, id=action_id, agents=self._agents)
+        elif kind == "InvokeFunctionTool":
+            executor = InvokeFunctionToolExecutor(action_def, id=action_id, tools=self._tools)
         else:
             executor = executor_class(action_def, id=action_id)
         self._executors[action_id] = executor
