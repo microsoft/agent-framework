@@ -117,7 +117,7 @@ def _decode(value: Any) -> Any:
     return value
 
 
-def _verify_type(obj: Any, expected_type_key: str | None) -> None:
+def _verify_type(obj: Any, expected_type_key: str) -> None:
     """Verify that an unpickled object matches its recorded type.
 
     Args:
@@ -127,10 +127,6 @@ def _verify_type(obj: Any, expected_type_key: str | None) -> None:
     Raises:
         CheckpointDecodingError: If the types don't match.
     """
-    if expected_type_key is None:
-        # No type recorded (legacy checkpoint), skip verification
-        return
-
     actual_type_key = _type_to_key(type(obj))  # type: ignore
     if actual_type_key != expected_type_key:
         raise CheckpointDecodingError(
