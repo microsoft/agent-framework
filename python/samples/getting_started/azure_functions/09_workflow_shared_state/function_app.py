@@ -107,8 +107,8 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     - Emit an AgentExecutorRequest asking the detector to respond.
     """
     new_email = Email(email_id=str(uuid4()), email_content=email_text)
-    await ctx.set_shared_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
-    await ctx.set_shared_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
+    ctx.set_state(f"{EMAIL_STATE_PREFIX}{new_email.email_id}", new_email)
+    ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
         AgentExecutorRequest(messages=[ChatMessage(role="user", text=new_email.email_content)], should_respond=True)
@@ -130,7 +130,7 @@ async def to_detection_result(response: AgentExecutorResponse, ctx: WorkflowCont
         # Fallback for empty or invalid response (e.g. due to content filtering)
         parsed = DetectionResultAgent(is_spam=True, reason="Agent execution failed or yielded invalid JSON.")
 
-    email_id: str = await ctx.get_shared_state(CURRENT_EMAIL_ID_KEY)
+    email_id: str = ctx.get_state(CURRENT_EMAIL_ID_KEY)
     await ctx.send_message(DetectionResult(is_spam=parsed.is_spam, reason=parsed.reason, email_id=email_id))
 
 
@@ -145,7 +145,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
         raise RuntimeError("This executor should only handle non-spam messages.")
 
     # Load the original content by id from shared state and forward it to the assistant.
-    email: Email = await ctx.get_shared_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
+    email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
         AgentExecutorRequest(messages=[ChatMessage(role="user", text=email.email_content)], should_respond=True)
     )
@@ -225,8 +225,7 @@ def _create_workflow() -> Workflow:
     #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
     #     True  -> handle_spam
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(store_email)
+        WorkflowBuilder(start_executor=store_email)
         .add_edge(store_email, spam_detection_agent)
         .add_edge(spam_detection_agent, to_detection_result)
         .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))

@@ -176,7 +176,7 @@ class ContentAnalyzerExecutor(Executor):
             )
 
         # Retrieve the original submission from shared state
-        submission: ContentSubmission = await ctx.get_shared_state("current_submission")
+        submission: ContentSubmission = ctx.get_state("current_submission")
 
         await ctx.send_message(AnalysisWithSubmission(submission=submission, analysis=analysis))
 
@@ -233,7 +233,7 @@ class HumanReviewExecutor(Executor):
         )
 
         # Store analysis in shared state for the response handler
-        await ctx.set_shared_state("pending_analysis", data)
+        ctx.set_state("pending_analysis", data)
 
         # Request human input - workflow will pause here
         # The response_type specifies what we expect back
@@ -354,7 +354,7 @@ class InputRouterExecutor(Executor):
         )
 
         # Store submission in shared state for later retrieval
-        await ctx.set_shared_state("current_submission", submission)
+        ctx.set_state("current_submission", submission)
 
         # Create the agent request
         message = (
@@ -400,8 +400,7 @@ def _create_workflow() -> Workflow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(input_router)
+        WorkflowBuilder(start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)

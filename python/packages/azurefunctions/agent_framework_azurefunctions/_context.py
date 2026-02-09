@@ -15,7 +15,6 @@ from typing import Any
 from agent_framework import (
     CheckpointStorage,
     Message,
-    RequestInfoEvent,
     RunnerContext,
     State,
     WorkflowCheckpoint,
@@ -39,7 +38,7 @@ class CapturingRunnerContext(RunnerContext):
         """Initialize the capturing runner context."""
         self._messages: dict[str, list[Message]] = {}
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
-        self._pending_request_info_events: dict[str, RequestInfoEvent] = {}
+        self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
         self._workflow_id: str | None = None
         self._streaming: bool = False
 
@@ -146,8 +145,8 @@ class CapturingRunnerContext(RunnerContext):
 
     # region Request Info Events
 
-    async def add_request_info_event(self, event: RequestInfoEvent) -> None:
-        """Add a RequestInfoEvent and track it for correlation."""
+    async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
+        """Add a request_info WorkflowEvent and track it for correlation."""
         self._pending_request_info_events[event.request_id] = event
         await self.add_event(event)
 
@@ -162,8 +161,8 @@ class CapturingRunnerContext(RunnerContext):
             "Human-in-the-loop scenarios should be handled at the orchestrator level."
         )
 
-    async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
-        """Get the mapping of request IDs to their corresponding RequestInfoEvent."""
+    async def get_pending_request_info_events(self) -> dict[str, WorkflowEvent[Any]]:
+        """Get the mapping of request IDs to their corresponding request_info events."""
         return dict(self._pending_request_info_events)
 
     # endregion Request Info Events

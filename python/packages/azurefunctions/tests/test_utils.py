@@ -12,7 +12,7 @@ from agent_framework import (
     AgentResponse,
     ChatMessage,
     Message,
-    WorkflowOutputEvent,
+    WorkflowEvent,
 )
 from pydantic import BaseModel
 
@@ -106,19 +106,20 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_add_event_queues_event(self, context: CapturingRunnerContext) -> None:
         """Test that add_event queues events correctly."""
-        event = WorkflowOutputEvent(data="output", executor_id="exec_1")
+        event = WorkflowEvent.output(executor_id="exec_1", data="output")
 
         await context.add_event(event)
 
         events = await context.drain_events()
         assert len(events) == 1
-        assert isinstance(events[0], WorkflowOutputEvent)
+        assert isinstance(events[0], WorkflowEvent)
+        assert events[0].type == "output"
         assert events[0].data == "output"
 
     @pytest.mark.asyncio
     async def test_drain_events_clears_queue(self, context: CapturingRunnerContext) -> None:
         """Test that drain_events clears the event queue."""
-        await context.add_event(WorkflowOutputEvent(data="test", executor_id="e"))
+        await context.add_event(WorkflowEvent.output(executor_id="e", data="test"))
 
         await context.drain_events()  # First drain
         events = await context.drain_events()  # Second drain
@@ -130,14 +131,14 @@ class TestCapturingRunnerContext:
         """Test has_events returns correct boolean."""
         assert await context.has_events() is False
 
-        await context.add_event(WorkflowOutputEvent(data="test", executor_id="e"))
+        await context.add_event(WorkflowEvent.output(executor_id="e", data="test"))
 
         assert await context.has_events() is True
 
     @pytest.mark.asyncio
     async def test_next_event_waits_for_event(self, context: CapturingRunnerContext) -> None:
         """Test that next_event returns queued events."""
-        event = WorkflowOutputEvent(data="waited", executor_id="e")
+        event = WorkflowEvent.output(executor_id="e", data="waited")
         await context.add_event(event)
 
         result = await context.next_event()
@@ -169,7 +170,7 @@ class TestCapturingRunnerContext:
     async def test_reset_for_new_run_clears_state(self, context: CapturingRunnerContext) -> None:
         """Test that reset_for_new_run clears all state."""
         await context.send_message(Message(data="test", target_id="t", source_id="s"))
-        await context.add_event(WorkflowOutputEvent(data="event", executor_id="e"))
+        await context.add_event(WorkflowEvent.output(executor_id="e", data="event"))
         context.set_streaming(True)
 
         context.reset_for_new_run()
@@ -181,10 +182,10 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_create_checkpoint_raises_not_implemented(self, context: CapturingRunnerContext) -> None:
         """Test that checkpointing methods raise NotImplementedError."""
-        from agent_framework import SharedState
+        from agent_framework import State
 
         with pytest.raises(NotImplementedError):
-            await context.create_checkpoint(SharedState(), 1)
+            await context.create_checkpoint(State(), 1)
 
     @pytest.mark.asyncio
     async def test_load_checkpoint_raises_not_implemented(self, context: CapturingRunnerContext) -> None:
