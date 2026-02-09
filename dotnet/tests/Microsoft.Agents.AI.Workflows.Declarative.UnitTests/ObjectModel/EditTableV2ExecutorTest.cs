@@ -60,6 +60,97 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public async Task InvalidModel_AddItemOperation_NullValueAsync()
+    {
+        // Arrange
+        const string variableName = "TestTable";
+        EditTableV2 model = new EditTableV2.Builder
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvalidModel_AddItemOperation_NullValueAsync)),
+            ItemsVariable = PropertyPath.Create(FormatVariablePath(variableName)),
+            ChangeType = new AddItemOperation.Builder
+            {
+                Value = null
+            }.Build()
+        }.Build();
+
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        TableValue tableValue = FormulaValue.NewTable(recordType);
+        this.State.Set(variableName, tableValue);
+        this.State.Bind();
+
+        // Act, Assert
+        EditTableV2Executor action = new(model, this.State);
+        await Assert.ThrowsAsync<DeclarativeActionException>(async () => await this.ExecuteAsync(action));
+    }
+
+    [Fact]
+    public async Task InvalidModel_RemoveItemOperation_NullValueAsync()
+    {
+        // Arrange
+        const string variableName = "TestTable";
+        EditTableV2 model = new EditTableV2.Builder
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvalidModel_RemoveItemOperation_NullValueAsync)),
+            ItemsVariable = PropertyPath.Create(FormatVariablePath(variableName)),
+            ChangeType = new RemoveItemOperation.Builder
+            {
+                Value = null
+            }.Build()
+        }.Build();
+
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        TableValue tableValue = FormulaValue.NewTable(recordType);
+        this.State.Set(variableName, tableValue);
+        this.State.Bind();
+
+        // Act, Assert
+        EditTableV2Executor action = new(model, this.State);
+        await Assert.ThrowsAsync<DeclarativeActionException>(async () => await this.ExecuteAsync(action));
+    }
+
+    [Fact]
+    public async Task RemoveItemOperation_NonTableValueAsync()
+    {
+        // Arrange
+        const string variableName = "TestTable";
+
+        // Create a table with some items
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue record1 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item1")));
+        TableValue tableValue = FormulaValue.NewTable(recordType, record1);
+        this.State.Set(variableName, tableValue);
+
+        // Set a string value instead of a table for removal
+        this.State.Set("_RemoveItems", FormulaValue.New("NotATable"));
+        this.State.Bind();
+
+        EditTableV2 model = new EditTableV2.Builder
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(RemoveItemOperation_NonTableValueAsync)),
+            ItemsVariable = PropertyPath.Create(FormatVariablePath(variableName)),
+            ChangeType = new RemoveItemOperation.Builder
+            {
+                Value = new ValueExpression.Builder(ValueExpression.Variable(PropertyPath.TopicVariable("_RemoveItems")))
+            }.Build()
+        }.Build();
+
+        // Act
+        EditTableV2Executor action = new(model, this.State);
+        await this.ExecuteAsync(action);
+
+        // Assert
+        // When the remove value is not a table, no removal occurs, so the table should be unchanged
+        FormulaValue value = this.State.Get(variableName);
+        Assert.IsAssignableFrom<TableValue>(value);
+        TableValue resultTable = (TableValue)value;
+        Assert.Single(resultTable.Rows);
+    }
+
+    [Fact]
     public async Task AddItemOperation_WithSingleFieldRecordAsync()
     {
         // Arrange, Act, Assert
