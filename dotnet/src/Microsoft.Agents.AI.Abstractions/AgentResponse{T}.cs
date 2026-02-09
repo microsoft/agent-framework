@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -28,8 +29,11 @@ public class AgentResponse<T> : AgentResponse
     /// </summary>
     /// <param name="response">The <see cref="AgentResponse"/> from which to populate this <see cref="AgentResponse{T}"/>.</param>
     /// <param name="serializerOptions">The <see cref="JsonSerializerOptions"/> to use when deserializing the result.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="serializerOptions"/> is <see langword="null"/>.</exception>
     public AgentResponse(AgentResponse response, JsonSerializerOptions serializerOptions) : base(response)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         this._serializerOptions = serializerOptions;
     }
 
@@ -38,8 +42,11 @@ public class AgentResponse<T> : AgentResponse
     /// </summary>
     /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentResponse{T}"/>.</param>
     /// <param name="serializerOptions">The <see cref="JsonSerializerOptions"/> to use when deserializing the result.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="serializerOptions"/> is <see langword="null"/>.</exception>
     public AgentResponse(ChatResponse response, JsonSerializerOptions serializerOptions) : base(response)
     {
+        _ = Throw.IfNull(serializerOptions);
+
         this._serializerOptions = serializerOptions;
     }
 
