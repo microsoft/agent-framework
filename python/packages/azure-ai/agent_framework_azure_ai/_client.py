@@ -58,15 +58,15 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
 
 
-TAzureAIClientOptions = TypeVar(
-    "TAzureAIClientOptions",
+AzureAIClientOptionsT = TypeVar(
+    "AzureAIClientOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
 
-class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
+class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
     """Raw Azure AI client without middleware, telemetry, or function invocation layers.
 
     Warning:
@@ -568,12 +568,12 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | Mapping[str, Any] | None = None,
+        default_options: AzureAIClientOptionsT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[TAzureAIClientOptions]:
+    ) -> ChatAgent[AzureAIClientOptionsT]:
         """Convert this chat client to a ChatAgent.
 
         This method creates a ChatAgent instance with this client pre-configured.
@@ -613,11 +613,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
 
 
 class AzureAIClient(
-    ChatMiddlewareLayer[TAzureAIClientOptions],
-    FunctionInvocationLayer[TAzureAIClientOptions],
-    ChatTelemetryLayer[TAzureAIClientOptions],
-    RawAzureAIClient[TAzureAIClientOptions],
-    Generic[TAzureAIClientOptions],
+    ChatMiddlewareLayer[AzureAIClientOptionsT],
+    FunctionInvocationLayer[AzureAIClientOptionsT],
+    ChatTelemetryLayer[AzureAIClientOptionsT],
+    RawAzureAIClient[AzureAIClientOptionsT],
+    Generic[AzureAIClientOptionsT],
 ):
     """Azure AI client with middleware, telemetry, and function invocation support.
 

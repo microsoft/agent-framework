@@ -76,7 +76,7 @@ if TYPE_CHECKING:
         ResponseStream,
     )
 
-    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
 logger = get_logger()
@@ -100,7 +100,7 @@ __all__ = [
 logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
+ChatClientT = TypeVar("ChatClientT", bound="ChatClientProtocol[Any]")
 # region Helpers
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel, default=BaseModel)
@@ -569,7 +569,7 @@ def _default_histogram() -> Histogram:
         )
 
 
-TClass = TypeVar("TClass", bound="SerializationMixin")
+ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
 class EmptyInputModel(BaseModel):
@@ -2043,15 +2043,15 @@ async def _process_function_requests(
     return result
 
 
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
 
 
-class FunctionInvocationLayer(Generic[TOptions_co]):
+class FunctionInvocationLayer(Generic[OptionsCoT]):
     """Layer for chat clients to apply function invocation around get_response."""
 
     def __init__(
@@ -2075,9 +2075,9 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
@@ -2085,7 +2085,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -2095,7 +2095,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -2104,7 +2104,7 @@ class FunctionInvocationLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:

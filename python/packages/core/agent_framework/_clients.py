@@ -56,10 +56,10 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 
-TInput = TypeVar("TInput", contravariant=True)
+InputT = TypeVar("InputT", contravariant=True)
 
-TEmbedding = TypeVar("TEmbedding")
-TBaseChatClient = TypeVar("TBaseChatClient", bound="BaseChatClient")
+EmbeddingT = TypeVar("EmbeddingT")
+BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
 logger = get_logger()
 
@@ -72,19 +72,19 @@ __all__ = [
 # region ChatClientProtocol Protocol
 
 # Contravariant for the Protocol
-TOptions_contra = TypeVar(
-    "TOptions_contra",
+OptionsContraT = TypeVar(
+    "OptionsContraT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     contravariant=True,
 )
 
 # Used for the overloads that capture the response model type from options
-TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
 @runtime_checkable
-class ChatClientProtocol(Protocol[TOptions_contra]):
+class ChatClientProtocol(Protocol[OptionsContraT]):
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
@@ -137,9 +137,9 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: "ChatOptions[ResponseModelBoundT]",
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
@@ -147,7 +147,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_contra | ChatOptions[None] | None" = None,
+        options: "OptionsContraT | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -157,7 +157,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        options: "OptionsContraT | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -166,7 +166,7 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_contra | ChatOptions[Any] | None" = None,
+        options: "OptionsContraT | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Send input and return the response.
@@ -193,15 +193,15 @@ class ChatClientProtocol(Protocol[TOptions_contra]):
 # region ChatClientBase
 
 # Covariant for the BaseChatClient
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
 
 
-class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
+class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     """Abstract base class for chat clients without middleware wrapping.
 
     This abstract base class provides core functionality for chat client implementations,
@@ -366,9 +366,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "ChatOptions[TResponseModelT]",
+        options: "ChatOptions[ResponseModelBoundT]",
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
@@ -376,7 +376,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: "TOptions_co | ChatOptions[None] | None" = None,
+        options: "OptionsCoT | ChatOptions[None] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -386,7 +386,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: "OptionsCoT | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -395,7 +395,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: "OptionsCoT | ChatOptions[Any] | None" = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from a chat client.
@@ -440,13 +440,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[TOptions_co]):
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions_co | Mapping[str, Any] | None = None,
+        default_options: OptionsCoT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence["MiddlewareTypes"] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> "ChatAgent[OptionsCoT]":
         """Create a ChatAgent with this client.
 
         This is a convenience method that creates a ChatAgent instance with this

@@ -54,7 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
         ResponseStream,
     )
 
-    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 __all__ = [
     "OBSERVABILITY_SETTINGS",
@@ -71,7 +71,7 @@ __all__ = [
 
 
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
+ChatClientT = TypeVar("ChatClientT", bound="ChatClientProtocol[Any]")
 
 
 logger = get_logger()
@@ -1049,15 +1049,15 @@ def _get_token_usage_histogram() -> metrics.Histogram:
     )
 
 
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
 
 
-class ChatTelemetryLayer(Generic[TOptions_co]):
+class ChatTelemetryLayer(Generic[OptionsCoT]):
     """Layer that wraps chat client get_response with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
@@ -1073,9 +1073,9 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
@@ -1083,7 +1083,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1093,7 +1093,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1102,7 +1102,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""

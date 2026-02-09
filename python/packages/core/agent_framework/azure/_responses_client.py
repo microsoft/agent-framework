@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 __all__ = ["AzureOpenAIResponsesClient"]
 
 
-TAzureOpenAIResponsesOptions = TypeVar(
-    "TAzureOpenAIResponsesOptions",
+AzureOpenAIResponsesOptionsT = TypeVar(
+    "AzureOpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
@@ -49,11 +49,11 @@ TAzureOpenAIResponsesOptions = TypeVar(
 
 class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[TAzureOpenAIResponsesOptions],
-    FunctionInvocationLayer[TAzureOpenAIResponsesOptions],
-    ChatTelemetryLayer[TAzureOpenAIResponsesOptions],
-    RawOpenAIResponsesClient[TAzureOpenAIResponsesOptions],
-    Generic[TAzureOpenAIResponsesOptions],
+    ChatMiddlewareLayer[AzureOpenAIResponsesOptionsT],
+    FunctionInvocationLayer[AzureOpenAIResponsesOptionsT],
+    ChatTelemetryLayer[AzureOpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[AzureOpenAIResponsesOptionsT],
+    Generic[AzureOpenAIResponsesOptionsT],
 ):
     """Azure Responses completion class with middleware, telemetry, and function invocation support."""
 

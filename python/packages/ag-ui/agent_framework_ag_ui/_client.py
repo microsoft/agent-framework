@@ -57,17 +57,17 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
+BaseChatClientT = TypeVar("BaseChatClientT", bound=type[BaseChatClient[Any]])
 
-TAGUIChatOptions = TypeVar(
-    "TAGUIChatOptions",
+AGUIChatOptionsT = TypeVar(
+    "AGUIChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AGUIChatOptions",
     covariant=True,
 )
 
 
-def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
+def _apply_server_function_call_unwrap(chat_client: BaseChatClientT) -> BaseChatClientT:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
     original_get_response = chat_client.get_response
@@ -109,11 +109,11 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
-    ChatMiddlewareLayer[TAGUIChatOptions],
-    FunctionInvocationLayer[TAGUIChatOptions],
-    ChatTelemetryLayer[TAGUIChatOptions],
-    BaseChatClient[TAGUIChatOptions],
-    Generic[TAGUIChatOptions],
+    ChatMiddlewareLayer[AGUIChatOptionsT],
+    FunctionInvocationLayer[AGUIChatOptionsT],
+    ChatTelemetryLayer[AGUIChatOptionsT],
+    BaseChatClient[AGUIChatOptionsT],
+    Generic[AGUIChatOptionsT],
 ):
     """Chat client for communicating with AG-UI compliant servers.
 

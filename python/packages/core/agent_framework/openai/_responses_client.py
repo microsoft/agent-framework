@@ -122,10 +122,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+ResponseFormatT = TypeVar("ResponseFormatT", bound=BaseModel | None, default=None)
 
 
-class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
+class OpenAIResponsesOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -189,8 +189,8 @@ class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseForm
     - 'disabled': Fail with 400 error if exceeds context"""
 
 
-TOpenAIResponsesOptions = TypeVar(
-    "TOpenAIResponsesOptions",
+OpenAIResponsesOptionsT = TypeVar(
+    "OpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
@@ -205,8 +205,8 @@ TOpenAIResponsesOptions = TypeVar(
 
 class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    BaseChatClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
 
@@ -1435,11 +1435,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIResponsesOptions],
-    FunctionInvocationLayer[TOpenAIResponsesOptions],
-    ChatTelemetryLayer[TOpenAIResponsesOptions],
-    RawOpenAIResponsesClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
+    FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatTelemetryLayer[OpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 

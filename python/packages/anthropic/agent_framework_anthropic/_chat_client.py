@@ -76,7 +76,7 @@ ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Anthropic Chat Options TypedDict
@@ -100,7 +100,7 @@ class ThinkingConfig(TypedDict, total=False):
     budget_tokens: int
 
 
-class AnthropicChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Anthropic-specific chat options.
 
     Extends ChatOptions with options specific to Anthropic's Messages API.
@@ -158,8 +158,8 @@ class AnthropicChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel],
     conversation_id: None  # type: ignore[misc]
 
 
-TAnthropicOptions = TypeVar(
-    "TAnthropicOptions",
+AnthropicOptionsT = TypeVar(
+    "AnthropicOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AnthropicChatOptions",
     covariant=True,
@@ -230,11 +230,11 @@ class AnthropicSettings(AFBaseSettings):
 
 
 class AnthropicClient(
-    ChatMiddlewareLayer[TAnthropicOptions],
-    FunctionInvocationLayer[TAnthropicOptions],
-    ChatTelemetryLayer[TAnthropicOptions],
-    BaseChatClient[TAnthropicOptions],
-    Generic[TAnthropicOptions],
+    ChatMiddlewareLayer[AnthropicOptionsT],
+    FunctionInvocationLayer[AnthropicOptionsT],
+    ChatTelemetryLayer[AnthropicOptionsT],
+    BaseChatClient[AnthropicOptionsT],
+    Generic[AnthropicOptionsT],
 ):
     """Anthropic Chat client with middleware, telemetry, and function invocation support."""
 

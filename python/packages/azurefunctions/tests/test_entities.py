@@ -14,7 +14,7 @@ from agent_framework import AgentResponse, ChatMessage
 
 from agent_framework_azurefunctions._entities import create_agent_entity
 
-TFunc = TypeVar("TFunc", bound=Callable[..., Any])
+FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
 
 def _agent_response(text: str | None) -> AgentResponse:

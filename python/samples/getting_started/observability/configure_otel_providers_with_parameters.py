@@ -106,9 +106,15 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "tool", "a
     # Create custom OTLP exporters with specific configuration
     # Note: You need to install opentelemetry-exporter-otlp-proto-grpc or -http separately
     try:
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPLogExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPSpanExporter,
+        )
 
         # Create exporters with custom configuration
         # These will be added to any exporters configured via environment variables
