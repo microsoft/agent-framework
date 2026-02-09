@@ -927,7 +927,7 @@ async def execute_hitl_response_handler(
         executor=executor,
         source_executor_ids=[SOURCE_HITL_RESPONSE],
         runner_context=runner_context,
-        shared_state=shared_state,
+        state=shared_state,
     )
 
     # Call the response handler

@@ -434,9 +434,7 @@ def _create_workflow() -> Workflow:
 
     # Build workflow with parallel patterns
     workflow = (
-        WorkflowBuilder()
-        # Start: Route input to parallel processors
-        .set_start_executor(input_router)
+        WorkflowBuilder(start_executor=input_router)
         
         # Pattern 1: Fan-out to two executors (run in parallel)
         .add_fan_out_edges(

@@ -9,7 +9,7 @@ This sample shows how to use `AgentFunctionApp` to execute a `WorkflowBuilder` w
 ## What This Sample Demonstrates
 
 1. **Workflow Execution** - Running `WorkflowBuilder` workflows in Azure Durable Functions
-2. **SharedState APIs** - Using `ctx.set_shared_state()` and `ctx.get_shared_state()` to share data
+2. **State APIs** - Using `ctx.set_state()` and `ctx.get_state()` to share data
 3. **Conditional Routing** - Routing messages based on spam detection results
 4. **Agent + Executor Composition** - Combining AI agents with non-AI function executors
 
@@ -25,9 +25,9 @@ store_email → spam_detector (agent) → to_detection_result → [branch]:
 
 | Executor | SharedState Operations |
 |----------|----------------------|
-| `store_email` | `set_shared_state("email:{id}", email)`, `set_shared_state("current_email_id", id)` |
-| `to_detection_result` | `get_shared_state("current_email_id")` |
-| `submit_to_email_assistant` | `get_shared_state("email:{id}")` |
+| `store_email` | `set_state("email:{id}", email)`, `set_state("current_email_id", id)` |
+| `to_detection_result` | `get_state("current_email_id")` |
+| `submit_to_email_assistant` | `get_state("email:{id}")` |
 
 SharedState allows executors to pass large payloads (like email content) by reference rather than through message routing.
 

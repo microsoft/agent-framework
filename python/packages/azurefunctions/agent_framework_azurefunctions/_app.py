@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowOutputEvent, get_logger
+from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent, get_logger
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -301,7 +301,7 @@ class AgentFunctionApp(DFAppBase):
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
                 deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
                 original_snapshot = dict(deserialized_state)
-                await shared_state.import_state(deserialized_state)
+                shared_state.import_state(deserialized_state)
 
                 if is_hitl_response:
                     # Handle HITL response by calling the executor's @response_handler
@@ -316,12 +316,13 @@ class AgentFunctionApp(DFAppBase):
                     await executor.execute(
                         message=message,
                         source_executor_ids=source_executor_ids,
-                        shared_state=shared_state,
+                        state=shared_state,
                         runner_context=runner_context,
                     )
 
-                # Export current state and compute changes
-                current_state = await shared_state.export_state()
+                # Commit pending state changes and export
+                shared_state.commit()
+                current_state = shared_state.export_state()
                 original_keys = set(original_snapshot.keys())
                 current_keys = set(current_state.keys())
 
@@ -337,10 +338,10 @@ class AgentFunctionApp(DFAppBase):
                 sent_messages = await runner_context.drain_messages()
                 events = await runner_context.drain_events()
 
-                # Extract outputs from WorkflowOutputEvent instances
+                # Extract outputs from WorkflowEvent instances with type='output'
                 outputs: list[Any] = []
                 for event in events:
-                    if isinstance(event, WorkflowOutputEvent):
+                    if isinstance(event, WorkflowEvent) and event.type == "output":
                         outputs.append(serialize_value(event.data))
 
                 # Get pending request info events for HITL
