@@ -1,12 +1,14 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Client application for interacting with multiple hosted agents.
 
 This client connects to the Durable Task Scheduler and interacts with two different
 agents (WeatherAgent and MathAgent), demonstrating how to work with multiple agents
 each with their own specialized capabilities and tools.
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with both agents registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -30,12 +32,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for client logging
-        
+
     Returns:
         Configured DurableAIAgentClient instance
     """
@@ -60,7 +62,7 @@ def get_client(
 
 def run_client(agent_client: DurableAIAgentClient) -> None:
     """Run client interactions with both WeatherAgent and MathAgent.
-    
+
     Args:
         agent_client: The DurableAIAgentClient instance
     """

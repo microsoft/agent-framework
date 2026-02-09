@@ -43,7 +43,7 @@ async def main() -> None:
     )
 
     # 2) Build sequential workflow: writer -> reviewer
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Run and collect outputs
     outputs: list[list[ChatMessage]] = []

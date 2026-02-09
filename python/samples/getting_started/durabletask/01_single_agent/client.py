@@ -1,11 +1,13 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Client application for interacting with a Durable Task hosted agent.
 
 This client connects to the Durable Task Scheduler and sends requests to
 registered agents, demonstrating how to interact with agents from external processes.
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with the agent registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -29,12 +31,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for client logging
-        
+
     Returns:
         Configured DurableAIAgentClient instance
     """
@@ -59,7 +61,7 @@ def get_client(
 
 def run_client(agent_client: DurableAIAgentClient) -> None:
     """Run client interactions with the Joker agent.
-    
+
     Args:
         agent_client: The DurableAIAgentClient instance
     """

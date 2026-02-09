@@ -76,12 +76,12 @@ def test_workflow():
     executor = WorkflowTestExecutor(id="test_executor")
     checkpoint_storage = InMemoryCheckpointStorage()
 
-    return (
-        WorkflowBuilder(name="Test Workflow", description="Test checkpoint behavior")
-        .set_start_executor(executor)
-        .with_checkpointing(checkpoint_storage)
-        .build()
-    )
+    return WorkflowBuilder(
+        name="Test Workflow",
+        description="Test checkpoint behavior",
+        start_executor=executor,
+        checkpoint_storage=checkpoint_storage,
+    ).build()
 
 
 class TestCheckpointConversationManager:
@@ -335,7 +335,7 @@ class TestIntegration:
         # Get checkpoint storage for this session
         checkpoint_storage = checkpoint_manager.get_checkpoint_storage(conversation_id)
 
-        # Set build-time storage (equivalent to .with_checkpointing() at build time)
+        # Set build-time storage (equivalent to checkpoint_storage= at build time)
         # Note: In production, DevUI uses runtime injection via run(stream=True) parameter
         if hasattr(test_workflow, "_runner") and hasattr(test_workflow._runner, "context"):
             test_workflow._runner.context._checkpoint_storage = checkpoint_storage
@@ -399,7 +399,7 @@ class TestIntegration:
         """Test that workflows automatically save checkpoints to our conversation-backed storage.
 
         This is the critical end-to-end test that verifies the entire checkpoint flow:
-        1. Storage is set as build-time storage (simulates .with_checkpointing())
+        1. Storage is set as build-time storage (simulates checkpoint_storage=...)
         2. Workflow runs and pauses at HIL point (IDLE_WITH_PENDING_REQUESTS status)
         3. Framework automatically saves checkpoint to our storage
         4. Checkpoint is accessible via manager for UI to list/resume

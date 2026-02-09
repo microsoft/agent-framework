@@ -10,6 +10,7 @@ from agent_framework import (
     ChatMessage,
     ChatMiddleware,
     ChatResponse,
+    MiddlewareTermination,
     chat_middleware,
     tool,
 )
@@ -127,8 +128,7 @@ async def security_and_override_middleware(
                     )
 
                     # Set terminate flag to stop execution
-                    context.terminate = True
-                    return
+                    raise MiddlewareTermination
 
     # Continue to next middleware or AI execution
     await next(context)

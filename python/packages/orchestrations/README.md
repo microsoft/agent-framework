@@ -52,12 +52,10 @@ Orchestrator-directed multi-agent conversations:
 ```python
 from agent_framework_orchestrations import GroupChatBuilder
 
-workflow = (
-    GroupChatBuilder()
-    .with_orchestrator(selection_func=my_selector)
-    .participants([agent1, agent2])
-    .build()
-)
+workflow = GroupChatBuilder(
+    participants=[agent1, agent2],
+    selection_func=my_selector,
+).build()
 ```
 
 ### MagenticBuilder
@@ -67,12 +65,10 @@ Sophisticated multi-agent orchestration using the Magentic One pattern:
 ```python
 from agent_framework_orchestrations import MagenticBuilder
 
-workflow = (
-    MagenticBuilder()
-    .participants([researcher, writer, reviewer])
-    .with_manager(agent=manager_agent)
-    .build()
-)
+workflow = MagenticBuilder(
+    participants=[researcher, writer, reviewer],
+    manager_agent=manager_agent,
+).build()
 ```
 
 ## Usage with agent_framework

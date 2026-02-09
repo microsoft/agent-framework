@@ -150,11 +150,10 @@ def _handle_events(events: list[WorkflowEvent]) -> list[WorkflowEvent[HandoffAge
                         speaker = message.author_name or message.role
                         print(f"- {speaker}: {message.text or [content.type for content in message.contents]}")
                     print("===================================")
-        elif event.type == "request_info":
+        elif event.type == "request_info" and isinstance(event.data, HandoffAgentUserRequest):
             # Request info event: Workflow is requesting user input
-            if isinstance(event.data, HandoffAgentUserRequest):
-                _print_handoff_agent_user_request(event.data.agent_response)
-                requests.append(cast(WorkflowEvent[HandoffAgentUserRequest], event))
+            _print_handoff_agent_user_request(event.data.agent_response)
+            requests.append(cast(WorkflowEvent[HandoffAgentUserRequest], event))
 
     return requests
 
@@ -208,15 +207,18 @@ async def _run_workflow(workflow: Workflow, user_inputs: list[str]) -> None:
             responses = {req.request_id: HandoffAgentUserRequest.terminate() for req in pending_requests}
 
         # Send responses and get new events
-        # We use send_responses_streaming() to get events as they occur, allowing us to
-        # display agent responses in real-time and handle new requests as they arrive
-        workflow_result = await workflow.send_responses(responses)
+        # We use run(responses=...) to get events, allowing us to
+        # display agent responses and handle new requests as they arrive
+        workflow_result = await workflow.run(responses=responses)
         pending_requests = _handle_events(workflow_result)
 
 
 async def main() -> None:
     """Run the autonomous handoff workflow with participant factories."""
     # Build the handoff workflow using participant factories
+    # termination_condition: Custom termination that checks if the triage agent has provided a closing message.
+    # This looks for the last message being from triage_agent and containing "welcome",
+    # which indicates the conversation has concluded naturally.
     workflow_builder = (
         HandoffBuilder(
             name="Autonomous Handoff with Participant Factories",
@@ -226,18 +228,13 @@ async def main() -> None:
                 "order_status": create_order_status_agent,
                 "return": create_return_agent,
             },
-        )
-        .with_start_agent("triage")
-        .with_termination_condition(
-            # Custom termination: Check if the triage agent has provided a closing message.
-            # This looks for the last message being from triage_agent and containing "welcome",
-            # which indicates the conversation has concluded naturally.
-            lambda conversation: (
+            termination_condition=lambda conversation: (
                 len(conversation) > 0
                 and conversation[-1].author_name == "triage_agent"
                 and "welcome" in conversation[-1].text.lower()
-            )
+            ),
         )
+        .with_start_agent("triage")
     )
 
     # Scripted user responses for reproducible demo

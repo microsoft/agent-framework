@@ -392,13 +392,13 @@ legitimate_message_handler = LegitimateMessageHandler(id="legitimate_message_han
 final_processor = FinalProcessor(id="final_processor")
 
 # Build the comprehensive 4-step workflow with branching logic and HIL support
-# Note: No .with_checkpointing() call - DevUI will pass checkpoint_storage at runtime
+# Note: No checkpoint_storage in constructor - DevUI will pass checkpoint_storage at runtime
 workflow = (
     WorkflowBuilder(
         name="Email Spam Detector",
         description="4-step email classification workflow with human-in-the-loop spam approval",
+        start_executor=email_preprocessor,
     )
-    .set_start_executor(email_preprocessor)
     .add_edge(email_preprocessor, spam_detector)
     # HIL handled within spam_detector via @response_handler
     # Continue with branching logic after human approval

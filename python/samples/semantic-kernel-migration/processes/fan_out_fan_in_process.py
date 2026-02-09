@@ -221,12 +221,11 @@ async def run_agent_framework_workflow_example() -> str | None:
     aggregate = FanInExecutor(required_cycles=3)
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=kickoff)
         .add_edge(kickoff, step_a)
         .add_edge(kickoff, step_b)
         .add_fan_in_edges([step_a, step_b], aggregate)
         .add_edge(aggregate, kickoff)
-        .set_start_executor(kickoff)
         .build()
     )
 

@@ -662,8 +662,8 @@ def create_complex_workflow():
         WorkflowBuilder(
             name="Data Processing Pipeline",
             description="Complex workflow with parallel validation, transformation, and quality assurance stages",
+            start_executor=data_ingestion,
         )
-        .set_start_executor(data_ingestion)
         # Fan-out to validation stage
         .add_fan_out_edges(data_ingestion, [schema_validator, quality_validator, security_validator])
         # Fan-in from validation to aggregator

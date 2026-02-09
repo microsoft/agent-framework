@@ -2,9 +2,7 @@
 
 import asyncio
 import tempfile
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -34,17 +32,18 @@ QUERY = (
 )
 
 
-async def download_container_files(file_contents: Sequence[Annotation | Content], agent: ChatAgent) -> list[Path]:
+async def download_container_files(file_contents: list[Annotation | Content], agent: ChatAgent) -> list[Path]:
     """Download container files using the OpenAI containers API.
 
     Code interpreter generates files in containers, which require both file_id
     and container_id to download. The container_id is stored in additional_properties.
 
-    This function works for both streaming (Content with type='hosted_file') and non-streaming
+    This function works for both streaming (Content with type="hosted_file") and non-streaming
     (Annotation) responses.
 
     Args:
-        file_contents: List of Annotation or Content objects containing file_id and container_id.
+        file_contents: List of Annotation or Content objects
+                      containing file_id and container_id.
         agent: The ChatAgent instance with access to the AzureAIClient.
 
     Returns:
@@ -61,27 +60,20 @@ async def download_container_files(file_contents: Sequence[Annotation | Content]
     print(f"\nDownloading {len(file_contents)} container file(s) to {output_dir.absolute()}...")
 
     # Access the OpenAI client from AzureAIClient
-    # type: ignore is needed because chat_client is typed as protocol
-    openai_client: Any = agent.chat_client.client  # type: ignore[attr-defined]
+    openai_client = agent.chat_client.client  # type: ignore[attr-defined]
 
     downloaded_files: list[Path] = []
 
-    for item in file_contents:
-        # Handle both Annotation (dict-like) and Content objects
-        if isinstance(item, dict):
-            # Annotation TypedDict
-            file_id = item.get("file_id")
-            additional_props = item.get("additional_properties", {})
-            url = item.get("url")
-        else:
-            # Content object
-            file_id = item.file_id
-            additional_props = item.additional_properties or {}
-            url = None
-
-        if not file_id:
-            print("  Skipping item without file_id")
-            continue
+    for content in file_contents:
+        # Handle both Annotation (TypedDict) and Content objects
+        if isinstance(content, dict):  # Annotation TypedDict
+            file_id = content.get("file_id")
+            additional_props = content.get("additional_properties", {})
+            url = content.get("url")
+        else:  # Content object
+            file_id = content.file_id
+            additional_props = content.additional_properties or {}
+            url = content.uri
 
         # Extract container_id from additional_properties
         if not additional_props or "container_id" not in additional_props:
@@ -91,14 +83,12 @@ async def download_container_files(file_contents: Sequence[Annotation | Content]
         container_id = additional_props["container_id"]
 
         # Extract filename based on content type
-        if isinstance(item, dict):
-            # Annotation - use url field
+        if isinstance(content, dict):  # Annotation TypedDict
             filename = url or f"{file_id}.txt"
             # Extract filename from sandbox URL if present (e.g., sandbox:/mnt/data/sample.txt)
             if filename.startswith("sandbox:"):
                 filename = filename.split("/")[-1]
-        else:
-            # Content (hosted_file) - use filename from additional_properties
+        else:  # Content
             filename = additional_props.get("filename") or f"{file_id}.txt"
 
         output_path = output_dir / filename
@@ -156,10 +146,9 @@ async def non_streaming_example() -> None:
             for content in message.contents:
                 if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
-                        file_id = annotation.get("file_id")
-                        if file_id:
+                        if annotation.get("file_id"):
                             annotations_found.append(annotation)
-                            print(f"Found file annotation: file_id={file_id}")
+                            print(f"Found file annotation: file_id={annotation['file_id']}")
                             additional_props = annotation.get("additional_properties", {})
                             if additional_props and "container_id" in additional_props:
                                 print(f"  container_id={additional_props['container_id']}")
@@ -207,9 +196,8 @@ async def streaming_example() -> None:
                             text_chunks.append(content.text)
                         if content.annotations:
                             for annotation in content.annotations:
-                                file_id = annotation.get("file_id")
-                                if file_id:
-                                    print(f"Found streaming annotation: file_id={file_id}")
+                                if annotation.get("file_id"):
+                                    print(f"Found streaming annotation: file_id={annotation['file_id']}")
                     elif content.type == "hosted_file":
                         file_contents_found.append(content)
                         print(f"Found streaming hosted_file: file_id={content.file_id}")

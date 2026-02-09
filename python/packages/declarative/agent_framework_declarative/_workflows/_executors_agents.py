@@ -755,7 +755,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         When externalLoop.when is configured and evaluates to true after agent response,
         this method emits an ExternalInputRequest via ctx.request_info() and returns.
         The workflow will yield, and when the caller provides a response via
-        send_responses_streaming(), the handle_external_input_response handler
+        run(responses=..., stream=True), the handle_external_input_response handler
         will continue the loop.
         """
         state = await self._ensure_state_initialized(ctx, trigger)

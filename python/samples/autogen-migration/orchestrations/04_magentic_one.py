@@ -91,21 +91,17 @@ async def run_agent_framework() -> None:
     )
 
     # Create Magentic workflow
-    workflow = (
-        MagenticBuilder()
-        .participants([researcher, coder, reviewer])
-        .with_manager(
-            agent=client.as_agent(
-                name="magentic_manager",
-                instructions="You coordinate a team to complete complex tasks efficiently.",
-                description="Orchestrator for team coordination",
-            ),
-            max_round_count=20,
-            max_stall_count=3,
-            max_reset_count=1,
-        )
-        .build()
-    )
+    workflow = MagenticBuilder(
+        participants=[researcher, coder, reviewer],
+        manager_agent=client.as_agent(
+            name="magentic_manager",
+            instructions="You coordinate a team to complete complex tasks efficiently.",
+            description="Orchestrator for team coordination",
+        ),
+        max_round_count=20,
+        max_stall_count=3,
+        max_reset_count=1,
+    ).build()
 
     # Run complex task
     last_message_id: str | None = None

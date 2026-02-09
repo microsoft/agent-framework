@@ -132,8 +132,8 @@ workflow = (
     WorkflowBuilder(
         name="Content Review Workflow",
         description="Multi-agent content creation workflow with quality-based routing (Writer → Reviewer → Editor/Publisher)",
+        start_executor=writer,
     )
-    .set_start_executor(writer)
     .add_edge(writer, reviewer)
     # Branch 1: High quality (>= 80) goes directly to publisher
     .add_edge(reviewer, publisher, condition=is_approved)

@@ -76,13 +76,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
-    wf = (
-        WorkflowBuilder()
-        .set_start_executor(agent_exec)
-        .add_edge(agent_exec, capturer)
-        .with_output_from([capturer])
-        .build()
-    )
+    wf = WorkflowBuilder(start_executor=agent_exec, output_executors=[capturer]).add_edge(agent_exec, capturer).build()
 
     # Act: use run() to test non-streaming mode
     result = await wf.run("hello world")
@@ -144,7 +138,7 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     a1 = _CaptureAgent(id="agent1", name="A1", reply_text="A1 reply")
     a2 = _CaptureAgent(id="agent2", name="A2", reply_text="A2 reply")
 
-    wf = SequentialBuilder().participants([a1, a2]).build()
+    wf = SequentialBuilder(participants=[a1, a2]).build()
 
     # Act
     async for ev in wf.run("hello seq", stream=True):

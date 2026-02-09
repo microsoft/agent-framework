@@ -113,7 +113,7 @@ async def main():
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
+    workflow = WorkflowBuilder(start_executor=writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the workflow output.

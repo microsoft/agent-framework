@@ -5,7 +5,9 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import (
+    tool,
+)
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import Field

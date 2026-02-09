@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import sys
+from asyncio import iscoroutine
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
@@ -2676,7 +2677,10 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                self._stream = await self._stream_source  # type: ignore[assignment]
+                if not iscoroutine(self._stream_source):
+                    self._stream = self._stream_source  # type: ignore[assignment]
+                else:
+                    self._stream = await self._stream_source  # type: ignore[assignment]
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
                 self._inner_stream = self._stream
                 return self._stream
@@ -2739,12 +2743,12 @@ class ResponseStream(AsyncIterable[TUpdate], Generic[TUpdate, TFinal]):
         """
         if self._wrap_inner:
             if self._inner_stream is None:
-                if self._inner_stream_source is None:
-                    raise ValueError("No inner stream configured for this stream.")
-                if isinstance(self._inner_stream_source, ResponseStream):
-                    self._inner_stream = self._inner_stream_source
-                else:
-                    self._inner_stream = await self._inner_stream_source
+                # Use _get_stream() to resolve the awaitable - this properly handles
+                # the case where _stream_source and _inner_stream_source are the same
+                # coroutine (e.g., from from_awaitable), avoiding double-await errors.
+                await self._get_stream()
+            if self._inner_stream is None:
+                raise RuntimeError("Inner stream not available")
             if not self._finalized:
                 # Consume outer stream (which delegates to inner) if not already consumed
                 if not self._consumed:

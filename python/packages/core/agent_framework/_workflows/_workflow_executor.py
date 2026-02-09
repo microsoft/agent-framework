@@ -653,7 +653,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Resume the sub-workflow with all collected responses
-            result = await self.workflow.send_responses(responses_to_send)
+            result = await self.workflow.run(responses=responses_to_send)
             # Remove handled requests from result. The result may contain the original
             # RequestInfoEvents that were already handled. This is due to checkpointing
             # and rehydration of the workflow that re-adds the RequestInfoEvents to the

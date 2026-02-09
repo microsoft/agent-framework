@@ -29,8 +29,8 @@ parallel workflow with:
 - a default aggregator that combines all agent conversations and completes the workflow
 
 Notes:
-- Participants can be provided as SupportsAgentRun or Executor instances via `.participants()`,
-  or as factories returning SupportsAgentRun or Executor via `.register_participants()`.
+- Participants can be provided as SupportsAgentRun or Executor instances via `participants=[...]`,
+  or as factories returning SupportsAgentRun or Executor via `participant_factories=[...]`.
 - A custom aggregator can be provided as:
   - an Executor instance (it should handle list[AgentExecutorResponse],
     yield output), or
@@ -186,8 +186,8 @@ class _CallbackAggregator(Executor):
 class ConcurrentBuilder:
     r"""High-level builder for concurrent agent workflows.
 
-    - `participants([...])` accepts a list of SupportsAgentRun (recommended) or Executor.
-    - `register_participants([...])` accepts a list of factories for SupportsAgentRun (recommended)
+    - `participants=[...]` accepts a list of SupportsAgentRun (recommended) or Executor.
+    - `participant_factories=[...]` accepts a list of factories for SupportsAgentRun (recommended)
        or Executor factories
     - `build()` wires: dispatcher -> fan-out -> participants -> fan-in -> aggregator.
     - `with_aggregator(...)` overrides the default aggregator with an Executor or callback.
@@ -200,10 +200,10 @@ class ConcurrentBuilder:
         from agent_framework_orchestrations import ConcurrentBuilder
 
         # Minimal: use default aggregator (returns list[ChatMessage])
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).build()
 
         # With agent factories
-        workflow = ConcurrentBuilder().register_participants([create_agent1, create_agent2, create_agent3]).build()
+        workflow = ConcurrentBuilder(participant_factories=[create_agent1, create_agent2, create_agent3]).build()
 
 
         # Custom aggregator via callback (sync or async). The callback receives
@@ -212,7 +212,7 @@ class ConcurrentBuilder:
             return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_aggregator(summarize).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).with_aggregator(summarize).build()
 
 
         # Custom aggregator via a factory
@@ -223,112 +223,76 @@ class ConcurrentBuilder:
 
 
         workflow = (
-            ConcurrentBuilder()
-            .register_participants([create_agent1, create_agent2, create_agent3])
+            ConcurrentBuilder(participant_factories=[create_agent1, create_agent2, create_agent3])
             .register_aggregator(lambda: MyAggregator(id="my_aggregator"))
             .build()
         )
 
 
         # Enable checkpoint persistence so runs can resume
-        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3], checkpoint_storage=storage).build()
 
         # Enable request info before aggregation
-        workflow = ConcurrentBuilder().participants([agent1, agent2]).with_request_info().build()
+        workflow = ConcurrentBuilder(participants=[agent1, agent2]).with_request_info().build()
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        participants: Sequence[SupportsAgentRun | Executor] | None = None,
+        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        intermediate_outputs: bool = False,
+    ) -> None:
+        """Initialize the ConcurrentBuilder.
+
+        Args:
+            participants: Optional sequence of agent or executor instances to run in parallel.
+            participant_factories: Optional sequence of callables returning agent or executor instances.
+            checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
+            intermediate_outputs: If True, enables intermediate outputs from agent participants
+                before aggregation.
+        """
         self._participants: list[SupportsAgentRun | Executor] = []
         self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
         self._aggregator: Executor | None = None
         self._aggregator_factory: Callable[[], Executor] | None = None
-        self._checkpoint_storage: CheckpointStorage | None = None
+        self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
-        self._intermediate_outputs: bool = False
+        self._intermediate_outputs: bool = intermediate_outputs
 
-    def register_participants(
+        if participants is None and participant_factories is None:
+            raise ValueError("Either participants or participant_factories must be provided.")
+
+        if participant_factories is not None:
+            self._set_participant_factories(participant_factories)
+        if participants is not None:
+            self._set_participants(participants)
+
+    def _set_participant_factories(
         self,
         participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
-    ) -> "ConcurrentBuilder":
-        r"""Define the parallel participants for this concurrent workflow.
-
-        Accepts factories (callables) that return SupportsAgentRun instances (e.g., created
-        by a chat client) or Executor instances. Each participant created by a factory
-        is wired as a parallel branch using fan-out edges from an internal dispatcher.
-
-        Args:
-            participant_factories: Sequence of callables returning SupportsAgentRun or Executor instances
-
-        Raises:
-            ValueError: if `participant_factories` is empty or `.participants()`
-                       or `.register_participants()` were already called
-
-        Example:
-
-        .. code-block:: python
-
-            def create_researcher() -> ChatAgent:
-                return ...
-
-
-            def create_marketer() -> ChatAgent:
-                return ...
-
-
-            def create_legal() -> ChatAgent:
-                return ...
-
-
-            class MyCustomExecutor(Executor): ...
-
-
-            wf = ConcurrentBuilder().register_participants([create_researcher, create_marketer, create_legal]).build()
-
-            # Mixing agent(s) and executor(s) is supported
-            wf2 = ConcurrentBuilder().register_participants([create_researcher, MyCustomExecutor]).build()
-        """
+    ) -> None:
+        """Set participant factories (internal)."""
         if self._participants:
-            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
+            raise ValueError("Cannot provide both participants and participant_factories.")
 
         if self._participant_factories:
-            raise ValueError("register_participants() has already been called on this builder instance.")
+            raise ValueError("participant_factories already set.")
 
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
         self._participant_factories = list(participant_factories)
-        return self
 
-    def participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> "ConcurrentBuilder":
-        r"""Define the parallel participants for this concurrent workflow.
-
-        Accepts SupportsAgentRun instances (e.g., created by a chat client) or Executor
-        instances. Each participant is wired as a parallel branch using fan-out edges
-        from an internal dispatcher.
-
-        Args:
-            participants: Sequence of SupportsAgentRun or Executor instances
-
-        Raises:
-            ValueError: if `participants` is empty, contains duplicates, or `.register_participants()`
-                       or `.participants()` were already called
-            TypeError: if any entry is not SupportsAgentRun or Executor
-
-        Example:
-
-        .. code-block:: python
-
-            wf = ConcurrentBuilder().participants([researcher_agent, marketer_agent, legal_agent]).build()
-
-            # Mixing agent(s) and executor(s) is supported
-            wf2 = ConcurrentBuilder().participants([researcher_agent, my_custom_executor]).build()
-        """
+    def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
+        """Set participants (internal)."""
         if self._participant_factories:
-            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
+            raise ValueError("Cannot provide both participants and participant_factories.")
 
         if self._participants:
-            raise ValueError("participants() has already been called on this builder instance.")
+            raise ValueError("participants already set.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -350,7 +314,6 @@ class ConcurrentBuilder:
                 raise TypeError(f"participants must be SupportsAgentRun or Executor instances; got {type(p).__name__}")
 
         self._participants = list(participants)
-        return self
 
     def register_aggregator(self, aggregator_factory: Callable[[], Executor]) -> "ConcurrentBuilder":
         r"""Define a custom aggregator for this concurrent workflow.
@@ -412,7 +375,7 @@ class ConcurrentBuilder:
                     await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(CustomAggregator()).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(CustomAggregator()).build()
 
 
             # Callback-based aggregator (string result)
@@ -420,7 +383,7 @@ class ConcurrentBuilder:
                 return " | ".join(r.agent_response.messages[-1].text for r in results)
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(summarize).build()
 
 
             # Callback-based aggregator (yield result)
@@ -428,7 +391,7 @@ class ConcurrentBuilder:
                 await ctx.yield_output(" | ".join(r.agent_response.messages[-1].text for r in results))
 
 
-            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
+            wf = ConcurrentBuilder(participants=[a1, a2, a3]).with_aggregator(summarize).build()
         """
         if self._aggregator_factory is not None:
             raise ValueError(
@@ -445,15 +408,6 @@ class ConcurrentBuilder:
         else:
             raise TypeError("aggregator must be an Executor or a callable")
 
-        return self
-
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "ConcurrentBuilder":
-        """Enable checkpoint persistence using the provided storage backend.
-
-        Args:
-            checkpoint_storage: CheckpointStorage instance for persisting workflow state
-        """
-        self._checkpoint_storage = checkpoint_storage
         return self
 
     def with_request_info(
@@ -489,23 +443,10 @@ class ConcurrentBuilder:
 
         return self
 
-    def with_intermediate_outputs(self) -> "ConcurrentBuilder":
-        """Enable intermediate outputs from agent participants before aggregation.
-
-        When enabled, the workflow returns each agent participant's response or yields
-        streaming updates as they become available. The output of the aggregator will
-        always be available as the final output of the workflow.
-
-        Returns:
-            Self for fluent chaining
-        """
-        self._intermediate_outputs = True
-        return self
-
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
         if not self._participants and not self._participant_factories:
-            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
+            raise ValueError("No participants provided. Pass participants or participant_factories to the constructor.")
         # We don't need to check if both are set since that is handled in the respective methods
 
         participants: list[Executor | SupportsAgentRun] = []
@@ -557,7 +498,7 @@ class ConcurrentBuilder:
 
         .. code-block:: python
 
-            workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
+            workflow = ConcurrentBuilder(participants=[agent1, agent2]).build()
         """
         # Internal nodes
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
@@ -574,18 +515,14 @@ class ConcurrentBuilder:
         # Resolve participants and participant factories to executors
         participants: list[Executor] = self._resolve_participants()
 
-        builder = WorkflowBuilder()
-        builder.set_start_executor(dispatcher)
+        builder = WorkflowBuilder(
+            start_executor=dispatcher,
+            checkpoint_storage=self._checkpoint_storage,
+            output_executors=[aggregator] if not self._intermediate_outputs else None,
+        )
         # Fan-out for parallel execution
         builder.add_fan_out_edges(dispatcher, participants)
         # Direct fan-in to aggregator
         builder.add_fan_in_edges(participants, aggregator)
-
-        if not self._intermediate_outputs:
-            # Constrain output to aggregator only
-            builder = builder.with_output_from([aggregator])
-
-        if self._checkpoint_storage is not None:
-            builder = builder.with_checkpointing(self._checkpoint_storage)
 
         return builder.build()

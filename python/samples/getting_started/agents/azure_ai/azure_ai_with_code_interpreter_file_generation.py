@@ -51,10 +51,9 @@ async def non_streaming_example() -> None:
             for content in message.contents:
                 if content.type == "text" and content.annotations:
                     for annotation in content.annotations:
-                        file_id = annotation.get("file_id")
-                        if file_id:
-                            annotations_found.append(file_id)
-                            print(f"Found file annotation: file_id={file_id}")
+                        if annotation.get("file_id"):
+                            annotations_found.append(annotation["file_id"])
+                            print(f"Found file annotation: file_id={annotation['file_id']}")
 
         if annotations_found:
             print(f"SUCCESS: Found {len(annotations_found)} file annotation(s)")
@@ -92,10 +91,9 @@ async def streaming_example() -> None:
                             text_chunks.append(content.text)
                         if content.annotations:
                             for annotation in content.annotations:
-                                file_id = annotation.get("file_id")
-                                if file_id:
-                                    annotations_found.append(file_id)
-                                    print(f"Found streaming annotation: file_id={file_id}")
+                                if annotation.get("file_id"):
+                                    annotations_found.append(annotation["file_id"])
+                                    print(f"Found streaming annotation: file_id={annotation['file_id']}")
                     elif content.type == "hosted_file":
                         file_ids_found.append(content.file_id)
                         print(f"Found streaming HostedFileContent: file_id={content.file_id}")

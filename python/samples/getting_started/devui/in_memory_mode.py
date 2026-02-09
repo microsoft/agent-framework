@@ -102,8 +102,8 @@ def main():
         WorkflowBuilder(
             name="Text Transformer",
             description="Simple 2-step workflow that converts text to uppercase and adds exclamation",
+            start_executor=upper_executor,
         )
-        .set_start_executor(upper_executor)
         .add_edge(upper_executor, exclaim_executor)
         .build()
     )

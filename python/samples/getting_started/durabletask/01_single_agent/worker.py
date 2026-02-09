@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting a single Azure OpenAI-powered agent using Durable Task.
 
 This worker registers agents as durable entities and continuously listens for requests.

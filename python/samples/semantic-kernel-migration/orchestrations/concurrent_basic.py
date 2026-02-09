@@ -87,7 +87,7 @@ async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]
         name="chemistry",
     )
 
-    workflow = ConcurrentBuilder().participants([physics, chemistry]).build()
+    workflow = ConcurrentBuilder(participants=[physics, chemistry]).build()
 
     outputs: list[list[ChatMessage]] = []
     async for event in workflow.run(prompt, stream=True):

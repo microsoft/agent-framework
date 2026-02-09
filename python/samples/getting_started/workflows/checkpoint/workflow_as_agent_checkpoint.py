@@ -56,7 +56,7 @@ async def basic_checkpointing() -> None:
         )
 
     # Build sequential workflow with participant factories
-    workflow = SequentialBuilder().register_participants([create_assistant, create_reviewer]).build()
+    workflow = SequentialBuilder(participant_factories=[create_assistant, create_reviewer]).build()
     agent = workflow.as_agent(name="CheckpointedAgent")
 
     # Create checkpoint storage
@@ -93,7 +93,7 @@ async def checkpointing_with_thread() -> None:
             instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
         )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
     agent = workflow.as_agent(name="MemoryAgent")
 
     # Create both thread (for conversation) and checkpoint storage (for workflow state)
@@ -137,7 +137,7 @@ async def streaming_with_checkpoints() -> None:
             instructions="You are a helpful assistant.",
         )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
     agent = workflow.as_agent(name="StreamingCheckpointAgent")
 
     checkpoint_storage = InMemoryCheckpointStorage()

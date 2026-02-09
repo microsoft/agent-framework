@@ -80,9 +80,8 @@ async def run_sequential_workflow() -> None:
 
     # Step 2: Build the workflow with the defined edges.
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=upper_case_executor)
         .add_edge(upper_case_executor, reverse_text_executor)
-        .set_start_executor(upper_case_executor)
         .build()
     )
 

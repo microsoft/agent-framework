@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Human-in-the-Loop Orchestration Sample - Durable Task Integration
 
 This sample demonstrates the HITL pattern with a WriterAgent that generates content
@@ -7,8 +9,8 @@ and waits for human approval. The orchestration handles:
 - Iterative refinement based on feedback
 - Activity functions for notifications and publishing
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 

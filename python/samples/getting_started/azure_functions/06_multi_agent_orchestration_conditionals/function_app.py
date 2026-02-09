@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Route email requests through conditional orchestration with two agents.
 
 Components used in this sample:

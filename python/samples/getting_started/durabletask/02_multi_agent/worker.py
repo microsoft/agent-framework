@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting multiple agents with different tools using Durable Task.
 
 This worker registers two agents - a weather assistant and a math assistant - each

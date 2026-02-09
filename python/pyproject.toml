@@ -225,8 +225,10 @@ test = "python run_tasks_in_packages_if_exists.py test"
 fmt = "python run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
+samples-lint = "ruff check samples --fix --exclude samples/autogen-migration,samples/semantic-kernel-migration --ignore E501,ASYNC,B901,TD002"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
+samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
 typing = ["pyright", "mypy"]
 # cleaning
 clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
@@ -238,7 +240,7 @@ build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
-check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint"]
+check = ["fmt", "lint", "pyright", "mypy", "samples-lint", "samples-syntax", "test", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
 cmd = """
@@ -323,7 +325,9 @@ sequence = [
     { ref = "fmt" },
     { ref = "lint" },
     { ref = "pre-commit-pyright ${files}" },
-    { ref = "pre-commit-markdown-code-lint ${files}" }
+    { ref = "pre-commit-markdown-code-lint ${files}" },
+    { ref = "samples-lint" },
+    { ref = "samples-syntax" }
 ]
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 

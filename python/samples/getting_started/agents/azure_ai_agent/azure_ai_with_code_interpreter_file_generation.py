@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 
@@ -62,7 +62,7 @@ async def main() -> None:
             for content in chunk.contents:
                 if content.type == "text":
                     print(content.text, end="", flush=True)
-                elif content.type == "hosted_file":
+                elif content.type == "hosted_file" and content.file_id:
                     file_ids.append(content.file_id)
                     print(f"\n[File generated: {content.file_id}]")
 

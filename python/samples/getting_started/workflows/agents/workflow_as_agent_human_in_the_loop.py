@@ -99,7 +99,7 @@ async def main() -> None:
     # Build a workflow with bidirectional communication between Worker and Reviewer,
     # and escalation paths for human review.
     agent = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor="worker")
         .register_executor(
             lambda: Worker(
                 id="sub-worker",
@@ -113,7 +113,6 @@ async def main() -> None:
         )
         .add_edge("worker", "reviewer")  # Worker sends requests to Reviewer
         .add_edge("reviewer", "worker")  # Reviewer sends feedback to Worker
-        .set_start_executor("worker")
         .build()
         .as_agent()  # Convert workflow into an agent interface
     )

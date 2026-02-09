@@ -413,16 +413,14 @@ class TestSerializationWorkflowClasses:
         """
         # Create innermost workflow
         inner_executor = SampleExecutor(id="inner-exec")
-        inner_workflow = WorkflowBuilder().set_start_executor(inner_executor).set_max_iterations(10).build()
+        inner_workflow = WorkflowBuilder(max_iterations=10, start_executor=inner_executor).build()
 
         # Create middle workflow with WorkflowExecutor
         inner_workflow_executor = WorkflowExecutor(workflow=inner_workflow, id="inner-workflow-exec")
         middle_executor = SampleExecutor(id="middle-exec")
         middle_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(middle_executor)
+            WorkflowBuilder(max_iterations=20, start_executor=middle_executor)
             .add_edge(middle_executor, inner_workflow_executor)
-            .set_max_iterations(20)
             .build()
         )
 
@@ -430,10 +428,8 @@ class TestSerializationWorkflowClasses:
         middle_workflow_executor = WorkflowExecutor(workflow=middle_workflow, id="middle-workflow-exec")
         outer_executor = SampleExecutor(id="outer-exec")
         outer_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(outer_executor)
+            WorkflowBuilder(max_iterations=30, start_executor=outer_executor)
             .add_edge(outer_executor, middle_workflow_executor)
-            .set_max_iterations(30)
             .build()
         )
 
@@ -543,7 +539,7 @@ class TestSerializationWorkflowClasses:
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump
         data = workflow.to_dict()
@@ -616,7 +612,7 @@ class TestSerializationWorkflowClasses:
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump - should not include private runtime objects
         data = workflow.to_dict()
@@ -629,11 +625,11 @@ class TestSerializationWorkflowClasses:
     def test_workflow_name_description_serialization(self) -> None:
         """Test that workflow name and description are serialized correctly."""
         # Test 1: With name and description
-        workflow1 = (
-            WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
-            .set_start_executor(SampleExecutor(id="e1"))
-            .build()
-        )
+        workflow1 = WorkflowBuilder(
+            name="Test Pipeline",
+            description="Test workflow description",
+            start_executor=SampleExecutor(id="e1"),
+        ).build()
 
         assert workflow1.name == "Test Pipeline"
         assert workflow1.description == "Test workflow description"
@@ -649,7 +645,7 @@ class TestSerializationWorkflowClasses:
         assert parsed1["description"] == "Test workflow description"
 
         # Test 2: Without name and description (defaults)
-        workflow2 = WorkflowBuilder().set_start_executor(SampleExecutor(id="e2")).build()
+        workflow2 = WorkflowBuilder(start_executor=SampleExecutor(id="e2")).build()
 
         assert workflow2.name is None
         assert workflow2.description is None
@@ -659,7 +655,7 @@ class TestSerializationWorkflowClasses:
         assert "description" not in data2
 
         # Test 3: With only name (no description)
-        workflow3 = WorkflowBuilder(name="Named Only").set_start_executor(SampleExecutor(id="e3")).build()
+        workflow3 = WorkflowBuilder(name="Named Only", start_executor=SampleExecutor(id="e3")).build()
 
         assert workflow3.name == "Named Only"
         assert workflow3.description is None
@@ -706,8 +702,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Build workflow with all three edge group types
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(router)
+        WorkflowBuilder(start_executor=router)
         # 1. SwitchCaseEdgeGroup: Conditional routing
         .add_switch_case_edge_group(
             router,

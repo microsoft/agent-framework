@@ -75,7 +75,7 @@ async def main() -> None:
     image_saved = False
     for message in result.messages:
         for content in message.contents:
-            if content.type == "image_generation_tool_result" and content.outputs:
+            if content.type == "image_generation_tool_result_tool_result" and content.outputs:
                 output = content.outputs
                 if isinstance(output, Content) and output.uri:
                     await save_image(output)

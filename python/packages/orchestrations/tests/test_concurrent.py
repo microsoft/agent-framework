@@ -39,14 +39,14 @@ class _FakeAgentExec(Executor):
 
 def test_concurrent_builder_rejects_empty_participants() -> None:
     with pytest.raises(ValueError):
-        ConcurrentBuilder().participants([])
+        ConcurrentBuilder(participants=[])
 
 
 def test_concurrent_builder_rejects_duplicate_executors() -> None:
     a = _FakeAgentExec("dup", "A")
     b = _FakeAgentExec("dup", "B")  # same executor id
     with pytest.raises(ValueError):
-        ConcurrentBuilder().participants([a, b])
+        ConcurrentBuilder(participants=[a, b])
 
 
 def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None:
@@ -58,43 +58,35 @@ def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None
     def create_dup2() -> Executor:
         return _FakeAgentExec("dup", "B")  # same executor id
 
-    builder = ConcurrentBuilder().register_participants([create_dup1, create_dup2])
+    builder = ConcurrentBuilder(participant_factories=[create_dup1, create_dup2])
     with pytest.raises(ValueError, match="Duplicate executor ID 'dup' detected in workflow."):
         builder.build()
 
 
 def test_concurrent_builder_rejects_mixed_participants_and_factories() -> None:
-    """Test that mixing .participants() and .register_participants() raises an error."""
-    # Case 1: participants first, then register_participants
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        (
-            ConcurrentBuilder()
-            .participants([_FakeAgentExec("a", "A")])
-            .register_participants([lambda: _FakeAgentExec("b", "B")])
-        )
-
-    # Case 2: register_participants first, then participants
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        (
-            ConcurrentBuilder()
-            .register_participants([lambda: _FakeAgentExec("a", "A")])
-            .participants([_FakeAgentExec("b", "B")])
+    """Test that passing both participants and participant_factories to the constructor raises an error."""
+    with pytest.raises(ValueError, match="Cannot provide both participants and participant_factories"):
+        ConcurrentBuilder(
+            participants=[_FakeAgentExec("a", "A")],
+            participant_factories=[lambda: _FakeAgentExec("b", "B")],
         )
 
 
-def test_concurrent_builder_rejects_multiple_calls_to_participants() -> None:
-    """Test that multiple calls to .participants() raises an error."""
-    with pytest.raises(ValueError, match=r"participants\(\) has already been called"):
-        (ConcurrentBuilder().participants([_FakeAgentExec("a", "A")]).participants([_FakeAgentExec("b", "B")]))
+def test_concurrent_builder_rejects_both_participants_and_factories() -> None:
+    """Test that passing both participants and participant_factories raises an error."""
+    with pytest.raises(ValueError, match="Cannot provide both participants and participant_factories"):
+        ConcurrentBuilder(
+            participants=[_FakeAgentExec("a", "A")],
+            participant_factories=[lambda: _FakeAgentExec("b", "B")],
+        )
 
 
-def test_concurrent_builder_rejects_multiple_calls_to_register_participants() -> None:
-    """Test that multiple calls to .register_participants() raises an error."""
-    with pytest.raises(ValueError, match=r"register_participants\(\) has already been called"):
-        (
-            ConcurrentBuilder()
-            .register_participants([lambda: _FakeAgentExec("a", "A")])
-            .register_participants([lambda: _FakeAgentExec("b", "B")])
+def test_concurrent_builder_rejects_both_factories_and_participants() -> None:
+    """Test that passing both participant_factories and participants raises an error."""
+    with pytest.raises(ValueError, match="Cannot provide both participants and participant_factories"):
+        ConcurrentBuilder(
+            participant_factories=[lambda: _FakeAgentExec("a", "A")],
+            participants=[_FakeAgentExec("b", "B")],
         )
 
 
@@ -104,7 +96,7 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
     e2 = _FakeAgentExec("agentB", "Beta")
     e3 = _FakeAgentExec("agentC", "Gamma")
 
-    wf = ConcurrentBuilder().participants([e1, e2, e3]).build()
+    wf = ConcurrentBuilder(participants=[e1, e2, e3]).build()
 
     completed = False
     output: list[ChatMessage] | None = None
@@ -142,7 +134,7 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
-    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
+    wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize).build()
 
     completed = False
     output: str | None = None
@@ -173,7 +165,7 @@ async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
             texts.append(msgs[-1].text if msgs else "")
         return " | ".join(sorted(texts))
 
-    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize_sync).build()
+    wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize_sync).build()
 
     completed = False
     output: str | None = None
@@ -198,7 +190,7 @@ def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
     def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
         return str(len(results))
 
-    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(summarize).build()
+    wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize).build()
 
     assert "summarize" in wf.executors
     aggregator = wf.executors["summarize"]
@@ -221,7 +213,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
     e2 = _FakeAgentExec("agentB", "Two")
 
     aggregator_instance = CustomAggregator(id="instance_aggregator")
-    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(aggregator_instance).build()
+    wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(aggregator_instance).build()
 
     completed = False
     output: str | None = None
@@ -255,8 +247,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
     e2 = _FakeAgentExec("agentB", "Two")
 
     wf = (
-        ConcurrentBuilder()
-        .participants([e1, e2])
+        ConcurrentBuilder(participants=[e1, e2])
         .register_aggregator(lambda: CustomAggregator(id="custom_aggregator"))
         .build()
     )
@@ -295,7 +286,7 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    wf = ConcurrentBuilder().participants([e1, e2]).register_aggregator(CustomAggregator).build()
+    wf = ConcurrentBuilder(participants=[e1, e2]).register_aggregator(CustomAggregator).build()
 
     completed = False
     output: str | None = None
@@ -320,7 +311,11 @@ def test_concurrent_builder_rejects_multiple_calls_to_with_aggregator() -> None:
         return str(len(results))
 
     with pytest.raises(ValueError, match=r"with_aggregator\(\) has already been called"):
-        (ConcurrentBuilder().with_aggregator(summarize).with_aggregator(summarize))
+        (
+            ConcurrentBuilder(participants=[_FakeAgentExec("a", "A")])
+            .with_aggregator(summarize)
+            .with_aggregator(summarize)
+        )
 
 
 def test_concurrent_builder_rejects_multiple_calls_to_register_aggregator() -> None:
@@ -331,7 +326,7 @@ def test_concurrent_builder_rejects_multiple_calls_to_register_aggregator() -> N
 
     with pytest.raises(ValueError, match=r"register_aggregator\(\) has already been called"):
         (
-            ConcurrentBuilder()
+            ConcurrentBuilder(participants=[_FakeAgentExec("a", "A")])
             .register_aggregator(lambda: CustomAggregator(id="agg1"))
             .register_aggregator(lambda: CustomAggregator(id="agg2"))
         )
@@ -346,7 +341,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
         _FakeAgentExec("agentC", "Gamma"),
     )
 
-    wf = ConcurrentBuilder().participants(list(participants)).with_checkpointing(storage).build()
+    wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):
@@ -370,7 +365,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
         _FakeAgentExec("agentB", "Beta"),
         _FakeAgentExec("agentC", "Gamma"),
     )
-    wf_resume = ConcurrentBuilder().participants(list(resumed_participants)).with_checkpointing(storage).build()
+    wf_resume = ConcurrentBuilder(participants=list(resumed_participants), checkpoint_storage=storage).build()
 
     resumed_output: list[ChatMessage] | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
@@ -392,7 +387,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     storage = InMemoryCheckpointStorage()
 
     agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
-    wf = ConcurrentBuilder().participants(agents).build()
+    wf = ConcurrentBuilder(participants=agents).build()
 
     baseline_output: list[ChatMessage] | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
@@ -413,7 +408,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     )
 
     resumed_agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
-    wf_resume = ConcurrentBuilder().participants(resumed_agents).build()
+    wf_resume = ConcurrentBuilder(participants=resumed_agents).build()
 
     resumed_output: list[ChatMessage] | None = None
     async for ev in wf_resume.run(
@@ -442,7 +437,7 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
         runtime_storage = FileCheckpointStorage(temp_dir2)
 
         agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
-        wf = ConcurrentBuilder().participants(agents).with_checkpointing(buildtime_storage).build()
+        wf = ConcurrentBuilder(participants=agents, checkpoint_storage=buildtime_storage).build()
 
         baseline_output: list[ChatMessage] | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
@@ -462,7 +457,7 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
 
 def test_concurrent_builder_rejects_empty_participant_factories() -> None:
     with pytest.raises(ValueError):
-        ConcurrentBuilder().register_participants([])
+        ConcurrentBuilder(participant_factories=[])
 
 
 async def test_concurrent_builder_reusable_after_build_with_participants() -> None:
@@ -470,7 +465,7 @@ async def test_concurrent_builder_reusable_after_build_with_participants() -> No
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    builder = ConcurrentBuilder().participants([e1, e2])
+    builder = ConcurrentBuilder(participants=[e1, e2])
 
     builder.build()
 
@@ -493,7 +488,7 @@ async def test_concurrent_builder_reusable_after_build_with_factories() -> None:
         call_count += 1
         return _FakeAgentExec("agentB", "Two")
 
-    builder = ConcurrentBuilder().register_participants([create_agent_executor_a, create_agent_executor_b])
+    builder = ConcurrentBuilder(participant_factories=[create_agent_executor_a, create_agent_executor_b])
 
     # Build the first workflow
     wf1 = builder.build()
@@ -523,7 +518,7 @@ async def test_concurrent_with_register_participants() -> None:
     def create_agent3() -> Executor:
         return _FakeAgentExec("agentC", "Gamma")
 
-    wf = ConcurrentBuilder().register_participants([create_agent1, create_agent2, create_agent3]).build()
+    wf = ConcurrentBuilder(participant_factories=[create_agent1, create_agent2, create_agent3]).build()
 
     completed = False
     output: list[ChatMessage] | None = None

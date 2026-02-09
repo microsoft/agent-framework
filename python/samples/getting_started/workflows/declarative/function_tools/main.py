@@ -90,7 +90,7 @@ async def main():
     while True:
         if pending_request_id:
             response = ExternalInputResponse(user_input=user_input)
-            stream = workflow.send_responses_streaming({pending_request_id: response})
+            stream = workflow.run(stream=True, responses={pending_request_id: response})
         else:
             stream = workflow.run({"userInput": user_input}, stream=True)
 

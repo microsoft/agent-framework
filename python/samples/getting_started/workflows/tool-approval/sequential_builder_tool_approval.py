@@ -34,8 +34,8 @@ requiring any additional builder configuration.
 
 Demonstrate:
 - Using @tool(approval_mode="always_require") for sensitive operations.
-- Handling  with function_approval_request Content in sequential workflows.
-- Resuming workflow execution after approval via send_responses_streaming.
+- Handling request_info events with function_approval_request Content in sequential workflows.
+- Resuming workflow execution after approval via run(responses=..., stream=True).
 
 Prerequisites:
 - OpenAI or Azure OpenAI configured with the required environment variables.
@@ -111,14 +111,14 @@ async def main() -> None:
     )
 
     # 3. Build a sequential workflow with the agent
-    workflow = SequentialBuilder().participants([database_agent]).build()
+    workflow = SequentialBuilder(participants=[database_agent]).build()
 
     # 4. Start the workflow with a user task
     print("Starting sequential workflow with tool approval...")
     print("-" * 60)
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(
         "Check the schema and then update all orders with status 'pending' to 'processing'", stream=True
     )
@@ -127,7 +127,7 @@ async def main() -> None:
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
     """

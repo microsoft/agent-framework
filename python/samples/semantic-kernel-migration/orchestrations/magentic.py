@@ -8,6 +8,7 @@ from typing import cast
 
 from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
     Agent,
     ChatCompletionAgent,
@@ -147,7 +148,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         chat_client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
+    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
 
     final_text: str | None = None
     async for event in workflow.run(prompt, stream=True):
