@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
+    "agent-framework-core>=1.0.0b260130",
     "powerfx>=0.0.31; python_version < '3.14'",
     "pyyaml>=6.0,<7.0",
 ]

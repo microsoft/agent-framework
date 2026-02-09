@@ -8,6 +8,8 @@ using an MCP calculator tool.
 One GPU with 40GB of memory is sufficient for this sample.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json

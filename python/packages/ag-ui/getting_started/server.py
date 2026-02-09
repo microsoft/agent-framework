@@ -2,6 +2,8 @@
 
 """AG-UI server example with server-side tools."""
 
+from __future__ import annotations
+
 import logging
 import os
 

@@ -371,6 +371,7 @@ class GAIA:
         local_dir = snapshot_download(  # type: ignore
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
+            revision="682dd723ee1e1697e00360edccf2366dc8418dd9",
             token=token,
             local_dir=str(self.data_dir),
             force_download=False,

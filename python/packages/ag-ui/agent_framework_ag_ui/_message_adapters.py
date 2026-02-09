@@ -2,6 +2,8 @@
 
 """Message format conversion between AG-UI and Agent Framework."""
 
+from __future__ import annotations
+
 import json
 import logging
 from typing import Any, cast

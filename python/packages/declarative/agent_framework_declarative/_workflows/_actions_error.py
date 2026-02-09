@@ -7,6 +7,8 @@ This module implements handlers for:
 - TryCatch: Try-catch-finally error handling
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
@@ -44,7 +46,7 @@ class ErrorEvent(WorkflowEvent):
 
 
 @action_handler("ThrowException")
-async def handle_throw_exception(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_throw_exception(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Raise an exception that can be caught by TryCatch.
 
     Action schema:
@@ -67,7 +69,7 @@ async def handle_throw_exception(ctx: ActionContext) -> AsyncGenerator[WorkflowE
 
 
 @action_handler("TryCatch")
-async def handle_try_catch(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:
+async def handle_try_catch(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:
     """Try-catch-finally error handling.
 
     Action schema:

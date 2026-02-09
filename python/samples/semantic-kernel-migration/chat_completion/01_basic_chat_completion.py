@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/chat_completion/01_basic_chat_completion.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Basic SK ChatCompletionAgent vs Agent Framework ChatAgent.
 

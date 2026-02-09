@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import base64
+import pickle  # noqa: S403
+from typing import Any
+
+from agent_framework import get_logger
+
 """Checkpoint encoding using JSON structure with pickle+base64 for arbitrary data.
 
 This hybrid approach provides:
@@ -11,13 +19,6 @@ SECURITY WARNING: Checkpoints use pickle for data serialization. Only load check
 from trusted sources. Loading a malicious checkpoint file can execute arbitrary code.
 """
 
-from __future__ import annotations
-
-import base64
-import pickle  # noqa: S403
-from typing import Any
-
-from agent_framework import get_logger
 
 logger = get_logger(__name__)
 

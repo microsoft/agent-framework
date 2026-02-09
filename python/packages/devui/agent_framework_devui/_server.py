@@ -2,6 +2,8 @@
 
 """FastAPI server implementation."""
 
+from __future__ import annotations
+
 import asyncio
 import importlib.metadata
 import inspect
@@ -287,7 +289,7 @@ class DevServer:
         """Create the FastAPI application."""
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # Startup
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
@@ -623,7 +625,7 @@ class DevServer:
                 entity_path = Path(entity_path_str)
 
                 # Stream deployment events
-                async def event_generator() -> AsyncGenerator[str, None]:
+                async def event_generator() -> AsyncGenerator[str]:
                     async for event in self.deployment_manager.deploy(config, entity_path):
                         # Format as SSE
                         import json
@@ -1085,7 +1087,7 @@ class DevServer:
 
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
             # Collect events for final response.completed event
@@ -1155,7 +1157,7 @@ class DevServer:
 
     async def _stream_openai_execution(
         self, executor: OpenAIExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution through OpenAI executor.
 
         OpenAI events are already in final format - no conversion or aggregation needed.
@@ -1212,7 +1214,7 @@ class DevServer:
 
     async def _stream_with_cancellation(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest, response_id: str
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution with automatic cancellation on client disconnect.
 
         This wrapper adds cancellation support to the execution stream:
@@ -1231,7 +1233,7 @@ class DevServer:
         """
         task = None
 
-        async def execution_wrapper() -> AsyncGenerator[str, None]:
+        async def execution_wrapper() -> AsyncGenerator[str]:
             """Inner wrapper to handle the actual execution."""
             try:
                 logger.debug(f"[CANCELLATION] Starting execution for {response_id}")

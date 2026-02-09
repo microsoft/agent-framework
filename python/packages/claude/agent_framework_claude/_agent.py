@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import contextlib
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
@@ -100,13 +102,13 @@ class ClaudeAgentOptions(TypedDict, total=False):
     disallowed_tools: list[str]
     """Blocklist of tools. Claude cannot use these tools."""
 
-    mcp_servers: dict[str, "McpServerConfig"]
+    mcp_servers: dict[str, McpServerConfig]
     """MCP server configurations for external tools."""
 
-    permission_mode: "PermissionMode"
+    permission_mode: PermissionMode
     """Permission handling mode ("default", "acceptEdits", "plan", "bypassPermissions")."""
 
-    can_use_tool: "CanUseTool"
+    can_use_tool: CanUseTool
     """Permission callback for tool use."""
 
     max_turns: int
@@ -115,16 +117,16 @@ class ClaudeAgentOptions(TypedDict, total=False):
     max_budget_usd: float
     """Budget limit in USD."""
 
-    hooks: dict[str, list["HookMatcher"]]
+    hooks: dict[str, list[HookMatcher]]
     """Pre/post tool hooks."""
 
     add_dirs: list[str | Path]
     """Additional directories to add to context."""
 
-    sandbox: "SandboxSettings"
+    sandbox: SandboxSettings
     """Sandbox configuration for bash isolation."""
 
-    agents: dict[str, "AgentDefinition"]
+    agents: dict[str, AgentDefinition]
     """Custom agent definitions."""
 
     output_format: dict[str, Any]
@@ -133,7 +135,7 @@ class ClaudeAgentOptions(TypedDict, total=False):
     enable_file_checkpointing: bool
     """Enable file checkpointing for rewind."""
 
-    betas: list["SdkBeta"]
+    betas: list[SdkBeta]
     """Beta features to enable."""
 
 
@@ -328,7 +330,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                 normalized = normalize_tools(tool)
                 self._custom_tools.extend(normalized)
 
-    async def __aenter__(self) -> "ClaudeAgent[TOptions]":
+    async def __aenter__(self) -> ClaudeAgent[TOptions]:
         """Start the agent when entering async context."""
         await self.start()
         return self

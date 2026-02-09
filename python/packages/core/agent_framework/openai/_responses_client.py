@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -815,7 +817,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
         options: dict[str, Any],
-    ) -> "ChatResponse":
+    ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
@@ -945,7 +947,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list["Content"] = []
+                    outputs: list[Content] = []
                     if item_outputs := getattr(item, "outputs", None):
                         for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
@@ -1456,7 +1458,7 @@ class OpenAIResponsesClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: (
-            Sequence["ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable"] | None
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
         ) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
