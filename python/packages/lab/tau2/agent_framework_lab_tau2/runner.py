@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import uuid
 from typing import cast
 
@@ -90,7 +92,7 @@ class TaskRunner:
         self.max_steps = max_steps
         self.reinit()
 
-    def reinit(self) -> "TaskRunner":
+    def reinit(self) -> TaskRunner:
         """Reset all state for a new task run."""
         self.step_count = 0
         self.full_conversation = []

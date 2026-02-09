@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -78,7 +80,7 @@ class Mem0Provider(ContextProvider):
         self._per_operation_thread_id: str | None = None
         self._should_close_client = should_close_client
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         if self.mem0_client and isinstance(self.mem0_client, AbstractAsyncContextManager):
             await self.mem0_client.__aenter__()

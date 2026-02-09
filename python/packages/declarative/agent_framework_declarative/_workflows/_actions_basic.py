@@ -16,6 +16,8 @@ network calls. The `return; yield` pattern makes a function an async generator w
 actually yielding any events.
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
@@ -37,7 +39,7 @@ logger = get_logger("agent_framework.declarative.workflows.actions")
 
 
 @action_handler("SetValue")
-async def handle_set_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_set_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Set a value in the workflow state.
 
     Action schema:
@@ -63,7 +65,7 @@ async def handle_set_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, 
 
 
 @action_handler("SetVariable")
-async def handle_set_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_set_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Set a variable in the workflow state (.NET workflow format).
 
     This is an alias for SetValue with 'variable' instead of 'path'.
@@ -113,7 +115,7 @@ def _normalize_variable_path(variable: str) -> str:
 
 
 @action_handler("AppendValue")
-async def handle_append_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_append_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Append a value to a list in the workflow state.
 
     Action schema:
@@ -139,7 +141,7 @@ async def handle_append_value(ctx: ActionContext) -> AsyncGenerator[WorkflowEven
 
 
 @action_handler("SendActivity")
-async def handle_send_activity(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_send_activity(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Send text or attachments to the user.
 
     Action schema (object form):
@@ -189,7 +191,7 @@ async def handle_send_activity(ctx: ActionContext) -> AsyncGenerator[WorkflowEve
 
 
 @action_handler("EmitEvent")
-async def handle_emit_event(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_emit_event(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Emit a custom workflow event.
 
     Action schema:
@@ -213,7 +215,7 @@ async def handle_emit_event(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent,
     yield CustomEvent(name=name, data=evaluated_data)
 
 
-def _evaluate_dict_values(d: dict[str, Any], state: "WorkflowState") -> dict[str, Any]:
+def _evaluate_dict_values(d: dict[str, Any], state: WorkflowState) -> dict[str, Any]:
     """Recursively evaluate PowerFx expressions in a dictionary.
 
     Args:
@@ -245,7 +247,7 @@ def _evaluate_dict_values(d: dict[str, Any], state: "WorkflowState") -> dict[str
 
 
 @action_handler("SetTextVariable")
-async def handle_set_text_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_set_text_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Set a text variable with string interpolation support.
 
     This is similar to SetVariable but supports multi-line text with
@@ -281,7 +283,7 @@ async def handle_set_text_variable(ctx: ActionContext) -> AsyncGenerator[Workflo
 
 
 @action_handler("SetMultipleVariables")
-async def handle_set_multiple_variables(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_set_multiple_variables(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Set multiple variables at once.
 
     Action schema:
@@ -313,7 +315,7 @@ async def handle_set_multiple_variables(ctx: ActionContext) -> AsyncGenerator[Wo
 
 
 @action_handler("ResetVariable")
-async def handle_reset_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_reset_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Reset a variable to its default/blank state.
 
     Action schema:
@@ -336,7 +338,7 @@ async def handle_reset_variable(ctx: ActionContext) -> AsyncGenerator[WorkflowEv
 
 
 @action_handler("ClearAllVariables")
-async def handle_clear_all_variables(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_clear_all_variables(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Clear all turn-scoped variables.
 
     Action schema:
@@ -350,7 +352,7 @@ async def handle_clear_all_variables(ctx: ActionContext) -> AsyncGenerator[Workf
 
 
 @action_handler("CreateConversation")
-async def handle_create_conversation(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_create_conversation(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Create a new conversation context.
 
     Action schema (.NET style):
@@ -399,7 +401,7 @@ async def handle_create_conversation(ctx: ActionContext) -> AsyncGenerator[Workf
 
 
 @action_handler("AddConversationMessage")
-async def handle_add_conversation_message(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_add_conversation_message(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Add a message to a conversation.
 
     Action schema:
@@ -451,7 +453,7 @@ async def handle_add_conversation_message(ctx: ActionContext) -> AsyncGenerator[
 
 
 @action_handler("CopyConversationMessages")
-async def handle_copy_conversation_messages(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_copy_conversation_messages(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Copy messages from one conversation to another.
 
     Action schema:
@@ -506,7 +508,7 @@ async def handle_copy_conversation_messages(ctx: ActionContext) -> AsyncGenerato
 
 
 @action_handler("RetrieveConversationMessages")
-async def handle_retrieve_conversation_messages(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_retrieve_conversation_messages(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Retrieve messages from a conversation and store in a variable.
 
     Action schema:
@@ -547,7 +549,7 @@ async def handle_retrieve_conversation_messages(ctx: ActionContext) -> AsyncGene
     yield  # Make it a generator
 
 
-def _interpolate_string(text: str, state: "WorkflowState") -> str:
+def _interpolate_string(text: str, state: WorkflowState) -> str:
     """Interpolate {Variable.Path} references in a string.
 
     Args:

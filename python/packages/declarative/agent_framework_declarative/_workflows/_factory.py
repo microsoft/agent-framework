@@ -10,6 +10,8 @@ Each YAML action becomes a real Executor node in the workflow graph,
 enabling checkpointing, visualization, and pause/resume capabilities.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -506,7 +508,7 @@ class WorkflowFactory:
             f"Invalid agent definition. Expected 'file', 'kind', or 'connection': {agent_def}"
         )
 
-    def register_agent(self, name: str, agent: SupportsAgentRun | AgentExecutor) -> "WorkflowFactory":
+    def register_agent(self, name: str, agent: SupportsAgentRun | AgentExecutor) -> WorkflowFactory:
         """Register an agent instance with the factory for use in workflows.
 
         Registered agents are available to InvokeAzureAgent actions by name.
@@ -552,7 +554,7 @@ class WorkflowFactory:
         self._agents[name] = agent
         return self
 
-    def register_binding(self, name: str, func: Any) -> "WorkflowFactory":
+    def register_binding(self, name: str, func: Any) -> WorkflowFactory:
         """Register a function binding with the factory for use in workflow actions.
 
         Bindings allow workflow actions to invoke Python functions by name.
