@@ -41,6 +41,13 @@ async def main():
     print(response)
     # </run_agent>
 
+    # <run_agent_streaming>
+    stream = agent.run("Tell me a fun fact about Paris.", stream=True)
+    async for update in stream:
+        print(update.text, end="")
+    print()
+    # </run_agent_streaming>
+
 
 if __name__ == "__main__":
     asyncio.run(main())
