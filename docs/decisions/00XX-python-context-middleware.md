@@ -115,22 +115,22 @@ class AgentThread:
 
 ## Design Decisions Summary
 
-The following key decisions shape the ContextPlugin design:
+The following key decisions shape the ContextProvider design:
 
 | # | Decision | Rationale |
 |---|----------|-----------|
 | 1 | **Agent vs Session Ownership** | Agent owns plugin instances; Session owns state as mutable dict. Plugins shared across sessions, state isolated per session. |
-| 2 | **Execution Pattern** | **ContextPlugin** with `before_run`/`after_run` methods (hooks pattern). Simpler mental model than wrapper/onion pattern. |
+| 2 | **Execution Pattern** | **ContextProvider** with `before_run`/`after_run` methods (hooks pattern). Simpler mental model than wrapper/onion pattern. |
 | 3 | **State Management** | Whole state dict (`dict[str, Any]`) passed to each plugin. Dict is mutable, so no return value needed. |
-| 4 | **Default Storage at Runtime** | `InMemoryStoragePlugin` auto-added when no service_session_id, store≠True, and no plugins. Evaluated at runtime so users can modify pipeline first. |
-| 5 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero storage plugins have `load_messages=True` (likely misconfiguration). |
-| 6 | **Single Storage Class** | One `StorageContextPlugin` configured for memory/audit/evaluation - no separate classes. |
+| 4 | **Default Storage at Runtime** | `InMemoryHistoryProvider` auto-added when no service_session_id, store≠True, and no plugins. Evaluated at runtime so users can modify pipeline first. |
+| 5 | **Multiple Storage Allowed** | Warn at session creation if multiple or zero history providers have `load_messages=True` (likely misconfiguration). |
+| 6 | **Single Storage Class** | One `HistoryProvider` configured for memory/audit/evaluation - no separate classes. |
 | 7 | **Mandatory source_id** | Required parameter forces explicit naming for attribution in `context_messages` dict. |
-| 8 | **Explicit Load Behavior** | `load_messages: bool = True` - explicit configuration with no automatic detection. For `StorageContextPlugin`, `before_run` is skipped entirely when `load_messages=False`. |
+| 8 | **Explicit Load Behavior** | `load_messages: bool = True` - explicit configuration with no automatic detection. For `HistoryProvider`, `before_run` is skipped entirely when `load_messages=False`. |
 | 9 | **Dict-based Context** | `context_messages: dict[str, list[ChatMessage]]` keyed by source_id maintains order and enables filtering. Messages can have an `attribution` marker in `additional_properties` for external filtering scenarios. |
 | 10 | **Selective Storage** | `store_context_messages` and `store_context_from` control what gets persisted from other plugins. |
 | 11 | **Tool Attribution** | `add_tools()` automatically sets `tool.metadata["context_source"] = source_id`. |
-| 12 | **Clean Break** | Remove `AgentThread`, `ContextProvider`, `ChatMessageStore` completely (preview, no compatibility shims). |
+| 12 | **Clean Break** | Remove `AgentThread`, old `ContextProvider`, `ChatMessageStore` completely; replace with new `ContextProvider` (hooks pattern), `HistoryProvider`, `AgentSession`. No compatibility shims (preview). |
 | 13 | **Plugin Ordering** | User-defined order; storage sees prior plugins (pre-processing) or all plugins (post-processing). |
 | 14 | **Agent-owned Serialization** | `agent.serialize_session(session)` and `agent.restore_session(state)`. Agent handles all serialization. |
 | 15 | **Session Management Methods** | `agent.create_session()` (no required params) and `agent.get_session_by_id(id)` for clear lifecycle management. |
@@ -733,7 +733,7 @@ response = await agent.run("Hello", session=session)
 ### Decision 1: Execution Pattern
 
 **Chosen: Option 3 - Hooks (Pre/Post Pattern)** with the following naming:
-- **Class name:** `ContextPlugin` (emphasizes extensibility, familiar from build tools)
+- **Class name:** `ContextProvider` (emphasizes extensibility, familiar from build tools)
 - **Method names:** `before_run` / `after_run` (matches `agent.run()` terminology)
 
 Rationale:
@@ -753,9 +753,9 @@ Both options share the same:
 
 **Chosen: Option B1 - Instances in Agent, State in Session (Simple Dict)**
 
-The `ChatAgent` owns and manages the `ContextPlugin` instances. The `AgentSession` only stores state as a mutable `dict[str, Any]`. Each plugin receives the **whole state dict** (not just its own slice), and since a dict is mutable, no return value is needed - plugins modify the dict in place.
+The `ChatAgent` owns and manages the `ContextProvider` instances. The `AgentSession` only stores state as a mutable `dict[str, Any]`. Each plugin receives the **whole state dict** (not just its own slice), and since a dict is mutable, no return value is needed - plugins modify the dict in place.
 
-> **Note on trust:** Since all `ContextPlugin` instances reason over conversation messages (which may contain sensitive user data), they should be **trusted by default**. This is also why we allow all plugins to see all state - if a plugin is untrusted, it shouldn't be in the pipeline at all. The whole state dict is passed rather than isolated slices because plugins that handle messages already have access to the full conversation context.
+> **Note on trust:** Since all `ContextProvider` instances reason over conversation messages (which may contain sensitive user data), they should be **trusted by default**. This is also why we allow all plugins to see all state - if a plugin is untrusted, it shouldn't be in the pipeline at all. The whole state dict is passed rather than isolated slices because plugins that handle messages already have access to the full conversation context.
 
 Rationale for B1 over B2: Simpler is better. The whole state dict is passed to each plugin, and since Python dicts are mutable, plugins can modify state in place without returning anything. This is the most Pythonic approach.
 
@@ -853,10 +853,10 @@ class ChatAgent:
         self,
         chat_client: ...,
         *,
-        context_plugins: Sequence[ContextPlugin] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
     ):
         # Agent owns the actual plugin instances
-        self._context_plugins = list(context_plugins or [])
+        self._context_providers = list(context_providers or [])
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create lightweight session with just state."""
@@ -869,7 +869,7 @@ class ChatAgent:
         )
 
         # Before-run plugins
-        for plugin in self._context_plugins:
+        for plugin in self._context_providers:
             await plugin.before_run(self, session, context, session.state)
 
         # assemble final input messages from context
@@ -877,12 +877,12 @@ class ChatAgent:
         # ... actual running, i.e. `get_response` for ChatAgent ...
 
         # After-run plugins (reverse order)
-        for plugin in reversed(self._context_plugins):
+        for plugin in reversed(self._context_providers):
             await plugin.after_run(self, session, context, session.state)
 
 
 # Plugin that maintains state - modifies dict in place
-class InMemoryStoragePlugin(ContextPlugin):
+class InMemoryHistoryProvider(ContextProvider):
     async def before_run(
         self,
         agent: "ChatAgent",
@@ -913,7 +913,7 @@ class InMemoryStoragePlugin(ContextPlugin):
 
 
 # Stateless plugin - ignores state
-class TimeContextPlugin(ContextPlugin):
+class TimeContextProvider(ContextProvider):
     async def before_run(
         self,
         agent: "ChatAgent",
@@ -1103,8 +1103,8 @@ The .NET Agent Framework provides equivalent functionality through a different s
 
 | .NET Concept | Python (Chosen) |
 |--------------|-----------------|
-| `AIContextProvider` | `ContextPlugin` |
-| `ChatHistoryProvider` | `StorageContextPlugin` |
+| `AIContextProvider` | `ContextProvider` |
+| `ChatHistoryProvider` | `HistoryProvider` |
 | `AgentSession` | `AgentSession` |
 
 ### Feature Equivalence
@@ -1113,10 +1113,10 @@ Both platforms provide the same core capabilities:
 
 | Capability | .NET | Python |
 |------------|------|--------|
-| Inject context before invocation | `AIContextProvider.InvokingAsync()` | `ContextPlugin.before_run()` |
-| React after invocation | `AIContextProvider.InvokedAsync()` | `ContextPlugin.after_run()` |
-| Load conversation history | `ChatHistoryProvider.InvokingAsync()` | `StorageContextPlugin` with `load_messages=True` |
-| Store conversation history | `ChatHistoryProvider.InvokedAsync()` | `StorageContextPlugin` with `store_*` flags |
+| Inject context before invocation | `AIContextProvider.InvokingAsync()` | `ContextProvider.before_run()` |
+| React after invocation | `AIContextProvider.InvokedAsync()` | `ContextProvider.after_run()` |
+| Load conversation history | `ChatHistoryProvider.InvokingAsync()` | `HistoryProvider` with `load_messages=True` |
+| Store conversation history | `ChatHistoryProvider.InvokedAsync()` | `HistoryProvider` with `store_*` flags |
 | Session serialization | `Serialize()` on providers | Session's `state` dict is directly serializable |
 | Factory-based creation | `AIContextProviderFactory`, `ChatHistoryProviderFactory` | Not needed - state dict handles per-session needs |
 
@@ -1126,7 +1126,7 @@ The implementations differ in ways idiomatic to each language:
 
 | Aspect | .NET Approach | Python Approach |
 |--------|---------------|-----------------|
-| **Context providers** | Separate `AIContextProvider` (single) and `ChatHistoryProvider` (single) | Unified list of `ContextPlugin` (multiple) |
+| **Context providers** | Separate `AIContextProvider` (single) and `ChatHistoryProvider` (single) | Unified list of `ContextProvider` (multiple) |
 | **Composition** | One of each provider type per session | Unlimited plugins in pipeline |
 | **Type system** | Strict interfaces, compile-time checks | Duck typing, protocols, runtime flexibility |
 | **Configuration** | DI container, factory delegates | Direct instantiation, list of instances |
@@ -1231,16 +1231,732 @@ Regardless of the chosen approach, these extension points could support compacti
 
 ## Implementation Plan
 
-See **Appendix A** for the detailed implementation plan including:
-- Complete class definitions
-- User experience examples
-- Phase-by-phase workplan
+See **Appendix A** for class hierarchy, API signatures, and user experience examples.
+See the **Workplan** at the end for PR breakdown and reference implementation.
 
 ---
 
-## Appendix A: Implementation Plan
+## Appendix A: API Overview
 
-### New Types
+### Class Hierarchy
+
+```
+ContextProvider (base - hooks pattern)
+├── HistoryProvider (storage subclass)
+│   ├── InMemoryHistoryProvider (built-in)
+│   ├── RedisHistoryProvider (packages/redis)
+│   └── CosmosHistoryProvider (packages/azure-ai)
+├── AzureAISearchContextProvider (packages/azure-ai-search)
+├── Mem0ContextProvider (packages/mem0)
+└── (custom user providers)
+
+AgentSession (lightweight state container)
+
+SessionContext (per-invocation state)
+```
+
+### ContextProvider
+
+```python
+class ContextProvider(ABC):
+    """Base class for context providers (hooks pattern).
+
+    Context providers participate in the context engineering pipeline,
+    adding context before model invocation and processing responses after.
+
+    Attributes:
+        source_id: Unique identifier for this provider instance (required).
+            Used for message/tool attribution so other providers can filter.
+    """
+
+    def __init__(self, source_id: str):
+        self.source_id = source_id
+
+    async def before_run(
+        self,
+        agent: "ChatAgent",
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Called before model invocation. Override to add context."""
+        pass
+
+    async def after_run(
+        self,
+        agent: "ChatAgent",
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Called after model invocation. Override to process response."""
+        pass
+
+    async def serialize(self) -> Any:
+        """Serialize provider state. Default returns None (no state)."""
+        return None
+
+    async def restore(self, state: Any) -> None:
+        """Restore provider state from serialized object."""
+        pass
+```
+
+### HistoryProvider
+
+```python
+class HistoryProvider(ContextProvider):
+    """Base class for conversation history storage providers.
+
+    A single class configured for different use cases:
+    - Primary memory storage (loads + stores messages)
+    - Audit/logging storage (stores only, doesn't load)
+    - Evaluation storage (stores only for later analysis)
+
+    Loading behavior:
+    - `load_messages=True` (default): Load messages from storage in before_run
+    - `load_messages=False`: Skip loading (before_run is a no-op)
+
+    Storage behavior:
+    - `store_inputs`: Store input messages (default True)
+    - `store_responses`: Store response messages (default True)
+    - `store_context_messages`: Also store context from other providers (default False)
+    - `store_context_from`: Only store from specific source_ids (default None = all)
+    """
+
+    def __init__(
+        self,
+        source_id: str,
+        *,
+        load_messages: bool = True,
+        store_inputs: bool = True,
+        store_responses: bool = True,
+        store_context_messages: bool = False,
+        store_context_from: Sequence[str] | None = None,
+    ): ...
+
+    @abstractmethod
+    async def get_messages(self, session_id: str | None) -> list[ChatMessage]:
+        """Retrieve stored messages for this session."""
+        ...
+
+    @abstractmethod
+    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
+        """Persist messages for this session."""
+        ...
+```
+
+### SessionContext
+
+```python
+class SessionContext:
+    """Per-invocation state passed through the context provider pipeline.
+
+    Created fresh for each agent.run() call. Providers read from and write to
+    the mutable fields to add context before invocation and process responses after.
+
+    Attributes:
+        session_id: The ID of the current session
+        service_session_id: Service-managed session ID (if present)
+        input_messages: New messages being sent to the agent (set by caller)
+        context_messages: Dict mapping source_id -> messages added by that provider.
+            Maintains insertion order (provider execution order).
+        instructions: Additional instructions - providers can append here
+        tools: Additional tools - providers can append here
+        response_messages: After invocation, contains the agent's response (set by agent).
+            READ-ONLY - use AgentMiddleware to modify responses.
+        options: Options passed to agent.run() - READ-ONLY, for reflection only
+        metadata: Shared metadata dictionary for cross-provider communication
+    """
+
+    def __init__(
+        self,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+        input_messages: list[ChatMessage],
+        context_messages: dict[str, list[ChatMessage]] | None = None,
+        instructions: list[str] | None = None,
+        tools: list[ToolProtocol] | None = None,
+        response_messages: list[ChatMessage] | None = None,
+        options: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ): ...
+
+    def add_messages(self, source_id: str, messages: Sequence[ChatMessage]) -> None:
+        """Add context messages from a specific source."""
+        ...
+
+    def add_instructions(self, source_id: str, instructions: str | Sequence[str]) -> None:
+        """Add instructions to be prepended to the conversation."""
+        ...
+
+    def add_tools(self, source_id: str, tools: Sequence[ToolProtocol]) -> None:
+        """Add tools with source attribution in tool.metadata."""
+        ...
+
+    def get_messages(
+        self,
+        sources: Sequence[str] | None = None,
+        exclude_sources: Sequence[str] | None = None,
+    ) -> list[ChatMessage]:
+        """Get context messages, optionally filtered by source."""
+        ...
+
+    def get_all_messages(
+        self,
+        *,
+        include_input: bool = False,
+        include_response: bool = False,
+    ) -> list[ChatMessage]:
+        """Get all messages (context + optionally input + response)."""
+        ...
+```
+
+### AgentSession (Decision B1)
+
+```python
+class AgentSession:
+    """A conversation session with an agent.
+
+    Lightweight state container. Provider instances are owned by the agent,
+    not the session. The session only holds session IDs and a mutable state dict.
+    """
+
+    def __init__(self, *, session_id: str | None = None):
+        self._session_id = session_id or str(uuid.uuid4())
+        self.service_session_id: str | None = None
+        self.state: dict[str, Any] = {}
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+```
+
+### ChatAgent Integration
+
+```python
+class ChatAgent:
+    def __init__(
+        self,
+        chat_client: ...,
+        *,
+        context_providers: Sequence[ContextProvider] | None = None,
+    ):
+        self._context_providers = list(context_providers or [])
+
+    def create_session(self, *, session_id: str | None = None, service_session_id: str | None = None) -> AgentSession:
+        """Create a new lightweight session."""
+        session = AgentSession(session_id=session_id)
+        session.service_session_id = service_session_id
+        return session
+
+    async def run(self, input: str, *, session: AgentSession) -> AgentResponse:
+        context = SessionContext(session_id=session.session_id, input_messages=[...])
+
+        # Before-run providers (forward order)
+        for provider in self._context_providers:
+            await provider.before_run(self, session, context, session.state)
+
+        # ... assemble messages, invoke model ...
+
+        # After-run providers (reverse order)
+        for provider in reversed(self._context_providers):
+            await provider.after_run(self, session, context, session.state)
+```
+
+### Message/Tool Attribution
+
+The `SessionContext` provides explicit methods for adding context:
+
+```python
+# Adding messages (keyed by source_id in context_messages dict)
+context.add_messages(self.source_id, messages)
+
+# Adding instructions (flat list, source_id for debugging)
+context.add_instructions(self.source_id, "Be concise and helpful.")
+context.add_instructions(self.source_id, ["Instruction 1", "Instruction 2"])
+
+# Adding tools (source attribution added to tool.metadata automatically)
+context.add_tools(self.source_id, [my_tool, another_tool])
+
+# Getting all messages in provider execution order
+all_messages = context.get_all_messages()
+
+# Filtering by source
+memory_messages = context.get_messages(sources=["memory"])
+non_rag_messages = context.get_messages(exclude_sources=["rag"])
+
+# Direct access to check specific sources
+if "memory" in context.context_messages:
+    history = context.context_messages["memory"]
+```
+
+---
+
+## User Experience Examples
+
+### Example 0: Zero-Config Default (Simplest Use Case)
+
+```python
+from agent_framework import ChatAgent
+
+# No providers configured - but conversation history still works!
+agent = ChatAgent(
+    chat_client=client,
+    name="assistant",
+    # No context_providers specified
+)
+
+# Create session - automatically gets InMemoryHistoryProvider on first run
+session = agent.create_session()
+response = await agent.run("Hello, my name is Alice!", session=session)
+
+# Conversation history is preserved automatically
+response = await agent.run("What's my name?", session=session)
+# Agent remembers: "Your name is Alice!"
+
+# With service-managed session - no default storage added (service handles it)
+service_session = agent.create_session(service_session_id="thread_abc123")
+
+# With store=True in options - user expects service storage, no default added
+response = await agent.run("Hello!", session=session, options={"store": True})
+```
+
+### Example 1: Explicit Memory Storage
+
+```python
+from agent_framework import ChatAgent
+from agent_framework.context import InMemoryHistoryProvider
+
+# Explicit provider configuration (same behavior as default, but explicit)
+agent = ChatAgent(
+    chat_client=client,
+    name="assistant",
+    context_providers=[
+        InMemoryHistoryProvider(source_id="memory")
+    ]
+)
+
+# Create session and chat
+session = agent.create_session()
+response = await agent.run("Hello!", session=session)
+
+# Messages are automatically stored and loaded on next invocation
+response = await agent.run("What did I say before?", session=session)
+```
+
+### Example 2: RAG + Memory + Audit (All HistoryProvider)
+
+```python
+from agent_framework import ChatAgent
+from agent_framework.azure import CosmosHistoryProvider, AzureAISearchContextProvider
+from agent_framework.redis import RedisHistoryProvider
+
+# RAG provider that injects relevant documents
+search_provider = AzureAISearchContextProvider(
+    source_id="rag",
+    endpoint="https://...",
+    index_name="documents",
+)
+
+# Primary memory storage (loads + stores)
+# load_messages=True (default) - loads and stores messages
+memory_provider = RedisHistoryProvider(
+    source_id="memory",
+    redis_url="redis://...",
+)
+
+# Audit storage - SAME CLASS, different configuration
+# load_messages=False = never loads, just stores for audit
+audit_provider = CosmosHistoryProvider(
+    source_id="audit",
+    connection_string="...",
+    load_messages=False,  # Don't load - just store for audit
+)
+
+agent = ChatAgent(
+    chat_client=client,
+    name="assistant",
+    context_providers=[
+        memory_provider,   # First: loads history
+        search_provider,   # Second: adds RAG context
+        audit_provider,    # Third: stores for audit (no load)
+    ]
+)
+```
+
+### Example 3: Custom Context Providers
+
+```python
+from agent_framework.context import ContextProvider, SessionContext
+
+class TimeContextProvider(ContextProvider):
+    """Adds current time to the context."""
+
+    async def before_run(self, agent, session, context, state) -> None:
+        from datetime import datetime
+        context.add_instructions(
+            self.source_id,
+            f"Current date and time: {datetime.now().isoformat()}"
+        )
+
+
+class UserPreferencesProvider(ContextProvider):
+    """Tracks and applies user preferences from conversation."""
+
+    async def before_run(self, agent, session, context, state) -> None:
+        prefs = state.get(self.source_id, {}).get("preferences", {})
+        if prefs:
+            context.add_instructions(
+                self.source_id,
+                f"User preferences: {json.dumps(prefs)}"
+            )
+
+    async def after_run(self, agent, session, context, state) -> None:
+        # Extract preferences from response and store in session state
+        for msg in context.response_messages or []:
+            if "preference:" in msg.text.lower():
+                my_state = state.setdefault(self.source_id, {})
+                my_state.setdefault("preferences", {})
+                # ... extract and store preference
+
+
+# Compose providers - each with mandatory source_id
+agent = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        InMemoryHistoryProvider(source_id="memory"),
+        TimeContextProvider(source_id="time"),
+        UserPreferencesProvider(source_id="prefs"),
+    ]
+)
+```
+
+### Example 4: Filtering by Source (Using Dict-Based Context)
+
+```python
+class SelectiveContextProvider(ContextProvider):
+    """Provider that only processes messages from specific sources."""
+
+    async def before_run(self, agent, session, context, state) -> None:
+        # Check what sources have added messages so far
+        print(f"Sources so far: {list(context.context_messages.keys())}")
+
+        # Get messages excluding RAG context
+        non_rag_messages = context.get_messages(exclude_sources=["rag"])
+
+        # Or get only memory messages
+        if "memory" in context.context_messages:
+            memory_only = context.context_messages["memory"]
+
+        # Do something with filtered messages...
+        # e.g., sentiment analysis, topic extraction
+
+
+class RAGContextProvider(ContextProvider):
+    """Provider that adds RAG context."""
+
+    async def before_run(self, agent, session, context, state) -> None:
+        # Search for relevant documents based on input
+        relevant_docs = await self._search(context.input_messages)
+
+        # Add RAG context using explicit method
+        rag_messages = [
+            ChatMessage(role="system", text=f"Relevant info: {doc}")
+            for doc in relevant_docs
+        ]
+        context.add_messages(self.source_id, rag_messages)
+```
+
+### Example 5: Explicit Storage Configuration for Service-Managed Sessions
+
+```python
+# HistoryProvider uses explicit configuration - no automatic detection.
+# load_messages=True (default): Load messages from storage
+# load_messages=False: Skip loading (useful for audit-only storage)
+
+agent = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        RedisHistoryProvider(
+            source_id="memory",
+            redis_url="redis://...",
+            # load_messages=True is the default
+        )
+    ]
+)
+
+session = agent.create_session()
+
+# Normal run - loads and stores messages
+response = await agent.run("Hello!", session=session)
+
+# For service-managed sessions, configure storage explicitly:
+# - Use load_messages=False when service handles history
+service_storage = RedisHistoryProvider(
+    source_id="audit",
+    redis_url="redis://...",
+    load_messages=False,  # Don't load - service manages history
+)
+
+agent_with_service = ChatAgent(
+    chat_client=client,
+    context_providers=[service_storage]
+)
+service_session = agent_with_service.create_session(service_session_id="thread_abc123")
+response = await agent_with_service.run("Hello!", session=service_session)
+# History provider stores for audit but doesn't load (service handles history)
+```
+
+### Example 6: Multiple Instances of Same Provider Type
+
+```python
+# You can have multiple instances of the same provider class
+# by using different source_ids
+
+agent = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        # Primary storage for conversation history
+        RedisHistoryProvider(
+            source_id="conversation_memory",
+            redis_url="redis://primary...",
+            load_messages=True,  # This one loads
+        ),
+        # Secondary storage for audit (different Redis instance)
+        RedisHistoryProvider(
+            source_id="audit_log",
+            redis_url="redis://audit...",
+            load_messages=False,  # This one just stores
+        ),
+    ]
+)
+# Warning will NOT be logged because only one has load_messages=True
+```
+
+### Example 7: Provider Ordering - RAG Before vs After Memory
+
+The order of providers determines what context each one can see. This is especially important for RAG, which may benefit from seeing conversation history.
+
+```python
+from agent_framework import ChatAgent
+from agent_framework.context import InMemoryHistoryProvider, ContextProvider, SessionContext
+
+class RAGContextProvider(ContextProvider):
+    """RAG provider that retrieves relevant documents based on available context."""
+
+    async def before_run(self, agent, session, context, state) -> None:
+        # Build query from what we can see
+        query_parts = []
+
+        # We can always see the current input
+        for msg in context.input_messages:
+            query_parts.append(msg.text)
+
+        # Can we see history? Depends on provider order!
+        history = context.get_all_messages()  # Gets context from providers that ran before us
+        if history:
+            # Include recent history for better RAG context
+            recent = history[-3:]  # Last 3 messages
+            for msg in recent:
+                query_parts.append(msg.text)
+
+        query = " ".join(query_parts)
+        documents = await self._retrieve_documents(query)
+
+        # Add retrieved documents as context
+        rag_messages = [ChatMessage.system(f"Relevant context:\n{doc}") for doc in documents]
+        context.add_messages(self.source_id, rag_messages)
+
+    async def _retrieve_documents(self, query: str) -> list[str]:
+        # ... vector search implementation
+        return ["doc1", "doc2"]
+
+
+# =============================================================================
+# SCENARIO A: RAG runs BEFORE Memory
+# =============================================================================
+# RAG only sees the current input message - no conversation history
+# Use when: RAG should be based purely on the current query
+
+agent_rag_first = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        RAGContextProvider("rag"),           # Runs first - only sees input_messages
+        InMemoryHistoryProvider("memory"),   # Runs second - loads/stores history
+    ]
+)
+
+# Flow:
+# 1. RAG.before_run():
+#    - context.input_messages = ["What's the weather?"]
+#    - context.get_all_messages() = []  (empty - memory hasn't run yet)
+#    - RAG query based on: "What's the weather?" only
+#    - Adds: context_messages["rag"] = [retrieved docs]
+#
+# 2. Memory.before_run():
+#    - Loads history: context_messages["memory"] = [previous conversation]
+#
+# 3. Agent invocation with: history + rag docs + input
+#
+# 4. Memory.after_run():
+#    - Stores: input + response (not RAG docs by default)
+#
+# 5. RAG.after_run():
+#    - (nothing to do)
+
+
+# =============================================================================
+# SCENARIO B: RAG runs AFTER Memory
+# =============================================================================
+# RAG sees conversation history - can use it for better retrieval
+# Use when: RAG should consider conversation context for better results
+
+agent_memory_first = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        InMemoryHistoryProvider("memory"),   # Runs first - loads history
+        RAGContextProvider("rag"),           # Runs second - sees history + input
+    ]
+)
+
+# Flow:
+# 1. Memory.before_run():
+#    - Loads history: context_messages["memory"] = [previous conversation]
+#
+# 2. RAG.before_run():
+#    - context.input_messages = ["What's the weather?"]
+#    - context.get_all_messages() = [previous conversation]  (sees history!)
+#    - RAG query based on: recent history + "What's the weather?"
+#    - Better retrieval because RAG understands conversation context
+#    - Adds: context_messages["rag"] = [more relevant docs]
+#
+# 3. Agent invocation with: history + rag docs + input
+#
+# 4. RAG.after_run():
+#    - (nothing to do)
+#
+# 5. Memory.after_run():
+#    - Stores: input + response
+
+
+# =============================================================================
+# SCENARIO C: RAG after Memory, with selective storage
+# =============================================================================
+# Memory first for better RAG, plus separate audit that stores RAG context
+
+agent_full_context = ChatAgent(
+    chat_client=client,
+    context_providers=[
+        InMemoryHistoryProvider("memory"),   # Primary history storage
+        RAGContextProvider("rag"),           # Gets history context for better retrieval
+        PersonaContextProvider("persona"),   # Adds persona instructions
+        # Audit storage - stores everything including RAG results
+        CosmosHistoryProvider(
+            "audit",
+            load_messages=False,               # Don't load (memory handles that)
+            store_context_messages=True,       # Store RAG + persona context too
+        ),
+    ]
+)
+```
+
+---
+
+### Workplan
+
+The implementation is split into 2 PRs to limit scope and simplify review.
+
+```
+PR1 (New Types) ──► PR2 (Agent Integration + Cleanup)
+```
+
+#### PR 1: New Types
+
+**Goal:** Create all new types. No changes to existing code yet.
+
+**Core Package - `packages/core/agent_framework/_sessions.py`:**
+- [ ] `SessionContext` class with explicit add/get methods
+- [ ] `ContextProvider` base class with `before_run()`/`after_run()`
+- [ ] `HistoryProvider` derived class with load_messages/store flags
+- [ ] Add `serialize()` and `restore()` methods to `ContextProvider` base class
+- [ ] `AgentSession` class with `state: dict[str, Any]`
+- [ ] `InMemoryHistoryProvider(HistoryProvider)`
+
+**External Packages:**
+- [ ] `packages/azure-ai-search/` - create `AzureAISearchContextProvider`
+- [ ] `packages/redis/` - create `RedisHistoryProvider`
+- [ ] `packages/mem0/` - create `Mem0ContextProvider`
+
+**Testing:**
+- [ ] Unit tests for `SessionContext` methods (add_messages, get_messages, add_instructions, add_tools)
+- [ ] Unit tests for `HistoryProvider` load/store flags
+- [ ] Unit tests for `InMemoryHistoryProvider` serialize/restore
+- [ ] Unit tests for source attribution (mandatory source_id)
+
+---
+
+#### PR 2: Agent Integration + Cleanup
+
+**Goal:** Wire up new types into `ChatAgent` and remove old types.
+
+**Changes to `ChatAgent`:**
+- [ ] Replace `thread` parameter with `session` in `agent.run()`
+- [ ] Add `context_providers` parameter to `ChatAgent.__init__()`
+- [ ] Add `create_session()` method
+- [ ] Add `serialize_session()` / `restore_session()` methods
+- [ ] Wire up provider iteration (before_run forward, after_run reverse)
+- [ ] Add validation warning if multiple/zero history providers have `load_messages=True`
+- [ ] Wire up default `InMemoryHistoryProvider` behavior (auto-add when no providers and no service_session_id)
+
+**Remove Legacy Types:**
+- [ ] `packages/core/agent_framework/_memory.py` - remove `ContextProvider` class
+- [ ] `packages/core/agent_framework/_threads.py` - remove `ChatMessageStore`, `ChatMessageStoreProtocol`, `AgentThread`
+- [ ] `packages/core/agent_framework/__init__.py` - remove old exports, add new exports from `_sessions.py`
+- [ ] Remove old provider classes from `azure-ai-search`, `redis`, `mem0`
+
+**Documentation & Samples:**
+- [ ] Update all samples in `samples/` to use new API
+- [ ] Write migration guide
+- [ ] Update API documentation
+
+**Testing:**
+- [ ] Unit tests for provider execution order (before_run forward, after_run reverse)
+- [ ] Unit tests for validation warnings (multiple/zero loaders)
+- [ ] Unit tests for session serialization/deserialization
+- [ ] Integration test: agent with `context_providers` + `session` works
+- [ ] Integration test: full conversation with memory persistence
+- [ ] Ensure all existing tests still pass (with updated API)
+- [ ] Verify no references to removed types remain
+
+---
+
+#### CHANGELOG (single entry for release)
+
+- **[BREAKING]** Replaced `ContextProvider` with new `ContextProvider` (hooks pattern with `before_run`/`after_run`)
+- **[BREAKING]** Replaced `ChatMessageStore` with `HistoryProvider`
+- **[BREAKING]** Replaced `AgentThread` with `AgentSession`
+- **[BREAKING]** Replaced `thread` parameter with `session` in `agent.run()`
+- Added `SessionContext` for invocation state with source attribution
+- Added `InMemoryHistoryProvider` for conversation history
+- Added session serialization (`serialize_session`, `restore_session`)
+
+---
+
+#### Estimated Sizes
+
+| PR | New Lines | Modified Lines | Risk |
+|----|-----------|----------------|------|
+| PR1 | ~500 | ~0 | Low |
+| PR2 | ~150 | ~400 | Medium |
+
+---
+
+#### Reference Implementation
+
+Full implementation code for the chosen design (hooks pattern, Decision B1).
+
+##### SessionContext
 
 ```python
 # Copyright (c) Microsoft. All rights reserved.
@@ -1254,25 +1970,24 @@ from ._tools import ToolProtocol
 
 
 class SessionContext:
-    """State passed through the ContextMiddleware pipeline for a single invocation.
+    """Per-invocation state passed through the context provider pipeline.
 
-    This object is created fresh for each agent invocation and flows through the
-    middleware pipeline. Middleware can read from and write to the mutable fields
-    to add context before invocation and process responses after.
+    Created fresh for each agent.run() call. Providers read from and write to
+    the mutable fields to add context before invocation and process responses after.
 
     Attributes:
         session_id: The ID of the current session
         service_session_id: Service-managed session ID (if present, service handles storage)
         input_messages: The new messages being sent to the agent (read-only, set by caller)
-        context_messages: Dict mapping source_id -> messages added by that middleware.
-            Maintains insertion order (middleware execution order). Use add_context_messages()
+        context_messages: Dict mapping source_id -> messages added by that provider.
+            Maintains insertion order (provider execution order). Use add_messages()
             to add messages with proper source attribution.
-        instructions: Additional instructions - middleware can append here
-        tools: Additional tools - middleware can append here
+        instructions: Additional instructions - providers can append here
+        tools: Additional tools - providers can append here
         response_messages: After invocation, contains the agent's response (set by agent).
             READ-ONLY - modifications are ignored. Use AgentMiddleware to modify responses.
         options: Options passed to agent.run() - READ-ONLY, for reflection only
-        metadata: Shared metadata dictionary for cross-middleware communication
+        metadata: Shared metadata dictionary for cross-provider communication
 
     Note:
         - `options` is read-only; changes will NOT be merged back into the agent run
@@ -1304,16 +2019,14 @@ class SessionContext:
         self.options = options or {}  # READ-ONLY - for reflection only
         self.metadata = metadata or {}
 
-    # --- Methods for adding context ---
-
     def add_messages(self, source_id: str, messages: Sequence[ChatMessage]) -> None:
         """Add context messages from a specific source.
 
         Messages are stored keyed by source_id, maintaining insertion order
-        based on middleware execution order.
+        based on provider execution order.
 
         Args:
-            source_id: The middleware source_id adding these messages
+            source_id: The provider source_id adding these messages
             messages: The messages to add
         """
         if source_id not in self.context_messages:
@@ -1327,7 +2040,7 @@ class SessionContext:
         in metadata for debugging but instructions are not keyed by source.
 
         Args:
-            source_id: The middleware source_id adding these instructions
+            source_id: The provider source_id adding these instructions
             instructions: A single instruction string or sequence of strings
         """
         if isinstance(instructions, str):
@@ -1340,16 +2053,13 @@ class SessionContext:
         Tools are added with source attribution in their metadata.
 
         Args:
-            source_id: The middleware source_id adding these tools
+            source_id: The provider source_id adding these tools
             tools: The tools to add
         """
         for tool in tools:
-            # Add source attribution to tool metadata
             if hasattr(tool, 'metadata') and isinstance(tool.metadata, dict):
                 tool.metadata["context_source"] = source_id
         self.tools.extend(tools)
-
-    # --- Methods for reading context ---
 
     def get_messages(
         self,
@@ -1358,14 +2068,14 @@ class SessionContext:
     ) -> list[ChatMessage]:
         """Get context messages, optionally filtered by source.
 
-        Returns messages in middleware execution order (dict insertion order).
+        Returns messages in provider execution order (dict insertion order).
 
         Args:
             sources: If provided, only include messages from these sources
             exclude_sources: If provided, exclude messages from these sources
 
         Returns:
-            Flattened list of messages in middleware execution order
+            Flattened list of messages in provider execution order
         """
         result: list[ChatMessage] = []
         for source_id, messages in self.context_messages.items():
@@ -1385,7 +2095,7 @@ class SessionContext:
         """Get all messages, optionally including input and response.
 
         Returns messages in the order they would appear in a full conversation:
-        1. Context messages (from middleware, in execution order)
+        1. Context messages (from providers, in execution order)
         2. Input messages (if include_input=True)
         3. Response messages (if include_response=True)
 
@@ -1397,139 +2107,92 @@ class SessionContext:
             Flattened list of messages in conversation order
         """
         result: list[ChatMessage] = []
-
-        # Context messages in middleware execution order
         for messages in self.context_messages.values():
             result.extend(messages)
-
-        # Input messages (user's new messages for this invocation)
         if include_input and self.input_messages:
             result.extend(self.input_messages)
-
-        # Response messages (agent's response)
         if include_response and self.response_messages:
             result.extend(self.response_messages)
-
         return result
+```
 
+##### ContextProvider
 
-# Type alias for the next middleware callable
-ContextMiddlewareNext = Callable[[SessionContext], Awaitable[None]]
+```python
+class ContextProvider(ABC):
+    """Base class for context providers (hooks pattern).
 
-# Type alias for middleware factory - takes session_id, returns middleware
-ContextMiddlewareFactory = Callable[[str | None], ContextMiddleware]
-
-# Union type for middleware configuration - either instance or factory
-ContextMiddlewareConfig = ContextMiddleware | ContextMiddlewareFactory
-
-
-class ContextMiddleware(ABC):
-    """Base class for context middleware (onion/wrapper pattern).
-
-    Context middleware wraps the context preparation and storage flow,
-    allowing modification of messages, tools, and instructions before
-    invocation and processing of responses after invocation.
-
-    The process() method receives a context and a next() callable.
-    Before calling next(), you can modify the context (add messages, tools, etc.).
-    After calling next(), the response_messages will be populated and you can
-    process them (store, extract info, etc.).
-
-    Lifecycle:
-    - session_created(): Called once when a new session is created
-    - process(): Called for each invocation, wraps the context flow
+    Context providers participate in the context engineering pipeline,
+    adding context before model invocation and processing responses after.
 
     Attributes:
-        source_id: Unique identifier for this middleware instance (required).
-            Used for message/tool attribution so other middleware can filter.
-        session_id: The session ID, automatically set when created via factory.
-            None if middleware is shared across sessions (instance mode).
-
-    Note:
-        Middleware can be provided to agents as either:
-        - An instantiated middleware object (shared across all sessions)
-        - A factory function `(session_id: str | None) -> ContextMiddleware`
-          that creates a new instance per session
-
-    Examples:
-        # As instance (shared across sessions)
-        class MyContextMiddleware(ContextMiddleware):
-            def __init__(self, source_id: str):
-                super().__init__(source_id=source_id)
-
-            async def process(self, context, next):
-                context.add_instructions(self.source_id, "Be helpful!")
-                await next(context)
-
-        # As factory (new instance per session)
-        def create_session_middleware(session_id: str | None) -> ContextMiddleware:
-            return MySessionMiddleware(
-                source_id="session_specific",
-                session_id=session_id,
-            )
-
-                # POST-PROCESSING: Handle response after invocation
-                for msg in context.response_messages or []:
-                    print(f"Response: {msg.text}")
+        source_id: Unique identifier for this provider instance (required).
+            Used for message/tool attribution so other providers can filter.
     """
 
-    def __init__(self, source_id: str, *, session_id: str | None = None):
-        """Initialize the middleware.
+    def __init__(self, source_id: str):
+        """Initialize the provider.
 
         Args:
-            source_id: Unique identifier for this middleware instance.
+            source_id: Unique identifier for this provider instance.
                 Used for message/tool attribution.
-            session_id: Optional session ID. Automatically set when middleware
-                is created via a factory function.
         """
         self.source_id = source_id
-        self.session_id = session_id
 
-    async def session_created(self, session_id: str | None) -> None:
-        """Called when a new session is created.
+    async def before_run(
+        self,
+        agent: "ChatAgent",
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Called before model invocation.
 
-        Override this to load any initial data from persistent storage
-        or perform session-level initialization.
-
-        Note: If you need the session_id, prefer using `self.session_id`
-        which is set automatically when using a factory.
+        Override to add context (messages, instructions, tools) to the
+        SessionContext before the model is invoked.
 
         Args:
-            session_id: The ID of the newly created session
+            agent: The agent running this invocation
+            session: The current session
+            context: The invocation context - add messages/instructions/tools here
+            state: The session's mutable state dict
         """
         pass
 
-    @abstractmethod
-    async def process(
+    async def after_run(
         self,
+        agent: "ChatAgent",
+        session: AgentSession,
         context: SessionContext,
-        next: ContextMiddlewareNext
+        state: dict[str, Any],
     ) -> None:
-        """Process the context, wrapping the call to next middleware.
+        """Called after model invocation.
 
-        Before calling next():
-        - Modify context.context_messages to add messages (RAG, memory, etc.)
-        - Modify context.instructions to add system instructions
-        - Modify context.tools to add tools for this invocation
-        - Access context.history_messages to see loaded history
-        - Access context.input_messages to see new user messages
-
-        After calling next():
-        - context.response_messages contains the agent's response
-        - Store messages, extract information, perform cleanup
+        Override to process the response (store messages, extract info, etc.).
+        The context.response_messages will be populated at this point.
 
         Args:
-            context: The invocation context being processed
-            next: Callable to invoke the next middleware in the chain
+            agent: The agent that ran this invocation
+            session: The current session
+            context: The invocation context with response_messages populated
+            state: The session's mutable state dict
         """
+        pass
+
+    async def serialize(self) -> Any:
+        """Serialize provider state. Default returns None (no state)."""
+        return None
+
+    async def restore(self, state: Any) -> None:
+        """Restore provider state from serialized object."""
         pass
 ```
 
-### Storage Middleware Base
+##### HistoryProvider
 
 ```python
-class StorageContextMiddleware(ContextMiddleware):
-    """Base class for storage-focused context middleware.
+class HistoryProvider(ContextProvider):
+    """Base class for conversation history storage providers.
 
     A single class that can be configured for different use cases:
     - Primary memory storage (loads + stores messages)
@@ -1538,7 +2201,7 @@ class StorageContextMiddleware(ContextMiddleware):
 
     Loading behavior (when to add messages to context_messages[source_id]):
     - `load_messages=True` (default): Load messages from storage
-    - `load_messages=False`: Never load (audit/logging mode)
+    - `load_messages=False`: Skip loading (before_run is a no-op)
 
     Storage behavior:
     - `store_inputs`: Store input messages (default True)
@@ -1546,36 +2209,25 @@ class StorageContextMiddleware(ContextMiddleware):
     - Storage always happens unless explicitly disabled, regardless of load_messages
 
     Warning: At session creation time, a warning is logged if:
-    - Multiple storage middleware have `load_messages=True` (likely duplicate loading)
-    - Zero storage middleware have `load_messages=True` (likely missing primary storage)
-
-    These are warnings only (not errors) because valid use cases exist for both scenarios,
-    such as intentional multi-source loading or audit-only storage configurations.
+    - Multiple history providers have `load_messages=True` (likely duplicate loading)
+    - Zero history providers have `load_messages=True` (likely missing primary storage)
 
     Examples:
         # Primary memory - loads and stores
-        memory = InMemoryStorageMiddleware(source_id="memory")
+        memory = InMemoryHistoryProvider(source_id="memory")
 
         # Audit storage - stores only, doesn't add to context
-        audit = RedisStorageMiddleware(
+        audit = RedisHistoryProvider(
             source_id="audit",
             load_messages=False,
             redis_url="redis://...",
         )
 
-        # Evaluation storage - stores responses only
-        eval_storage = CosmosStorageMiddleware(
-            source_id="evaluation",
-            load_messages=False,
-            store_inputs=False,
-            store_responses=True,
-        )
-
         # Full audit - stores everything including RAG context
-        full_audit = CosmosStorageMiddleware(
+        full_audit = CosmosHistoryProvider(
             source_id="full_audit",
             load_messages=False,
-            store_context_messages=True,  # Also store context from other middleware
+            store_context_messages=True,
         )
     """
 
@@ -1583,14 +2235,13 @@ class StorageContextMiddleware(ContextMiddleware):
         self,
         source_id: str,
         *,
-        session_id: str | None = None,
         load_messages: bool = True,
         store_responses: bool = True,
         store_inputs: bool = True,
-        store_context_messages: bool = False,  # Store context added by other middleware
-        store_context_from: Sequence[str] | None = None,  # Only store from these sources
+        store_context_messages: bool = False,
+        store_context_from: Sequence[str] | None = None,
     ):
-        super().__init__(source_id, session_id=session_id)
+        super().__init__(source_id)
         self.load_messages = load_messages
         self.store_responses = store_responses
         self.store_inputs = store_inputs
@@ -1615,33 +2266,21 @@ class StorageContextMiddleware(ContextMiddleware):
         """Get context messages that should be stored based on configuration."""
         if not self.store_context_messages:
             return []
-
         if self.store_context_from is not None:
-            # Only store from specific sources
             return context.get_messages(sources=self.store_context_from)
         else:
-            # Store all context messages (excluding our own to avoid duplication)
             return context.get_messages(exclude_sources=[self.source_id])
 
-    async def process(
-        self,
-        context: SessionContext,
-        next: ContextMiddlewareNext
-    ) -> None:
-        # PRE: Load history if configured, keyed by our source_id
+    async def before_run(self, agent, session, context, state) -> None:
+        """Load history into context if configured."""
         if self.load_messages:
             history = await self.get_messages(context.session_id)
             context.add_messages(self.source_id, history)
 
-        # Continue to next middleware
-        await next(context)
-
-        # POST: Store messages
+    async def after_run(self, agent, session, context, state) -> None:
+        """Store messages based on configuration."""
         messages_to_store: list[ChatMessage] = []
-
-        # Optionally store context messages from other middleware
         messages_to_store.extend(self._get_context_messages_to_store(context))
-
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_responses and context.response_messages:
@@ -1650,34 +2289,7 @@ class StorageContextMiddleware(ContextMiddleware):
             await self.save_messages(context.session_id, messages_to_store)
 ```
 
-### Message/Tool Attribution
-
-The `SessionContext` provides explicit methods for adding context:
-
-```python
-# Adding messages (keyed by source_id in context_messages dict)
-context.add_messages(self.source_id, messages)
-
-# Adding instructions (flat list, source_id for debugging)
-context.add_instructions(self.source_id, "Be concise and helpful.")
-context.add_instructions(self.source_id, ["Instruction 1", "Instruction 2"])
-
-# Adding tools (source attribution added to tool.metadata automatically)
-context.add_tools(self.source_id, [my_tool, another_tool])
-
-# Getting all messages in middleware execution order
-all_messages = context.get_all_messages()
-
-# Filtering by source
-memory_messages = context.get_messages(sources=["memory"])
-non_rag_messages = context.get_messages(exclude_sources=["rag"])
-
-# Direct access to check specific sources
-if "memory" in context.context_messages:
-    history = context.context_messages["memory"]
-```
-
-### AgentSession Class (replaces AgentThread)
+##### AgentSession
 
 ```python
 import uuid
@@ -1685,121 +2297,16 @@ import warnings
 from collections.abc import Sequence
 
 
-def _resolve_middleware(
-    config: ContextMiddlewareConfig,
-    session_id: str | None,
-) -> ContextMiddleware:
-    """Resolve a middleware config to an instance.
-
-    If config is already a ContextMiddleware instance, return it.
-    If config is a factory callable, call it with session_id to create an instance.
-    """
-    if isinstance(config, ContextMiddleware):
-        return config
-    # It's a factory - call it with session_id
-    return config(session_id)
-
-
-class ContextMiddlewarePipeline:
-    """Executes a chain of context middleware in onion/wrapper style."""
-
-    def __init__(self, middleware: Sequence[ContextMiddleware]):
-        self._middleware = list(middleware)
-        self._validate_middleware()
-
-    @classmethod
-    def from_config(
-        cls,
-        configs: Sequence[ContextMiddlewareConfig],
-        session_id: str | None,
-    ) -> "ContextMiddlewarePipeline":
-        """Create a pipeline from middleware configs, resolving factories.
-
-        Args:
-            configs: Sequence of middleware instances or factories
-            session_id: Session ID to pass to factories
-
-        Returns:
-            A new pipeline with resolved middleware instances
-        """
-        middleware = [_resolve_middleware(config, session_id) for config in configs]
-        return cls(middleware)
-
-    def _validate_middleware(self) -> None:
-        """Warn if storage middleware configuration looks like a mistake.
-
-        These are warnings only (not errors) because valid use cases exist
-        for both multiple loaders and zero loaders.
-        """
-        storage_middleware = [
-            m for m in self._middleware
-            if isinstance(m, StorageContextMiddleware)
-        ]
-
-        if not storage_middleware:
-            # No storage middleware at all - that's fine, user may not need it
-            return
-
-        loaders = [m for m in storage_middleware if m.load_messages is True]
-
-        if len(loaders) > 1:
-            warnings.warn(
-                f"Multiple storage middleware configured to load messages: "
-                f"{[m.source_id for m in loaders]}. "
-                f"This may cause duplicate messages in context. "
-                f"If this is intentional, you can ignore this warning.",
-                UserWarning
-            )
-        elif len(loaders) == 0:
-            warnings.warn(
-                f"Storage middleware configured but none have load_messages=True: "
-                f"{[m.source_id for m in storage_middleware]}. "
-                f"No conversation history will be loaded. "
-                f"If this is intentional (e.g., audit-only), you can ignore this warning.",
-                UserWarning
-            )
-
-    async def session_created(self, session_id: str | None) -> None:
-        """Notify all middleware that a session was created."""
-        for middleware in self._middleware:
-            await middleware.session_created(session_id)
-
-    async def execute(self, context: SessionContext) -> None:
-        """Execute the middleware pipeline."""
-
-        async def terminal(s: SessionContext) -> None:
-            # Terminal handler - nothing more to do
-            pass
-
-        # Build the chain from last to first
-        next_handler = terminal
-        for middleware in reversed(self._middleware):
-            # Capture middleware in closure
-            current_middleware = middleware
-            current_next = next_handler
-
-            async def handler(s: SessionContext, mw=current_middleware, nxt=current_next) -> None:
-                await mw.process(s, nxt)
-
-            next_handler = handler
-
-        # Execute the chain
-        await next_handler(context)
-
-
 class AgentSession:
     """A conversation session with an agent.
 
-    AgentSession manages the conversation state and owns a ContextMiddlewarePipeline
-    that processes context before each invocation and handles responses after.
-
-    Note: The session is created by calling agent.create_session(), which constructs
-    the pipeline from the agent's context_middleware sequence, resolving any factories.
+    Lightweight state container. Provider instances are owned by the agent,
+    not the session. The session only holds session IDs and a mutable state dict.
 
     Attributes:
         session_id: Unique identifier for this session
         service_session_id: Service-managed session ID (if using service-side storage)
-        context_pipeline: The middleware pipeline for this session
+        state: Mutable state dict shared with all providers
     """
 
     def __init__(
@@ -1807,142 +2314,34 @@ class AgentSession:
         *,
         session_id: str | None = None,
         service_session_id: str | None = None,
-        context_pipeline: ContextMiddlewarePipeline | None = None,
     ):
         """Initialize the session.
 
         Note: Prefer using agent.create_session() instead of direct construction.
 
-        Default storage behavior (applied at runtime, not init):
-        - If service_session_id is set: service handles storage, no default added
-        - If options.store=True: user expects service storage, no default added
-        - If no service_session_id AND store is not True AND no pipeline:
-          InMemoryStorageMiddleware is automatically added
-
         Args:
             session_id: Optional session ID (generated if not provided)
             service_session_id: Optional service-managed session ID
-            context_pipeline: The middleware pipeline (created by agent)
         """
         self._session_id = session_id or str(uuid.uuid4())
-        self._service_session_id = service_session_id
-        self._context_pipeline = context_pipeline
-        self._initialized = False
-        self._default_storage_checked = False
+        self.service_session_id = service_session_id
+        self.state: dict[str, Any] = {}
 
     @property
     def session_id(self) -> str:
         """The unique identifier for this session."""
         return self._session_id
 
-    @property
-    def service_session_id(self) -> str | None:
-        """The service-managed session ID (if using service-side storage)."""
-        return self._service_session_id
 
-    @service_session_id.setter
-    def service_session_id(self, value: str | None) -> None:
-        self._service_session_id = value
-
-    @property
-    def context_pipeline(self) -> ContextMiddlewarePipeline | None:
-        """The middleware pipeline for this session."""
-        return self._context_pipeline
-
-    @context_pipeline.setter
-    def context_pipeline(self, value: ContextMiddlewarePipeline | None) -> None:
-        """Set the middleware pipeline for this session."""
-        self._context_pipeline = value
-
-    def _ensure_default_storage(self, options: dict[str, Any]) -> None:
-        """Add default InMemoryStorageMiddleware if needed.
-
-        Called at runtime (first run) so users can modify the pipeline
-        after session creation but before first invocation.
-
-        Default storage is added when ALL of these are true:
-        - No service_session_id (service not managing storage)
-        - options.store is not True (user not expecting service storage)
-        - Pipeline is empty or None (user hasn't configured middleware)
-        """
-        if self._default_storage_checked:
-            return
-        self._default_storage_checked = True
-
-        # User expects service-side storage
-        if options.get("store") is True:
-            return
-
-        # Service is managing storage
-        if self._service_session_id is not None:
-            return
-
-        # User has configured middleware
-        if self._context_pipeline is not None and len(self._context_pipeline) > 0:
-            return
-
-        # Add default in-memory storage
-        default_middleware = InMemoryStorageMiddleware("memory")
-        if self._context_pipeline is None:
-            self._context_pipeline = ContextMiddlewarePipeline([default_middleware])
-        else:
-            self._context_pipeline.prepend(default_middleware)
-
-    async def initialize(self) -> None:
-        """Initialize the session and notify middleware."""
-        if not self._initialized and self._context_pipeline is not None:
-            await self._context_pipeline.session_created(self._session_id)
-            self._initialized = True
-
-    async def run_context_pipeline(
-        self,
-        input_messages: list[ChatMessage],
-        *,
-        tools: list[ToolProtocol] | None = None,
-        options: dict[str, Any] | None = None,
-    ) -> SessionContext:
-        """Prepare context by running the middleware pipeline.
-
-        This runs the full middleware pipeline (pre-processing, then post-processing
-        after response_messages is set).
-
-        Args:
-            input_messages: New messages to send to the agent
-            tools: Additional tools available for this invocation
-            options: Options including 'store' flag (READ-ONLY, for reflection)
-
-        Returns:
-            The invocation context with history, context, instructions, and tools populated
-        """
-        options = options or {}
-
-        # Check for default storage on first run (deferred from init)
-        self._ensure_default_storage(options)
-
-        await self.initialize()
-        context = SessionContext(
-            session_id=self._session_id,
-            service_session_id=self._service_session_id,
-            input_messages=input_messages,
-            tools=tools or [],
-            options=options,
-        )
-        if self._context_pipeline is not None:
-            await self._context_pipeline.execute(context)
-        return context
-
-
-# Example of how agent creates sessions:
+# Example of how agent creates sessions and runs providers:
 class ChatAgent:
     def __init__(
         self,
         chat_client: ...,
         *,
-        context_middleware: Sequence[ContextMiddleware] | None = None,
-        # ... other params
+        context_providers: Sequence[ContextProvider] | None = None,
     ):
-        self._context_middleware = list(context_middleware or [])
-        # ... other init
+        self._context_providers = list(context_providers or [])
 
     def create_session(
         self,
@@ -1950,659 +2349,107 @@ class ChatAgent:
         session_id: str | None = None,
         service_session_id: str | None = None,
     ) -> AgentSession:
-        """Create a new session with a fresh middleware pipeline.
-
-        Middleware factories are called with the session_id to create
-        session-specific instances.
+        """Create a new lightweight session.
 
         Args:
             session_id: Optional session ID (generated if not provided)
             service_session_id: Optional service-managed session ID
         """
-        resolved_session_id = session_id or str(uuid.uuid4())
-
-        # Only create pipeline if we have middleware configured
-        pipeline = None
-        if self._context_middleware:
-            pipeline = ContextMiddlewarePipeline.from_config(
-                self._context_middleware,
-                session_id=resolved_session_id,
-            )
-
         return AgentSession(
-            session_id=resolved_session_id,
+            session_id=session_id,
             service_session_id=service_session_id,
-            context_pipeline=pipeline,
         )
+
+    def _ensure_default_storage(self, session: AgentSession, options: dict[str, Any]) -> None:
+        """Add default InMemoryHistoryProvider if needed.
+
+        Default storage is added when ALL of these are true:
+        - No service_session_id (service not managing storage)
+        - options.store is not True (user not expecting service storage)
+        - No context_providers configured at all
+        """
+        if options.get("store") is True:
+            return
+        if session.service_session_id is not None:
+            return
+        if self._context_providers:
+            return
+        # Add default in-memory storage
+        self._context_providers.append(InMemoryHistoryProvider("memory"))
+
+    def _validate_providers(self) -> None:
+        """Warn if history provider configuration looks like a mistake."""
+        storage_providers = [
+            p for p in self._context_providers
+            if isinstance(p, HistoryProvider)
+        ]
+        if not storage_providers:
+            return
+        loaders = [p for p in storage_providers if p.load_messages is True]
+        if len(loaders) > 1:
+            warnings.warn(
+                f"Multiple history providers configured to load messages: "
+                f"{[p.source_id for p in loaders]}. "
+                f"This may cause duplicate messages in context.",
+                UserWarning
+            )
+        elif len(loaders) == 0:
+            warnings.warn(
+                f"History providers configured but none have load_messages=True: "
+                f"{[p.source_id for p in storage_providers]}. "
+                f"No conversation history will be loaded.",
+                UserWarning
+            )
 
     async def run(self, input: str, *, session: AgentSession, options: dict[str, Any] | None = None) -> ...:
         """Run the agent with the given input."""
-        # Default storage check happens inside session.run_context_pipeline()
-        # ... rest of run logic
-```
+        options = options or {}
 
----
+        # Ensure default storage on first run
+        self._ensure_default_storage(session, options)
+        self._validate_providers()
 
-## User Experience Examples
-
-### Example 0: Zero-Config Default (Simplest Use Case)
-
-```python
-from agent_framework import ChatAgent
-
-# No middleware configured - but conversation history still works!
-agent = ChatAgent(
-    chat_client=client,
-    name="assistant",
-    # No context_middleware specified
-)
-
-# Create session - automatically gets InMemoryStorageMiddleware on first run
-session = agent.create_session()
-response = await agent.run("Hello, my name is Alice!", session=session)
-
-# Conversation history is preserved automatically
-response = await agent.run("What's my name?", session=session)
-# Agent remembers: "Your name is Alice!"
-
-# With service-managed session - no default storage added (service handles it)
-service_session = agent.create_session()
-
-# With store=True in options - user expects service storage, no default added
-response = await agent.run("Hello!", session=session, options={"store": True})
-
-# User can manually add middleware to session before first run
-session = agent.create_session()
-session.context_pipeline = ContextMiddlewarePipeline([
-    MyCustomMiddleware(source_id="custom")
-])
-response = await agent.run("Hello!", session=session)  # No default added since pipeline exists
-```
-
-### Example 1: Explicit Memory Storage
-
-```python
-from agent_framework import ChatAgent
-from agent_framework.context import InMemoryStorageMiddleware
-
-# Explicit middleware configuration (same behavior as default, but explicit)
-agent = ChatAgent(
-    chat_client=client,
-    name="assistant",
-    context_middleware=[
-        InMemoryStorageMiddleware(source_id="memory")
-    ]
-)
-
-# Create session and chat
-session = agent.create_session()
-response = await agent.run("Hello!", session=session)
-
-# Messages are automatically stored and loaded on next invocation
-response = await agent.run("What did I say before?", session=session)
-```
-
-### Example 1b: Using Middleware Factory for Per-Session State
-
-```python
-from agent_framework import ChatAgent
-from agent_framework.context import ContextMiddleware, SessionContext
-
-class SessionSpecificMiddleware(ContextMiddleware):
-    """Middleware that stores state per session."""
-
-    def __init__(self, source_id: str, session_id: str | None):
-        super().__init__(source_id=source_id)
-        self.session_id = session_id
-        self.invocation_count = 0  # Per-session counter
-
-    async def process(self, context: SessionContext, next) -> None:
-        self.invocation_count += 1
-        context.add_instructions(
-            self.source_id,
-            f"This is invocation #{self.invocation_count} in session {self.session_id}"
-        )
-        await next(context)
-
-
-# Factory function - receives session_id when session is created
-def create_session_middleware(session_id: str | None) -> ContextMiddleware:
-    return SessionSpecificMiddleware(
-        source_id="session_tracker",
-        session_id=session_id,
-    )
-
-
-# Agent with factory - each session gets its own middleware instance
-agent = ChatAgent(
-    chat_client=client,
-    name="assistant",
-    context_middleware=[
-        InMemoryStorageMiddleware(source_id="memory"),  # Instance (shared)
-        create_session_middleware,  # Factory (per-session)
-    ]
-)
-
-# Each session gets a fresh SessionSpecificMiddleware instance
-session1 = agent.create_session()
-session2 = agent.create_session()
-# session1 and session2 have independent invocation_count
-```
-
-### Example 2: RAG + Memory + Audit (All StorageContextMiddleware)
-
-```python
-from agent_framework import ChatAgent
-from agent_framework.azure import CosmosStorageMiddleware, AzureAISearchContextMiddleware
-from agent_framework.redis import RedisStorageMiddleware
-
-# RAG middleware that injects relevant documents
-search_middleware = AzureAISearchContextMiddleware(
-    source_id="rag",
-    endpoint="https://...",
-    index_name="documents",
-)
-
-# Primary memory storage (loads + stores)
-# load_messages=True (default) - loads and stores messages
-memory_middleware = RedisStorageMiddleware(
-    source_id="memory",
-    redis_url="redis://...",
-)
-
-# Audit storage - SAME CLASS, different configuration
-# load_messages=False = never loads, just stores for audit
-audit_middleware = CosmosStorageMiddleware(
-    source_id="audit",
-    connection_string="...",
-    load_messages=False,  # Don't load - just store for audit
-)
-
-agent = ChatAgent(
-    chat_client=client,
-    name="assistant",
-    context_middleware=[
-        memory_middleware,   # First: loads history
-        search_middleware,   # Second: adds RAG context
-        audit_middleware,    # Third: stores for audit (no load)
-    ]
-)
-```
-
-### Example 3: Custom Context Middleware (Onion Pattern)
-
-```python
-from agent_framework.context import ContextMiddleware, SessionContext
-
-class TimeContextMiddleware(ContextMiddleware):
-    """Adds current time to the context."""
-
-    def __init__(self, source_id: str):
-        super().__init__(source_id=source_id)
-
-    async def process(
-        self,
-        context: SessionContext,
-        next
-    ) -> None:
-        from datetime import datetime
-
-        # PRE: Add time instruction using explicit method
-        context.add_instructions(
-            self.source_id,
-            f"Current date and time: {datetime.now().isoformat()}"
+        context = SessionContext(
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
+            input_messages=[...],
+            options=options,
         )
 
-        # Continue to next middleware
-        await next(context)
+        # Before-run providers (forward order)
+        for provider in self._context_providers:
+            await provider.before_run(self, session, context, session.state)
 
-        # POST: Nothing to do after invocation for this middleware
+        # ... assemble final messages from context, invoke model ...
 
+        # After-run providers (reverse order)
+        for provider in reversed(self._context_providers):
+            await provider.after_run(self, session, context, session.state)
 
-class UserPreferencesMiddleware(ContextMiddleware):
-    """Tracks and applies user preferences from conversation."""
+    async def serialize_session(self, session: AgentSession) -> dict[str, Any]:
+        """Serialize a session's state for persistence."""
+        provider_states: dict[str, Any] = {}
+        for provider in self._context_providers:
+            state = await provider.serialize()
+            if state is not None:
+                provider_states[provider.source_id] = state
+        return {
+            "session_id": session.session_id,
+            "service_session_id": session.service_session_id,
+            "state": session.state,
+            "provider_states": provider_states,
+        }
 
-    def __init__(self, source_id: str):
-        super().__init__(source_id=source_id)
-        self._preferences: dict[str, dict[str, Any]] = {}
-
-    async def process(
-        self,
-        context: SessionContext,
-        next
-    ) -> None:
-        # PRE: Add known preferences as instructions
-        prefs = self._preferences.get(context.session_id or "", {})
-        if prefs:
-            context.add_instructions(
-                self.source_id,
-                f"User preferences: {json.dumps(prefs)}"
-            )
-
-        # Continue to next middleware and model invocation
-        await next(context)
-
-        # POST: Extract preferences from response
-        for msg in context.response_messages or []:
-            if "preference:" in msg.text.lower():
-                # Store extracted preference for future sessions
-                pass
-
-
-# Compose middleware - each with mandatory source_id
-agent = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        InMemoryStorageMiddleware(source_id="memory"),
-        TimeContextMiddleware(source_id="time"),
-        UserPreferencesMiddleware(source_id="prefs"),
-    ]
-)
-```
-
-### Example 4: Filtering by Source (Using Dict-Based Context)
-
-```python
-class SelectiveContextMiddleware(ContextMiddleware):
-    """Middleware that only processes messages from specific sources."""
-
-    def __init__(self, source_id: str):
-        super().__init__(source_id=source_id)
-
-    async def process(
-        self,
-        context: SessionContext,
-        next
-    ) -> None:
-        # Check what sources have added messages so far
-        print(f"Sources so far: {list(context.context_messages.keys())}")
-
-        # Get messages excluding RAG context
-        non_rag_messages = context.get_messages(exclude_sources=["rag"])
-
-        # Or get only memory messages
-        if "memory" in context.context_messages:
-            memory_only = context.context_messages["memory"]
-
-        # Do something with filtered messages...
-        # e.g., sentiment analysis, topic extraction
-
-        # Continue to next middleware
-        await next(context)
-
-
-class RAGContextMiddleware(ContextMiddleware):
-    """Middleware that adds RAG context."""
-
-    def __init__(self, source_id: str):
-        super().__init__(source_id=source_id)
-
-    async def process(
-        self,
-        context: SessionContext,
-        next
-    ) -> None:
-        # Search for relevant documents based on input
-        relevant_docs = await self._search(context.input_messages)
-
-        # Add RAG context using explicit method
-        rag_messages = [
-            ChatMessage(role="system", text=f"Relevant info: {doc}")
-            for doc in relevant_docs
-        ]
-        context.add_messages(self.source_id, rag_messages)
-
-        await next(context)
-```
-
-### Example 5: Explicit Storage Configuration for Service-Managed Sessions
-
-```python
-# StorageContextMiddleware uses explicit configuration - no automatic detection.
-# load_messages=True (default): Load messages from storage
-# load_messages=False: Skip loading (useful for audit-only storage)
-
-agent = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        RedisStorageMiddleware(
-            source_id="memory",
-            redis_url="redis://...",
-            # load_messages=True is the default
+    async def restore_session(self, serialized: dict[str, Any]) -> AgentSession:
+        """Restore a session from serialized state."""
+        session = AgentSession(
+            session_id=serialized["session_id"],
+            service_session_id=serialized.get("service_session_id"),
         )
-    ]
-)
-
-session = agent.create_session()
-
-# Normal run - loads and stores messages
-response = await agent.run("Hello!", session=session)
-
-# For service-managed sessions, configure storage explicitly:
-# - Use load_messages=False when service handles history
-service_storage = RedisStorageMiddleware(
-    source_id="audit",
-    redis_url="redis://...",
-    load_messages=False,  # Don't load - service manages history
-)
-
-agent_with_service = ChatAgent(
-    chat_client=client,
-    context_middleware=[service_storage]
-)
-service_session = agent_with_service.create_session(service_session_id="thread_abc123")
-response = await agent_with_service.run("Hello!", session=service_session)
-# Storage middleware stores for audit but doesn't load (service handles history)
+        session.state = serialized.get("state", {})
+        provider_states = serialized.get("provider_states", {})
+        for provider in self._context_providers:
+            if provider.source_id in provider_states:
+                await provider.restore(provider_states[provider.source_id])
+        return session
 ```
-
-### Example 6: Multiple Instances of Same Middleware Type
-
-```python
-# You can have multiple instances of the same middleware class
-# by using different source_ids
-
-agent = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        # Primary storage for conversation history
-        RedisStorageMiddleware(
-            source_id="conversation_memory",
-            redis_url="redis://primary...",
-            load_messages=True,  # This one loads
-        ),
-        # Secondary storage for audit (different Redis instance)
-        RedisStorageMiddleware(
-            source_id="audit_log",
-            redis_url="redis://audit...",
-            load_messages=False,  # This one just stores
-        ),
-    ]
-)
-# Warning will NOT be logged because only one has load_messages=True
-```
-
-### Example 7: Middleware Ordering - RAG Before vs After Memory
-
-The order of middleware determines what context each middleware can see. This is especially important for RAG, which may benefit from seeing conversation history.
-
-```python
-from agent_framework import ChatAgent
-from agent_framework.context import InMemoryStorageMiddleware, ContextMiddleware, SessionContext
-
-class RAGContextMiddleware(ContextMiddleware):
-    """RAG middleware that retrieves relevant documents based on available context."""
-
-    async def process(self, context: SessionContext, next) -> None:
-        # Build query from what we can see
-        query_parts = []
-
-        # We can always see the current input
-        for msg in context.input_messages:
-            query_parts.append(msg.text)
-
-        # Can we see history? Depends on middleware order!
-        history = context.get_all_messages()  # Gets context from middleware that ran before us
-        if history:
-            # Include recent history for better RAG context
-            recent = history[-3:]  # Last 3 messages
-            for msg in recent:
-                query_parts.append(msg.text)
-
-        query = " ".join(query_parts)
-        documents = await self._retrieve_documents(query)
-
-        # Add retrieved documents as context
-        rag_messages = [ChatMessage.system(f"Relevant context:\n{doc}") for doc in documents]
-        context.add_messages(self.source_id, rag_messages)
-
-        await next(context)
-
-    async def _retrieve_documents(self, query: str) -> list[str]:
-        # ... vector search implementation
-        return ["doc1", "doc2"]
-
-
-# =============================================================================
-# SCENARIO A: RAG runs BEFORE Memory
-# =============================================================================
-# RAG only sees the current input message - no conversation history
-# Use when: RAG should be based purely on the current query
-
-agent_rag_first = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        RAGContextMiddleware("rag"),           # Runs first - only sees input_messages
-        InMemoryStorageMiddleware("memory"),   # Runs second - loads/stores history
-    ]
-)
-
-# Flow:
-# 1. RAG.process() BEFORE next():
-#    - context.input_messages = ["What's the weather?"]
-#    - context.get_all_messages() = []  (empty - memory hasn't run yet)
-#    - RAG query based on: "What's the weather?" only
-#    - Adds: context_messages["rag"] = [retrieved docs]
-#
-# 2. Memory.process() BEFORE next():
-#    - context.get_all_messages() = [rag docs]  (sees RAG context)
-#    - Loads history: context_messages["memory"] = [previous conversation]
-#
-# 3. Agent invocation with: history + rag docs + input
-#
-# 4. Memory.process() AFTER next():
-#    - Stores: input + response (not RAG docs by default)
-
-
-# =============================================================================
-# SCENARIO B: RAG runs AFTER Memory
-# =============================================================================
-# RAG sees conversation history - can use it for better retrieval
-# Use when: RAG should consider conversation context for better results
-
-agent_memory_first = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        InMemoryStorageMiddleware("memory"),   # Runs first - loads history
-        RAGContextMiddleware("rag"),           # Runs second - sees history + input
-    ]
-)
-
-# Flow:
-# 1. Memory.process() BEFORE next():
-#    - Loads history: context_messages["memory"] = [previous conversation]
-#
-# 2. RAG.process() BEFORE next():
-#    - context.input_messages = ["What's the weather?"]
-#    - context.get_all_messages() = [previous conversation]  (sees history!)
-#    - RAG query based on: recent history + "What's the weather?"
-#    - Better retrieval because RAG understands conversation context
-#    - Adds: context_messages["rag"] = [more relevant docs]
-#
-# 3. Agent invocation with: history + rag docs + input
-#
-# 4. Memory.process() AFTER next():
-#    - Stores: input + response
-
-
-# =============================================================================
-# SCENARIO C: RAG after Memory, with selective storage
-# =============================================================================
-# Memory first for better RAG, plus separate audit that stores RAG context
-
-agent_full_context = ChatAgent(
-    chat_client=client,
-    context_middleware=[
-        InMemoryStorageMiddleware("memory"),   # Primary history storage
-        RAGContextMiddleware("rag"),           # Gets history context for better retrieval
-        PersonaContextMiddleware("persona"),   # Adds persona instructions
-        # Audit storage - stores everything including RAG results
-        CosmosStorageMiddleware(
-            "audit",
-            load_messages=False,               # Don't load (memory handles that)
-            store_context_messages=True,       # Store RAG + persona context too
-        ),
-    ]
-)
-```
-
-### Example 8: Understanding the Onion Pattern for Storage
-
-```python
-# Detailed breakdown of what storage middleware sees at each phase:
-#
-# Middleware order: [Storage, RAG, Persona]
-#
-# BEFORE next() - Storage pre-processing:
-#   context.context_messages = {}  (empty, no one has added yet)
-#   context.input_messages = [user's message]
-#   context.response_messages = None
-#
-# BEFORE next() - RAG pre-processing:
-#   context.context_messages = {"memory": [...]}  (storage added history)
-#
-# BEFORE next() - Persona pre-processing:
-#   context.context_messages = {"memory": [...], "rag": [...]}
-#
-# --- Agent invocation happens ---
-#
-# AFTER next() - Persona post-processing:
-#   context.response_messages = [assistant's response]
-#
-# AFTER next() - RAG post-processing:
-#   (same state)
-#
-# AFTER next() - Storage post-processing:
-#   context.context_messages = {"memory": [...], "rag": [...], "persona": [...]}
-#   context.response_messages = [assistant's response]
-#
-#   Storage NOW has access to ALL context if store_context_messages=True
-
-class StorageWithLogging(StorageContextMiddleware):
-    """Example showing what storage sees at each phase."""
-
-    async def process(self, context: SessionContext, next) -> None:
-        # PRE: Load history
-        print(f"PRE - context sources: {list(context.context_messages.keys())}")
-        # Output: PRE - context sources: []
-
-        if self._should_load_messages(context):
-            history = await self.get_messages(context.session_id)
-            context.add_messages(self.source_id, history)
-
-        await next(context)
-
-        # POST: Now we see everything
-        print(f"POST - context sources: {list(context.context_messages.keys())}")
-        # Output: POST - context sources: ['memory', 'rag', 'persona']
-
-        # Store based on configuration
-        # 1. Determine which context messages to include
-        if self.store_context_messages:
-            if self.store_context_from:
-                # Only from specific sources
-                context_msgs = context.get_messages(sources=self.store_context_from)
-            else:
-                # All context messages from all middleware
-                context_msgs = context.get_all_messages()
-        else:
-            # No context from other middleware - typically just our own loaded history
-            context_msgs = []
-
-        # 2. Build final list: context + input + response
-        messages_to_store = list(context_msgs)
-        if self.store_inputs:
-            messages_to_store.extend(context.input_messages)
-        if self.store_responses:
-            messages_to_store.extend(context.response_messages or [])
-
-        await self.save_messages(context.session_id, messages_to_store)
-```
-
----
-
-### Workplan
-
-The implementation is split into 2 PRs to limit scope and simplify review.
-
-```
-PR1 (New Types) ──► PR2 (Agent Integration + Cleanup)
-```
-
-#### PR 1: New Types
-
-**Goal:** Create all new types. No changes to existing code yet.
-
-**Core Package - `packages/core/agent_framework/_sessions.py`:**
-- [ ] `SessionContext` class with explicit add/get methods
-- [ ] `ContextPlugin` base class with `before_run()`/`after_run()`
-- [ ] `StorageContextPlugin` derived class with load_messages/store flags
-- [ ] Add `serialize()` and `restore()` methods to `ContextPlugin` base class
-- [ ] `AgentSession` class with `state: dict[str, Any]`
-- [ ] `InMemoryStoragePlugin(StorageContextPlugin)`
-
-**External Packages:**
-- [ ] `packages/azure-ai-search/` - create `AzureAISearchContextPlugin`
-- [ ] `packages/redis/` - create `RedisStoragePlugin`
-- [ ] `packages/mem0/` - create `Mem0ContextPlugin`
-
-**Testing:**
-- [ ] Unit tests for `SessionContext` methods (add_messages, get_messages, add_instructions, add_tools)
-- [ ] Unit tests for `StorageContextPlugin` load/store flags
-- [ ] Unit tests for `InMemoryStoragePlugin` serialize/restore
-- [ ] Unit tests for source attribution (mandatory source_id)
-
----
-
-#### PR 2: Agent Integration + Cleanup
-
-**Goal:** Wire up new types into `ChatAgent` and remove old types.
-
-**Changes to `ChatAgent`:**
-- [ ] Replace `thread` parameter with `session` in `agent.run()`
-- [ ] Add `context_plugins` parameter to `ChatAgent.__init__()`
-- [ ] Add `create_session()` method
-- [ ] Add `serialize_session()` / `restore_session()` methods
-- [ ] Wire up plugin iteration (before_run forward, after_run reverse)
-- [ ] Add validation warning if multiple/zero storage plugins have `load_messages=True`
-- [ ] Wire up default `InMemoryStoragePlugin` behavior (auto-add when no plugins and no service_session_id)
-
-**Remove Legacy Types:**
-- [ ] `packages/core/agent_framework/_memory.py` - remove `ContextProvider` class
-- [ ] `packages/core/agent_framework/_threads.py` - remove `ChatMessageStore`, `ChatMessageStoreProtocol`, `AgentThread`
-- [ ] `packages/core/agent_framework/__init__.py` - remove old exports, add new exports from `_sessions.py`
-- [ ] Remove old provider classes from `azure-ai-search`, `redis`, `mem0`
-
-**Documentation & Samples:**
-- [ ] Update all samples in `samples/` to use new API
-- [ ] Write migration guide
-- [ ] Update API documentation
-
-**Testing:**
-- [ ] Unit tests for plugin execution order (before_run forward, after_run reverse)
-- [ ] Unit tests for validation warnings (multiple/zero loaders)
-- [ ] Unit tests for session serialization/deserialization
-- [ ] Integration test: agent with `context_plugins` + `session` works
-- [ ] Integration test: full conversation with memory persistence
-- [ ] Ensure all existing tests still pass (with updated API)
-- [ ] Verify no references to removed types remain
-
----
-
-#### CHANGELOG (single entry for release)
-
-- **[BREAKING]** Replaced `ContextProvider` with `ContextPlugin` (hooks pattern with `before_run`/`after_run`)
-- **[BREAKING]** Replaced `ChatMessageStore` with `StorageContextPlugin`
-- **[BREAKING]** Replaced `AgentThread` with `AgentSession`
-- **[BREAKING]** Replaced `thread` parameter with `session` in `agent.run()`
-- Added `SessionContext` for invocation state with source attribution
-- Added `InMemoryStoragePlugin` for conversation history
-- Added session serialization (`serialize_session`, `restore_session`)
-
----
-
-#### Estimated Sizes
-
-| PR | New Lines | Modified Lines | Risk |
-|----|-----------|----------------|------|
-| PR1 | ~500 | ~0 | Low |
-| PR2 | ~150 | ~400 | Medium |
