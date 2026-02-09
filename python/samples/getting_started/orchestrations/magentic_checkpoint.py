@@ -115,7 +115,7 @@ async def main() -> None:
         print("No plan review request emitted; nothing to resume.")
         return
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow.name)
     if not checkpoints:
         print("No checkpoints persisted.")
         return
@@ -180,7 +180,7 @@ async def main() -> None:
     def _pending_message_count(cp: WorkflowCheckpoint) -> int:
         return sum(len(msg_list) for msg_list in cp.messages.values() if isinstance(msg_list, list))
 
-    all_checkpoints = await checkpoint_storage.list_checkpoints(resume_checkpoint.workflow_id)
+    all_checkpoints = await checkpoint_storage.list_checkpoints(resume_checkpoint.workflow_name)
     later_checkpoints_with_messages = [
         cp
         for cp in all_checkpoints

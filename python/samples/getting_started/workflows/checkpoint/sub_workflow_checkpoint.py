@@ -345,7 +345,7 @@ async def main() -> None:
     if request_id is None:
         raise RuntimeError("Sub-workflow completed without requesting review.")
 
-    checkpoints = await storage.list_checkpoints(workflow.id)
+    checkpoints = await storage.list_checkpoints(workflow.name)
     if not checkpoints:
         raise RuntimeError("No checkpoints found.")
 

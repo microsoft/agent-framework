@@ -567,6 +567,15 @@ class Workflow(DictConvertible):
         ):
             if event.type == "output" and not self._should_yield_output_event(event):
                 continue
+            if event.type == "request_info" and event.request_id in (responses or {}):
+                # Don't yield request_info events for which we have responses to send -
+                # these are considered "handled". This prevents the caller from seeing
+                # events for requests they are already responding to.
+                # This usually happens when responses are provided with a checkpoint
+                # (restore then send), because the request_info events are stored in the
+                # checkpoint and would be emitted on restoration by the runner regardless
+                # of if a response is provided or not.
+                continue
             yield event
 
     async def _run_cleanup(self, checkpoint_storage: CheckpointStorage | None) -> None:

@@ -140,7 +140,7 @@ async def main():
                 break
 
         # Find the latest checkpoint to resume from
-        all_checkpoints = await checkpoint_storage.list_checkpoints()
+        all_checkpoints = await checkpoint_storage.list_checkpoints(workflow.name)
         if not all_checkpoints:
             raise RuntimeError("No checkpoints available to resume from.")
         latest_checkpoint = all_checkpoints[-1]

@@ -177,9 +177,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
     workflow_builder = (
-        WorkflowBuilder(
-            max_iterations=6, start_executor="prepare_brief", checkpoint_storage=checkpoint_storage
-        )
+        WorkflowBuilder(max_iterations=6, start_executor="prepare_brief", checkpoint_storage=checkpoint_storage)
         .register_agent(
             lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
                 instructions="Write concise, warm release notes that sound human and helpful.",
@@ -285,7 +283,7 @@ async def main() -> None:
     result = await run_interactive_session(workflow, initial_message=brief)
     print(f"Workflow completed with: {result}")
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow.name)
     if not checkpoints:
         print("No checkpoints recorded.")
         return

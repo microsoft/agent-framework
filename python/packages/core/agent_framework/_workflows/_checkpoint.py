@@ -8,7 +8,7 @@ import logging
 import os
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
@@ -87,7 +87,14 @@ class WorkflowCheckpoint:
     version: str = "1.0"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """Convert the WorkflowCheckpoint to a dictionary.
+
+        Notes:
+            1. This method does not recursively convert nested dataclasses to dicts.
+            2. This is a shallow conversion. The resulting dict will contain the same
+               references to nested objects as the original dataclass.
+        """
+        return {f.name: getattr(self, f.name) for f in fields(self)}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> WorkflowCheckpoint:
@@ -244,7 +251,7 @@ class FileCheckpointStorage:
         from ._checkpoint_encoding import encode_checkpoint_value
 
         file_path = self.storage_path / f"{checkpoint.checkpoint_id}.json"
-        checkpoint_dict = asdict(checkpoint)
+        checkpoint_dict = checkpoint.to_dict()
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
         def _write_atomic() -> None:
