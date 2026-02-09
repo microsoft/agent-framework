@@ -6,7 +6,7 @@ from collections.abc import MutableSequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import Message, Context, ContextProvider
+from agent_framework import Context, ContextProvider, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential

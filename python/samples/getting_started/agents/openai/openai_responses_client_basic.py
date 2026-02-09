@@ -5,7 +5,16 @@ from collections.abc import Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import Agent, ChatContext, Message, ChatResponse, Role, chat_middleware, tool
+from agent_framework import (
+    Agent,
+    ChatContext,
+    ChatResponse,
+    Message,
+    MiddlewareTermination,
+    Role,
+    chat_middleware,
+    tool,
+)
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -47,9 +56,8 @@ async def security_and_override_middleware(
                         ]
                     )
 
-                    # Set terminate flag to stop execution
-                    context.terminate = True
-                    return
+                    # Terminate middleware execution with the blocked response
+                    raise MiddlewareTermination(result=context.result)
 
     # Continue to next middleware or AI execution
     await call_next(context)

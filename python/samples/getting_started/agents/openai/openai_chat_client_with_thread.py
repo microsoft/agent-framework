@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, Agent, ChatMessageStore, tool
+from agent_framework import Agent, AgentThread, ChatMessageStore, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 

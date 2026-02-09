@@ -25,7 +25,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import AgentResponse, Agent, Message
+from agent_framework import Agent, AgentResponse, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.microsoft import (
     PurviewChatPolicyMiddleware,

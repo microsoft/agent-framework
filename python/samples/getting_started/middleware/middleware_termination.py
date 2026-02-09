@@ -10,6 +10,7 @@ from agent_framework import (
     AgentMiddleware,
     AgentResponse,
     Message,
+    MiddlewareTermination,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -71,9 +72,8 @@ class PreTerminationMiddleware(AgentMiddleware):
                         ]
                     )
 
-                    # Set terminate flag to prevent further processing
-                    context.terminate = True
-                    break
+                    # Terminate to prevent further processing
+                    raise MiddlewareTermination(result=context.result)
 
         await call_next(context)
 
@@ -98,7 +98,7 @@ class PostTerminationMiddleware(AgentMiddleware):
                 f"[PostTerminationMiddleware] Maximum responses ({self.max_responses}) reached. "
                 "Terminating further processing."
             )
-            context.terminate = True
+            raise MiddlewareTermination
 
         # Allow the agent to process normally
         await call_next(context)

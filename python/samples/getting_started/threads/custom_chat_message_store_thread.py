@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Collection
 from typing import Any
 
-from agent_framework import Message, ChatMessageStoreProtocol
+from agent_framework import ChatMessageStoreProtocol, Message
 from agent_framework._threads import ChatMessageStoreState
 from agent_framework.openai import OpenAIChatClient
 

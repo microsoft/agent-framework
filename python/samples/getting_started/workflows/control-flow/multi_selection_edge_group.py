@@ -12,7 +12,6 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    Agent,
     Message,
     WorkflowBuilder,
     WorkflowContext,

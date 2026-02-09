@@ -5,7 +5,7 @@ import base64
 import struct
 from pathlib import Path
 
-from agent_framework import Message, Content
+from agent_framework import Content, Message
 from agent_framework.openai import OpenAIChatClient
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"

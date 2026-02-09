@@ -18,7 +18,7 @@ import os
 from collections.abc import Generator
 from typing import Any
 
-from agent_framework import AgentResponse, Agent
+from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker

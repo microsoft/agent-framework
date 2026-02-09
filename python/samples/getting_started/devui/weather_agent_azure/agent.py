@@ -9,11 +9,13 @@ from typing import Annotated
 from agent_framework import (
     Agent,
     ChatContext,
-    Message,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
+    Message,
+    MiddlewareTermination,
+    ResponseStream,
     Role,
     chat_middleware,
     function_middleware,
@@ -54,14 +56,17 @@ async def security_filter_middleware(
                 )
 
                 if context.stream:
-                    # Streaming mode: return async generator
-                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                    # Streaming mode: wrap in ResponseStream
+                    async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[Content.from_text(text=error_message)],
+                            contents=[Content.from_text(text=msg)],
                             role=Role.ASSISTANT,
                         )
 
-                    context.result = blocked_stream()
+                    response = ChatResponse(
+                        messages=[Message(role=Role.ASSISTANT, text=error_message)]
+                    )
+                    context.result = ResponseStream(blocked_stream(), finalizer=lambda _, r=response: r)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
@@ -73,8 +78,7 @@ async def security_filter_middleware(
                         ]
                     )
 
-                context.terminate = True
-                return
+                raise MiddlewareTermination(result=context.result)
 
     await call_next(context)
 
@@ -92,8 +96,7 @@ async def atlantis_location_filter_middleware(
             "Blocked! Hold up right there!! Tell the user that "
             "'Atlantis is a special place, we must never ask about the weather there!!'"
         )
-        context.terminate = True
-        return
+        raise MiddlewareTermination(result=context.result)
 
     await call_next(context)
 

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, Agent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import Agent, AgentResponseUpdate, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from openai.types.beta.threads.runs import (

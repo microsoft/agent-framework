@@ -11,9 +11,9 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     ChatContext,
-    Message,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
     Role,
     tool,
@@ -76,10 +76,10 @@ async def weather_override_middleware(context: ChatContext, call_next: Callable[
                     index["value"] += 1
                 return update
 
-            context.result.with_update_hook(_update_hook)
+            context.result.with_transform_hook(_update_hook)
         else:
             # For non-streaming: just replace with a new message
-            current_text = context.result.text or ""
+            current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
             custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
             context.result = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=custom_message)])
 
@@ -172,7 +172,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[A
                 content.text = text
             return update
 
-        context.result.with_update_hook(_clean_update)
+        context.result.with_transform_hook(_clean_update)
         context.result.with_finalizer(_sanitize)
     elif isinstance(context.result, AgentResponse):
         context.result = _sanitize(context.result)

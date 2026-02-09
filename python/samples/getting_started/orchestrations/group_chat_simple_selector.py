@@ -4,8 +4,8 @@ import asyncio
 from typing import cast
 
 from agent_framework import (
-    AgentResponseUpdate,
     Agent,
+    AgentResponseUpdate,
     Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient

@@ -17,7 +17,7 @@ from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import Agent, Message, Context, ContextProvider
+from agent_framework import Agent, Context, ContextProvider, Message
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 

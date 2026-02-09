@@ -8,7 +8,6 @@ from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutor,
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
     AgentExecutorResponse,
-    Agent,  # Output from an AgentExecutor
     Message,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowContext,  # Per-run context and event bus

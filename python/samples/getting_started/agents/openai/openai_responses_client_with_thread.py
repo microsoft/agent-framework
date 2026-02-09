@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, Agent, tool
+from agent_framework import Agent, AgentThread, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 

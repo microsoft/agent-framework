@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import MutableSequence, Sequence
 from typing import Any
 
-from agent_framework import Agent, SupportsChatGetResponse, Message, Context, ContextProvider
+from agent_framework import Agent, Context, ContextProvider, Message, SupportsChatGetResponse
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel

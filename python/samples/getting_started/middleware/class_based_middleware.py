@@ -10,9 +10,9 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    Message,
     FunctionInvocationContext,
     FunctionMiddleware,
+    Message,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient

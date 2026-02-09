@@ -28,7 +28,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, Agent, Message, FunctionResultContent, Role, tool
+from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -573,7 +573,7 @@ async def chatkit_endpoint(request: Request):
 
 
 @app.post("/upload/{attachment_id}")
-async def upload_file(attachment_id: str, file: UploadFile = File(...)):
+async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa: B008
     """Handle file upload for two-phase upload.
 
     The client POSTs the file bytes here after creating the attachment

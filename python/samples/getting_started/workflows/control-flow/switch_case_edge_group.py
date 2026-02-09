@@ -11,9 +11,8 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
     Case,
-    Agent,  # Case entry for a switch-case edge group
-    Message,
     Default,  # Default branch when no cases match
+    Message,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor

@@ -5,8 +5,8 @@ import logging
 from typing import cast
 
 from agent_framework import (
-    AgentResponseUpdate,
     Agent,
+    AgentResponseUpdate,
     Message,
     resolve_agent_id,
 )

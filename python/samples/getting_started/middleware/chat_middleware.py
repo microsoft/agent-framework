@@ -7,9 +7,9 @@ from typing import Annotated
 
 from agent_framework import (
     ChatContext,
-    Message,
     ChatMiddleware,
     ChatResponse,
+    Message,
     MiddlewareTermination,
     chat_middleware,
     tool,

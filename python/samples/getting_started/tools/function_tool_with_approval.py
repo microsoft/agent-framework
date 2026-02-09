@@ -4,7 +4,7 @@ import asyncio
 from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
-from agent_framework import AgentResponse, Agent, Message, tool
+from agent_framework import Agent, AgentResponse, Message, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:

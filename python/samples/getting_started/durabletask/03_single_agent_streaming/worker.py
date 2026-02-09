@@ -18,7 +18,7 @@ import os
 from datetime import timedelta
 
 import redis.asyncio as aioredis
-from agent_framework import AgentResponseUpdate, Agent
+from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,

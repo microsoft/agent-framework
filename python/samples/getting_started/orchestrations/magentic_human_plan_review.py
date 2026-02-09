@@ -6,8 +6,8 @@ from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
-    AgentResponseUpdate,
     Agent,
+    AgentResponseUpdate,
     Message,
     WorkflowEvent,
 )

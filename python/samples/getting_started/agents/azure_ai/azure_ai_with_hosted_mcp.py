@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import SupportsAgentRun, AgentResponse, AgentThread, Message, HostedMCPTool
+from agent_framework import AgentResponse, AgentThread, HostedMCPTool, Message, SupportsAgentRun
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 

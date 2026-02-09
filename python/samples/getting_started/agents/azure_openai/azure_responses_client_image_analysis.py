@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Message, Content
+from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
