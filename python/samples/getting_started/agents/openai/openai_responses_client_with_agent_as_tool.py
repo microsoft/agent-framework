@@ -19,13 +19,13 @@ multiple specialized agents, each focusing on specific tasks.
 
 async def logging_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
     """MiddlewareTypes that logs tool invocations to show the delegation flow."""
     print(f"[Calling tool: {context.function.name}]")
     print(f"[Request: {context.arguments}]")
 
-    await next(context)
+    await call_next(context)
 
     print(f"[Response: {context.result}]")
 
