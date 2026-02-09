@@ -279,7 +279,7 @@ async def test_checkpoint_restore_with_responses_does_not_reemit_handled_request
         )
 
 
-async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_requests(self):
+async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_requests():
     """Test that only unhandled request_info events are re-emitted when partial responses are provided.
 
     When calling run(checkpoint_id=..., responses=...) with responses for only some of the

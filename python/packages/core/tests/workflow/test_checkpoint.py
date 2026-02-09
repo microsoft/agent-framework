@@ -714,7 +714,7 @@ async def test_memory_checkpoint_storage_roundtrip_bytes():
     storage = InMemoryCheckpointStorage()
 
     binary_data = b"\x00\x01\x02\xff\xfe\xfd"
-    unicode_bytes = "Hello 世界".encode("utf-8")
+    unicode_bytes = "Hello 世界".encode()
 
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
@@ -1386,7 +1386,7 @@ async def test_file_checkpoint_storage_roundtrip_bytes():
         storage = FileCheckpointStorage(temp_dir)
 
         binary_data = b"\x00\x01\x02\xff\xfe\xfd"
-        unicode_bytes = "Hello 世界".encode("utf-8")
+        unicode_bytes = "Hello 世界".encode()
 
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
