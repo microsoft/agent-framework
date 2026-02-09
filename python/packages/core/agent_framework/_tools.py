@@ -1248,6 +1248,7 @@ def tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1261,6 +1262,7 @@ def tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1273,6 +1275,7 @@ def tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1288,6 +1291,9 @@ def tool(
     with a string description as the second argument. You can also use Pydantic's
     ``Field`` class for more advanced configuration.
 
+    Alternatively, you can provide an explicit schema via the ``schema`` parameter
+    to bypass automatic inference from the function signature.
+
     Args:
         func: The function to decorate. This parameter enables the decorator to be used
             both with and without parentheses: ``@tool`` directly decorates the function,
@@ -1300,6 +1306,13 @@ def tool(
             attribute will be used.
         description: A description of the function. If not provided, the function's
             docstring will be used.
+        schema: An explicit input schema for the function. This can be a Pydantic
+            ``BaseModel`` subclass or a JSON schema dictionary (``Mapping[str, Any]``).
+            When a dictionary is provided, it must be a flat object schema with a
+            ``properties`` key (complex JSON Schema features such as ``oneOf``,
+            ``$ref``, or nested compositions are not supported).
+            When provided, the schema is used instead of inferring one from the
+            function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
             Default is that approval is NOT required (``"never_require"``).
         max_invocations: The maximum number of times this function can be invoked.
@@ -1355,6 +1368,21 @@ def tool(
                 return f"Weather in {location}"
 
 
+            # With an explicit Pydantic model schema
+            from pydantic import BaseModel, Field
+
+
+            class WeatherInput(BaseModel):
+                location: Annotated[str, Field(description="City name")]
+                unit: str = "celsius"
+
+
+            @tool(schema=WeatherInput)
+            def get_weather(location: str, unit: str = "celsius") -> str:
+                '''Get weather for a location.'''
+                return f"Weather in {location}: 22 {unit}"
+
+
             # Declaration-only tool (no implementation)
             # Use FunctionTool directly when you need a tool declaration without
             # an executable function. The agent can request this tool, but it won't
@@ -1383,6 +1411,7 @@ def tool(
                 max_invocation_exceptions=max_invocation_exceptions,
                 additional_properties=additional_properties or {},
                 func=f,
+                input_model=schema,
             )
 
         return wrapper(func)
