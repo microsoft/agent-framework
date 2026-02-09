@@ -18,9 +18,9 @@ the statefulness and durability of `DurableAIAgent`s.
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
-from pathlib import Path
 from agent_framework import (
     AgentExecutorResponse,
     Case,
@@ -32,9 +32,9 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
-from agent_framework_azurefunctions import AgentFunctionApp
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class SpamHandlerExecutor(Executor):
             spam_result = SpamDetectionResult.model_validate_json(text)
         except ValidationError:
             spam_result = SpamDetectionResult(is_spam=True, reason="Invalid JSON from agent")
-        
+
         message = f"Email marked as spam: {spam_result.reason}"
         await ctx.yield_output(message)
 
@@ -145,7 +145,7 @@ class EmailSenderExecutor(Executor):
             email_response = EmailResponse.model_validate_json(text)
         except ValidationError:
             email_response = EmailResponse(response="Error generating response.")
-            
+
         message = f"Email sent: {email_response.response}"
         await ctx.yield_output(message)
 
@@ -184,7 +184,7 @@ def _create_workflow() -> Workflow:
     email_sender = EmailSenderExecutor(id="email_sender")
 
     # Build workflow
-    workflow = (
+    return (
         WorkflowBuilder(start_executor=spam_agent)
         .add_switch_case_edge_group(
             spam_agent,
@@ -196,7 +196,6 @@ def _create_workflow() -> Workflow:
         .add_edge(email_agent, email_sender)
         .build()
     )
-    return workflow
 
 
 def launch(durable: bool = True) -> AgentFunctionApp | None:
@@ -205,31 +204,29 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     if durable:
         # Initialize app
         workflow = _create_workflow()
-        app = AgentFunctionApp(workflow=workflow)
-        return app
-    else:
-        # Launch the spam detection workflow in DevUI
-        from agent_framework.devui import serve
-        from dotenv import load_dotenv
+        return AgentFunctionApp(workflow=workflow)
+    # Launch the spam detection workflow in DevUI
+    from agent_framework.devui import serve
+    from dotenv import load_dotenv
 
-        # Load environment variables from .env file
-        env_path = Path(__file__).parent / ".env"
-        load_dotenv(dotenv_path=env_path)
+    # Load environment variables from .env file
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
 
-        logger.info("Starting Multi-Agent Spam Detection Workflow")
-        logger.info("Available at: http://localhost:8094")
-        logger.info("\nThis workflow demonstrates:")
-        logger.info("- Conditional routing based on spam detection")
-        logger.info("- Mixing AI agents with non-AI executors (like activity functions)")
-        logger.info("- Path 1 (spam): SpamDetector Agent → SpamHandler Executor")
-        logger.info("- Path 2 (legitimate): SpamDetector Agent → EmailAssistant Agent → EmailSender Executor")
+    logger.info("Starting Multi-Agent Spam Detection Workflow")
+    logger.info("Available at: http://localhost:8094")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Conditional routing based on spam detection")
+    logger.info("- Mixing AI agents with non-AI executors (like activity functions)")
+    logger.info("- Path 1 (spam): SpamDetector Agent → SpamHandler Executor")
+    logger.info("- Path 2 (legitimate): SpamDetector Agent → EmailAssistant Agent → EmailSender Executor")
 
-        workflow = _create_workflow()
-        serve(entities=[workflow], port=8094, auto_open=True)
+    workflow = _create_workflow()
+    serve(entities=[workflow], port=8094, auto_open=True)
 
-        return None
-    
-    
+    return None
+
+
 # Default: Azure Functions mode
 # Run with `python function_app.py --maf` for pure MAF mode with DevUI
 app = launch(durable=True)

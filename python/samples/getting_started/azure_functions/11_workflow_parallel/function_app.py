@@ -37,11 +37,10 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from typing_extensions import Never
-
-from agent_framework_azurefunctions import AgentFunctionApp
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +103,7 @@ class ProcessorResult:
     has_numbers: bool
 
 
-@dataclass 
+@dataclass
 class AggregatedResults:
     """Aggregated results from parallel processors."""
     document_id: str
@@ -137,7 +136,7 @@ async def input_router(
     ctx: WorkflowContext[DocumentInput]
 ) -> None:
     """Route input document to parallel processors.
-    
+
     Accepts a JSON string from the HTTP request and converts to DocumentInput.
     """
     # Parse the JSON string input
@@ -152,16 +151,16 @@ async def input_router(
 
 @executor(id="word_count_processor")
 async def word_count_processor(
-    doc: DocumentInput, 
+    doc: DocumentInput,
     ctx: WorkflowContext[ProcessorResult]
 ) -> None:
     """Process document and count words - runs as an activity."""
     logger.info("[word_count_processor] Processing document: %s", doc.document_id)
-    
+
     word_count = len(doc.content.split())
     char_count = len(doc.content)
     has_numbers = any(c.isdigit() for c in doc.content)
-    
+
     result = ProcessorResult(
         processor_name="word_count",
         document_id=doc.document_id,
@@ -170,7 +169,7 @@ async def word_count_processor(
         char_count=char_count,
         has_numbers=has_numbers,
     )
-    
+
     await ctx.send_message(result)
 
 
@@ -181,13 +180,13 @@ async def format_analyzer_processor(
 ) -> None:
     """Analyze document format - runs as an activity in parallel with word_count."""
     logger.info("[format_analyzer_processor] Processing document: %s", doc.document_id)
-    
+
     # Simple format analysis
-    lines = doc.content.split('\n')
+    lines = doc.content.split("\n")
     word_count = len(lines)  # Using line count as "word count" for this processor
     char_count = sum(len(line) for line in lines)
-    has_numbers = doc.content.count('.') > 0  # Check for sentences
-    
+    has_numbers = doc.content.count(".") > 0  # Check for sentences
+
     result = ProcessorResult(
         processor_name="format_analyzer",
         document_id=doc.document_id,
@@ -196,7 +195,7 @@ async def format_analyzer_processor(
         char_count=char_count,
         has_numbers=has_numbers,
     )
-    
+
     await ctx.send_message(result)
 
 
@@ -207,17 +206,17 @@ async def aggregator(
 ) -> None:
     """Aggregate results from parallel processors - receives fan-in input."""
     logger.info("[aggregator] Aggregating %d results", len(results))
-    
+
     # Extract document info from the first result (all have the same content)
     document_id = results[0].document_id if results else "unknown"
     content = results[0].content if results else ""
-    
+
     aggregated = AggregatedResults(
         document_id=document_id,
         content=content,
         processor_results=results,
     )
-    
+
     await ctx.send_message(aggregated)
 
 
@@ -228,7 +227,7 @@ async def prepare_for_agents(
 ) -> None:
     """Prepare content for agent analysis - broadcasts to multiple agents."""
     logger.info("[prepare_for_agents] Preparing content for agents")
-    
+
     # Send the original content to agents for analysis
     await ctx.send_message(aggregated.content)
 
@@ -239,24 +238,24 @@ async def prepare_for_mixed(
     ctx: WorkflowContext[str]
 ) -> None:
     """Prepare results for mixed agent+executor parallel processing.
-    
+
     Combines agent analysis results into a string that can be consumed by
     both the SummaryAgent and the statistics_processor in parallel.
     """
     logger.info("[prepare_for_mixed] Preparing for mixed parallel pattern")
-    
+
     sentiment_text = ""
     keyword_text = ""
-    
+
     for analysis in analyses:
         executor_id = analysis.executor_id
         text = analysis.agent_response.text if analysis.agent_response else ""
-            
+
         if executor_id == SENTIMENT_AGENT_NAME:
             sentiment_text = text
         elif executor_id == KEYWORD_AGENT_NAME:
             keyword_text = text
-    
+
     # Combine into a string that both agent and executor can process
     combined = f"Sentiment Analysis: {sentiment_text}\n\nKeyword Extraction: {keyword_text}"
     await ctx.send_message(combined)
@@ -269,12 +268,12 @@ async def statistics_processor(
 ) -> None:
     """Calculate statistics from the analysis - runs in parallel with SummaryAgent."""
     logger.info("[statistics_processor] Calculating statistics")
-    
+
     # Calculate some statistics from the combined analysis
     word_count = len(analysis_text.split())
     char_count = len(analysis_text)
     has_numbers = any(c.isdigit() for c in analysis_text)
-    
+
     result = ProcessorResult(
         processor_name="statistics",
         document_id="analysis",
@@ -297,9 +296,9 @@ class FinalReportExecutor(Executor):
     ) -> None:
         """Compile final report from mixed agent + processor results."""
         logger.info("[final_report] Compiling report from %d analyses", len(analyses))
-        
+
         report_parts = ["=== Document Analysis Report ===\n"]
-        
+
         for analysis in analyses:
             if isinstance(analysis, AgentExecutorResponse):
                 agent_name = analysis.executor_id
@@ -309,10 +308,10 @@ class FinalReportExecutor(Executor):
                 text = f"Words: {analysis.word_count}, Chars: {analysis.char_count}"
             else:
                 continue
-                
+
             report_parts.append(f"\n--- {agent_name} ---")
             report_parts.append(text)
-        
+
         final_report = "\n".join(report_parts)
         await ctx.yield_output(final_report)
 
@@ -328,9 +327,9 @@ class MixedResultCollector(Executor):
     ) -> None:
         """Collect and format results from mixed parallel execution."""
         logger.info("[mixed_collector] Collecting %d mixed results", len(results))
-        
+
         output_parts = ["=== Mixed Parallel Execution Results ===\n"]
-        
+
         for result in results:
             if isinstance(result, AgentExecutorResponse):
                 output_parts.append(f"[Agent: {result.executor_id}]")
@@ -338,7 +337,7 @@ class MixedResultCollector(Executor):
             elif isinstance(result, ProcessorResult):
                 output_parts.append(f"[Processor: {result.processor_name}]")
                 output_parts.append(f"  Words: {result.word_count}, Chars: {result.char_count}")
-        
+
         await ctx.yield_output("\n".join(output_parts))
 
 
@@ -373,21 +372,21 @@ def _build_client_kwargs() -> dict[str, Any]:
 
 def _create_workflow() -> Workflow:
     """Create the parallel workflow definition.
-    
+
     Workflow structure demonstrating three parallel patterns:
-    
+
     Pattern 1: Two Executors in Parallel (Fan-out/Fan-in to activities)
     ────────────────────────────────────────────────────────────────────
                    ┌─> word_count_processor ─────┐
     input_router ──┤                             ├──> aggregator
                    └─> format_analyzer_processor ─┘
-    
+
     Pattern 2: Two Agents in Parallel (Fan-out to entities)
     ────────────────────────────────────────────────────────
     prepare_for_agents ─┬─> SentimentAgent ──┐
                         └─> KeywordAgent ────┤
                                              └──> prepare_for_mixed
-    
+
     Pattern 3: Mixed Agent + Executor in Parallel
     ──────────────────────────────────────────────
     prepare_for_mixed ─┬─> SummaryAgent ────────┐
@@ -433,52 +432,42 @@ def _create_workflow() -> Workflow:
     final_report_executor = FinalReportExecutor(id="final_report")
 
     # Build workflow with parallel patterns
-    workflow = (
+    return (
         WorkflowBuilder(start_executor=input_router)
-        
         # Pattern 1: Fan-out to two executors (run in parallel)
         .add_fan_out_edges(
             source=input_router,
             targets=[word_count_processor, format_analyzer_processor],
         )
-        
         # Fan-in: Both processors send results to aggregator
         .add_fan_in_edges(
             sources=[word_count_processor, format_analyzer_processor],
             target=aggregator,
         )
-        
         # Prepare content for agent analysis
         .add_edge(aggregator, prepare_for_agents)
-        
         # Pattern 2: Fan-out to two agents (run in parallel)
         .add_fan_out_edges(
             source=prepare_for_agents,
             targets=[sentiment_agent, keyword_agent],
         )
-        
         # Fan-in: Collect agent results into prepare_for_mixed
         .add_fan_in_edges(
             sources=[sentiment_agent, keyword_agent],
             target=prepare_for_mixed,
         )
-        
         # Pattern 3: Fan-out to one agent + one executor (mixed parallel)
         .add_fan_out_edges(
             source=prepare_for_mixed,
             targets=[summary_agent, statistics_processor],
         )
-        
         # Final fan-in: Collect mixed results
         .add_fan_in_edges(
             sources=[summary_agent, statistics_processor],
             target=final_report_executor,
         )
-        
         .build()
     )
-    
-    return workflow
 
 
 # ============================================================================
@@ -492,31 +481,30 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
 
     if durable:
         workflow = _create_workflow()
-        app = AgentFunctionApp(
-            workflow=workflow, 
+        return AgentFunctionApp(
+            workflow=workflow,
             enable_health_check=True,
         )
-        return app
-    else:
-        from pathlib import Path
-        from agent_framework.devui import serve
-        from dotenv import load_dotenv
+    from pathlib import Path
 
-        env_path = Path(__file__).parent / ".env"
-        load_dotenv(dotenv_path=env_path)
+    from agent_framework.devui import serve
+    from dotenv import load_dotenv
 
-        logger.info("Starting Parallel Workflow Sample")
-        logger.info("Available at: http://localhost:8095")
-        logger.info("\nThis workflow demonstrates:")
-        logger.info("- Pattern 1: Two executors running in parallel")
-        logger.info("- Pattern 2: Two agents running in parallel")
-        logger.info("- Pattern 3: Mixed agent + executor running in parallel")
-        logger.info("- Fan-in aggregation of parallel results")
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
 
-        workflow = _create_workflow()
-        serve(entities=[workflow], port=8095, auto_open=True)
+    logger.info("Starting Parallel Workflow Sample")
+    logger.info("Available at: http://localhost:8095")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Pattern 1: Two executors running in parallel")
+    logger.info("- Pattern 2: Two agents running in parallel")
+    logger.info("- Pattern 3: Mixed agent + executor running in parallel")
+    logger.info("- Fan-in aggregation of parallel results")
 
-        return None
+    workflow = _create_workflow()
+    serve(entities=[workflow], port=8095, auto_open=True)
+
+    return None
 
 
 # Default: Azure Functions mode

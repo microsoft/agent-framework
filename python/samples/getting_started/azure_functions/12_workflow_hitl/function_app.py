@@ -41,11 +41,10 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
-
-from agent_framework_azurefunctions import AgentFunctionApp
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +84,7 @@ class ContentSubmission:
 @dataclass
 class HumanApprovalRequest:
     """Request sent to human reviewer for approval.
-    
+
     This is the payload passed to ctx.request_info() and will be
     exposed via the orchestration status for external systems to retrieve.
     """
@@ -100,7 +99,7 @@ class HumanApprovalRequest:
 
 class HumanApprovalResponse(BaseModel):
     """Response from human reviewer.
-    
+
     This is what the external system must send back via the HITL response endpoint.
     """
 
@@ -183,7 +182,7 @@ class ContentAnalyzerExecutor(Executor):
 
 class HumanReviewExecutor(Executor):
     """Requests human approval using MAF's request_info pattern.
-    
+
     This executor demonstrates the core HITL pattern:
     1. Receives the AI analysis result
     2. Calls ctx.request_info() to pause and request human input
@@ -200,7 +199,7 @@ class HumanReviewExecutor(Executor):
         ctx: WorkflowContext,
     ) -> None:
         """Request human review for the content.
-        
+
         This method:
         1. Constructs the approval request with all context
         2. Calls request_info to pause the workflow
@@ -250,7 +249,7 @@ class HumanReviewExecutor(Executor):
         ctx: WorkflowContext[ModerationResult],
     ) -> None:
         """Process the human reviewer's decision.
-        
+
         This method is called automatically when a response to request_info is received.
         The original_request contains the HumanApprovalRequest we sent.
         The response contains the HumanApprovalResponse from the reviewer.
@@ -399,7 +398,7 @@ def _create_workflow() -> Workflow:
     # Flow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
-    workflow = (
+    return (
         WorkflowBuilder(start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
@@ -407,8 +406,6 @@ def _create_workflow() -> Workflow:
         .add_edge(human_review_executor, publish_executor)
         .build()
     )
-
-    return workflow
 
 
 # ============================================================================
@@ -418,7 +415,7 @@ def _create_workflow() -> Workflow:
 
 def launch(durable: bool = True) -> AgentFunctionApp | None:
     """Launch the function app or DevUI.
-    
+
     Args:
         durable: If True, returns AgentFunctionApp for Azure Functions.
                  If False, launches DevUI for local MAF development.
@@ -431,30 +428,28 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
         # - POST /api/workflow/respond/{instanceId}/{requestId} - Send HITL response
         # - GET /api/health - Health check
         workflow = _create_workflow()
-        app = AgentFunctionApp(workflow=workflow, enable_health_check=True)
-        return app
-    else:
-        # Pure MAF mode with DevUI for local development
-        from pathlib import Path
+        return AgentFunctionApp(workflow=workflow, enable_health_check=True)
+    # Pure MAF mode with DevUI for local development
+    from pathlib import Path
 
-        from agent_framework.devui import serve
-        from dotenv import load_dotenv
+    from agent_framework.devui import serve
+    from dotenv import load_dotenv
 
-        env_path = Path(__file__).parent / ".env"
-        load_dotenv(dotenv_path=env_path)
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
 
-        logger.info("Starting Workflow HITL Sample in MAF mode")
-        logger.info("Available at: http://localhost:8096")
-        logger.info("\nThis workflow demonstrates:")
-        logger.info("- Human-in-the-loop using request_info / @response_handler pattern")
-        logger.info("- AI content analysis with structured output")
-        logger.info("- Human approval workflow integration")
-        logger.info("\nFlow: InputRouter -> ContentAnalyzer Agent -> HumanReview -> Publish")
+    logger.info("Starting Workflow HITL Sample in MAF mode")
+    logger.info("Available at: http://localhost:8096")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Human-in-the-loop using request_info / @response_handler pattern")
+    logger.info("- AI content analysis with structured output")
+    logger.info("- Human approval workflow integration")
+    logger.info("\nFlow: InputRouter -> ContentAnalyzer Agent -> HumanReview -> Publish")
 
-        workflow = _create_workflow()
-        serve(entities=[workflow], port=8096, auto_open=True)
+    workflow = _create_workflow()
+    serve(entities=[workflow], port=8096, auto_open=True)
 
-        return None
+    return None
 
 
 # Default: Azure Functions mode
