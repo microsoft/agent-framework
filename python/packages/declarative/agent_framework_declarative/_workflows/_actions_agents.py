@@ -7,6 +7,8 @@ This module implements handlers for:
 - InvokePromptAgent: Invoke a local prompt-based agent
 """
 
+from __future__ import annotations
+
 import json
 from collections.abc import AsyncGenerator
 from typing import Any, cast
@@ -185,7 +187,7 @@ def _build_messages_from_state(ctx: ActionContext) -> list[ChatMessage]:
 
 
 @action_handler("InvokeAzureAgent")
-async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:
+async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:
     """Invoke a hosted Azure AI agent.
 
     Supports both Python-style and .NET-style YAML schemas:
@@ -523,7 +525,7 @@ def _normalize_variable_path(variable: str) -> str:
 
 
 @action_handler("InvokePromptAgent")
-async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:
+async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:
     """Invoke a local prompt-based agent (similar to InvokeAzureAgent but for local agents).
 
     Action schema:

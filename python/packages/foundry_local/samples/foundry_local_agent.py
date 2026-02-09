@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 # ruff: noqa
 
+from __future__ import annotations
+
 import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
@@ -31,7 +33,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def non_streaming_example(agent: "ChatAgent") -> None:
+async def non_streaming_example(agent: ChatAgent) -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
@@ -41,7 +43,7 @@ async def non_streaming_example(agent: "ChatAgent") -> None:
     print(f"Agent: {result}\n")
 
 
-async def streaming_example(agent: "ChatAgent") -> None:
+async def streaming_example(agent: ChatAgent) -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 

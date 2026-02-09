@@ -6,6 +6,8 @@ This module provides a clean abstraction layer for managing conversations
 while wrapping AgentFramework's AgentThread underneath.
 """
 
+from __future__ import annotations
+
 import time
 import uuid
 from abc import ABC, abstractmethod

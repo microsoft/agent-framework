@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
@@ -74,7 +76,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        middleware: Sequence["MiddlewareTypes"] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

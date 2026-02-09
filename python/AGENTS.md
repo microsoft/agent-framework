@@ -61,22 +61,9 @@ from agent_framework.azure import AzureOpenAIChatClient, AzureAIAgentClient
 - **Comments**: Avoid excessive comments; prefer clear code
 - **Formatting**: Format only files you changed, not the entire codebase
 
-## Sample Structure
+## Samples
 
-1. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-2. Required imports
-3. Module docstring: `"""This sample demonstrates..."""`
-4. Helper functions
-5. Main function(s) demonstrating functionality
-6. Entry point: `if __name__ == "__main__": asyncio.run(main())`
-
-When modifying samples, update associated README files in the same or parent folders.
-
-### Samples Syntax Checking
-
-Run `uv run poe samples-syntax` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
-
-Some samples depend on external packages (e.g., `azure.ai.agentserver.agentframework`, `microsoft_agents`) that are not installed in the dev environment. These are excluded in `pyrightconfig.samples.json`. When adding or modifying these excluded samples, add them to the exclude list and manually verify they have no import errors from `agent_framework` packages by temporarily removing them from the exclude list and running the check.
+See [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) for sample structure, external dependency handling (PEP 723), and syntax checking instructions.
 
 ## Package Documentation
 

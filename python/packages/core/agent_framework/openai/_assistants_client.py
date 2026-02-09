@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import (
@@ -227,7 +229,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        middleware: Sequence["MiddlewareTypes"] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -325,7 +327,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         self.thread_id: str | None = thread_id
         self._should_delete_assistant: bool = False
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 

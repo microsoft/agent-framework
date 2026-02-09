@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pandas",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/getting_started/evaluation/self_reflection/self_reflection.py
+
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore
 import argparse

@@ -6,6 +6,8 @@ Most orchestration helpers have been moved inline to _run.py.
 This module retains utilities that may be useful for testing or extensions.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from typing import Any

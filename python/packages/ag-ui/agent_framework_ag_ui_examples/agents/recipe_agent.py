@@ -2,6 +2,8 @@
 
 """Recipe agent example demonstrating shared state management (Feature 3)."""
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Any
 
