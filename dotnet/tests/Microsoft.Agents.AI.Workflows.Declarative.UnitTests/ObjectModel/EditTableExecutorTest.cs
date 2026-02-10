@@ -28,7 +28,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 3}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -50,7 +49,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 1, name: \"First\"}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -80,7 +78,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Clear the table to make it empty but preserve schema
         await table.ClearAsync(CancellationToken.None);
         this.State.Set("MyTable", table);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -102,7 +99,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 3}, {id: 7}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -124,7 +120,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 1}, {id: 2}, {id: 3}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -149,7 +144,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 1}, {id: 2}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -172,7 +166,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Clear the table to make it empty but preserve schema
         await table.ClearAsync(CancellationToken.None);
         this.State.Set("MyTable", table);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -192,7 +185,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 10}, {id: 20}, {id: 30}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -217,7 +209,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Clear the table to make it empty but preserve schema
         await table.ClearAsync(CancellationToken.None);
         this.State.Set("MyTable", table);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -238,7 +229,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 10}, {id: 20}, {id: 30}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -263,7 +253,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Clear the table to make it empty but preserve schema
         await table.ClearAsync(CancellationToken.None);
         this.State.Set("MyTable", table);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -284,7 +273,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 100}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -306,7 +294,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 100}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -327,7 +314,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
     {
         // Arrange
         this.State.Set("NotATable", FormulaValue.New("This is a string, not a table"));
-        this.State.Bind();
 
         EditTable model = this.CreateModel(
             nameof(ErrorWhenVariableIsNotTableAsync),
@@ -351,7 +337,7 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 5}]");
         this.State.Set("MyTable", tableValue);
         this.State.Set("NewId", FormulaValue.New(10));
-        this.State.Bind();
+        this.State.Bind(); // Bind is needed here to make NewId available to the expression
 
         EditTable model = this.CreateModel(
             nameof(AddWithExpressionAsync),
@@ -377,7 +363,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         // Arrange - Initialize table using Power FX expression
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 1}, {id: 2}]");
         this.State.Set("MyTable", tableValue);
-        this.State.Bind();
 
         // Try to remove using a non-table value (should not throw, just not remove anything)
         EditTable model = this.CreateModel(
