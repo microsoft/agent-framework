@@ -50,7 +50,7 @@ class _RedisHistoryProvider(BaseHistoryProvider):
         store_responses: bool = True,
         store_inputs: bool = True,
         store_context_messages: bool = False,
-        store_context_from: Sequence[str] | None = None,
+        store_context_from: set[str] | None = None,
     ) -> None:
         """Initialize the Redis history provider.
 

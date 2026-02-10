@@ -86,7 +86,7 @@ class SessionContext:
             Maintains insertion order (provider execution order).
         instructions: Additional instructions added by providers.
         tools: Additional tools added by providers.
-        response: After invocation, contains the full AgentResponse (read-only property).
+        response: After invocation, contains the full AgentResponse, should not be changed.
         options: Options passed to agent.run() - read-only, for reflection only.
         metadata: Shared metadata dictionary for cross-provider communication.
     """
@@ -175,8 +175,8 @@ class SessionContext:
     def get_messages(
         self,
         *,
-        sources: Sequence[str] | None = None,
-        exclude_sources: Sequence[str] | None = None,
+        sources: set[str] | None = None,
+        exclude_sources: set[str] | None = None,
         include_input: bool = False,
         include_response: bool = False,
     ) -> list[ChatMessage]:
@@ -306,7 +306,7 @@ class BaseHistoryProvider(BaseContextProvider):
         store_responses: bool = True,
         store_inputs: bool = True,
         store_context_messages: bool = False,
-        store_context_from: Sequence[str] | None = None,
+        store_context_from: set[str] | None = None,
     ):
         """Initialize the history provider.
 
@@ -323,7 +323,7 @@ class BaseHistoryProvider(BaseContextProvider):
         self.store_responses = store_responses
         self.store_inputs = store_inputs
         self.store_context_messages = store_context_messages
-        self.store_context_from = list(store_context_from) if store_context_from else None
+        self.store_context_from = store_context_from
 
     @abstractmethod
     async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[ChatMessage]:
@@ -355,7 +355,7 @@ class BaseHistoryProvider(BaseContextProvider):
             return []
         if self.store_context_from is not None:
             return context.get_messages(sources=self.store_context_from)
-        return context.get_messages(exclude_sources=[self.source_id])
+        return context.get_messages(exclude_sources={self.source_id})
 
     async def before_run(
         self,

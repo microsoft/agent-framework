@@ -61,7 +61,9 @@ class TestSessionContext:
 
     def test_extend_messages_does_not_overwrite_existing_attribution(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="system", contents=["context"], additional_properties={"attribution": {"source_id": "custom"}})
+        msg = ChatMessage(
+            role="system", contents=["context"], additional_properties={"attribution": {"source_id": "custom"}}
+        )
         ctx.extend_messages("rag", [msg])
         assert msg.additional_properties["attribution"] == {"source_id": "custom"}
 
@@ -187,12 +189,12 @@ class TestHistoryProviderBase:
             load_messages=False,
             store_inputs=False,
             store_context_messages=True,
-            store_context_from=["rag"],
+            store_context_from={"rag"},
         )
         assert provider.load_messages is False
         assert provider.store_inputs is False
         assert provider.store_context_messages is True
-        assert provider.store_context_from == ["rag"]
+        assert provider.store_context_from == {"rag"}
 
     async def test_before_run_loads_messages(self) -> None:
         msgs = [ChatMessage(role="user", contents=["history"])]
@@ -255,7 +257,7 @@ class TestHistoryProviderBase:
         from agent_framework import AgentResponse
 
         provider = ConcreteHistoryProvider(
-            "audit", load_messages=False, store_context_messages=True, store_context_from=["rag"]
+            "audit", load_messages=False, store_context_messages=True, store_context_from={"rag"}
         )
         ctx = SessionContext(session_id="s1", input_messages=[])
         ctx.extend_messages("rag", [ChatMessage(role="system", contents=["rag-context"])])
