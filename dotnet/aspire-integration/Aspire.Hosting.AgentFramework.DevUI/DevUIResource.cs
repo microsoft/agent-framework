@@ -25,6 +25,7 @@ public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints
     /// <param name="port">An optional fixed port. If <c>null</c>, a dynamic port is assigned.</param>
     internal DevUIResource(string name, int? port) : this(name)
     {
+        this.Port = port;
         this.Annotations.Add(new EndpointAnnotation(
             ProtocolType.Tcp,
             uriScheme: "http",
@@ -35,6 +36,11 @@ public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints
             TargetHost = "localhost"
         });
     }
+
+    /// <summary>
+    /// Gets the optional fixed port for the DevUI web interface.
+    /// </summary>
+    internal int? Port { get; }
 
     /// <summary>
     /// Gets the primary HTTP endpoint for the DevUI web interface.
