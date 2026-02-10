@@ -118,7 +118,7 @@ def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) ->
 
 def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test initialization with an existing AIProjectClient."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from openai import AsyncOpenAI
 
@@ -145,7 +145,7 @@ def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) ->
 
 def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test initialization with a project endpoint and credential."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from openai import AsyncOpenAI
 
@@ -169,8 +169,6 @@ def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) 
 
 def test_create_client_from_project_with_project_client() -> None:
     """Test _create_client_from_project with an existing project client."""
-    from unittest.mock import MagicMock
-
     from openai import AsyncOpenAI
 
     mock_openai_client = MagicMock(spec=AsyncOpenAI)
@@ -192,7 +190,7 @@ def test_create_client_from_project_with_project_client() -> None:
 
 def test_create_client_from_project_with_endpoint() -> None:
     """Test _create_client_from_project with a project endpoint."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from openai import AsyncOpenAI
 
