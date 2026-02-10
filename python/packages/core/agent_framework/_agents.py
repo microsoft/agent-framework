@@ -908,6 +908,7 @@ class RawChatAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     usage_details=response.usage_details,
                     value=response.value,
                     response_format=response_format,
+                    continuation_token=response.continuation_token,
                     raw_representation=response,
                     additional_properties=response.additional_properties,
                 )

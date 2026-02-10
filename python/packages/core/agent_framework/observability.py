@@ -1139,8 +1139,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
-            span_cm = _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL)
-            span = span_cm.__enter__()
+            # Create span directly without trace.use_span() context attachment.
+            # Streaming spans are closed asynchronously in cleanup hooks, which run
+            # in a different async context than creation — using use_span() would
+            # cause "Failed to detach context" errors from OpenTelemetry.
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span_name = attributes.get(SpanAttributes.LLM_REQUEST_MODEL, "unknown")
+            span = get_tracer().start_span(f"{operation} {span_name}")
+            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1157,7 +1163,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 if span_state["closed"]:
                     return
                 span_state["closed"] = True
-                span_cm.__exit__(None, None, None)
+                span.end()
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
@@ -1326,8 +1332,14 @@ class AgentTelemetryLayer:
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
-            span_cm = _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME)
-            span = span_cm.__enter__()
+            # Create span directly without trace.use_span() context attachment.
+            # Streaming spans are closed asynchronously in cleanup hooks, which run
+            # in a different async context than creation — using use_span() would
+            # cause "Failed to detach context" errors from OpenTelemetry.
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
+            span = get_tracer().start_span(f"{operation} {span_name}")
+            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1344,7 +1356,7 @@ class AgentTelemetryLayer:
                 if span_state["closed"]:
                     return
                 span_state["closed"] = True
-                span_cm.__exit__(None, None, None)
+                span.end()
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
