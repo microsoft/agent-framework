@@ -20,6 +20,8 @@ from a2a.types import (
     FileWithUri,
     Message,
     Task,
+    TaskIdParams,
+    TaskQueryParams,
     TaskState,
     TextPart,
     TransportProtocol,
@@ -34,6 +36,7 @@ from agent_framework import (
     BaseAgent,
     ChatMessage,
     Content,
+    ContinuationToken,
     ResponseStream,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
@@ -48,6 +51,12 @@ TERMINAL_TASK_STATES = [
     TaskState.failed,
     TaskState.canceled,
     TaskState.rejected,
+]
+IN_PROGRESS_TASK_STATES = [
+    TaskState.submitted,
+    TaskState.working,
+    TaskState.input_required,
+    TaskState.auth_required,
 ]
 
 
@@ -193,6 +202,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
+        continuation_token: ContinuationToken | None = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -203,6 +214,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
+        continuation_token: ContinuationToken | None = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -212,13 +225,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
+        continuation_token: ContinuationToken | None = None,
+        background: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
-
-        This method returns the final result of the agent's execution
-        as a single AgentResponse object when stream=False. When stream=True,
-        it returns a ResponseStream that yields AgentResponseUpdate objects.
 
         Args:
             messages: The message(s) to send to the agent.
@@ -226,71 +237,50 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
+            continuation_token: Optional token to resume a long-running task
+                instead of starting a new one.
+            background: When True, in-progress task updates surface continuation
+                tokens so the caller can poll or resubscribe later. When False
+                (default), the agent internally waits for the task to complete.
             kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
+        if continuation_token is not None:
+            a2a_stream: AsyncIterable[Any] = self.client.resubscribe(TaskIdParams(id=continuation_token["task_id"]))
+        else:
+            normalized_messages = normalize_messages(messages)
+            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_stream = self.client.send_message(a2a_message)
+
+        response = ResponseStream(
+            self._map_a2a_stream(a2a_stream, background=background),
+            finalizer=lambda updates: AgentResponse.from_updates(list(updates)),
+        )
         if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
-        return self._run_impl(messages=messages, thread=thread, **kwargs)
+            return response
+        return response.get_final_response()
 
-    async def _run_impl(
+    async def _map_a2a_stream(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        a2a_stream: AsyncIterable[Any],
         *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse[Any]:
-        """Non-streaming implementation of run."""
-        # Collect all updates and use framework to consolidate updates into response
-        updates: list[AgentResponseUpdate] = []
-        async for update in self._stream_updates(messages, thread=thread, **kwargs):
-            updates.append(update)
-        return AgentResponse.from_updates(updates)
-
-    def _run_stream_impl(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-        """Streaming implementation of run."""
-
-        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
-            return AgentResponse.from_updates(list(updates))
-
-        return ResponseStream(self._stream_updates(messages, thread=thread, **kwargs), finalizer=_finalize)
-
-    async def _stream_updates(
-        self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
+        background: bool = False,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Internal method to stream updates from the A2A agent.
+        """Map raw A2A protocol items to AgentResponseUpdates.
 
         Args:
-            messages: The message(s) to send to the agent.
+            a2a_stream: The raw A2A event stream.
 
         Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            AgentResponseUpdate items from the A2A agent.
+            background: When False, in-progress task updates are silently
+                consumed (the stream keeps iterating until a terminal state).
+                When True, they are yielded with a continuation token.
         """
-        normalized_messages = normalize_messages(messages)
-        a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
-
-        response_stream = self.client.send_message(a2a_message)
-
-        async for item in response_stream:
+        async for item in a2a_stream:
             if isinstance(item, Message):
-                # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentResponseUpdate(
                     contents=contents,
@@ -300,32 +290,81 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 )
             elif isinstance(item, tuple) and len(item) == 2:  # ClientEvent = (Task, UpdateEvent)
                 task, _update_event = item
-                if isinstance(task, Task) and task.status.state in TERMINAL_TASK_STATES:
-                    # Convert Task artifacts to ChatMessages and yield as separate updates
-                    task_messages = self._parse_messages_from_task(task)
-                    if task_messages:
-                        for message in task_messages:
-                            # Use the artifact's ID from raw_representation as message_id for unique identification
-                            artifact_id = getattr(message.raw_representation, "artifact_id", None)
-                            yield AgentResponseUpdate(
-                                contents=message.contents,
-                                role=message.role,
-                                response_id=task.id,
-                                message_id=artifact_id,
-                                raw_representation=task,
-                            )
-                    else:
-                        # Empty task
-                        yield AgentResponseUpdate(
-                            contents=[],
-                            role="assistant",
-                            response_id=task.id,
-                            raw_representation=task,
-                        )
+                if isinstance(task, Task):
+                    for update in self._updates_from_task(task, background=background):
+                        yield update
             else:
-                # Unknown response type
                 msg = f"Only Message and Task responses are supported from A2A agents. Received: {type(item)}"
                 raise NotImplementedError(msg)
+
+    # ------------------------------------------------------------------
+    # Task helpers
+    # ------------------------------------------------------------------
+
+    def _updates_from_task(self, task: Task, *, background: bool = False) -> list[AgentResponseUpdate]:
+        """Convert an A2A Task into AgentResponseUpdate(s).
+
+        Terminal tasks produce updates from their artifacts/history.
+        In-progress tasks produce a continuation token update only when
+        ``background=True``; otherwise they are silently skipped so the
+        caller keeps consuming the stream until completion.
+        """
+        if task.status.state in TERMINAL_TASK_STATES:
+            task_messages = self._parse_messages_from_task(task)
+            if task_messages:
+                return [
+                    AgentResponseUpdate(
+                        contents=message.contents,
+                        role=message.role,
+                        response_id=task.id,
+                        message_id=getattr(message.raw_representation, "artifact_id", None),
+                        raw_representation=task,
+                    )
+                    for message in task_messages
+                ]
+            return [AgentResponseUpdate(contents=[], role="assistant", response_id=task.id, raw_representation=task)]
+
+        if background and task.status.state in IN_PROGRESS_TASK_STATES:
+            token = self._build_continuation_token(task)
+            return [
+                AgentResponseUpdate(
+                    contents=[],
+                    role="assistant",
+                    response_id=task.id,
+                    continuation_token=token,
+                    raw_representation=task,
+                )
+            ]
+
+        return []
+
+    @staticmethod
+    def _build_continuation_token(task: Task) -> ContinuationToken | None:
+        """Build a ContinuationToken from an A2A Task if it is still in progress."""
+        if task.status.state in IN_PROGRESS_TASK_STATES:
+            return ContinuationToken(task_id=task.id, context_id=task.context_id)
+        return None
+
+    async def poll_task(self, continuation_token: ContinuationToken) -> AgentResponse[Any]:
+        """Poll for the current state of a long-running A2A task.
+
+        Unlike ``run(continuation_token=...)``, which resubscribes to the SSE
+        stream, this performs a single request to retrieve the task state.
+
+        Args:
+            continuation_token: A token previously obtained from a response's
+                ``continuation_token`` field.
+
+        Returns:
+            An AgentResponse whose ``continuation_token`` is set when the task
+            is still in progress, or ``None`` when it has reached a terminal state.
+        """
+        task_id = continuation_token["task_id"]
+        task = await self.client.get_task(TaskQueryParams(id=task_id))
+        updates = self._updates_from_task(task, background=True)
+        if updates:
+            return AgentResponse.from_updates(updates)
+        return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
     def _prepare_message_for_a2a(self, message: ChatMessage) -> A2AMessage:
         """Prepare a ChatMessage for the A2A protocol.

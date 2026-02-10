@@ -2441,8 +2441,6 @@ async def test_integration_streaming_file_search() -> None:
 
 def test_continuation_token_json_serializable() -> None:
     """Test that ContinuationToken is a plain dict and JSON-serializable."""
-    import json
-
     from agent_framework import ContinuationToken
 
     token = ContinuationToken(response_id="resp_abc123")
