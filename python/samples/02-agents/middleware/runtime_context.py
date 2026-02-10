@@ -57,7 +57,7 @@ class SessionContextContainer:
     async def inject_context_middleware(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
     ) -> None:
         """Middleware that extracts runtime context from kwargs and stores in container.
 
@@ -77,7 +77,7 @@ class SessionContextContainer:
             print(f"  - Session Metadata Keys: {list(self.session_metadata.keys())}")
 
         # Continue to tool execution
-        await next(context)
+        await call_call_next(context)
 # </session_context_container>
 
 
@@ -289,19 +289,19 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
 
     @function_middleware
     async def email_kwargs_tracker(
-        context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
     ) -> None:
         email_agent_kwargs.update(context.kwargs)
         print(f"[EmailAgent] Received runtime context: {list(context.kwargs.keys())}")
-        await next(context)
+        await call_call_next(context)
 
     @function_middleware
     async def sms_kwargs_tracker(
-        context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
     ) -> None:
         sms_agent_kwargs.update(context.kwargs)
         print(f"[SMSAgent] Received runtime context: {list(context.kwargs.keys())}")
-        await next(context)
+        await call_call_next(context)
 
     client = OpenAIChatClient(model_id="gpt-4o-mini")
 
@@ -372,7 +372,7 @@ class AuthContextMiddleware:
         self.validated_tokens: list[str] = []
 
     async def validate_and_track(
-        self, context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+        self, context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
     ) -> None:
         """Validate API token and track usage."""
         api_token = context.kwargs.get("api_token")
@@ -388,7 +388,7 @@ class AuthContextMiddleware:
         else:
             print("[AuthMiddleware] No API token provided")
 
-        await next(context)
+        await call_call_next(context)
 
 
 @tool(approval_mode="never_require")

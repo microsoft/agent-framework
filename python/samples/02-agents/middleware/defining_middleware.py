@@ -74,7 +74,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
@@ -91,7 +91,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 return
 
         print("[SecurityAgentMiddleware] Security check passed.")
-        await next(context)
+        await call_call_next(context)
 
 
 class LoggingFunctionMiddleware(FunctionMiddleware):
@@ -100,14 +100,14 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
     ) -> None:
         function_name = context.function.name
         print(f"[LoggingFunctionMiddleware] About to call function: {function_name}.")
 
         start_time = time.time()
 
-        await next(context)
+        await call_call_next(context)
 
         end_time = time.time()
         duration = end_time - start_time
@@ -123,7 +123,7 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
 # <function_based>
 async def security_agent_middleware(
     context: AgentContext,
-    next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query
@@ -137,12 +137,12 @@ async def security_agent_middleware(
             return
 
     print("[SecurityAgentMiddleware] Security check passed.")
-    await next(context)
+    await call_call_next(context)
 
 
 async def logging_function_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
 ) -> None:
     """Function middleware that logs function calls."""
     function_name = context.function.name
@@ -150,7 +150,7 @@ async def logging_function_middleware(
 
     start_time = time.time()
 
-    await next(context)
+    await call_call_next(context)
 
     end_time = time.time()
     duration = end_time - start_time
@@ -168,7 +168,7 @@ async def logging_function_middleware(
 async def simple_agent_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Agent middleware that runs before and after agent execution."""
     print("[Agent MiddlewareTypes] Before agent execution")
-    await next(context)
+    await call_call_next(context)
     print("[Agent MiddlewareTypes] After agent execution")
 
 
@@ -176,7 +176,7 @@ async def simple_agent_middleware(context, next):  # type: ignore - parameters i
 async def simple_function_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Function middleware that runs before and after function calls."""
     print(f"[Function MiddlewareTypes] Before calling: {context.function.name}")  # type: ignore
-    await next(context)
+    await call_call_next(context)
     print(f"[Function MiddlewareTypes] After calling: {context.function.name}")  # type: ignore
 # </decorator_based>
 
