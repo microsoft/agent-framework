@@ -7,13 +7,13 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
     Case,
-    ChatAgent,  # Case entry for a switch-case edge group
-    ChatMessage,
     Default,  # Default branch when no cases match
+    Message,
     WorkflowBuilder,  # Fluent builder for assembling the graph
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
@@ -99,7 +99,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -120,7 +120,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content from workflow state using the id carried in DetectionResult.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -152,7 +152,7 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
         raise RuntimeError("This executor should only handle Uncertain messages.")
 
 
-def create_spam_detection_agent() -> ChatAgent:
+def create_spam_detection_agent() -> Agent:
     """Create and return the spam detection agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -166,7 +166,7 @@ def create_spam_detection_agent() -> ChatAgent:
     )
 
 
-def create_email_assistant_agent() -> ChatAgent:
+def create_email_assistant_agent() -> Agent:
     """Create and return the email assistant agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),

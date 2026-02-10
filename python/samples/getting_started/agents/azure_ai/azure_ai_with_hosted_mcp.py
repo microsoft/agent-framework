@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentResponse, AgentThread, ChatMessage, HostedMCPTool, SupportsAgentRun
+from agent_framework import AgentResponse, AgentThread, HostedMCPTool, Message, SupportsAgentRun
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -25,10 +25,10 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
             )
-            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
+            new_inputs.append(Message("assistant", [user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                Message("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         result = await agent.run(new_inputs, store=False)
@@ -48,7 +48,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
             )
             user_approval = input("Approve function call? (y/n): ")
             new_input.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )

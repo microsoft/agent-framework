@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    ChatAgent,
+    Agent,
     ContextProvider,
     FunctionTool,
     MiddlewareTypes,
@@ -18,15 +18,13 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.aio import AgentsClient
-from azure.ai.agents.models import Agent, ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
+from azure.ai.agents.models import Agent as AzureAgent
+from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel, ValidationError
 
-from ._chat_client import AzureAIAgentClient
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
 from ._shared import AzureAISettings, from_azure_ai_agent_tools, to_azure_ai_agent_tools
-
-if TYPE_CHECKING:
-    from ._chat_client import AzureAIAgentOptions
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
@@ -38,7 +36,7 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
-# Type variable for options - allows typed ChatAgent[OptionsCoT] returns
+# Type variable for options - allows typed Agent[TOptions] returns
 # Default matches AzureAIAgentClient's default options type
 OptionsCoT = TypeVar(
     "OptionsCoT",
@@ -51,7 +49,7 @@ OptionsCoT = TypeVar(
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
 
-    This provider enables creating, retrieving, and wrapping Azure AI agents as ChatAgent
+    This provider enables creating, retrieving, and wrapping Azure AI agents as Agent
     instances. It manages the underlying AgentsClient lifecycle and provides a high-level
     interface for agent operations.
 
@@ -179,11 +177,11 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Create a new agent on the Azure AI service and return a ChatAgent.
+    ) -> Agent[OptionsCoT]:
+        """Create a new agent on the Azure AI service and return a Agent.
 
         This method creates a persistent agent on the Azure AI service with the specified
-        configuration and returns a local ChatAgent instance for interaction.
+        configuration and returns a local Agent instance for interaction.
 
         Args:
             name: The name for the agent.
@@ -200,7 +198,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_provider: Context provider to include during agent invocation.
 
         Returns:
-            ChatAgent: A ChatAgent instance configured with the created agent.
+            Agent: A Agent instance configured with the created agent.
 
         Raises:
             ServiceInitializationError: If model deployment name is not available.
@@ -240,7 +238,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             args["response_format"] = self._create_response_format_config(response_format)
 
         # Normalize and convert tools
-        # Local MCP tools (MCPTool) are handled by ChatAgent at runtime, not stored on the Azure agent
+        # Local MCP tools (MCPTool) are handled by Agent at runtime, not stored on the Azure agent
         normalized_tools = normalize_tools(tools)
         if normalized_tools:
             # Only convert non-MCP tools to Azure AI format
@@ -255,7 +253,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Create the agent on the service
         created_agent = await self._agents_client.create_agent(**args)
 
-        # Create ChatAgent wrapper
+        # Create Agent wrapper
         return self._to_chat_agent_from_agent(
             created_agent,
             normalized_tools,
@@ -276,11 +274,11 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Retrieve an existing agent from the service and return a ChatAgent.
+    ) -> Agent[OptionsCoT]:
+        """Retrieve an existing agent from the service and return a Agent.
 
         This method fetches an agent by ID from the Azure AI service
-        and returns a local ChatAgent instance for interaction.
+        and returns a local Agent instance for interaction.
 
         Args:
             id: The ID of the agent to retrieve from the service.
@@ -294,7 +292,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_provider: Context provider to include during agent invocation.
 
         Returns:
-            ChatAgent: A ChatAgent instance configured with the retrieved agent.
+            Agent: A Agent instance configured with the retrieved agent.
 
         Raises:
             ServiceInitializationError: If required function tools are not provided.
@@ -323,7 +321,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
 
     def as_agent(
         self,
-        agent: Agent,
+        agent: AzureAgent,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -332,8 +330,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Wrap an existing Agent SDK object as a ChatAgent without making HTTP calls.
+    ) -> Agent[OptionsCoT]:
+        """Wrap an existing Agent SDK object as a Agent without making HTTP calls.
 
         Use this method when you already have an Agent object from a previous
         SDK operation and want to use it with the Agent Framework.
@@ -348,7 +346,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_provider: Context provider to include during agent invocation.
 
         Returns:
-            ChatAgent: A ChatAgent instance configured with the agent.
+            Agent: A Agent instance configured with the agent.
 
         Raises:
             ServiceInitializationError: If required function tools are not provided.
@@ -363,7 +361,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
                     instructions="...",
                 )
 
-                # Wrap as ChatAgent
+                # Wrap as Agent
                 chat_agent = provider.as_agent(sdk_agent)
         """
         # Validate function tools
@@ -380,13 +378,13 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
 
     def _to_chat_agent_from_agent(
         self,
-        agent: Agent,
+        agent: AzureAgent,
         provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Create a ChatAgent from an Agent SDK object.
+    ) -> Agent[OptionsCoT]:
+        """Create a Agent from an Agent SDK object.
 
         Args:
             agent: The Agent SDK object.
@@ -408,8 +406,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Merge tools: convert agent's hosted tools + user-provided function tools
         merged_tools = self._merge_tools(agent.tools, provided_tools)
 
-        return ChatAgent(  # type: ignore[return-value]
-            chat_client=client,
+        return Agent(  # type: ignore[return-value]
+            client=client,
             id=agent.id,
             name=agent.name,
             description=agent.description,
@@ -433,7 +431,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             provided_tools: User-provided tools (Agent Framework format).
 
         Returns:
-            Combined list of tools for the ChatAgent.
+            Combined list of tools for the Agent.
         """
         merged: list[ToolProtocol | dict[str, Any]] = []
 
@@ -452,7 +450,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         if provided_tools:
             for provided_tool in provided_tools:
                 # FunctionTool - has implementation for function calling
-                # MCPTool - ChatAgent handles MCP connection and tool discovery at runtime
+                # MCPTool - Agent handles MCP connection and tool discovery at runtime
                 if isinstance(provided_tool, (FunctionTool, MCPTool)):
                     merged.append(provided_tool)  # type: ignore[reportUnknownArgumentType]
 

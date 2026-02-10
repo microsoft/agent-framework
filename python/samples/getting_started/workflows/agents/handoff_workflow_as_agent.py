@@ -4,10 +4,10 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentResponse,
-    ChatAgent,
-    ChatMessage,
     Content,
+    Message,
     WorkflowAgent,
     tool,
 )
@@ -57,17 +57,17 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        chat_client: The AzureOpenAIChatClient to use for creating agents.
+        client: The AzureOpenAIChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = chat_client.as_agent(
+    triage_agent = client.as_agent(
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -76,7 +76,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = chat_client.as_agent(
+    refund_agent = client.as_agent(
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -84,7 +84,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = chat_client.as_agent(
+    order_agent = client.as_agent(
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -92,7 +92,7 @@ def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAg
     )
 
     # Return specialist: Handles return requests
-    return_agent = chat_client.as_agent(
+    return_agent = client.as_agent(
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -147,10 +147,10 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI chat client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create all agents: triage + specialists
-    triage, refund, order, support = create_agents(chat_client)
+    triage, refund, order, support = create_agents(client)
 
     # Build the handoff workflow
     # - participants: All agents that can participate in the workflow
@@ -213,7 +213,7 @@ async def main() -> None:
         function_results = [
             Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
         ]
-        response = await agent.run(ChatMessage("tool", function_results))
+        response = await agent.run(Message("tool", function_results))
         pending_requests = handle_response_and_requests(response)
 
 

@@ -5,8 +5,8 @@ from collections.abc import AsyncIterable
 from typing import Annotated, cast
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
     WorkflowEvent,
     tool,
 )
@@ -78,7 +78,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
             # The output of the workflow comes from the orchestrator and it's a list of messages
             print("\n" + "=" * 60)
             print("Workflow summary:")
-            outputs = cast(list[ChatMessage], event.data)
+            outputs = cast(list[Message], event.data)
             for msg in outputs:
                 speaker = msg.author_name or msg.role
                 print(f"[{speaker}]: {msg.text}")
@@ -99,8 +99,8 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
-    chat_client = OpenAIChatClient()
-    database_agent = chat_client.as_agent(
+    client = OpenAIChatClient()
+    database_agent = client.as_agent(
         name="DatabaseAgent",
         instructions=(
             "You are a database assistant. You can view the database schema and execute "

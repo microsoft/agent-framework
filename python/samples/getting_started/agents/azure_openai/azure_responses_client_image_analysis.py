@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -24,7 +24,7 @@ async def main():
     )
 
     # 2. Create a simple message with both text and image content
-    user_message = ChatMessage(
+    user_message = Message(
         role="user",
         contents=[
             Content.from_text(text="What do you see in this image?"),

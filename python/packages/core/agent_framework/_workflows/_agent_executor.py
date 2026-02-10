@@ -11,7 +11,7 @@ from agent_framework import Content
 
 from .._agents import SupportsAgentRun
 from .._threads import AgentThread
-from .._types import AgentResponse, AgentResponseUpdate, ChatMessage
+from .._types import AgentResponse, AgentResponseUpdate, Message
 from ._agent_utils import resolve_agent_id
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
@@ -40,7 +40,7 @@ class AgentExecutorRequest:
             If False, the messages will be saved to the executor's cache but not sent to the agent.
     """
 
-    messages: list[ChatMessage]
+    messages: list[Message]
     should_respond: bool = True
 
 
@@ -58,7 +58,7 @@ class AgentExecutorResponse:
 
     executor_id: str
     agent_response: AgentResponse
-    full_conversation: list[ChatMessage] | None = None
+    full_conversation: list[Message] | None = None
 
 
 class AgentExecutor(Executor):
@@ -104,9 +104,9 @@ class AgentExecutor(Executor):
         self._pending_responses_to_agent: list[Content] = []
 
         # AgentExecutor maintains an internal cache of messages in between runs
-        self._cache: list[ChatMessage] = []
+        self._cache: list[Message] = []
         # This tracks the full conversation after each run
-        self._full_conversation: list[ChatMessage] = []
+        self._full_conversation: list[Message] = []
 
     @property
     def description(self) -> str | None:
@@ -157,20 +157,20 @@ class AgentExecutor(Executor):
     @handler
     async def from_message(
         self,
-        message: ChatMessage,
+        message: Message,
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
-        """Accept a single ChatMessage as input."""
+        """Accept a single Message as input."""
         self._cache = normalize_messages_input(message)
         await self._run_agent_and_emit(ctx)
 
     @handler
     async def from_messages(
         self,
-        messages: list[str | ChatMessage],
+        messages: list[str | Message],
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
-        """Accept a list of chat inputs (strings or ChatMessage) as conversation context."""
+        """Accept a list of chat inputs (strings or Message) as conversation context."""
         self._cache = normalize_messages_input(messages)
         await self._run_agent_and_emit(ctx)
 
@@ -198,7 +198,7 @@ class AgentExecutor(Executor):
             # Use role="tool" for function_result responses (from declaration-only tools)
             # so the LLM receives proper tool results instead of orphaned tool_calls.
             role = "tool" if all(r.type == "function_result" for r in self._pending_responses_to_agent) else "user"
-            self._cache = normalize_messages_input(ChatMessage(role=role, contents=self._pending_responses_to_agent))
+            self._cache = normalize_messages_input(Message(role=role, contents=self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 
@@ -216,8 +216,8 @@ class AgentExecutor(Executor):
         """
         # Check if using AzureAIAgentClient with server-side thread and warn about checkpointing limitations
         if is_chat_agent(self._agent) and self._agent_thread.service_thread_id is not None:
-            client_class_name = self._agent.chat_client.__class__.__name__
-            client_module = self._agent.chat_client.__class__.__module__
+            client_class_name = self._agent.client.__class__.__name__
+            client_module = self._agent.client.__class__.__module__
 
             if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
                 logger.warning(

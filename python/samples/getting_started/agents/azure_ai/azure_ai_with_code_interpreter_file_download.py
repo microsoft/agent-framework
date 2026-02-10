@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
     Annotation,
-    ChatAgent,
     Content,
     HostedCodeInterpreterTool,
 )
@@ -33,7 +33,7 @@ QUERY = (
 )
 
 
-async def download_container_files(file_contents: list[Annotation | Content], agent: ChatAgent) -> list[Path]:
+async def download_container_files(file_contents: list[Annotation | Content], agent: Agent) -> list[Path]:
     """Download container files using the OpenAI containers API.
 
     Code interpreter generates files in containers, which require both file_id
@@ -45,7 +45,7 @@ async def download_container_files(file_contents: list[Annotation | Content], ag
     Args:
         file_contents: List of Annotation or Content objects
                       containing file_id and container_id.
-        agent: The ChatAgent instance with access to the AzureAIClient.
+        agent: The Agent instance with access to the AzureAIClient.
 
     Returns:
         List of Path objects for successfully downloaded files.
@@ -61,7 +61,7 @@ async def download_container_files(file_contents: list[Annotation | Content], ag
     print(f"\nDownloading {len(file_contents)} container file(s) to {output_dir.absolute()}...")
 
     # Access the OpenAI client from AzureAIClient
-    openai_client = agent.chat_client.client  # type: ignore[attr-defined]
+    openai_client = agent.client.client  # type: ignore[attr-defined]
 
     downloaded_files: list[Path] = []
 
@@ -139,7 +139,7 @@ async def non_streaming_example() -> None:
 
         # Check for annotations in the response
         annotations_found: list[Annotation] = []
-        # AgentResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains Message objects
         for message in result.messages:
             for content in message.contents:
                 if content.type == "text" and content.annotations:

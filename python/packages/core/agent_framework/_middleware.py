@@ -10,13 +10,13 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, overload
 
-from ._clients import ChatClientProtocol
+from ._clients import SupportsChatGetResponse
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
     prepare_messages,
 )
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
     from ._threads import AgentThread
     from ._tools import FunctionTool
     from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
@@ -155,7 +155,7 @@ class AgentContext:
         self,
         *,
         agent: SupportsAgentRun,
-        messages: list[ChatMessage],
+        messages: list[Message],
         thread: AgentThread | None = None,
         options: Mapping[str, Any] | None = None,
         stream: bool = False,
@@ -263,7 +263,7 @@ class ChatContext:
     about the chat request.
 
     Attributes:
-        chat_client: The chat client being invoked.
+        client: The chat client being invoked.
         messages: The messages being sent to the chat client.
         options: The options for the chat request as a dict.
         stream: Whether this is a streaming invocation.
@@ -302,8 +302,8 @@ class ChatContext:
 
     def __init__(
         self,
-        chat_client: ChatClientProtocol,
-        messages: Sequence[ChatMessage],
+        client: SupportsChatGetResponse,
+        messages: Sequence[Message],
         options: Mapping[str, Any] | None,
         stream: bool = False,
         metadata: Mapping[str, Any] | None = None,
@@ -319,7 +319,7 @@ class ChatContext:
         """Initialize the ChatContext.
 
         Args:
-            chat_client: The chat client being invoked.
+            client: The chat client being invoked.
             messages: The messages being sent to the chat client.
             options: The options for the chat request as a dict.
             stream: Whether this is a streaming invocation.
@@ -330,7 +330,7 @@ class ChatContext:
             stream_result_hooks: Result hooks to apply to the finalized streaming response.
             stream_cleanup_hooks: Cleanup hooks to run after streaming completes.
         """
-        self.chat_client = chat_client
+        self.client = client
         self.messages = messages
         self.options = options
         self.stream = stream
@@ -356,7 +356,7 @@ class AgentMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentMiddleware, AgentContext, ChatAgent
+            from agent_framework import AgentMiddleware, AgentContext, Agent
 
 
             class RetryMiddleware(AgentMiddleware):
@@ -372,7 +372,7 @@ class AgentMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=[RetryMiddleware()])
+            agent = Agent(client=client, name="assistant", middleware=[RetryMiddleware()])
     """
 
     @abstractmethod
@@ -415,7 +415,7 @@ class FunctionMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import FunctionMiddleware, FunctionInvocationContext, ChatAgent
+            from agent_framework import FunctionMiddleware, FunctionInvocationContext, Agent
 
 
             class CachingMiddleware(FunctionMiddleware):
@@ -439,7 +439,7 @@ class FunctionMiddleware(ABC):
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=[CachingMiddleware()])
+            agent = Agent(client=client, name="assistant", middleware=[CachingMiddleware()])
     """
 
     @abstractmethod
@@ -479,7 +479,7 @@ class ChatMiddleware(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMiddleware, ChatContext, ChatAgent
+            from agent_framework import ChatMiddleware, ChatContext, Agent
 
 
             class SystemPromptMiddleware(ChatMiddleware):
@@ -488,17 +488,17 @@ class ChatMiddleware(ABC):
 
                 async def process(self, context: ChatContext, call_next):
                     # Add system prompt to messages
-                    from agent_framework import ChatMessage
+                    from agent_framework import Message
 
-                    context.messages.insert(0, ChatMessage(role="system", text=self.system_prompt))
+                    context.messages.insert(0, Message(role="system", text=self.system_prompt))
 
                     # Continue execution
                     await call_next()
 
 
             # Use with an agent
-            agent = ChatAgent(
-                chat_client=client,
+            agent = Agent(
+                client=client,
                 name="assistant",
                 middleware=[SystemPromptMiddleware("You are a helpful assistant.")],
             )
@@ -570,7 +570,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     Examples:
         .. code-block:: python
 
-            from agent_framework import agent_middleware, AgentContext, ChatAgent
+            from agent_framework import agent_middleware, AgentContext, Agent
 
 
             @agent_middleware
@@ -581,7 +581,7 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as agent middleware
     func._middleware_type: MiddlewareType = MiddlewareType.AGENT  # type: ignore
@@ -603,7 +603,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
     Examples:
         .. code-block:: python
 
-            from agent_framework import function_middleware, FunctionInvocationContext, ChatAgent
+            from agent_framework import function_middleware, FunctionInvocationContext, Agent
 
 
             @function_middleware
@@ -614,7 +614,7 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as function middleware
     func._middleware_type: MiddlewareType = MiddlewareType.FUNCTION  # type: ignore
@@ -636,7 +636,7 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     Examples:
         .. code-block:: python
 
-            from agent_framework import chat_middleware, ChatContext, ChatAgent
+            from agent_framework import chat_middleware, ChatContext, Agent
 
 
             @chat_middleware
@@ -647,7 +647,7 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
 
 
             # Use with an agent
-            agent = ChatAgent(chat_client=client, name="assistant", middleware=[logging_middleware])
+            agent = Agent(client=client, name="assistant", middleware=[logging_middleware])
     """
     # Add marker attribute to identify this as chat middleware
     func._middleware_type: MiddlewareType = MiddlewareType.CHAT  # type: ignore
@@ -978,7 +978,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -988,7 +988,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -998,7 +998,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1007,7 +1007,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1033,7 +1033,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             )
 
         context = ChatContext(
-            chat_client=self,  # type: ignore[arg-type]
+            client=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),
             options=options,
             stream=stream,
@@ -1088,14 +1088,14 @@ class AgentMiddlewareLayer:
         self.agent_middleware = middleware_list["agent"]
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
         super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
-        # Note: We intentionally don't extend chat_client's middleware lists here.
+        # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
 
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -1107,7 +1107,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -1119,7 +1119,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -1130,7 +1130,7 @@ class AgentMiddlewareLayer:
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,

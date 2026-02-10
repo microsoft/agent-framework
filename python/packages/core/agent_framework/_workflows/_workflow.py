@@ -841,14 +841,14 @@ class Workflow(DictConvertible):
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
-        The returned agent converts standard agent inputs (strings, ChatMessage, or lists of these)
-        into a list[ChatMessage] that is passed to the workflow's start executor. This conversion
+        The returned agent converts standard agent inputs (strings, Message, or lists of these)
+        into a list[Message] that is passed to the workflow's start executor. This conversion
         happens in WorkflowAgent._normalize_messages() which transforms:
-        - str -> [ChatMessage(USER, [str])]
-        - ChatMessage -> [ChatMessage]
-        - list[str | ChatMessage] -> list[ChatMessage] (with string elements converted)
+        - str -> [Message(USER, [str])]
+        - Message -> [Message]
+        - list[str | Message] -> list[Message] (with string elements converted)
 
-        The workflow's start executor must accept list[ChatMessage] as an input type, otherwise
+        The workflow's start executor must accept list[Message] as an input type, otherwise
         initialization will fail with a ValueError.
 
         Args:
@@ -858,7 +858,7 @@ class Workflow(DictConvertible):
             A WorkflowAgent instance that wraps this workflow.
 
         Raises:
-            ValueError: If the workflow's start executor cannot handle list[ChatMessage] input.
+            ValueError: If the workflow's start executor cannot handle list[Message] input.
         """
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent

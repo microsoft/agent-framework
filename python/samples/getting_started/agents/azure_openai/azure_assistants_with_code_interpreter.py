@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import Agent, AgentResponseUpdate, ChatResponseUpdate, HostedCodeInterpreterTool
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from openai.types.beta.threads.runs import (
@@ -46,8 +46,8 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     ) as agent:

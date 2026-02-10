@@ -13,7 +13,7 @@ import sys
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
@@ -131,7 +131,7 @@ class _Mem0ContextProvider(BaseContextProvider):
         if line_separated_memories:
             context.extend_messages(
                 self.source_id,
-                [ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
             )
 
     async def after_run(
@@ -145,7 +145,7 @@ class _Mem0ContextProvider(BaseContextProvider):
         """Store request/response messages to Mem0 for future retrieval."""
         self._validate_filters()
 
-        messages_to_store: list[ChatMessage] = list(context.input_messages)
+        messages_to_store: list[Message] = list(context.input_messages)
         if context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
 

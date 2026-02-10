@@ -8,12 +8,12 @@ from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    Message,
     ResponseStream,
     Role,
 )
@@ -61,7 +61,7 @@ class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -82,7 +82,7 @@ class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
+        response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
 
         response = ChatResponse(
             messages=[response_message],
@@ -124,7 +124,7 @@ class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
 
 
 async def main() -> None:
-    """Demonstrates how to implement and use a custom chat client with ChatAgent."""
+    """Demonstrates how to implement and use a custom chat client with Agent."""
     print("=== Custom Chat Client Example ===\n")
 
     # Create the custom chat client

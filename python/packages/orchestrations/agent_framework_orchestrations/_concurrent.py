@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from agent_framework import ChatMessage, SupportsAgentRun
+from agent_framework import Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -56,14 +56,14 @@ class _DispatchToAllParticipants(Executor):
         await ctx.send_message(request)
 
     @handler
-    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+    async def from_message(self, message: Message, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         request = AgentExecutorRequest(messages=normalize_messages_input(message), should_respond=True)
         await ctx.send_message(request)
 
     @handler
     async def from_messages(
         self,
-        messages: list[str | ChatMessage],
+        messages: list[str | Message],
         ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
         request = AgentExecutorRequest(messages=normalize_messages_input(messages), should_respond=True)
@@ -73,7 +73,7 @@ class _DispatchToAllParticipants(Executor):
 class _AggregateAgentConversations(Executor):
     """Aggregates agent responses and completes with combined ChatMessages.
 
-    Emits a list[ChatMessage] shaped as:
+    Emits a list[Message] shaped as:
       [ single_user_prompt?, agent1_final_assistant, agent2_final_assistant, ... ]
 
     - Extracts a single user prompt (first user message seen across results).
@@ -82,9 +82,7 @@ class _AggregateAgentConversations(Executor):
     """
 
     @handler
-    async def aggregate(
-        self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, list[ChatMessage]]
-    ) -> None:
+    async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, list[Message]]) -> None:
         if not results:
             logger.error("Concurrent aggregator received empty results list")
             raise ValueError("Aggregation failed: no results provided")
@@ -98,8 +96,8 @@ class _AggregateAgentConversations(Executor):
             role_str = str(role).lower()
             return r_str == role_str
 
-        prompt_message: ChatMessage | None = None
-        assistant_replies: list[ChatMessage] = []
+        prompt_message: Message | None = None
+        assistant_replies: list[Message] = []
 
         for r in results:
             resp_messages = list(getattr(r.agent_response, "messages", []) or [])
@@ -132,7 +130,7 @@ class _AggregateAgentConversations(Executor):
             logger.error(f"Aggregation failed: no assistant replies found across {len(results)} results")
             raise RuntimeError("Aggregation failed: no assistant replies found")
 
-        output: list[ChatMessage] = []
+        output: list[Message] = []
         if prompt_message is not None:
             output.append(prompt_message)
         else:
@@ -195,7 +193,7 @@ class ConcurrentBuilder:
 
         from agent_framework_orchestrations import ConcurrentBuilder
 
-        # Minimal: use default aggregator (returns list[ChatMessage])
+        # Minimal: use default aggregator (returns list[Message])
         workflow = ConcurrentBuilder(participants=[agent1, agent2, agent3]).build()
 
 
@@ -388,7 +386,7 @@ class ConcurrentBuilder:
         - If request info is enabled, the orchestration emits a request info event with outputs from all participants
             before sending the outputs to the aggregator
         - Aggregator yields output and the workflow becomes idle. The output is either:
-          - list[ChatMessage] (default aggregator: one user + one assistant per agent)
+          - list[Message] (default aggregator: one user + one assistant per agent)
           - custom payload from the provided aggregator
 
         Returns:

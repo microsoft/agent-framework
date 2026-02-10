@@ -18,7 +18,6 @@ from a2a.types import (
     FilePart,
     FileWithBytes,
     FileWithUri,
-    Message,
     Task,
     TaskIdParams,
     TaskQueryParams,
@@ -34,9 +33,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     ContinuationToken,
+    Message,
     ResponseStream,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
@@ -83,7 +82,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
-    via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
+    via HTTP/JSON-RPC. Converts framework Messages to A2A Messages on send, and converts
     A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
     while managing the underlying A2A protocol communication.
 
@@ -209,7 +208,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -221,7 +220,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -232,7 +231,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -268,7 +267,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         response = ResponseStream(
             self._map_a2a_stream(a2a_stream, background=background),
-            finalizer=lambda updates: AgentResponse.from_updates(list(updates)),
+            finalizer=AgentResponse.from_updates,
         )
         if stream:
             return response
@@ -291,7 +290,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 When True, they are yielded with a continuation token.
         """
         async for item in a2a_stream:
-            if isinstance(item, Message):
+            if isinstance(item, A2AMessage):
+                # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentResponseUpdate(
                     contents=contents,
@@ -377,10 +377,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: ChatMessage) -> A2AMessage:
-        """Prepare a ChatMessage for the A2A protocol.
+    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+        """Prepare a Message for the A2A protocol.
 
-        Transforms Agent Framework ChatMessage objects into A2A protocol Messages by:
+        Transforms Agent Framework Message objects into A2A protocol Messages by:
         - Converting all message contents to appropriate A2A Part types
         - Mapping text content to TextPart objects
         - Converting file references (URI/data/hosted_file) to FilePart objects
@@ -389,7 +389,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """
         parts: list[A2APart] = []
         if not message.contents:
-            raise ValueError("ChatMessage.contents is empty; cannot convert to A2AMessage.")
+            raise ValueError("Message.contents is empty; cannot convert to A2AMessage.")
 
         # Process ALL contents
         for content in message.contents:
@@ -511,9 +511,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raise ValueError(f"Unknown Part kind: {inner_part.kind}")
         return contents
 
-    def _parse_messages_from_task(self, task: Task) -> list[ChatMessage]:
-        """Parse A2A Task artifacts into ChatMessages with ASSISTANT role."""
-        messages: list[ChatMessage] = []
+    def _parse_messages_from_task(self, task: Task) -> list[Message]:
+        """Parse A2A Task artifacts into Messages with ASSISTANT role."""
+        messages: list[Message] = []
 
         if task.artifacts is not None:
             for artifact in task.artifacts:
@@ -523,7 +523,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             history_item = task.history[-1]
             contents = self._parse_contents_from_a2a(history_item.parts)
             messages.append(
-                ChatMessage(
+                Message(
                     role="assistant" if history_item.role == A2ARole.agent else "user",
                     contents=contents,
                     raw_representation=history_item,
@@ -532,10 +532,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         return messages
 
-    def _parse_message_from_artifact(self, artifact: Artifact) -> ChatMessage:
-        """Parse A2A Artifact into ChatMessage using part contents."""
+    def _parse_message_from_artifact(self, artifact: Artifact) -> Message:
+        """Parse A2A Artifact into Message using part contents."""
         contents = self._parse_contents_from_a2a(artifact.parts)
-        return ChatMessage(
+        return Message(
             role="assistant",
             contents=contents,
             raw_representation=artifact,

@@ -14,10 +14,10 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     ContextProvider,
     FunctionTool,
+    Message,
     ToolProtocol,
     get_logger,
     normalize_messages,
@@ -541,7 +541,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         if "permission_mode" in options:
             await self._client.set_permission_mode(options["permission_mode"])
 
-    def _format_prompt(self, messages: list[ChatMessage] | None) -> str:
+    def _format_prompt(self, messages: list[Message] | None) -> str:
         """Format messages into a prompt string.
 
         Args:
@@ -557,7 +557,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -568,7 +568,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     async def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -578,7 +578,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -608,7 +608,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_non_streaming(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         thread: AgentThread | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,
@@ -622,7 +622,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_streaming(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         thread: AgentThread | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,

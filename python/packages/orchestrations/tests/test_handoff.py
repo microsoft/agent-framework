@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
-    ChatAgent,
-    ChatMessage,
+    Agent,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Context,
     ContextProvider,
+    Message,
     ResponseStream,
     WorkflowEvent,
     resolve_agent_id,
@@ -50,7 +50,7 @@ class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], Bas
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -60,7 +60,7 @@ class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], Bas
 
         async def _get() -> ChatResponse:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            reply = ChatMessage(
+            reply = Message(
                 role="assistant",
                 contents=contents,
             )
@@ -105,7 +105,7 @@ def _build_reply_contents(
     return contents
 
 
-class MockHandoffAgent(ChatAgent):
+class MockHandoffAgent(Agent):
     """Mock agent that can hand off to another agent."""
 
     def __init__(
@@ -121,7 +121,7 @@ class MockHandoffAgent(ChatAgent):
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(chat_client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
+        super().__init__(client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
@@ -196,7 +196,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
 
     final_conversation = outputs[-1].data
     assert isinstance(final_conversation, list)
-    conversation_list = cast(list[ChatMessage], final_conversation)
+    conversation_list = cast(list[Message], final_conversation)
     assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
 
 
@@ -237,7 +237,7 @@ async def test_handoff_async_termination_condition() -> None:
     """Test that async termination conditions work correctly."""
     termination_call_count = 0
 
-    async def async_termination(conv: list[ChatMessage]) -> bool:
+    async def async_termination(conv: list[Message]) -> bool:
         nonlocal termination_call_count
         termination_call_count += 1
         user_count = sum(1 for msg in conv if msg.role == "user")
@@ -258,7 +258,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     events = await _drain(
         workflow.run(
-            stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]}
+            stream=True, responses={requests[-1].request_id: [Message(role="user", text="Second user message")]}
         )
     )
     outputs = [ev for ev in events if ev.type == "output"]
@@ -266,7 +266,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     final_conversation = outputs[0].data
     assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[ChatMessage], final_conversation)
+    final_conv_list = cast(list[Message], final_conversation)
     user_messages = [msg for msg in final_conv_list if msg.role == "user"]
     assert len(user_messages) == 2
     assert termination_call_count > 0
@@ -281,7 +281,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", text="Response")],
+            messages=[Message(role="assistant", text="Response")],
             response_id="test_response",
         )
 
@@ -289,8 +289,8 @@ async def test_tool_choice_preserved_from_agent_config():
     mock_client.get_response = AsyncMock(side_effect=mock_get_response)
 
     # Create agent with specific tool_choice configuration via default_options
-    agent = ChatAgent(
-        chat_client=mock_client,
+    agent = Agent(
+        client=mock_client,
         name="test_agent",
         default_options={"tool_choice": {"mode": "required"}},  # type: ignore
     )
@@ -313,7 +313,7 @@ async def test_context_provider_preserved_during_handoff():
     class TestContextProvider(ContextProvider):
         """A test context provider that tracks its invocations."""
 
-        async def invoking(self, messages: Sequence[ChatMessage], **kwargs: Any) -> Context:
+        async def invoking(self, messages: Sequence[Message], **kwargs: Any) -> Context:
             provider_calls.append("invoking")
             return Context(instructions="Test context from provider.")
 
@@ -324,8 +324,8 @@ async def test_context_provider_preserved_during_handoff():
     mock_client = MockChatClient(name="test_agent")
 
     # Create agent with context provider using proper constructor
-    agent = ChatAgent(
-        chat_client=mock_client,
+    agent = Agent(
+        client=mock_client,
         name="test_agent",
         id="test_agent",
         context_provider=context_provider,

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import (
-    ChatAgent,
+    Agent,
     HostedCodeInterpreterTool,
 )
 from agent_framework.openai import OpenAIResponsesClient
@@ -20,8 +20,8 @@ async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with OpenAI Responses."""
     print("=== OpenAI Responses Agent with Code Interpreter Example ===")
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=HostedCodeInterpreterTool(),
     )

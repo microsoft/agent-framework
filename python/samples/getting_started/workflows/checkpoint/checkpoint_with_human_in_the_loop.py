@@ -20,9 +20,9 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessage,
     Executor,
     FileCheckpointStorage,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowCheckpoint,
@@ -97,7 +97,7 @@ class BriefPreparer(Executor):
         # Hand the prompt to the writer agent. We always route through the
         # workflow context so the runtime can capture messages for checkpointing.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -159,7 +159,7 @@ class ReviewGateway(Executor):
             f"Human guidance: {reply}"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
 

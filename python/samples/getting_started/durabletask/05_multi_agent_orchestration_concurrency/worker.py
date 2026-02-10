@@ -18,7 +18,7 @@ import os
 from collections.abc import Generator
 from typing import Any
 
-from agent_framework import AgentResponse, ChatAgent
+from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -33,11 +33,11 @@ PHYSICIST_AGENT_NAME = "PhysicistAgent"
 CHEMIST_AGENT_NAME = "ChemistAgent"
 
 
-def create_physicist_agent() -> "ChatAgent":
+def create_physicist_agent() -> "Agent":
     """Create the Physicist agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Physicist agent
+        Agent: The configured Physicist agent
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=PHYSICIST_AGENT_NAME,
@@ -45,11 +45,11 @@ def create_physicist_agent() -> "ChatAgent":
     )
 
 
-def create_chemist_agent() -> "ChatAgent":
+def create_chemist_agent() -> "Agent":
     """Create the Chemist agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Chemist agent
+        Agent: The configured Chemist agent
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=CHEMIST_AGENT_NAME,

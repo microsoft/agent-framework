@@ -6,14 +6,14 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -90,7 +90,7 @@ class DraftFeedbackRequest:
 
     prompt: str = ""
     draft_text: str = ""
-    conversation: list[ChatMessage] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
+    conversation: list[Message] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
 
 
 class Coordinator(Executor):
@@ -116,7 +116,7 @@ class Coordinator(Executor):
         # Writer agent response; request human feedback.
         # Preserve the full conversation so the final editor
         # can see tool traces and the initial prompt.
-        conversation: list[ChatMessage]
+        conversation: list[Message]
         if draft.full_conversation is not None:
             conversation = list(draft.full_conversation)
         else:
@@ -147,7 +147,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [ChatMessage("user", text="The draft is approved as-is.")],
+                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -155,20 +155,20 @@ class Coordinator(Executor):
             return
 
         # Human provided feedback; prompt the writer to revise.
-        conversation: list[ChatMessage] = list(original_request.conversation)
+        conversation: list[Message] = list(original_request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(ChatMessage("user", text=instruction))
+        conversation.append(Message("user", text=instruction))
         await ctx.send_message(
             AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_id
         )
 
 
-def create_writer_agent() -> ChatAgent:
+def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="writer_agent",
@@ -182,7 +182,7 @@ def create_writer_agent() -> ChatAgent:
     )
 
 
-def create_final_editor_agent() -> ChatAgent:
+def create_final_editor_agent() -> Agent:
     """Creates a final editor agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="final_editor_agent",

@@ -44,7 +44,7 @@ async def non_streaming_example() -> None:
 
         # Check for annotations in the response
         annotations_found: list[str] = []
-        # AgentResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains Message objects
         for message in result.messages:
             for content in message.contents:
                 if content.type == "text" and content.annotations:

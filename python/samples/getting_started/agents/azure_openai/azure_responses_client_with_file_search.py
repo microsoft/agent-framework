@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, Content, HostedFileSearchTool
+from agent_framework import Agent, Content, HostedFileSearchTool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -53,8 +53,8 @@ async def main() -> None:
 
     file_id, vector_store = await create_vector_store(client)
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
         tools=[HostedFileSearchTool(inputs=vector_store)],
     )

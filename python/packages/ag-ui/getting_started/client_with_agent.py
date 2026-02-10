@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Example showing ChatAgent with AGUIChatClient for hybrid tool execution.
+"""Example showing Agent with AGUIChatClient for hybrid tool execution.
 
 This demonstrates the HYBRID pattern matching .NET AGUIClient implementation:
 
@@ -24,7 +24,7 @@ import asyncio
 import logging
 import os
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.ag_ui import AGUIChatClient
 
 # Enable debug logging
@@ -55,7 +55,7 @@ def get_weather(location: str) -> str:
 
 
 async def main():
-    """Demonstrate ChatAgent + AGUIChatClient hybrid tool execution.
+    """Demonstrate Agent + AGUIChatClient hybrid tool execution.
 
     This matches the .NET pattern from Program.cs where:
     - AIAgent agent = chatClient.CreateAIAgent(tools: [...])
@@ -63,14 +63,14 @@ async def main():
     - RunStreamingAsync(messages, thread)
 
     Python equivalent:
-    - agent = ChatAgent(chat_client=AGUIChatClient(...), tools=[...])
+    - agent = Agent(client=AGUIChatClient(...), tools=[...])
     - thread = agent.get_new_thread()  # Creates thread with message_store
     - agent.run(message, stream=True, thread=thread)  # Thread accumulates history
     """
     server_url = os.environ.get("AGUI_SERVER_URL", "http://127.0.0.1:5100/")
 
     print("=" * 70)
-    print("ChatAgent + AGUIChatClient: Hybrid Tool Execution")
+    print("Agent + AGUIChatClient: Hybrid Tool Execution")
     print("=" * 70)
     print(f"\nServer: {server_url}")
     print("\nThis example demonstrates:")
@@ -82,11 +82,11 @@ async def main():
     try:
         # Create remote client in async context manager
         async with AGUIChatClient(endpoint=server_url) as remote_client:
-            # Wrap in ChatAgent for conversation history management
-            agent = ChatAgent(
+            # Wrap in Agent for conversation history management
+            agent = Agent(
                 name="remote_assistant",
                 instructions="You are a helpful assistant. Remember user information across the conversation.",
-                chat_client=remote_client,
+                client=remote_client,
                 tools=[get_weather],
             )
 

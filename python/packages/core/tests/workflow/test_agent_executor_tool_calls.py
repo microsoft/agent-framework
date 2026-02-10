@@ -8,18 +8,18 @@ from typing import Any
 from typing_extensions import Never
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatAgent,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionTool,
+    Message,
     ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
@@ -39,7 +39,7 @@ class _ToolCallingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -49,7 +49,7 @@ class _ToolCallingAgent(BaseAgent):
             return ResponseStream(self._run_stream_impl(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
+            return AgentResponse(messages=[Message("assistant", ["done"])])
 
         return _run()
 
@@ -156,7 +156,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -175,7 +175,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
         if self._iteration == 0:
             if self._parallel_request:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -189,7 +189,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                 )
             else:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -199,7 +199,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
+            response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response
@@ -243,8 +243,8 @@ async def test_executor(agent_executor_response: AgentExecutorResponse, ctx: Wor
 async def test_agent_executor_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles tool calls requiring approval."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(),
+    agent = Agent(
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -277,8 +277,8 @@ async def test_agent_executor_tool_call_with_approval() -> None:
 async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles tool calls requiring approval in streaming mode."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(),
+    agent = Agent(
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -314,8 +314,8 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(parallel_request=True),
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -350,8 +350,8 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
 async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval in streaming mode."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(parallel_request=True),
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
@@ -409,7 +409,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -426,7 +426,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
         if self._iteration == 0:
             if self._parallel_request:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -440,7 +440,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                 )
             else:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -450,7 +450,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
+            response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response
@@ -483,8 +483,8 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 
 async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:
     """Test that AgentExecutor emits request_info when agent calls a declaration-only tool."""
-    agent = ChatAgent(
-        chat_client=DeclarationOnlyMockChatClient(),
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )
@@ -519,8 +519,8 @@ async def test_agent_executor_declaration_only_tool_emits_request_info() -> None
 
 async def test_agent_executor_declaration_only_tool_emits_request_info_streaming() -> None:
     """Test that AgentExecutor emits request_info for declaration-only tools in streaming mode."""
-    agent = ChatAgent(
-        chat_client=DeclarationOnlyMockChatClient(),
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )
@@ -558,8 +558,8 @@ async def test_agent_executor_declaration_only_tool_emits_request_info_streaming
 
 async def test_agent_executor_parallel_declaration_only_tool_emits_request_info() -> None:
     """Test that AgentExecutor emits request_info for parallel declaration-only tool calls."""
-    agent = ChatAgent(
-        chat_client=DeclarationOnlyMockChatClient(parallel_request=True),
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(parallel_request=True),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )

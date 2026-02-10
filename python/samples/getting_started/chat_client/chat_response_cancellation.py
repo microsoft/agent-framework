@@ -21,10 +21,10 @@ async def main() -> None:
     - OpenAI model ID: Use "model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
     - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
     """
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     try:
-        task = asyncio.create_task(chat_client.get_response(messages=["Tell me a fantasy story."]))
+        task = asyncio.create_task(client.get_response(messages=["Tell me a fantasy story."]))
         await asyncio.sleep(1)
         task.cancel()
         await task

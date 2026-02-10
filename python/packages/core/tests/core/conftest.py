@@ -16,12 +16,12 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseChatClient,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    Message,
     ResponseStream,
     SupportsAgentRun,
     ToolProtocol,
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 @fixture(scope="function")
-def chat_history() -> list[ChatMessage]:
+def chat_history() -> list[Message]:
     return []
 
 
@@ -90,7 +90,7 @@ class MockChatClient:
 
     def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | Message | list[str] | list[Message],
         *,
         stream: bool = False,
         options: dict[str, Any] | None = None,
@@ -105,14 +105,14 @@ class MockChatClient:
             self.call_count += 1
             if self.responses:
                 return self.responses.pop(0)
-            return ChatResponse(messages=ChatMessage(role="assistant", text="test response"))
+            return ChatResponse(messages=Message(role="assistant", text="test response"))
 
         return _get()
 
     def _get_streaming_response(
         self,
         *,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | Message | list[str] | list[Message],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -153,7 +153,7 @@ class MockBaseChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         stream: bool,
         options: dict[str, Any],
         **kwargs: Any,
@@ -180,7 +180,7 @@ class MockBaseChatClient(
     async def _get_non_streaming_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
@@ -188,13 +188,13 @@ class MockBaseChatClient(
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=Message(role="assistant", text=f"test response - {messages[-1].text}"))
 
         response = self.run_responses.pop(0)
 
         if options.get("tool_choice") == "none":
             return ChatResponse(
-                messages=ChatMessage(
+                messages=Message(
                     role="assistant",
                     text="I broke out of the function invocation loop...",
                 ),
@@ -206,7 +206,7 @@ class MockBaseChatClient(
     def _get_streaming_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -251,7 +251,7 @@ def max_iterations(request: Any) -> int:
 
 
 @fixture
-def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
+def client(enable_function_calling: bool, max_iterations: int) -> MockChatClient:
     if enable_function_calling:
         with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
             return type("FunctionInvokingMockChatClient", (FunctionInvocationLayer, MockChatClient), {})()
@@ -261,10 +261,10 @@ def chat_client(enable_function_calling: bool, max_iterations: int) -> MockChatC
 @fixture
 def chat_client_base(enable_function_calling: bool, max_iterations: int) -> MockBaseChatClient:
     with patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", max_iterations):
-        chat_client = MockBaseChatClient()
+        client = MockBaseChatClient()
     if not enable_function_calling:
-        chat_client.function_invocation_configuration["enabled"] = False
-    return chat_client
+        client.function_invocation_configuration["enabled"] = False
+    return client
 
 
 # region Agents
@@ -289,7 +289,7 @@ class MockAgent(SupportsAgentRun):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         stream: bool = False,
@@ -301,17 +301,17 @@ class MockAgent(SupportsAgentRun):
 
     async def _run_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
-        return AgentResponse(messages=[ChatMessage(role="assistant", contents=[Content.from_text("Response")])])
+        return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Response")])])
 
     async def _run_stream_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,

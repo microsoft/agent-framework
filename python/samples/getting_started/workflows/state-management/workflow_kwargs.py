@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import Annotated, Any, cast
 
-from agent_framework import ChatMessage, tool
+from agent_framework import Message, tool
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from pydantic import Field
@@ -74,10 +74,10 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     # Create agent with tools that use kwargs
-    agent = chat_client.as_agent(
+    agent = client.as_agent(
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "
@@ -121,10 +121,10 @@ async def main() -> None:
         stream=True,
     ):
         if event.type == "output":
-            output_data = cast(list[ChatMessage], event.data)
+            output_data = cast(list[Message], event.data)
             if isinstance(output_data, list):
                 for item in output_data:
-                    if isinstance(item, ChatMessage) and item.text:
+                    if isinstance(item, Message) and item.text:
                         print(f"\n[Final Answer]: {item.text}")
 
     print("\n" + "=" * 70)

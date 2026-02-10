@@ -5,11 +5,11 @@ import os
 from typing import Any
 
 from agent_framework import (  # Core chat primitives used to build requests
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
     AgentExecutorResponse,
-    ChatAgent,  # Output from an AgentExecutor
-    ChatMessage,
+    Message,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
@@ -122,13 +122,13 @@ async def to_email_assistant_request(
 
     Extracts DetectionResult.email_content and forwards it as a user message.
     """
-    # Bridge executor. Converts a structured DetectionResult into a ChatMessage and forwards it as a new request.
+    # Bridge executor. Converts a structured DetectionResult into a Message and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_response.text)
-    user_msg = ChatMessage("user", text=detection.email_content)
+    user_msg = Message("user", text=detection.email_content)
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
-def create_spam_detector_agent() -> ChatAgent:
+def create_spam_detector_agent() -> Agent:
     """Helper to create a spam detection agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
@@ -142,7 +142,7 @@ def create_spam_detector_agent() -> ChatAgent:
     )
 
 
-def create_email_assistant_agent() -> ChatAgent:
+def create_email_assistant_agent() -> Agent:
     """Helper to create an email assistant agent."""
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
@@ -185,7 +185,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[ChatMessage("user", text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[Message("user", text=email)], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

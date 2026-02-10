@@ -10,9 +10,9 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
+    Message,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -61,7 +61,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
                 context.result = AgentResponse(
-                    messages=[ChatMessage("assistant", ["Detected sensitive information, the request is blocked."])]
+                    messages=[Message("assistant", ["Detected sensitive information, the request is blocked."])]
                 )
                 # Simply don't call call_next() to prevent execution
                 return

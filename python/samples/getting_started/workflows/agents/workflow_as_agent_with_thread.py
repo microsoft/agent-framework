@@ -37,9 +37,9 @@ Prerequisites:
 
 async def main() -> None:
     # Create a chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    assistant = chat_client.as_agent(
+    assistant = client.as_agent(
         name="assistant",
         instructions=(
             "You are a helpful assistant. Answer questions based on the conversation "
@@ -47,7 +47,7 @@ async def main() -> None:
         ),
     )
 
-    summarizer = chat_client.as_agent(
+    summarizer = client.as_agent(
         name="summarizer",
         instructions=(
             "You are a summarizer. After the assistant responds, provide a brief "
@@ -119,9 +119,9 @@ async def demonstrate_thread_serialization() -> None:
     This shows how conversation history can be persisted and restored,
     enabling long-running conversational workflows.
     """
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    memory_assistant = chat_client.as_agent(
+    memory_assistant = client.as_agent(
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
     )

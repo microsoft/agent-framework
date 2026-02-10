@@ -18,7 +18,7 @@ from ._edge import (
     SwitchCaseEdgeGroup,
 )
 from ._executor import Executor
-from ._runner_context import Message, RunnerContext
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class EdgeRunner(ABC):
         self._executors = executors
 
     @abstractmethod
-    async def send_message(self, message: Message, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
         """Send a message through the edge group.
 
         Args:
@@ -52,7 +52,7 @@ class EdgeRunner(ABC):
         """
         raise NotImplementedError
 
-    def _can_handle(self, executor_id: str, message: Message) -> bool:
+    def _can_handle(self, executor_id: str, message: WorkflowMessage) -> bool:
         """Check if an executor can handle the given message data."""
         if executor_id not in self._executors:
             return False
@@ -62,7 +62,7 @@ class EdgeRunner(ABC):
         self,
         target_id: str,
         source_ids: list[str],
-        message: Message,
+        message: WorkflowMessage,
         state: State,
         ctx: RunnerContext,
     ) -> None:
@@ -90,7 +90,7 @@ class SingleEdgeRunner(EdgeRunner):
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 
-    async def send_message(self, message: Message, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
         should_execute = False
         target_id: str | None = None
@@ -162,7 +162,7 @@ class FanOutEdgeRunner(EdgeRunner):
             Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
         )
 
-    async def send_message(self, message: Message, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""
         deliverable_edges: list[Edge] = []
         single_target_edge: Edge | None = None
@@ -283,9 +283,9 @@ class FanInEdgeRunner(EdgeRunner):
         self._edges = edge_group.edges
         # Buffer to hold messages before sending them to the target executor
         # Key is the source executor ID, value is a list of messages
-        self._buffer: dict[str, list[Message]] = defaultdict(list)
+        self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
 
-    async def send_message(self, message: Message, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-in edge group."""
         execution_data: dict[str, Any] | None = None
         with create_edge_group_processing_span(
@@ -306,7 +306,7 @@ class FanInEdgeRunner(EdgeRunner):
 
                 # Check if target can handle list of message data (fan-in aggregates multiple messages)
                 if self._can_handle(
-                    self._edges[0].target_id, Message(data=[message.data], source_id=message.source_id)
+                    self._edges[0].target_id, WorkflowMessage(data=[message.data], source_id=message.source_id)
                 ):
                     # If the edge can handle the data, buffer the message
                     self._buffer[message.source_id].append(message)
@@ -334,7 +334,7 @@ class FanInEdgeRunner(EdgeRunner):
                     source_span_ids = [msg.source_span_id for msg in messages_to_send if msg.source_span_id]
 
                     # Create a new Message object for the aggregated data
-                    aggregated_message = Message(
+                    aggregated_message = WorkflowMessage(
                         data=aggregated_data,
                         source_id=self._edge_group.__class__.__name__,  # This won't be used in self._execute_on_target.
                         trace_contexts=trace_contexts,
