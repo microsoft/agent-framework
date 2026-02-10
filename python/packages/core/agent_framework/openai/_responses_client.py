@@ -678,8 +678,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             if last_assistant_idx >= 0:
                 # Collect system/developer messages from before the last assistant
                 system_messages = [
-                    msg for msg in chat_messages[:last_assistant_idx]
-                    if msg.role in ("system", "developer")
+                    msg for msg in chat_messages[:last_assistant_idx] if msg.role in ("system", "developer")
                 ]
                 # Get all messages after the last assistant (new user messages)
                 new_messages = chat_messages[last_assistant_idx + 1 :]
