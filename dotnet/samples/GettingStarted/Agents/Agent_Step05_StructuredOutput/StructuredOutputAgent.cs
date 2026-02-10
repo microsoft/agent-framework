@@ -1,13 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI;
+namespace SampleApp;
 
 /// <summary>
 /// A delegating AI agent that converts text responses from an inner AI agent into structured output using a chat client.
@@ -37,7 +33,7 @@ internal sealed class StructuredOutputAgent : DelegatingAIAgent
     public StructuredOutputAgent(AIAgent innerAgent, IChatClient chatClient, StructuredOutputAgentOptions? options = null)
         : base(innerAgent)
     {
-        this._chatClient = Throw.IfNull(chatClient);
+        this._chatClient = chatClient ?? throw new ArgumentNullException(nameof(chatClient));
         this._agentOptions = options;
     }
 
