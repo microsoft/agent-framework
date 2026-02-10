@@ -2163,6 +2163,88 @@ async def test_conversation_id_precedence_kwargs_over_options() -> None:
     assert "conversation" not in run_opts
 
 
+async def test_message_filtering_with_previous_response_id() -> None:
+    """Test that assistant messages are filtered when using previous_response_id."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Create a multi-turn conversation with history
+    messages = [
+        ChatMessage(role="system", text="You are a helpful assistant"),
+        ChatMessage(role="user", text="My name is Alice"),
+        ChatMessage(role="assistant", text="Nice to meet you, Alice!"),
+        ChatMessage(role="user", text="What's my name?"),
+    ]
+
+    # When using previous_response_id, assistant messages should be filtered but system messages preserved
+    options = await client._prepare_options(
+        messages,
+        {"conversation_id": "resp_12345"},  # Using resp_ prefix
+    )  # type: ignore
+
+    # Should include: system message + last user message
+    assert "input" in options
+    input_messages = options["input"]
+    assert len(input_messages) == 2, f"Expected 2 messages (system + user), got {len(input_messages)}"
+    assert input_messages[0]["role"] == "system"
+    assert input_messages[1]["role"] == "user"
+    assert "What's my name?" in str(input_messages[1])
+
+    # Verify previous_response_id is set
+    assert options["previous_response_id"] == "resp_12345"
+
+
+async def test_message_filtering_without_previous_response_id() -> None:
+    """Test that all messages are included when NOT using previous_response_id."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Same conversation as above
+    messages = [
+        ChatMessage(role="system", text="You are a helpful assistant"),
+        ChatMessage(role="user", text="My name is Alice"),
+        ChatMessage(role="assistant", text="Nice to meet you, Alice!"),
+        ChatMessage(role="user", text="What's my name?"),
+    ]
+
+    # Without conversation_id, all messages should be included
+    options = await client._prepare_options(messages, {})  # type: ignore
+
+    # Should include all messages
+    assert "input" in options
+    input_messages = options["input"]
+    # System (1) + User (1) + Assistant (1) + User (1) = 4 messages
+    assert len(input_messages) == 4
+
+    # Verify previous_response_id is NOT set
+    assert "previous_response_id" not in options
+
+
+async def test_message_filtering_with_conv_prefix() -> None:
+    """Test that messages are NOT filtered when using conv_ prefix (conversation ID)."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        ChatMessage(role="system", text="You are a helpful assistant"),
+        ChatMessage(role="user", text="My name is Alice"),
+        ChatMessage(role="assistant", text="Nice to meet you, Alice!"),
+        ChatMessage(role="user", text="What's my name?"),
+    ]
+
+    # When using conv_ prefix, should use conversation parameter, not previous_response_id
+    options = await client._prepare_options(
+        messages,
+        {"conversation_id": "conv_abc123"},  # Using conv_ prefix
+    )  # type: ignore
+
+    # All messages should be included (no filtering for conversation IDs)
+    assert "input" in options
+    input_messages = options["input"]
+    assert len(input_messages) == 4
+
+    # Verify conversation is set, not previous_response_id
+    assert options.get("conversation") == "conv_abc123"
+    assert "previous_response_id" not in options
+
+
 def test_with_callable_api_key() -> None:
     """Test OpenAIResponsesClient initialization with callable API key."""
 
