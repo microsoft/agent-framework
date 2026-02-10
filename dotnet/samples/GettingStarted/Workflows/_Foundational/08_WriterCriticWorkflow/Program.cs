@@ -196,7 +196,7 @@ internal sealed class CriticDecision
 /// Executor that creates or revises content based on user requests or critic feedback.
 /// This executor demonstrates multiple message handlers for different input types.
 /// </summary>
-internal sealed class WriterExecutor : Executor
+internal sealed partial class WriterExecutor : Executor
 {
     private readonly AIAgent _agent;
 
@@ -213,14 +213,10 @@ internal sealed class WriterExecutor : Executor
         );
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder
-            .AddHandler<string, ChatMessage>(this.HandleInitialRequestAsync)
-            .AddHandler<CriticDecision, ChatMessage>(this.HandleRevisionRequestAsync);
-
     /// <summary>
     /// Handles the initial writing request from the user.
     /// </summary>
+    [MessageHandler]
     private async ValueTask<ChatMessage> HandleInitialRequestAsync(
         string message,
         IWorkflowContext context,
@@ -232,6 +228,7 @@ internal sealed class WriterExecutor : Executor
     /// <summary>
     /// Handles revision requests from the critic with feedback.
     /// </summary>
+    [MessageHandler]
     private async ValueTask<ChatMessage> HandleRevisionRequestAsync(
         CriticDecision decision,
         IWorkflowContext context,

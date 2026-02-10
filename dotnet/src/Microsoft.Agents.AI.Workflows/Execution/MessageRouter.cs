@@ -27,8 +27,9 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal sealed class MessageRouter
 {
+    private readonly HashSet<Type> _interfaceHandlers = new();
     private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
-    private readonly Dictionary<TypeId, Type> _runtimeTypeMap;
+    private readonly Dictionary<TypeId, Type> _runtimeTypeMap = new();
 
     private readonly CatchAllF? _catchAllFunc;
 
@@ -37,6 +38,17 @@ internal sealed class MessageRouter
         Throw.IfNull(handlers);
 
         this._typedHandlers = handlers;
+
+        foreach (Type type in handlers.Keys)
+        {
+            this._runtimeTypeMap[new(type)] = type;
+
+            if (type.IsInterface)
+            {
+                this._interfaceHandlers.Add(type);
+            }
+        }
+
         this._runtimeTypeMap = handlers.Keys.ToDictionary(t => new TypeId(t), t => t);
         this._catchAllFunc = catchAllFunc;
 
@@ -49,15 +61,45 @@ internal sealed class MessageRouter
     [MemberNotNullWhen(true, nameof(_catchAllFunc))]
     internal bool HasCatchAll => this._catchAllFunc is not null;
 
-    public bool CanHandle(object message) => this.CanHandle(new TypeId(Throw.IfNull(message).GetType()));
-    public bool CanHandle(Type candidateType) => this.CanHandle(new TypeId(Throw.IfNull(candidateType)));
-
-    public bool CanHandle(TypeId candidateType)
-    {
-        return this.HasCatchAll || this._runtimeTypeMap.ContainsKey(candidateType);
-    }
+    public bool CanHandle(object message) => this.CanHandle(Throw.IfNull(message).GetType());
+    public bool CanHandle(Type candidateType) => this.HasCatchAll || this.FindHandler(candidateType) is not null;
 
     public HashSet<Type> DefaultOutputTypes { get; }
+
+    private MessageHandlerF? FindHandler(Type messageType)
+    {
+        for (Type? candidateType = messageType; candidateType != null; candidateType = candidateType.BaseType)
+        {
+            if (this._typedHandlers.TryGetValue(candidateType, out MessageHandlerF? handler))
+            {
+                if (candidateType != messageType)
+                {
+                    // Cache the handler for future lookups.
+                    this._typedHandlers[messageType] = handler;
+                    this._runtimeTypeMap[new TypeId(messageType)] = candidateType;
+                }
+
+                return handler;
+            }
+            else if (this._interfaceHandlers.Count > 0)
+            {
+                foreach (Type interfaceType in this._interfaceHandlers)
+                {
+                    if (interfaceType.IsAssignableFrom(candidateType))
+                    {
+                        handler = this._typedHandlers[interfaceType];
+                        this._typedHandlers[messageType] = handler;
+
+                        // TODO: This could cause some consternation with Checkpointing (need to ensure we surface errors well)
+                        this._runtimeTypeMap[new TypeId(messageType)] = interfaceType;
+                        return handler;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
 
     public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false, CancellationToken cancellationToken = default)
     {
@@ -75,7 +117,8 @@ internal sealed class MessageRouter
 
         try
         {
-            if (this._typedHandlers.TryGetValue(message.GetType(), out MessageHandlerF? handler))
+            MessageHandlerF? handler = this.FindHandler(message.GetType());
+            if (handler != null)
             {
                 result = await handler(message, context, cancellationToken).ConfigureAwait(false);
             }

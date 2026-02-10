@@ -27,7 +27,7 @@ public class TestRunContext : IRunnerContext
 
     internal TestRunContext ConfigureExecutor(Executor executor, EdgeMap? map = null)
     {
-        executor.Configure(new TestExternalRequestContext(this, executor.Id, map));
+        executor.AttachRequestContext(new TestExternalRequestContext(this, executor.Id, map));
         this.Executors.Add(executor.Id, executor);
         return this;
     }

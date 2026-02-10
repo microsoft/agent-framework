@@ -218,8 +218,14 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
-        startExecutor.Configure(new NoOpExternalRequestContext());
+        startExecutor.AttachRequestContext(new NoOpExternalRequestContext());
 
-        return startExecutor.DescribeProtocol();
+        ProtocolDescriptor inputProtocol = startExecutor.DescribeProtocol();
+        IEnumerable<Task<Executor>> outputExecutorTasks = this.OutputExecutors.Select(executorId => this.ExecutorBindings[executorId].CreateInstanceAsync(string.Empty).AsTask());
+
+        Executor[] outputExecutors = await Task.WhenAll(outputExecutorTasks).ConfigureAwait(false);
+        IEnumerable<Type> yieldedTypes = outputExecutors.SelectMany(executor => executor.DescribeProtocol().Yields);
+
+        return new(inputProtocol.Accepts, yieldedTypes, [], inputProtocol.AcceptsAll);
     }
 }

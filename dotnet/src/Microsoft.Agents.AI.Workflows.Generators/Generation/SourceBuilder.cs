@@ -16,6 +16,8 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Generation;
 /// </remarks>
 internal static class SourceBuilder
 {
+    internal const string IndentUnit = "    ";
+
     /// <summary>
     /// Generates the complete source file for an executor's generated partial class.
     /// </summary>
@@ -53,7 +55,7 @@ internal static class SourceBuilder
             {
                 sb.AppendLine($"{indent}partial class {containingType}");
                 sb.AppendLine($"{indent}{{");
-                indent += "    ";
+                indent += IndentUnit;
             }
         }
 
@@ -61,29 +63,48 @@ internal static class SourceBuilder
         sb.AppendLine($"{indent}partial class {info.ClassName}{info.GenericParameters}");
         sb.AppendLine($"{indent}{{");
 
-        string memberIndent = indent + "    ";
-        bool hasContent = false;
+        string memberIndent = indent + IndentUnit;
 
-        // Only generate ConfigureRoutes if there are handlers
-        if (info.Handlers.Count > 0)
+        // ConfigureProtocol
+        sb.AppendLine($"{memberIndent}protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)");
+        sb.AppendLine($"{memberIndent}{{");
+
+        string bodyIndent = memberIndent + IndentUnit;
+
+        if (info.BaseHasConfigureProtocol)
         {
-            GenerateConfigureRoutes(sb, info, memberIndent);
-            hasContent = true;
+            sb.Append($"{bodyIndent}return base.ConfigureProtocol(protocolBuilder)");
+            bodyIndent += "           ";
+        }
+        else
+        {
+            sb.Append($"{bodyIndent}return protocolBuilder");
         }
 
         // Only generate protocol overrides if [SendsMessage] or [YieldsOutput] attributes are present.
         // Without these attributes, we rely on the base class defaults.
-        if (info.ShouldGenerateProtocolOverrides)
+        if (info.ShouldGenerateSentMessageRegistrations)
         {
-            if (hasContent)
-            {
-                sb.AppendLine();
-            }
-
-            GenerateConfigureSentTypes(sb, info, memberIndent);
-            sb.AppendLine();
-            GenerateConfigureYieldTypes(sb, info, memberIndent);
+            GenerateConfigureSentTypes(sb, info, bodyIndent);
         }
+
+        if (info.ShouldGenerateYieldedOutputRegistrations)
+        {
+            GenerateConfigureYieldTypes(sb, info, bodyIndent);
+        }
+
+        // Only generate ConfigureRoutes if there are handlers
+        if (info.Handlers.Count > 0)
+        {
+            GenerateConfigureRoutes(sb, info, bodyIndent);
+        }
+        else
+        {
+            sb.AppendLine(";");
+        }
+
+        // Close ConfigureProtocol
+        sb.AppendLine($"{memberIndent}}}");
 
         // Close class
         sb.AppendLine($"{indent}}}");
@@ -107,24 +128,19 @@ internal static class SourceBuilder
     /// </summary>
     private static void GenerateConfigureRoutes(StringBuilder sb, ExecutorInfo info, string indent)
     {
-        sb.AppendLine($"{indent}protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)");
+        sb.AppendLine(".ConfigureRoutes(ConfigureRoutes);");
+
+        sb.AppendLine($"{indent}void ConfigureRoutes(RouteBuilder routeBuilder)");
         sb.AppendLine($"{indent}{{");
 
-        string bodyIndent = indent + "    ";
-
-        // If a base class has its own ConfigureRoutes, chain to it first to preserve inherited handlers.
-        if (info.BaseHasConfigureRoutes)
-        {
-            sb.AppendLine($"{bodyIndent}routeBuilder = base.ConfigureRoutes(routeBuilder);");
-            sb.AppendLine();
-        }
+        string bodyIndent = indent + IndentUnit;
 
         // Generate handler registrations using fluent AddHandler calls.
         // RouteBuilder.AddHandler<TIn> registers a void handler; AddHandler<TIn, TOut> registers one with a return value.
         if (info.Handlers.Count == 1)
         {
             HandlerInfo handler = info.Handlers[0];
-            sb.AppendLine($"{bodyIndent}return routeBuilder");
+            sb.AppendLine($"{bodyIndent}routeBuilder");
             sb.Append($"{bodyIndent}    .AddHandler");
             AppendHandlerGenericArgs(sb, handler);
             sb.AppendLine($"(this.{handler.MethodName});");
@@ -132,7 +148,7 @@ internal static class SourceBuilder
         else
         {
             // Multiple handlers: chain fluent calls, semicolon only on the last one.
-            sb.AppendLine($"{bodyIndent}return routeBuilder");
+            sb.AppendLine($"{bodyIndent}routeBuilder");
 
             for (int i = 0; i < info.Handlers.Count; i++)
             {
@@ -178,28 +194,30 @@ internal static class SourceBuilder
     /// </remarks>
     private static void GenerateConfigureSentTypes(StringBuilder sb, ExecutorInfo info, string indent)
     {
-        sb.AppendLine($"{indent}protected override ISet<Type> ConfigureSentTypes()");
-        sb.AppendLine($"{indent}{{");
-
-        string bodyIndent = indent + "    ";
-
-        sb.AppendLine($"{bodyIndent}var types = base.ConfigureSentTypes();");
+        // Track types to avoid emitting duplicate Add calls (the set handles runtime dedup,
+        // but cleaner generated code is easier to read).
+        var addedTypes = new HashSet<string>();
 
         foreach (var type in info.ClassSendTypes)
         {
-            sb.AppendLine($"{bodyIndent}types.Add(typeof({type}));");
+            if (addedTypes.Add(type))
+            {
+                sb.AppendLine($".SendsMessage<{type}>()");
+                sb.Append(indent);
+            }
         }
 
         foreach (var handler in info.Handlers)
         {
             foreach (var type in handler.SendTypes)
             {
-                sb.AppendLine($"{bodyIndent}types.Add(typeof({type}));");
+                if (addedTypes.Add(type))
+                {
+                    sb.AppendLine($".SendsMessage<{type}>()");
+                    sb.Append(indent);
+                }
             }
         }
-
-        sb.AppendLine($"{bodyIndent}return types;");
-        sb.AppendLine($"{indent}}}");
     }
 
     /// <summary>
@@ -211,13 +229,6 @@ internal static class SourceBuilder
     /// </remarks>
     private static void GenerateConfigureYieldTypes(StringBuilder sb, ExecutorInfo info, string indent)
     {
-        sb.AppendLine($"{indent}protected override ISet<Type> ConfigureYieldTypes()");
-        sb.AppendLine($"{indent}{{");
-
-        string bodyIndent = indent + "    ";
-
-        sb.AppendLine($"{bodyIndent}var types = base.ConfigureYieldTypes();");
-
         // Track types to avoid emitting duplicate Add calls (the set handles runtime dedup,
         // but cleaner generated code is easier to read).
         var addedTypes = new HashSet<string>();
@@ -226,7 +237,8 @@ internal static class SourceBuilder
         {
             if (addedTypes.Add(type))
             {
-                sb.AppendLine($"{bodyIndent}types.Add(typeof({type}));");
+                sb.AppendLine($".YieldsOutput<{type}>()");
+                sb.Append(indent);
             }
         }
 
@@ -236,18 +248,10 @@ internal static class SourceBuilder
             {
                 if (addedTypes.Add(type))
                 {
-                    sb.AppendLine($"{bodyIndent}types.Add(typeof({type}));");
+                    sb.AppendLine($".YieldsOutput<{type}>()");
+                    sb.Append(indent);
                 }
             }
-
-            // Handler return types (ValueTask<T>) are implicitly yielded.
-            if (handler.HasOutput && handler.OutputTypeName != null && addedTypes.Add(handler.OutputTypeName))
-            {
-                sb.AppendLine($"{bodyIndent}types.Add(typeof({handler.OutputTypeName}));");
-            }
         }
-
-        sb.AppendLine($"{bodyIndent}return types;");
-        sb.AppendLine($"{indent}}}");
     }
 }

@@ -6,7 +6,6 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -68,7 +67,8 @@ internal enum NumberSignal
     Matched
 }
 
-internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecutor>, IMessageHandler<NumberSignal, int>
+[YieldsOutput(typeof(string))]
+internal sealed partial class GuessNumberExecutor : Executor
 {
     private readonly int _initialLowerBound;
     private readonly int _initialUpperBound;
@@ -84,6 +84,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
         this._initialUpperBound = upperBound;
     }
 
+    [MessageHandler]
     public async ValueTask<int> HandleAsync(NumberSignal message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         NumberBounds bounds = await context.ReadStateAsync<NumberBounds>(nameof(NumberBounds), cancellationToken: cancellationToken)
@@ -111,7 +112,8 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     }
 }
 
-internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
+[YieldsOutput(typeof(TryCount))]
+internal sealed partial class JudgeExecutor : Executor
 {
     private readonly int _targetNumber;
 
@@ -120,6 +122,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         this._targetNumber = targetNumber;
     }
 
+    [MessageHandler]
     public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // This works properly because the default when unset is 0, and we increment before use.
