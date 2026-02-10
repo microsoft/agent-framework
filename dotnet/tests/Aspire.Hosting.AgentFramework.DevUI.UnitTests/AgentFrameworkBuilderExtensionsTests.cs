@@ -2,7 +2,6 @@
 
 using System;
 using System.Linq;
-using Aspire.Hosting.AgentFramework;
 using Aspire.Hosting.ApplicationModel;
 using Moq;
 
@@ -130,7 +129,7 @@ public class AgentFrameworkBuilderExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(
-            () => AgentFrameworkBuilderExtensions.WithAgentService<IResourceWithEndpoints>(null!, mockAgentService));
+            () => AgentFrameworkBuilderExtensions.WithAgentService(null!, mockAgentService));
         Assert.Equal("builder", exception.ParamName);
     }
 

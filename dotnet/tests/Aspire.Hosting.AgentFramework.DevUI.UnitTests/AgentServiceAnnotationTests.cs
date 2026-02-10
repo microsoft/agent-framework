@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Aspire.Hosting.AgentFramework;
 using Aspire.Hosting.ApplicationModel;
 using Moq;
 

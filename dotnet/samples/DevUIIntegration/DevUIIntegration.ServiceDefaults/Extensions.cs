@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;

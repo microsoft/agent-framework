@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Aspire.Hosting.AgentFramework;
-
 namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
 
 /// <summary>

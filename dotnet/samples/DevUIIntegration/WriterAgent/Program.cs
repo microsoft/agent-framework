@@ -1,3 +1,5 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
 using Azure.Identity;
 using Microsoft.Agents.AI.Hosting;
 
