@@ -1,22 +1,32 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates the self-reflection pattern using Agent Framework
-// to iteratively improve agent responses based on evaluation feedback.
+// This sample demonstrates how to use Microsoft.Extensions.AI.Evaluation.Quality to evaluate
+// an Agent Framework agent's response quality with a self-reflection loop.
+//
+// It uses GroundednessEvaluator, RelevanceEvaluator, and CoherenceEvaluator to score responses,
+// then iteratively asks the agent to improve based on evaluation feedback.
 //
 // Based on: Reflexion: Language Agents with Verbal Reinforcement Learning (NeurIPS 2023)
 // Reference: https://arxiv.org/abs/2303.11366
 //
-// For production implementations using built-in evaluators, consider:
-// - Microsoft.Extensions.AI.Evaluation (for local evaluation)
-// - Azure AI Foundry Evaluation Service (for cloud-based evaluation)
-// For details, see: https://learn.microsoft.com/dotnet/ai/evaluation/libraries
+// For more details, see:
+// https://learn.microsoft.com/dotnet/ai/evaluation/libraries
 
+using Azure.AI.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI.Evaluation;
+using Microsoft.Extensions.AI.Evaluation.Quality;
+using Microsoft.Extensions.AI.Evaluation.Safety;
+
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using ChatRole = Microsoft.Extensions.AI.ChatRole;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 
 Console.WriteLine("=" + new string('=', 79));
 Console.WriteLine("SELF-REFLECTION EVALUATION SAMPLE");
@@ -26,6 +36,19 @@ Console.WriteLine();
 // Initialize Azure credentials and client
 var credential = new AzureCliCredential();
 AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
+
+// Set up the LLM-based chat client for quality evaluators
+IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
+    .GetChatClient(deploymentName)
+    .AsIChatClient();
+
+// Configure evaluation: quality evaluators use the LLM, safety evaluators use Azure AI Foundry
+var safetyConfig = new ContentSafetyServiceConfiguration(
+    credential: credential,
+    endpoint: new Uri(endpoint));
+
+ChatConfiguration chatConfiguration = safetyConfig.ToChatConfiguration(
+    originalChatConfiguration: new ChatConfiguration(chatClient));
 
 // Create a test agent
 AIAgent agent = await CreateKnowledgeAgent(aiProjectClient, deploymentName);
@@ -53,17 +76,10 @@ Console.WriteLine("Question:");
 Console.WriteLine(Question);
 Console.WriteLine();
 
-// Choose one of the following approaches by uncommenting:
-// Each approach demonstrates a different evaluation strategy
-
-// Approach 1: Simulated Self-Reflection (ACTIVE)
-await RunSimulatedSelfReflection(agent, Question, Context);
-
-// Approach 2: Custom Evaluator Pattern (uncomment to use)
-// await RunWithCustomEvaluator(agent, Question, Context);
-
-// Approach 3: Azure AI Evaluation Service Pattern (uncomment to use)
-// await RunWithAzureEvalService(aiProjectClient, agent, Question, Context);
+// Run evaluations
+await RunSelfReflectionWithGroundedness(agent, Question, Context, chatConfiguration);
+await RunQualityEvaluation(agent, Question, Context, chatConfiguration);
+await RunCombinedQualityAndSafetyEvaluation(agent, Question, chatConfiguration);
 
 // Cleanup
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
@@ -82,88 +98,50 @@ static async Task<AIAgent> CreateKnowledgeAgent(AIProjectClient client, string m
         instructions: "You are a helpful assistant. Answer questions accurately based on the provided context.");
 }
 
-static async Task RunSimulatedSelfReflection(AIAgent agent, string question, string context)
+static async Task RunSelfReflectionWithGroundedness(
+    AIAgent agent, string question, string context, ChatConfiguration chatConfiguration)
 {
-    Console.WriteLine("Running Simulated Self-Reflection (3 iterations)...");
+    Console.WriteLine("Running Self-Reflection with Groundedness Evaluation...");
     Console.WriteLine();
 
+    var groundednessEvaluator = new GroundednessEvaluator();
+    var groundingContext = new GroundednessEvaluatorContext(context);
+
     const int MaxReflections = 3;
-    var messageHistory = new List<string> { question };
+    double bestScore = 0;
+    string? bestResponse = null;
+
+    string currentPrompt = $"Context: {context}\n\nQuestion: {question}";
 
     for (int i = 0; i < MaxReflections; i++)
     {
         Console.WriteLine($"Iteration {i + 1}/{MaxReflections}:");
         Console.WriteLine(new string('-', 40));
 
-        // Get agent response
         AgentSession session = await agent.CreateSessionAsync();
-        AgentResponse agentResponse = await agent.RunAsync(messageHistory.Last(), session);
+        AgentResponse agentResponse = await agent.RunAsync(currentPrompt, session);
         string responseText = agentResponse.Text;
 
-        Console.WriteLine($"Agent response: {responseText[..Math.Min(100, responseText.Length)]}...");
-        Console.WriteLine();
+        Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
 
-        // Simulate evaluation (in production, use actual evaluator)
-        int simulatedScore = SimulateGroundednessScore(responseText, context, i);
-        Console.WriteLine($"Simulated groundedness score: {simulatedScore}/5");
-        Console.WriteLine();
-
-        // Add response to history
-        messageHistory.Add(responseText);
-
-        // Request improvement if not perfect score
-        if (simulatedScore < 5 && i < MaxReflections - 1)
+        var messages = new List<ChatMessage>
         {
-            const string reflectionPrompt = """
-                Evaluate your response against the provided context for groundedness.
-                Improve your answer to ensure all information comes from the context.
-                Do not add information not present in the context.
-                """;
+            new(ChatRole.User, question),
+        };
+        var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
 
-            messageHistory.Add(reflectionPrompt);
-            Console.WriteLine("Requesting improvement...");
-            Console.WriteLine();
-        }
-        else if (simulatedScore == 5)
-        {
-            Console.WriteLine("Perfect groundedness achieved!");
-            break;
-        }
-    }
+        EvaluationResult result = await groundednessEvaluator.EvaluateAsync(
+            messages,
+            chatResponse,
+            chatConfiguration,
+            additionalContext: [groundingContext]);
 
-    Console.WriteLine(new string('=', 80));
-    Console.WriteLine("Self-reflection complete. See README.md for production implementation details.");
-}
+        NumericMetric groundedness = result.Get<NumericMetric>(GroundednessEvaluator.GroundednessMetricName);
+        double score = groundedness.Value ?? 0;
+        string rating = groundedness.Interpretation?.Rating.ToString() ?? "N/A";
 
-static int SimulateGroundednessScore(string response, string context, int iteration)
-{
-    // Simple simulation: score improves with iterations
-    // In production, use Microsoft.Extensions.AI.Evaluation.Quality.GroundednessEvaluator
-    return Math.Min(5, 3 + iteration);
-}
-
-#pragma warning disable CS8321 // Local function is declared but never used - available for uncommenting
-static async Task RunWithCustomEvaluator(AIAgent agent, string question, string context)
-{
-    Console.WriteLine("Running with Custom Evaluator...");
-    Console.WriteLine();
-
-    const int MaxReflections = 3;
-    var messageHistory = new List<string> { question };
-    double bestScore = 0;
-    string? bestResponse = null;
-
-    for (int i = 0; i < MaxReflections; i++)
-    {
-        Console.WriteLine($"Iteration {i + 1}/{MaxReflections}:");
-
-        AgentSession session = await agent.CreateSessionAsync();
-        AgentResponse agentResponse = await agent.RunAsync(messageHistory.Last(), session);
-        string responseText = agentResponse.Text;
-
-        // Custom evaluation logic
-        double score = EvaluateGroundedness(responseText, context);
-        Console.WriteLine($"Custom evaluation score: {score:F2}/5.0");
+        Console.WriteLine($"Groundedness score: {score:F1}/5 (Rating: {rating})");
+        Console.WriteLine();
 
         if (score > bestScore)
         {
@@ -171,62 +149,135 @@ static async Task RunWithCustomEvaluator(AIAgent agent, string question, string 
             bestResponse = responseText;
         }
 
-        messageHistory.Add(responseText);
+        if (score >= 4.0 || i == MaxReflections - 1)
+        {
+            if (score >= 4.0)
+            {
+                Console.WriteLine("Good groundedness achieved!");
+            }
 
-        if (score < 5.0 && i < MaxReflections - 1)
-        {
-            messageHistory.Add($"Score: {score}/5. Improve to be more grounded in the context.");
-        }
-        else if (score >= 5.0)
-        {
-            Console.WriteLine("Excellent groundedness!");
             break;
+        }
+
+        // Ask for improvement in the next iteration
+        currentPrompt = $"""
+            Context: {context}
+
+            Your previous answer scored {score}/5 on groundedness.
+            Please improve your answer to be more grounded in the provided context.
+            Only include information that is directly supported by the context.
+
+            Question: {question}
+            """;
+        Console.WriteLine("Requesting improvement...");
+        Console.WriteLine();
+    }
+
+    Console.WriteLine($"Best groundedness score: {bestScore:F1}/5");
+    Console.WriteLine(new string('=', 80));
+    Console.WriteLine();
+}
+
+static async Task RunQualityEvaluation(
+    AIAgent agent, string question, string context, ChatConfiguration chatConfiguration)
+{
+    Console.WriteLine("Running Quality Evaluation (Relevance, Coherence, Groundedness)...");
+    Console.WriteLine();
+
+    var evaluators = new IEvaluator[]
+    {
+        new RelevanceEvaluator(),
+        new CoherenceEvaluator(),
+        new GroundednessEvaluator(),
+    };
+
+    var compositeEvaluator = new CompositeEvaluator(evaluators);
+    var groundingContext = new GroundednessEvaluatorContext(context);
+
+    string prompt = $"Context: {context}\n\nQuestion: {question}";
+
+    AgentSession session = await agent.CreateSessionAsync();
+    AgentResponse agentResponse = await agent.RunAsync(prompt, session);
+    string responseText = agentResponse.Text;
+
+    Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
+    Console.WriteLine();
+
+    var messages = new List<ChatMessage>
+    {
+        new(ChatRole.User, question),
+    };
+    var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
+
+    EvaluationResult result = await compositeEvaluator.EvaluateAsync(
+        messages,
+        chatResponse,
+        chatConfiguration,
+        additionalContext: [groundingContext]);
+
+    foreach (EvaluationMetric metric in result.Metrics.Values)
+    {
+        if (metric is NumericMetric n)
+        {
+            string rating = n.Interpretation?.Rating.ToString() ?? "N/A";
+            Console.WriteLine($"  {n.Name,-20} Score: {n.Value:F1}/5  Rating: {rating}");
         }
     }
 
-    Console.WriteLine($"\nBest score: {bestScore:F2}/5.0");
+    Console.WriteLine(new string('=', 80));
+    Console.WriteLine();
 }
 
-static double EvaluateGroundedness(string response, string context)
+static async Task RunCombinedQualityAndSafetyEvaluation(
+    AIAgent agent, string question, ChatConfiguration chatConfiguration)
 {
-    // Simple heuristic: check if response contains context keywords
-    // In production, use proper evaluator like GroundednessEvaluator
-    string[] contextKeywords = ["unified", "safety", "security", "scalable", "integration", "evaluation", "RAG"];
-    int matchCount = contextKeywords.Count(kw => response.Contains(kw, StringComparison.OrdinalIgnoreCase));
-    return Math.Min(5.0, 1.0 + (matchCount / 2.0));
-}
-
-static async Task RunWithAzureEvalService(AIProjectClient client, AIAgent agent, string question, string context)
-{
-    Console.WriteLine("Running with Azure AI Evaluation Service Pattern...");
+    Console.WriteLine("Running Combined Quality + Safety Evaluation...");
     Console.WriteLine();
 
-    // This demonstrates the pattern for using Azure AI Foundry Evaluation Service
-    // Requires proper Azure AI Evaluation setup and configuration
+    var evaluators = new IEvaluator[]
+    {
+        new RelevanceEvaluator(),
+        new CoherenceEvaluator(),
+        new ContentHarmEvaluator(),
+        new ProtectedMaterialEvaluator(),
+    };
 
-    Console.WriteLine("Azure AI Evaluation Service approach:");
-    Console.WriteLine("1. Create evaluation configuration");
-    Console.WriteLine("2. Submit evaluation job to Azure AI Foundry");
-    Console.WriteLine("3. Monitor evaluation progress");
-    Console.WriteLine("4. Retrieve and analyze results");
+    var compositeEvaluator = new CompositeEvaluator(evaluators);
+
+    AgentSession session = await agent.CreateSessionAsync();
+    AgentResponse agentResponse = await agent.RunAsync(question, session);
+    string responseText = agentResponse.Text;
+
+    Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
     Console.WriteLine();
 
-    // Example pattern (requires Azure AI Evaluation to be configured):
-    // var evalClient = client.GetEvaluationsClient();
-    // var evalConfig = new EvaluationConfiguration
-    // {
-    //     EvaluatorType = "groundedness",
-    //     DataSource = new InlineDataSource
-    //     {
-    //         Items = new[] { new { query = question, response = "", context = context } }
-    //     }
-    // };
-    // var evalJob = await evalClient.CreateEvaluationAsync(evalConfig);
-    // var results = await evalClient.GetEvaluationResultsAsync(evalJob.Id);
+    var messages = new List<ChatMessage>
+    {
+        new(ChatRole.User, question),
+    };
+    var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
 
-    Console.WriteLine("Note: To use Azure AI Evaluation Service:");
-    Console.WriteLine("- Configure Azure AI Foundry project with evaluation capabilities");
-    Console.WriteLine("- Uncomment the evaluation service code above");
-    Console.WriteLine("- See README.md and Azure documentation for setup details");
+    EvaluationResult result = await compositeEvaluator.EvaluateAsync(
+        messages,
+        chatResponse,
+        chatConfiguration);
+
+    Console.WriteLine("Quality Metrics:");
+    foreach (EvaluationMetric metric in result.Metrics.Values)
+    {
+        if (metric is NumericMetric n)
+        {
+            string rating = n.Interpretation?.Rating.ToString() ?? "N/A";
+            bool failed = n.Interpretation?.Failed ?? false;
+            Console.WriteLine($"  {n.Name,-25} Score: {n.Value:F1,-6} Rating: {rating,-15} Failed: {failed}");
+        }
+        else if (metric is BooleanMetric b)
+        {
+            string rating = b.Interpretation?.Rating.ToString() ?? "N/A";
+            bool failed = b.Interpretation?.Failed ?? false;
+            Console.WriteLine($"  {b.Name,-25} Value: {b.Value,-6} Rating: {rating,-15} Failed: {failed}");
+        }
+    }
+
+    Console.WriteLine(new string('=', 80));
 }
-#pragma warning restore CS8321

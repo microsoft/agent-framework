@@ -14,31 +14,31 @@ Evaluation is critical for building trustworthy and high-quality AI applications
 
 ### Evaluation_Step01_RedTeaming
 
-Demonstrates Azure AI's RedTeam functionality to assess agent safety and resilience against adversarial attacks.
+Demonstrates content safety evaluation using `Microsoft.Extensions.AI.Evaluation.Safety` evaluators backed by the Azure AI Foundry Evaluation service.
 
 **Key Features:**
-- Multiple attack strategies (ROT13, Binary, Leetspeak, Character manipulation, etc.)
-- Multiple risk categories (Violence, HateUnfairness, Sexual, SelfHarm)
-- Async callback pattern for agent integration
-- Attack success rate (ASR) metrics
+- `ContentHarmEvaluator` for all-in-one content harm assessment (Violence, HateAndUnfairness, Sexual, SelfHarm)
+- Individual safety evaluators (`ViolenceEvaluator`, `HateAndUnfairnessEvaluator`, `ProtectedMaterialEvaluator`, `IndirectAttackEvaluator`)
+- `CompositeEvaluator` for combining multiple evaluators
+- Score interpretation with ratings and pass/fail status
 
 **Use Cases:**
 - Pre-deployment safety testing
-- Identifying prompt injection vulnerabilities
-- Testing agent guardrails and safety instructions
-- Continuous security assessment
+- Content harm detection
+- Protected material detection
+- Continuous safety assessment
 
 [View Red Teaming Sample](./Evaluation_Step01_RedTeaming/README.md)
 
 ### Evaluation_Step02_SelfReflection
 
-Demonstrates the self-reflection pattern where agents iteratively improve responses based on groundedness evaluation.
+Demonstrates the self-reflection pattern with real `Microsoft.Extensions.AI.Evaluation.Quality` evaluators for iterative response improvement.
 
 **Key Features:**
-- Groundedness evaluation (1-5 scoring)
-- Iterative improvement loop
-- Context-grounded response generation
-- Quality tracking across iterations
+- `GroundednessEvaluator` for context-grounded evaluation (1-5 scoring)
+- `RelevanceEvaluator` and `CoherenceEvaluator` for multi-metric quality assessment
+- Combined quality + safety evaluation with `CompositeEvaluator`
+- Iterative improvement loop with real evaluation feedback
 
 **Use Cases:**
 - Reducing hallucinations
@@ -114,9 +114,12 @@ The evaluation samples use the following packages:
 
 | Metric | Description | Tool | Target |
 |--------|-------------|------|--------|
-| Attack Success Rate (ASR) | Percentage of successful adversarial attacks | Red Teaming | < 5% |
-| Content Safety | Detects harmful content (hate, violence, etc.) | Safety Evaluators | Low risk |
-| Jailbreak Resistance | Resistance to instruction bypass attempts | Red Teaming | High |
+| Violence | Detects violent content | ViolenceEvaluator | Score < 2 |
+| Hate And Unfairness | Detects hateful or unfair content | HateAndUnfairnessEvaluator | Score < 2 |
+| Sexual | Detects sexual content | SexualEvaluator | Score < 2 |
+| Self Harm | Detects self-harm content | SelfHarmEvaluator | Score < 2 |
+| Protected Material | Detects copyrighted material | ProtectedMaterialEvaluator | false |
+| Indirect Attack | Detects indirect attacks | IndirectAttackEvaluator | false |
 
 ### Quality Metrics
 
@@ -212,12 +215,11 @@ Use: dotnet list package to check versions
 
 | Feature | .NET | Python |
 |---------|------|--------|
-| Red Teaming | Azure.AI.Projects.RedTeam | azure-ai-evaluation.RedTeam |
-| Groundedness Eval | Microsoft.Extensions.AI.Evaluation.Quality | azure-ai-projects Evals API |
+| Safety Evaluation | Microsoft.Extensions.AI.Evaluation.Safety | azure-ai-evaluation |
+| Groundedness Eval | Microsoft.Extensions.AI.Evaluation.Quality | azure-ai-evaluation |
 | Auth Pattern | AzureCliCredential | AzureCliCredential |
 | Async Support | async/await | asyncio |
 | Agent Integration | Microsoft.Agents.AI | agent_framework |
-| Batch Processing | Manual implementation | Built-in (JSONL) |
 
 Both implementations provide equivalent functionality with language-specific optimizations.
 
