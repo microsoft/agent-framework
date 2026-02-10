@@ -42,7 +42,7 @@ internal abstract partial class TestingExecutor<TIn, TOut> : Executor, IDisposab
     private int _nextActionIndex;
 
     [MessageHandler]
-    private ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
+    public ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
     {
         if (this.AtEnd)
         {

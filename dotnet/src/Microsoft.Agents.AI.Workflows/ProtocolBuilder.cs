@@ -2,10 +2,24 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
+
+internal static class MethodAttributeExtensions
+{
+    public static (IEnumerable<Type> Sent, IEnumerable<Type> Yielded) GetAttributeTypes(this MethodInfo method)
+    {
+        IEnumerable<SendsMessageAttribute> sendsMessageAttrs = method.GetCustomAttributes<SendsMessageAttribute>();
+        IEnumerable<YieldsOutputAttribute> yieldsOutputAttrs = method.GetCustomAttributes<YieldsOutputAttribute>();
+        // TODO: Should we include [MessageHandler]?
+
+        return (Sent: sendsMessageAttrs.Select(attr => attr.Type), Yielded: yieldsOutputAttrs.Select(attr => attr.Type));
+    }
+}
 
 /// <summary>
 /// .
@@ -18,6 +32,23 @@ public sealed class ProtocolBuilder
     internal ProtocolBuilder(DelayedExternalRequestContext delayRequestContext)
     {
         this.RouteBuilder = new RouteBuilder(delayRequestContext);
+    }
+
+    internal ProtocolBuilder AddHandlerAttributeTypes(MethodInfo method, bool registerSentTypes = true, bool registerYieldTypes = true)
+    {
+        (IEnumerable<Type> sentTypes, IEnumerable<Type> yieldTypes) = method.GetAttributeTypes();
+
+        if (registerSentTypes)
+        {
+            this._sendTypes.UnionWith(sentTypes);
+        }
+
+        if (registerYieldTypes)
+        {
+            this._yieldTypes.UnionWith(yieldTypes);
+        }
+
+        return this;
     }
 
     /// <summary>
