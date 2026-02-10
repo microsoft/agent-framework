@@ -540,7 +540,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
-    def get_code_interpreter_tool(
+    def get_code_interpreter_tool(  # type: ignore[override]
         *,
         file_ids: list[str] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
@@ -614,7 +614,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         return fs_tool
 
     @staticmethod
-    def get_web_search_tool(
+    def get_web_search_tool(  # type: ignore[override]
         *,
         user_location: dict[str, str] | None = None,
         search_context_size: Literal["low", "medium", "high"] | None = None,
@@ -660,9 +660,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         return ws_tool
 
     @staticmethod
-    def get_image_generation_tool(
+    def get_image_generation_tool(  # type: ignore[override]
         *,
-        model: str = "gpt-image-1",
+        model: Literal["gpt-image-1"] | str | None = None,
         size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
         output_format: Literal["png", "webp", "jpeg"] | None = None,
         quality: Literal["low", "medium", "high", "auto"] | None = None,
@@ -680,10 +680,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             quality: Output image quality.
             background: Background transparency setting.
             partial_images: Number of partial images to return during generation.
-            moderation: Moderation level. Note: This parameter is accepted for API compatibility
-                but not used by Azure AI Projects.
-            output_compression: Compression level. Note: This parameter is accepted for API compatibility
-                but not used by Azure AI Projects.
+            moderation: Moderation level.
+            output_compression: Compression level.
 
         Returns:
             An ImageGenTool ready to pass to ChatAgent.
@@ -696,15 +694,15 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 tool = AzureAIClient.get_image_generation_tool()
                 agent = ChatAgent(client, tools=[tool])
         """
-        _ = moderation  # Not used by Azure AI Projects
-        _ = output_compression  # Not used by Azure AI Projects
-        return ImageGenTool(
-            model=model,
+        return ImageGenTool(  # type: ignore[misc]
+            model=model,  # type: ignore[arg-type]
             size=size,
             output_format=output_format,
             quality=quality,
             background=background,
             partial_images=partial_images,
+            moderation=moderation,
+            output_compression=output_compression,
         )
 
     @staticmethod

@@ -380,7 +380,7 @@ def to_azure_ai_tools(
             azure_tools.append(tool)
         else:
             # Pass through dict-based tools directly
-            azure_tools.append(tool)
+            azure_tools.append(dict(tool) if isinstance(tool, MutableMapping) else tool)  # type: ignore[arg-type]
 
     return azure_tools
 
