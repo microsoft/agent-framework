@@ -32,10 +32,10 @@ class TestChatMiddleware:
             async def process(
                 self,
                 context: ChatContext,
-                next: Callable[[ChatContext], Awaitable[None]],
+                call_next: Callable[[ChatContext], Awaitable[None]],
             ) -> None:
                 execution_order.append("chat_middleware_before")
-                await next(context)
+                await call_next(context)
                 execution_order.append("chat_middleware_after")
 
         # Add middleware to chat client
@@ -58,9 +58,11 @@ class TestChatMiddleware:
         execution_order: list[str] = []
 
         @chat_middleware
-        async def logging_chat_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def logging_chat_middleware(
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
             execution_order.append("function_middleware_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("function_middleware_after")
 
         # Add middleware to chat client
@@ -83,13 +85,13 @@ class TestChatMiddleware:
 
         @chat_middleware
         async def message_modifier_middleware(
-            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
         ) -> None:
             # Modify the first message by adding a prefix
             if context.messages and len(context.messages) > 0:
                 original_text = context.messages[0].text or ""
                 context.messages[0] = ChatMessage(role=context.messages[0].role, text=f"MODIFIED: {original_text}")
-            await next(context)
+            await call_next(context)
 
         # Add middleware to chat client
         chat_client_base.chat_middleware = [message_modifier_middleware]
@@ -109,7 +111,7 @@ class TestChatMiddleware:
 
         @chat_middleware
         async def response_override_middleware(
-            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
         ) -> None:
             # Override the response without calling next()
             context.result = ChatResponse(
@@ -136,15 +138,15 @@ class TestChatMiddleware:
         execution_order: list[str] = []
 
         @chat_middleware
-        async def first_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def first_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
             execution_order.append("first_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("first_after")
 
         @chat_middleware
-        async def second_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def second_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
             execution_order.append("second_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("second_after")
 
         # Add middleware to chat client (order should be preserved)
@@ -172,10 +174,10 @@ class TestChatMiddleware:
 
         @chat_middleware
         async def agent_level_chat_middleware(
-            context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
         ) -> None:
             execution_order.append("agent_chat_middleware_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("agent_chat_middleware_after")
 
         chat_client = MockBaseChatClient()
@@ -203,15 +205,15 @@ class TestChatMiddleware:
         execution_order: list[str] = []
 
         @chat_middleware
-        async def first_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def first_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
             execution_order.append("first_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("first_after")
 
         @chat_middleware
-        async def second_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def second_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
             execution_order.append("second_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("second_after")
 
         # Create ChatAgent with multiple chat middleware
@@ -238,7 +240,9 @@ class TestChatMiddleware:
         execution_order: list[str] = []
 
         @chat_middleware
-        async def streaming_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def streaming_middleware(
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
             execution_order.append("streaming_before")
             # Verify it's a streaming context
             assert context.stream is True
@@ -250,7 +254,7 @@ class TestChatMiddleware:
                 return update
 
             context.stream_transform_hooks.append(upper_case_update)
-            await next(context)
+            await call_next(context)
             execution_order.append("streaming_after")
 
         # Add middleware to chat client
@@ -274,9 +278,11 @@ class TestChatMiddleware:
         execution_count = {"count": 0}
 
         @chat_middleware
-        async def counting_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def counting_middleware(
+            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
+        ) -> None:
             execution_count["count"] += 1
-            await next(context)
+            await call_next(context)
 
         # First call with run-level middleware
         messages = [ChatMessage(role="user", text="first message")]
@@ -304,7 +310,7 @@ class TestChatMiddleware:
         modified_kwargs: dict[str, Any] = {}
 
         @chat_middleware
-        async def kwargs_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def kwargs_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
             # Capture the original kwargs
             captured_kwargs.update(context.kwargs)
 
@@ -316,7 +322,7 @@ class TestChatMiddleware:
             # Store modified kwargs for verification
             modified_kwargs.update(context.kwargs)
 
-            await next(context)
+            await call_next(context)
 
         # Add middleware to chat client
         chat_client_base.chat_middleware = [kwargs_middleware]
@@ -349,11 +355,11 @@ class TestChatMiddleware:
 
         @function_middleware
         async def test_function_middleware(
-            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
         ) -> None:
             nonlocal execution_order
             execution_order.append(f"function_middleware_before_{context.function.name}")
-            await next(context)
+            await call_next(context)
             execution_order.append(f"function_middleware_after_{context.function.name}")
 
         # Define a simple tool function
@@ -415,10 +421,10 @@ class TestChatMiddleware:
 
         @function_middleware
         async def run_level_function_middleware(
-            context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
         ) -> None:
             execution_order.append("run_level_function_middleware_before")
-            await next(context)
+            await call_next(context)
             execution_order.append("run_level_function_middleware_after")
 
         # Define a simple tool function
