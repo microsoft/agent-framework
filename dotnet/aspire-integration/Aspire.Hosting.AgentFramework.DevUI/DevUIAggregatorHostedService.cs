@@ -66,8 +66,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             });
 
         this._app = builder.Build();
-        this._app.Urls.Add("http://127.0.0.1:0");
 
+        // Bind to a fixed port if one was specified on the DevUI resource; otherwise use 0 for dynamic allocation.
+        var port = this._resource.Port ?? 0;
+        this._app.Urls.Add($"http://127.0.0.1:{port}");
         this.MapRoutes(this._app);
 
         await this._app.StartAsync(cancellationToken).ConfigureAwait(false);
