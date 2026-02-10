@@ -27,6 +27,7 @@ from azure.ai.projects.models import (
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     FileSearchTool,
+    ImageGenTool,
     MCPTool,
     ResponseTextFormatConfigurationJsonSchema,
     WebSearchPreviewTool,
@@ -1513,3 +1514,115 @@ async def test_integration_agent_existing_thread():
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
+
+
+# region Factory Method Tests
+
+
+def test_get_code_interpreter_tool_basic() -> None:
+    """Test get_code_interpreter_tool returns CodeInterpreterTool."""
+    tool = AzureAIClient.get_code_interpreter_tool()
+    assert isinstance(tool, CodeInterpreterTool)
+
+
+def test_get_code_interpreter_tool_with_file_ids() -> None:
+    """Test get_code_interpreter_tool with file_ids."""
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert tool["container"]["file_ids"] == ["file-123", "file-456"]
+
+
+def test_get_file_search_tool_basic() -> None:
+    """Test get_file_search_tool returns FileSearchTool."""
+    tool = AzureAIClient.get_file_search_tool(vector_store_ids=["vs-123"])
+    assert isinstance(tool, FileSearchTool)
+    assert tool["vector_store_ids"] == ["vs-123"]
+
+
+def test_get_file_search_tool_with_options() -> None:
+    """Test get_file_search_tool with max_num_results."""
+    tool = AzureAIClient.get_file_search_tool(
+        vector_store_ids=["vs-123"],
+        max_num_results=10,
+    )
+    assert isinstance(tool, FileSearchTool)
+    assert tool["max_num_results"] == 10
+
+
+def test_get_file_search_tool_requires_vector_store_ids() -> None:
+    """Test get_file_search_tool raises ValueError when vector_store_ids is empty."""
+    with pytest.raises(ValueError, match="vector_store_ids"):
+        AzureAIClient.get_file_search_tool(vector_store_ids=[])
+
+
+def test_get_web_search_tool_basic() -> None:
+    """Test get_web_search_tool returns WebSearchPreviewTool."""
+    tool = AzureAIClient.get_web_search_tool()
+    assert isinstance(tool, WebSearchPreviewTool)
+
+
+def test_get_web_search_tool_with_location() -> None:
+    """Test get_web_search_tool with user_location."""
+    tool = AzureAIClient.get_web_search_tool(
+        user_location={"city": "Seattle", "country": "US"},
+    )
+    assert isinstance(tool, WebSearchPreviewTool)
+    assert tool.user_location is not None
+    assert tool.user_location.city == "Seattle"
+    assert tool.user_location.country == "US"
+
+
+def test_get_web_search_tool_with_search_context_size() -> None:
+    """Test get_web_search_tool with search_context_size."""
+    tool = AzureAIClient.get_web_search_tool(search_context_size="high")
+    assert isinstance(tool, WebSearchPreviewTool)
+    assert tool.search_context_size == "high"
+
+
+def test_get_mcp_tool_basic() -> None:
+    """Test get_mcp_tool returns MCPTool."""
+    tool = AzureAIClient.get_mcp_tool(name="test_mcp", url="https://example.com")
+    assert isinstance(tool, MCPTool)
+    assert tool["server_label"] == "test_mcp"
+    assert tool["server_url"] == "https://example.com"
+
+
+def test_get_mcp_tool_with_description() -> None:
+    """Test get_mcp_tool with description."""
+    tool = AzureAIClient.get_mcp_tool(
+        name="test_mcp",
+        url="https://example.com",
+        description="Test MCP server",
+    )
+    assert tool["server_description"] == "Test MCP server"
+
+
+def test_get_mcp_tool_with_project_connection_id() -> None:
+    """Test get_mcp_tool with project_connection_id."""
+    tool = AzureAIClient.get_mcp_tool(
+        name="test_mcp",
+        project_connection_id="conn-123",
+    )
+    assert tool["project_connection_id"] == "conn-123"
+
+
+def test_get_image_generation_tool_basic() -> None:
+    """Test get_image_generation_tool returns ImageGenTool."""
+    tool = AzureAIClient.get_image_generation_tool()
+    assert isinstance(tool, ImageGenTool)
+
+
+def test_get_image_generation_tool_with_options() -> None:
+    """Test get_image_generation_tool with various options."""
+    tool = AzureAIClient.get_image_generation_tool(
+        size="1024x1024",
+        quality="high",
+        output_format="png",
+    )
+    assert isinstance(tool, ImageGenTool)
+    assert tool["size"] == "1024x1024"
+    assert tool["quality"] == "high"
+    assert tool["output_format"] == "png"
+
+
+# endregion

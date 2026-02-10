@@ -544,6 +544,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         *,
         file_ids: list[str] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
+        **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
@@ -552,6 +553,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
+            **kwargs: Additional arguments passed to the SDK CodeInterpreterTool constructor.
 
         Returns:
             A CodeInterpreterTool ready to pass to ChatAgent.
@@ -568,7 +570,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
         tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
-        return CodeInterpreterTool(container=tool_container)
+        return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
     def get_file_search_tool(
@@ -577,6 +579,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> ProjectsFileSearchTool:
         """Create a file search tool configuration for Azure AI Projects.
 
@@ -585,6 +588,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             max_num_results: Maximum number of results to return (1-50).
             ranking_options: Ranking options for search results.
             filters: A filter to apply (ComparisonFilter or CompoundFilter).
+            **kwargs: Additional arguments passed to the SDK FileSearchTool constructor.
 
         Returns:
             A FileSearchTool ready to pass to ChatAgent.
@@ -604,20 +608,20 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         """
         if not vector_store_ids:
             raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
-        fs_tool = ProjectsFileSearchTool(vector_store_ids=vector_store_ids)
-        if max_num_results is not None:
-            fs_tool["max_num_results"] = max_num_results
-        if ranking_options is not None:
-            fs_tool["ranking_options"] = ranking_options
-        if filters is not None:
-            fs_tool["filters"] = filters
-        return fs_tool
+        return ProjectsFileSearchTool(
+            vector_store_ids=vector_store_ids,
+            max_num_results=max_num_results,
+            ranking_options=ranking_options,  # type: ignore[arg-type]
+            filters=filters,  # type: ignore[arg-type]
+            **kwargs,
+        )
 
     @staticmethod
     def get_web_search_tool(  # type: ignore[override]
         *,
         user_location: dict[str, str] | None = None,
         search_context_size: Literal["low", "medium", "high"] | None = None,
+        **kwargs: Any,
     ) -> WebSearchPreviewTool:
         """Create a web search preview tool configuration for Azure AI Projects.
 
@@ -626,6 +630,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 "city", "country", "region", "timezone".
             search_context_size: Amount of context to include from search results.
                 One of "low", "medium", or "high". Defaults to "medium".
+            **kwargs: Additional arguments passed to the SDK WebSearchPreviewTool constructor.
 
         Returns:
             A WebSearchPreviewTool ready to pass to ChatAgent.
@@ -644,7 +649,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                     search_context_size="high",
                 )
         """
-        ws_tool = WebSearchPreviewTool()
+        ws_tool = WebSearchPreviewTool(search_context_size=search_context_size, **kwargs)
 
         if user_location:
             ws_tool.user_location = ApproximateLocation(
@@ -653,9 +658,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
                 region=user_location.get("region"),
                 timezone=user_location.get("timezone"),
             )
-
-        if search_context_size:
-            ws_tool.search_context_size = search_context_size
 
         return ws_tool
 
@@ -670,6 +672,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         partial_images: int | None = None,
         moderation: Literal["auto", "low"] | None = None,
         output_compression: int | None = None,
+        **kwargs: Any,
     ) -> ImageGenTool:
         """Create an image generation tool configuration for Azure AI Projects.
 
@@ -682,6 +685,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             partial_images: Number of partial images to return during generation.
             moderation: Moderation level.
             output_compression: Compression level.
+            **kwargs: Additional arguments passed to the SDK ImageGenTool constructor.
 
         Returns:
             An ImageGenTool ready to pass to ChatAgent.
@@ -703,6 +707,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             partial_images=partial_images,
             moderation=moderation,
             output_compression=output_compression,
+            **kwargs,
         )
 
     @staticmethod
@@ -715,6 +720,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
         project_connection_id: str | None = None,
+        **kwargs: Any,
     ) -> MCPTool:
         """Create a hosted MCP tool configuration for Azure AI.
 
@@ -737,6 +743,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
             headers: HTTP headers to include in requests to the MCP server.
             project_connection_id: Azure AI Foundry connection ID for managed MCP connections.
                 If provided, url and headers are not required.
+            **kwargs: Additional arguments passed to the SDK MCPTool constructor.
 
         Returns:
             An MCPTool configuration ready to pass to ChatAgent.
@@ -761,7 +768,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
 
                 agent = ChatAgent(client, tools=[tool])
         """
-        mcp = MCPTool(server_label=name.replace(" ", "_"), server_url=url or "")
+        mcp = MCPTool(server_label=name.replace(" ", "_"), server_url=url or "", **kwargs)
 
         if description:
             mcp["server_description"] = description
