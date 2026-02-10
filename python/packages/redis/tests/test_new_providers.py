@@ -8,7 +8,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage
+from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 
@@ -142,7 +142,7 @@ class TestRedisContextProviderBeforeRun:
         mock_index.query = AsyncMock(return_value=[{"content": "Memory A"}, {"content": "Memory B"}])
         provider = _RedisContextProvider(source_id="ctx", user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["test query"])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test query"])], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -159,7 +159,7 @@ class TestRedisContextProviderBeforeRun:
     ):
         provider = _RedisContextProvider(source_id="ctx", user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["   "])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -174,7 +174,7 @@ class TestRedisContextProviderBeforeRun:
         mock_index.query = AsyncMock(return_value=[])
         provider = _RedisContextProvider(source_id="ctx", user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["hello"])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -189,8 +189,8 @@ class TestRedisContextProviderAfterRun:
     ):
         provider = _RedisContextProvider(source_id="ctx", user_id="u1")
         session = AgentSession(session_id="test-session")
-        response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["response text"])])
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["user input"])], session_id="s1")
+        response = AgentResponse(messages=[Message(role="assistant", contents=["response text"])])
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["user input"])], session_id="s1")
         ctx._response = response
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -208,7 +208,7 @@ class TestRedisContextProviderAfterRun:
     ):
         provider = _RedisContextProvider(source_id="ctx", user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["   "])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -221,7 +221,7 @@ class TestRedisContextProviderAfterRun:
     ):
         provider = _RedisContextProvider(source_id="ctx", application_id="app", agent_id="ag", user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["hello"])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -325,8 +325,8 @@ class TestRedisHistoryProviderRedisKey:
 
 class TestRedisHistoryProviderGetMessages:
     async def test_returns_deserialized_messages(self, mock_redis_client: MagicMock):
-        msg1 = ChatMessage(role="user", contents=["Hello"])
-        msg2 = ChatMessage(role="assistant", contents=["Hi!"])
+        msg1 = Message(role="user", contents=["Hello"])
+        msg2 = Message(role="assistant", contents=["Hi!"])
         mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
@@ -357,7 +357,7 @@ class TestRedisHistoryProviderSaveMessages:
             mock_from_url.return_value = mock_redis_client
             provider = _RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
 
-        msgs = [ChatMessage(role="user", contents=["Hello"]), ChatMessage(role="assistant", contents=["Hi"])]
+        msgs = [Message(role="user", contents=["Hello"]), Message(role="assistant", contents=["Hi"])]
         await provider.save_messages("s1", msgs)
 
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
@@ -379,7 +379,7 @@ class TestRedisHistoryProviderSaveMessages:
             mock_from_url.return_value = mock_redis_client
             provider = _RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=10)
 
-        await provider.save_messages("s1", [ChatMessage(role="user", contents=["msg"])])
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
 
         mock_redis_client.ltrim.assert_called_once_with("chat_messages:s1", -10, -1)
 
@@ -390,7 +390,7 @@ class TestRedisHistoryProviderSaveMessages:
             mock_from_url.return_value = mock_redis_client
             provider = _RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=10)
 
-        await provider.save_messages("s1", [ChatMessage(role="user", contents=["msg"])])
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
 
         mock_redis_client.ltrim.assert_not_called()
 
@@ -409,7 +409,7 @@ class TestRedisHistoryProviderBeforeAfterRun:
     """Test before_run/after_run integration via BaseHistoryProvider defaults."""
 
     async def test_before_run_loads_history(self, mock_redis_client: MagicMock):
-        msg = ChatMessage(role="user", contents=["old msg"])
+        msg = Message(role="user", contents=["old msg"])
         mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict())])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
@@ -417,7 +417,7 @@ class TestRedisHistoryProviderBeforeAfterRun:
             provider = _RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
 
         session = AgentSession(session_id="test")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["new msg"])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["new msg"])], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -431,8 +431,8 @@ class TestRedisHistoryProviderBeforeAfterRun:
             provider = _RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
 
         session = AgentSession(session_id="test")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["hi"])], session_id="s1")
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["hello"])])
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -448,7 +448,7 @@ class TestRedisHistoryProviderBeforeAfterRun:
             )
 
         session = AgentSession(session_id="test")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", contents=["hi"])], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
