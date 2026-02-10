@@ -92,7 +92,7 @@ Content-Type: application/json
 ### ============================================================================
 ### Example Workflow - Complete Happy Path
 ### ============================================================================
-### 
+###
 ### Step 1: Start workflow with content
 ### POST http://localhost:7071/api/workflow/run
 ### -> Returns instanceId: "abc123..."
