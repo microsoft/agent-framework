@@ -24,7 +24,7 @@ Next to what happens in the code when you run, we also make setting up observabi
 
 ### MCP trace propagation
 
-When observability is enabled, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally-configured OpenTelemetry propagator(s) (W3C Trace Context by default, producing `traceparent` and `tracestate`), so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries for all transports (stdio, HTTP, WebSocket), compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-06-18/basic#_meta).
+Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally-configured OpenTelemetry propagator(s) (W3C Trace Context by default, producing `traceparent` and `tracestate`), so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries for all transports (stdio, HTTP, WebSocket), compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
 
 ### Five patterns for configuring observability
 
