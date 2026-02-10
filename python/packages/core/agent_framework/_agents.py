@@ -621,7 +621,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
@@ -786,7 +787,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         options: ChatOptions[TResponseModelT],
         **kwargs: Any,
@@ -802,7 +804,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         options: TOptions_co | ChatOptions[None] | None = None,
         **kwargs: Any,
@@ -818,7 +821,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -833,7 +837,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -986,7 +991,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None,
         options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
@@ -1002,13 +1008,13 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         )
 
         # Normalize tools
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (
+        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any] = (
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[FunctionTool | Callable[..., Any] | dict[str, Any]] = []
+        final_tools: list[FunctionTool | Callable[..., Any] | dict[str, Any] | Any] = []
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
@@ -1397,7 +1403,8 @@ class ChatAgent(
         tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+        | Any
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
         default_options: TOptions_co | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,

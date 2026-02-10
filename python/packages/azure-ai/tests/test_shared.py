@@ -7,7 +7,7 @@ import pytest
 from agent_framework import (
     FunctionTool,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import CodeInterpreterToolDefinition
 from pydantic import BaseModel
 
@@ -104,13 +104,15 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
-    """Test unsupported tool type raises error."""
+    """Test unsupported tool type passes through unchanged."""
 
     class UnsupportedTool:
         pass
 
-    with pytest.raises(ServiceInitializationError, match="Unsupported tool type"):
-        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
+    unsupported = UnsupportedTool()
+    result = to_azure_ai_agent_tools([unsupported])  # type: ignore
+    assert len(result) == 1
+    assert result[0] is unsupported  # Passed through unchanged
 
 
 def test_from_azure_ai_agent_tools_empty() -> None:

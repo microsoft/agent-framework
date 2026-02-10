@@ -649,13 +649,15 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
-    """Test that unsupported tool types raise error."""
+    """Test that unsupported tool types pass through unchanged."""
 
     class UnsupportedTool:
         pass
 
-    with pytest.raises(ServiceInitializationError):
-        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
+    unsupported = UnsupportedTool()
+    result = to_azure_ai_agent_tools([unsupported])  # type: ignore
+    assert len(result) == 1
+    assert result[0] is unsupported  # Passed through unchanged
 
 
 # endregion

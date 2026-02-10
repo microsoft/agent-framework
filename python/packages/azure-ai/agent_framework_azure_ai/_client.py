@@ -25,7 +25,19 @@ from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
+from azure.ai.projects.models import (
+    ApproximateLocation,
+    CodeInterpreterTool,
+    CodeInterpreterToolAuto,
+    ImageGenTool,
+    MCPTool,
+    PromptAgentDefinition,
+    PromptAgentDefinitionText,
+    RaiConfig,
+    Reasoning,
+    WebSearchPreviewTool,
+)
+from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
@@ -528,6 +540,174 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str] | None = None,
+        container: Literal["auto"] | dict[str, Any] = "auto",
+    ) -> CodeInterpreterTool:
+        """Create a code interpreter tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            file_ids: Optional list of file IDs to make available to the code interpreter.
+            container: Container configuration. Use "auto" for automatic container management.
+                Note: Custom container settings from this parameter are not used by Azure AI Projects;
+                use file_ids instead.
+
+        Returns:
+            A CodeInterpreterTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_code_interpreter_tool()
+                agent = ChatAgent(client, tools=[tool])
+        """
+        # Extract file_ids from container if provided as dict and file_ids not explicitly set
+        if file_ids is None and isinstance(container, dict):
+            file_ids = container.get("file_ids")
+        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        return CodeInterpreterTool(container=tool_container)
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        vector_store_ids: list[str],
+        max_num_results: int | None = None,
+        ranking_options: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> ProjectsFileSearchTool:
+        """Create a file search tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            vector_store_ids: List of vector store IDs to search.
+            max_num_results: Maximum number of results to return (1-50).
+            ranking_options: Ranking options for search results.
+            filters: A filter to apply (ComparisonFilter or CompoundFilter).
+
+        Returns:
+            A FileSearchTool ready to pass to ChatAgent.
+
+        Raises:
+            ValueError: If vector_store_ids is empty.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123"],
+                )
+                agent = ChatAgent(client, tools=[tool])
+        """
+        if not vector_store_ids:
+            raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
+        fs_tool = ProjectsFileSearchTool(vector_store_ids=vector_store_ids)
+        if max_num_results is not None:
+            fs_tool["max_num_results"] = max_num_results
+        if ranking_options is not None:
+            fs_tool["ranking_options"] = ranking_options
+        if filters is not None:
+            fs_tool["filters"] = filters
+        return fs_tool
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        user_location: dict[str, str] | None = None,
+        search_context_size: Literal["low", "medium", "high"] | None = None,
+    ) -> WebSearchPreviewTool:
+        """Create a web search preview tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            user_location: Location context for search results. Dict with keys like
+                "city", "country", "region", "timezone".
+            search_context_size: Amount of context to include from search results.
+                One of "low", "medium", or "high". Defaults to "medium".
+
+        Returns:
+            A WebSearchPreviewTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_web_search_tool()
+                agent = ChatAgent(client, tools=[tool])
+
+                # With location and context size
+                tool = AzureAIClient.get_web_search_tool(
+                    user_location={"city": "Seattle", "country": "US"},
+                    search_context_size="high",
+                )
+        """
+        ws_tool = WebSearchPreviewTool()
+
+        if user_location:
+            ws_tool.user_location = ApproximateLocation(
+                city=user_location.get("city"),
+                country=user_location.get("country"),
+                region=user_location.get("region"),
+                timezone=user_location.get("timezone"),
+            )
+
+        if search_context_size:
+            ws_tool.search_context_size = search_context_size
+
+        return ws_tool
+
+    @staticmethod
+    def get_image_generation_tool(
+        *,
+        model: str = "gpt-image-1",
+        size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
+        output_format: Literal["png", "webp", "jpeg"] | None = None,
+        quality: Literal["low", "medium", "high", "auto"] | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        partial_images: int | None = None,
+        moderation: Literal["auto", "low"] | None = None,
+        output_compression: int | None = None,
+    ) -> ImageGenTool:
+        """Create an image generation tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            model: The model to use for image generation.
+            size: Output image size.
+            output_format: Output image format.
+            quality: Output image quality.
+            background: Background transparency setting.
+            partial_images: Number of partial images to return during generation.
+            moderation: Moderation level. Note: This parameter is accepted for API compatibility
+                but not used by Azure AI Projects.
+            output_compression: Compression level. Note: This parameter is accepted for API compatibility
+                but not used by Azure AI Projects.
+
+        Returns:
+            An ImageGenTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_image_generation_tool()
+                agent = ChatAgent(client, tools=[tool])
+        """
+        _ = moderation  # Not used by Azure AI Projects
+        _ = output_compression  # Not used by Azure AI Projects
+        return ImageGenTool(
+            model=model,
+            size=size,
+            output_format=output_format,
+            quality=quality,
+            background=background,
+            partial_images=partial_images,
+        )
+
+    @staticmethod
     def get_mcp_tool(
         *,
         name: str,
@@ -537,7 +717,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         allowed_tools: list[str] | None = None,
         headers: dict[str, str] | None = None,
         project_connection_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MCPTool:
         """Create a hosted MCP tool configuration for Azure AI.
 
         This configures an MCP (Model Context Protocol) server that will be called
@@ -583,10 +763,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
 
                 agent = ChatAgent(client, tools=[tool])
         """
-        mcp: dict[str, Any] = {"type": "mcp", "server_label": name.replace(" ", "_")}
-
-        if url:
-            mcp["server_url"] = url
+        mcp = MCPTool(server_label=name.replace(" ", "_"), server_url=url or "")
 
         if description:
             mcp["server_description"] = description

@@ -3,27 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, cast
 
 from agent_framework import (
     FunctionTool,
     get_logger,
 )
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import (
-    BingCustomSearchTool,
-    BingGroundingTool,
     CodeInterpreterToolDefinition,
-    McpTool,
     ToolDefinition,
 )
-from azure.ai.agents.models import FileSearchTool as AgentsFileSearchTool
 from azure.ai.projects.models import (
-    ApproximateLocation,
     CodeInterpreterTool,
-    CodeInterpreterToolAuto,
-    ImageGenTool,
     MCPTool,
     ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
@@ -140,56 +133,28 @@ def to_azure_ai_agent_tools(
         if isinstance(tool, FunctionTool):
             tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
         elif isinstance(tool, ToolDefinition):
+            # Pass through ToolDefinition subclasses unchanged (includes CodeInterpreterToolDefinition, etc.)
             tool_definitions.append(tool)
-        elif isinstance(tool, McpTool):
-            # Handle McpTool SDK type from get_mcp_tool()
+        elif hasattr(tool, "definitions") and not isinstance(tool, (dict, MutableMapping)):
+            # SDK Tool wrappers (McpTool, FileSearchTool, BingGroundingTool, etc.)
             tool_definitions.extend(tool.definitions)
-        elif isinstance(tool, AgentsFileSearchTool):
-            # Handle FileSearchTool from get_file_search_tool()
-            tool_definitions.extend(tool.definitions)
-            if run_options is not None and "tool_resources" not in run_options:
-                run_options["tool_resources"] = tool.resources
+            # Handle tool resources (MCP resources handled separately)
+            if (
+                run_options is not None
+                and hasattr(tool, "resources")
+                and tool.resources
+                and "mcp" not in tool.resources
+            ):
+                if "tool_resources" not in run_options:
+                    run_options["tool_resources"] = {}
+                run_options["tool_resources"].update(tool.resources)
         elif isinstance(tool, (dict, MutableMapping)):
-            # Handle dict-based tools from static factory methods
+            # Handle dict-based tools - pass through directly
             tool_dict = tool if isinstance(tool, dict) else dict(tool)
-            tool_type = tool_dict.get("type")
-
-            if tool_type == "code_interpreter":
-                tool_definitions.append(CodeInterpreterToolDefinition())
-            elif tool_type == "bing_grounding":
-                connection_id = tool_dict.get("connection_id")
-                if not connection_id:
-                    raise ServiceInitializationError("Bing grounding tool requires 'connection_id'.")
-                config_args = {k: v for k, v in tool_dict.items() if k not in ("type", "connection_id") and v}
-                bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
-                tool_definitions.extend(bing_search.definitions)
-            elif tool_type == "bing_custom_search":
-                connection_id = tool_dict.get("connection_id")
-                instance_name = tool_dict.get("instance_name")
-                if not connection_id or not instance_name:
-                    raise ServiceInitializationError(
-                        "Bing custom search tool requires 'connection_id' and 'instance_name'."
-                    )
-                config_args = {
-                    k: v for k, v in tool_dict.items() if k not in ("type", "connection_id", "instance_name") and v
-                }
-                bing_custom_search = BingCustomSearchTool(
-                    connection_id=connection_id, instance_name=instance_name, **config_args
-                )
-                tool_definitions.extend(bing_custom_search.definitions)
-            elif tool_type == "mcp":
-                server_label = tool_dict.get("server_label")
-                server_url = tool_dict.get("server_url")
-                if not server_label or not server_url:
-                    raise ServiceInitializationError("MCP tool requires 'server_label' and 'server_url'.")
-                allowed_tools = tool_dict.get("allowed_tools", [])
-                mcp_tool = McpTool(server_label=server_label, server_url=server_url, allowed_tools=allowed_tools)
-                tool_definitions.extend(mcp_tool.definitions)
-            else:
-                # Pass through other dict-based tools directly
-                tool_definitions.append(tool_dict)
+            tool_definitions.append(tool_dict)
         else:
-            raise ServiceInitializationError(f"Unsupported tool type: {type(tool)}")
+            # Pass through other types unchanged
+            tool_definitions.append(tool)
     return tool_definitions
 
 
@@ -381,14 +346,14 @@ def from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[d
 
 
 def to_azure_ai_tools(
-    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any] | Tool] | None,
 ) -> list[Tool | dict[str, Any]]:
     """Converts Agent Framework tools into Azure AI compatible tools.
 
-    Handles FunctionTool instances and dict-based tools from static factory methods.
+    Handles FunctionTool instances and passes through SDK Tool types directly.
 
     Args:
-        tools: A sequence of Agent Framework tool objects or dictionaries
+        tools: A sequence of Agent Framework tool objects, SDK Tool types, or dictionaries
             defining the tools to be converted. Can be None.
 
     Returns:
@@ -410,52 +375,12 @@ def to_azure_ai_tools(
                     description=tool.description,
                 )
             )
-        elif isinstance(tool, (dict, MutableMapping)):
-            # Handle dict-based tools from static factory methods
-            tool_dict = tool if isinstance(tool, dict) else dict(tool)
-            tool_type = tool_dict.get("type")
-
-            if tool_type == "code_interpreter":
-                file_ids = tool_dict.get("file_ids", [])
-                container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
-                ci_tool: CodeInterpreterTool = CodeInterpreterTool(container=container)
-                azure_tools.append(ci_tool)
-            elif tool_type == "file_search":
-                vector_store_ids = tool_dict.get("vector_store_ids", [])
-                if not vector_store_ids:
-                    raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
-                fs_tool: ProjectsFileSearchTool = ProjectsFileSearchTool(vector_store_ids=vector_store_ids)
-                if max_results := tool_dict.get("max_num_results"):
-                    fs_tool["max_num_results"] = max_results
-                azure_tools.append(fs_tool)
-            elif tool_type == "web_search_preview":
-                ws_tool: WebSearchPreviewTool = WebSearchPreviewTool()
-                if user_location := tool_dict.get("user_location"):
-                    ws_tool.user_location = ApproximateLocation(
-                        city=user_location.get("city"),
-                        country=user_location.get("country"),
-                        region=user_location.get("region"),
-                        timezone=user_location.get("timezone"),
-                    )
-                azure_tools.append(ws_tool)
-            elif tool_type == "mcp":
-                mcp = _prepare_mcp_tool_dict_for_azure_ai(tool_dict)
-                azure_tools.append(mcp)
-            elif tool_type == "image_generation":
-                ig_tool: ImageGenTool = ImageGenTool(
-                    model=tool_dict.get("model", "gpt-image-1"),
-                    size=cast(Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None, tool_dict.get("size")),
-                    output_format=cast(Literal["png", "webp", "jpeg"] | None, tool_dict.get("output_format")),
-                    quality=cast(Literal["low", "medium", "high", "auto"] | None, tool_dict.get("quality")),
-                    background=cast(Literal["transparent", "opaque", "auto"] | None, tool_dict.get("background")),
-                    partial_images=tool_dict.get("partial_images"),
-                )
-                azure_tools.append(ig_tool)
-            else:
-                # Pass through other dict-based tools directly
-                azure_tools.append(tool_dict)
+        elif isinstance(tool, Tool):
+            # Pass through SDK Tool types directly (CodeInterpreterTool, FileSearchTool, etc.)
+            azure_tools.append(tool)
         else:
-            logger.debug("Unsupported tool passed (type: %s)", type(tool))
+            # Pass through dict-based tools directly
+            azure_tools.append(tool)
 
     return azure_tools
 

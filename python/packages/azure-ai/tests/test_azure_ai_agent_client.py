@@ -772,76 +772,74 @@ async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_grounding(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with web_search dict tool using Bing Grounding."""
+    """Test _prepare_tools_for_azure_ai with BingGroundingTool from get_web_search_tool()."""
 
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id="test-connection-id")
-    # Add additional properties to the dict
-    web_search_tool["count"] = 5
-    web_search_tool["freshness"] = "Day"
-    web_search_tool["market"] = "en-US"
-    web_search_tool["set_lang"] = "en"
-
-    # Mock BingGroundingTool
+    # Mock BingGroundingTool to avoid SDK validation of connection ID
     with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
         mock_bing_tool = MagicMock()
         mock_bing_tool.definitions = [{"type": "bing_grounding"}]
         mock_bing_grounding.return_value = mock_bing_tool
 
+        # get_web_search_tool now returns a BingGroundingTool directly
+        web_search_tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id="test-connection-id")
+
+        # Verify the factory method created the tool with correct args
+        mock_bing_grounding.assert_called_once_with(connection_id="test-connection-id")
+
         result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
+        # BingGroundingTool.definitions should be extended into result
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        call_args = mock_bing_grounding.call_args[1]
-        assert call_args["count"] == 5
-        assert call_args["freshness"] == "Day"
-        assert call_args["market"] == "en-US"
-        assert call_args["set_lang"] == "en"
-        assert "connection_id" in call_args
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_grounding_with_connection_id(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_... with web_search dict tool using Bing Grounding with connection_id (no HTTP call)."""
+    """Test _prepare_tools_for_azure_ai with BingGroundingTool using explicit connection_id."""
 
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id="direct-connection-id")
-    web_search_tool["count"] = 3
-
-    # Mock BingGroundingTool
+    # Mock BingGroundingTool to avoid SDK validation of connection ID
     with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
         mock_bing_tool = MagicMock()
         mock_bing_tool.definitions = [{"type": "bing_grounding"}]
         mock_bing_grounding.return_value = mock_bing_tool
 
+        web_search_tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id="direct-connection-id")
+
+        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id")
+
         result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id", count=3)
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_custom_bing(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with web_search dict tool using Custom Bing Search."""
+    """Test _prepare_tools_for_azure_ai with BingCustomSearchTool from get_web_search_tool()."""
 
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = AzureAIAgentClient.get_web_search_tool(
-        bing_custom_connection_id="custom-connection-id",
-        bing_custom_instance_id="custom-instance",
-    )
-    web_search_tool["count"] = 10
-
-    # Mock BingCustomSearchTool
+    # Mock BingCustomSearchTool to avoid SDK validation
     with patch("agent_framework_azure_ai._chat_client.BingCustomSearchTool") as mock_custom_bing:
         mock_custom_tool = MagicMock()
         mock_custom_tool.definitions = [{"type": "bing_custom_search"}]
         mock_custom_bing.return_value = mock_custom_tool
+
+        web_search_tool = AzureAIAgentClient.get_web_search_tool(
+            bing_custom_connection_id="custom-connection-id",
+            bing_custom_instance_id="custom-instance",
+        )
+
+        mock_custom_bing.assert_called_once_with(
+            connection_id="custom-connection-id",
+            instance_name="custom-instance",
+        )
 
         result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 

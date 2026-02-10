@@ -48,7 +48,7 @@ from azure.ai.agents.models import (
     AsyncAgentRunStream,
     BingCustomSearchTool,
     BingGroundingTool,
-    CodeInterpreterToolDefinition,
+    CodeInterpreterTool,
     FileSearchTool,
     FunctionName,
     FunctionToolDefinition,
@@ -213,11 +213,11 @@ class AzureAIAgentClient(
     # region Hosted Tool Factory Methods
 
     @staticmethod
-    def get_code_interpreter_tool() -> Any:
+    def get_code_interpreter_tool() -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
 
         Returns:
-            A CodeInterpreterToolDefinition ready to pass to ChatAgent.
+            A CodeInterpreterTool instance ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -227,7 +227,7 @@ class AzureAIAgentClient(
                 tool = AzureAIAgentClient.get_code_interpreter_tool()
                 agent = ChatAgent(client, tools=[tool])
         """
-        return CodeInterpreterToolDefinition()
+        return CodeInterpreterTool()
 
     @staticmethod
     def get_file_search_tool(
@@ -260,12 +260,12 @@ class AzureAIAgentClient(
         bing_connection_id: str | None = None,
         bing_custom_connection_id: str | None = None,
         bing_custom_instance_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> BingGroundingTool | BingCustomSearchTool:
         """Create a web search tool configuration for Azure AI Agents.
 
         For Azure AI Agents, web search uses Bing Grounding or Bing Custom Search.
         If no arguments are provided, attempts to read from environment variables.
-        If no connection IDs are found, returns a basic web search tool configuration.
+        If no connection IDs are found, raises ValueError.
 
         Keyword Args:
             bing_connection_id: The Bing Grounding connection ID for standard web search.
@@ -276,7 +276,7 @@ class AzureAIAgentClient(
                 Falls back to BING_CUSTOM_INSTANCE_NAME environment variable.
 
         Returns:
-            A dict-based tool configuration ready to pass to ChatAgent.
+            A BingGroundingTool or BingCustomSearchTool instance ready to pass to ChatAgent.
 
         Examples:
             .. code-block:: python
@@ -308,19 +308,15 @@ class AzureAIAgentClient(
         resolved_custom_instance = bing_custom_instance_id or os.environ.get("BING_CUSTOM_INSTANCE_NAME")
 
         if resolved_custom_connection and resolved_custom_instance:
-            return {
-                "type": "bing_custom_search",
-                "connection_id": resolved_custom_connection,
-                "instance_name": resolved_custom_instance,
-            }
+            return BingCustomSearchTool(
+                connection_id=resolved_custom_connection,
+                instance_name=resolved_custom_instance,
+            )
 
         # Try explicit Bing Grounding parameter first, then environment variable
         resolved_connection_id = bing_connection_id or os.environ.get("BING_CONNECTION_ID")
         if resolved_connection_id:
-            return {
-                "type": "bing_grounding",
-                "connection_id": resolved_connection_id,
-            }
+            return BingGroundingTool(connection_id=resolved_connection_id)
 
         # Azure AI Agents requires Bing connection for web search
         raise ValueError(
@@ -1324,9 +1320,8 @@ class AzureAIAgentClient(
     ) -> list[Any]:
         """Prepare tool definitions for the Azure AI Agents API.
 
-        Converts FunctionTool to JSON schema format. SDK types (ToolDefinition, McpTool,
-        FileSearchTool) are unpacked. Bing tools are converted to SDK types.
-        All other tools pass through unchanged.
+        Converts FunctionTool to JSON schema format. SDK Tool wrappers with .definitions
+        are unpacked. All other tools (ToolDefinition, dict, etc.) pass through unchanged.
 
         Args:
             tools: Sequence of tools to prepare.
@@ -1339,31 +1334,21 @@ class AzureAIAgentClient(
         for tool in tools:
             if isinstance(tool, FunctionTool):
                 tool_definitions.append(tool.to_json_schema_spec())
-            elif isinstance(tool, ToolDefinition):
-                tool_definitions.append(tool)
-            elif isinstance(tool, McpTool):
+            elif hasattr(tool, "definitions") and not isinstance(tool, MutableMapping):
+                # SDK Tool wrappers (McpTool, FileSearchTool, BingGroundingTool, etc.)
                 tool_definitions.extend(tool.definitions)
-            elif isinstance(tool, FileSearchTool):
-                tool_definitions.extend(tool.definitions)
-                if run_options is not None and "tool_resources" not in run_options:
-                    run_options["tool_resources"] = tool.resources
-            elif isinstance(tool, MutableMapping):
-                tool_type = tool.get("type")
-                if tool_type == "bing_grounding":
-                    # Convert to SDK type
-                    config_args = {k: v for k, v in tool.items() if k not in ("type",) and v}
-                    bing_search = BingGroundingTool(**config_args)
-                    tool_definitions.extend(bing_search.definitions)
-                elif tool_type == "bing_custom_search":
-                    # Convert to SDK type
-                    config_args = {k: v for k, v in tool.items() if k not in ("type",) and v}
-                    bing_custom_search = BingCustomSearchTool(**config_args)
-                    tool_definitions.extend(bing_custom_search.definitions)
-                else:
-                    # Pass through other dict-based tools unchanged
-                    tool_definitions.append(tool)
+                # Handle tool resources (MCP resources handled separately by _prepare_mcp_resources)
+                if (
+                    run_options is not None
+                    and hasattr(tool, "resources")
+                    and tool.resources
+                    and "mcp" not in tool.resources
+                ):
+                    if "tool_resources" not in run_options:
+                        run_options["tool_resources"] = {}
+                    run_options["tool_resources"].update(tool.resources)
             else:
-                # Pass through all other tools (SDK types, etc.) unchanged
+                # Pass through ToolDefinition, dict, and other types unchanged
                 tool_definitions.append(tool)
         return tool_definitions
 
