@@ -64,7 +64,7 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
 
         // Act & Assert
         await this.ExecuteTestAsync(
-            displayName: nameof(AddMessageToWorkflowAsync),
+            displayName: nameof(AddMessageWithMetadataAsync),
             variableName: "TestMessage",
             role: AgentMessageRoleWrapper.Get(role),
             messageText: $"Hello from {role}",
@@ -115,10 +115,10 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
         string messageText,
         RecordDataValue? metadata)
     {
-        ObjectExpression<RecordDataValue>.Builder? metadataExpresssion = null;
+        ObjectExpression<RecordDataValue>.Builder? metadataExpression = null;
         if (metadata is not null)
         {
-            metadataExpresssion = ObjectExpression<RecordDataValue>.Literal(metadata).ToBuilder();
+            metadataExpression = ObjectExpression<RecordDataValue>.Literal(metadata).ToBuilder();
         }
 
         AddConversationMessage.Builder actionBuilder =
@@ -129,7 +129,7 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
                 Message = PropertyPath.Create(messageVariable),
                 ConversationId = StringExpression.Literal(conversationId),
                 Role = role,
-                Metadata = metadataExpresssion,
+                Metadata = metadataExpression,
             };
 
         actionBuilder.Content.Add(new AddConversationMessageContent.Builder

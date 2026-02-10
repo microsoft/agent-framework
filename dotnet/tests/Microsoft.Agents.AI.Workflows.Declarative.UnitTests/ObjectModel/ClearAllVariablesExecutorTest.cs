@@ -21,7 +21,7 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
 
         // Act & Assert
         await this.ExecuteTestAsync(
-                this.FormatDisplayName(nameof(ClearWorkflowScopeAsync)),
+                this.FormatDisplayName(nameof(ClearGlobalScopeAsync)),
                 VariablesToClear.AllGlobalVariables,
                 "GlobalVar",
                 VariableScopeNames.Global);

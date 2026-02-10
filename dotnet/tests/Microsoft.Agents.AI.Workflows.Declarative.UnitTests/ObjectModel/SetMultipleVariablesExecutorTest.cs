@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
@@ -127,12 +128,9 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
 
         // Assert
         VerifyModel(model, action);
-        foreach (AssignmentCase assignment in assignments)
+        foreach (AssignmentCase assignment in assignments.Where(a => a.VariableName != null))
         {
-            if (assignment.VariableName != null)
-            {
-                this.VerifyState(assignment.VariableName, assignment.ExpectedValue);
-            }
+            this.VerifyState(assignment.VariableName!, assignment.ExpectedValue);
         }
     }
 
