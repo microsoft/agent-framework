@@ -355,15 +355,15 @@ class TestPurviewChatPolicyMiddleware:
     ) -> None:
         """Test that session_id is extracted from context.options['conversation_id']."""
         chat_client = DummyChatClient()
-        messages = [ChatMessage(role="user", text="Hello")]
+        messages = [Message(role="user", text="Hello")]
         options = {"conversation_id": "conv-123", "model": "test-model"}
-        context = ChatContext(chat_client=chat_client, messages=messages, options=options)
+        context = ChatContext(client=chat_client, messages=messages, options=options)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Hi")]
+                result.messages = [Message(role="assistant", text="Hi")]
                 ctx.result = result
 
             await middleware.process(context, mock_next)
@@ -377,14 +377,14 @@ class TestPurviewChatPolicyMiddleware:
     ) -> None:
         """Test that session_id is None when options don't contain conversation_id."""
         chat_client = DummyChatClient()
-        messages = [ChatMessage(role="user", text="Hello")]
-        context = ChatContext(chat_client=chat_client, messages=messages, options=None)
+        messages = [Message(role="user", text="Hello")]
+        context = ChatContext(client=chat_client, messages=messages, options=None)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Hi")]
+                result.messages = [Message(role="assistant", text="Hi")]
                 ctx.result = result
 
             await middleware.process(context, mock_next)
@@ -395,15 +395,15 @@ class TestPurviewChatPolicyMiddleware:
     async def test_chat_middleware_session_id_used_in_post_check(self, middleware: PurviewChatPolicyMiddleware) -> None:
         """Test that session_id is passed to post-check process_messages call."""
         chat_client = DummyChatClient()
-        messages = [ChatMessage(role="user", text="Hello")]
+        messages = [Message(role="user", text="Hello")]
         options = {"conversation_id": "conv-999"}
-        context = ChatContext(chat_client=chat_client, messages=messages, options=options)
+        context = ChatContext(client=chat_client, messages=messages, options=options)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
             async def mock_next(ctx: ChatContext) -> None:
                 result = MagicMock()
-                result.messages = [ChatMessage(role="assistant", text="Response")]
+                result.messages = [Message(role="assistant", text="Response")]
                 ctx.result = result
 
             await middleware.process(context, mock_next)
