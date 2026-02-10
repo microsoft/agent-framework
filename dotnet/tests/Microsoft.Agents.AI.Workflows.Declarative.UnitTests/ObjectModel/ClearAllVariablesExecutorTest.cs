@@ -20,18 +20,11 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
         this.State.Set("NoVar", FormulaValue.New("Old value"));
         this.State.Bind();
 
-        ClearAllVariables model =
-            this.CreateModel(
-                this.FormatDisplayName(nameof(ClearWorkflowScopeAsync)),
-                VariablesToClear.ConversationScopedVariables);
-
-        // Act
-        ClearAllVariablesExecutor action = new(model, this.State);
-        await this.ExecuteAsync(action);
-
-        // Assert
-        VerifyModel(model, action);
-        this.VerifyUndefined("NoVar");
+        // Act & Assert
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
+                VariablesToClear.ConversationScopedVariables,
+                "NoVar");
     }
 
     [Fact]
@@ -41,19 +34,41 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
         this.State.Set("NoVar", FormulaValue.New("Old value"));
         this.State.Bind();
 
-        // Arrange
-        ClearAllVariables model =
-            this.CreateModel(
+        // Act & Assert
+        await this.ExecuteTestAsync(
                 this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
-                VariablesToClear.UserScopedVariables);
+                VariablesToClear.UserScopedVariables,
+                "NoVar",
+                FormulaValue.New("Old value"));
+    }
+
+    private async Task ExecuteTestAsync(
+        string displayName,
+        VariablesToClear scope,
+        string variableName,
+        FormulaValue? expectedValue = null)
+    {
+        // Arrange
+        ClearAllVariables model = this.CreateModel(
+            this.FormatDisplayName(displayName),
+            scope);
+
+        ClearAllVariablesExecutor action = new(model, this.State);
 
         // Act
-        ClearAllVariablesExecutor action = new(model, this.State);
         await this.ExecuteAsync(action);
 
         // Assert
         VerifyModel(model, action);
-        this.VerifyState("NoVar", FormulaValue.New("Old value"));
+
+        if (expectedValue is null)
+        {
+            this.VerifyUndefined(variableName);
+        }
+        else
+        {
+            this.VerifyState(variableName, expectedValue);
+        }
     }
 
     private ClearAllVariables CreateModel(string displayName, VariablesToClear variableTarget)

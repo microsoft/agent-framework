@@ -196,7 +196,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(variablePath),
                 Value = valueExpression,
             };
 

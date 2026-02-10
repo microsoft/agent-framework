@@ -19,7 +19,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
+        Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(valueExpression);
@@ -36,7 +36,7 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
             parsedValue = expressionResult.Value.ToFormula();
         }
 
-        await this.AssignAsync(variablePath, parsedValue, context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable.Path, parsedValue, context).ConfigureAwait(false);
 
         return default;
     }
