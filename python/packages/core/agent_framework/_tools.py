@@ -1333,7 +1333,14 @@ async def _try_execute_function_calls(
         )
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
-        return ([fcc for fcc in function_calls if fcc.type == "function_call"], False)
+        # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
+        declaration_only_calls = []
+        for fcc in function_calls:
+            if fcc.type == "function_call":
+                fcc.user_input_request = True
+                fcc.id = fcc.call_id
+                declaration_only_calls.append(fcc)
+        return (declaration_only_calls, False)
 
     # Run all function calls concurrently, handling MiddlewareTermination
     from ._middleware import MiddlewareTermination
@@ -1574,10 +1581,14 @@ def _handle_function_call_results(
     from ._types import ChatMessage
 
     if any(fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results):
-        if response.messages and response.messages[0].role == "assistant":
-            response.messages[0].contents.extend(function_call_results)
-        else:
-            response.messages.append(ChatMessage(role="assistant", contents=function_call_results))
+        # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
+        # Declaration-only function_call items are already present from the LLM response.
+        new_items = [fccr for fccr in function_call_results if fccr.type != "function_call"]
+        if new_items:
+            if response.messages and response.messages[0].role == "assistant":
+                response.messages[0].contents.extend(new_items)
+            else:
+                response.messages.append(ChatMessage(role="assistant", contents=new_items))
         return {
             "action": "return",
             "errors_in_a_row": errors_in_a_row,
