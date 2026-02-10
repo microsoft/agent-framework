@@ -8,9 +8,18 @@ from pathlib import Path
 from rich import print
 from task_runner import build_work_items, discover_projects, run_tasks
 
+# Tasks that need to run in all packages when core changes (type info propagates)
+TYPE_CHECK_TASKS = {"pyright", "mypy"}
 
-def get_changed_packages(projects: list[Path], changed_files: list[str], workspace_root: Path) -> set[Path]:
-    """Determine which packages have changed files."""
+
+def get_changed_packages(
+    projects: list[Path], changed_files: list[str], workspace_root: Path
+) -> tuple[set[Path], bool]:
+    """Determine which packages have changed files.
+
+    Returns:
+        A tuple of (changed_packages, core_package_changed).
+    """
     changed_packages: set[Path] = set()
     core_package_changed = False
 
@@ -32,20 +41,13 @@ def get_changed_packages(projects: list[Path], changed_files: list[str], workspa
                 # Check if the file is within this project directory
                 abs_path.relative_to(project_abs)
                 changed_packages.add(project)
-                # Check if the core package was changed
                 if project == Path("packages/core"):
                     core_package_changed = True
                 break
             except ValueError:
-                # File is not in this project
                 continue
 
-    # If core package changed, check all packages
-    if core_package_changed:
-        print("[yellow]Core package changed - checking all packages[/yellow]")
-        return set(projects)
-
-    return changed_packages
+    return changed_packages, core_package_changed
 
 
 def main() -> None:
@@ -63,17 +65,33 @@ def main() -> None:
     if not args.files or args.files == ["."]:
         task_list = ", ".join(args.tasks)
         print(f"[yellow]No specific files provided, running {task_list} in all packages[/yellow]")
-        target_packages = sorted(set(projects))
+        work_items = build_work_items(sorted(set(projects)), args.tasks)
     else:
-        changed_packages = get_changed_packages(projects, args.files, workspace_root)
-        if changed_packages:
-            print(f"[cyan]Detected changes in packages: {', '.join(str(p) for p in sorted(changed_packages))}[/cyan]")
-        else:
-            print(f"[yellow]No changes detected in any package, skipping[/yellow]")
+        changed_packages, core_changed = get_changed_packages(projects, args.files, workspace_root)
+        if not changed_packages:
+            print("[yellow]No changes detected in any package, skipping[/yellow]")
             return
-        target_packages = sorted(changed_packages)
 
-    work_items = build_work_items(target_packages, args.tasks)
+        print(f"[cyan]Detected changes in packages: {', '.join(str(p) for p in sorted(changed_packages))}[/cyan]")
+
+        # File-local tasks (fmt, lint) only run in packages with actual changes.
+        # Type-checking tasks (pyright, mypy) run in all packages when core changes,
+        # because type changes in core propagate to downstream packages.
+        local_tasks = [t for t in args.tasks if t not in TYPE_CHECK_TASKS]
+        type_tasks = [t for t in args.tasks if t in TYPE_CHECK_TASKS]
+
+        work_items = build_work_items(sorted(changed_packages), local_tasks)
+        if type_tasks:
+            if core_changed:
+                print("[yellow]Core package changed - type-checking all packages[/yellow]")
+                work_items += build_work_items(sorted(set(projects)), type_tasks)
+            else:
+                work_items += build_work_items(sorted(changed_packages), type_tasks)
+
+    if not work_items:
+        print("[yellow]No matching tasks found in any package[/yellow]")
+        return
+
     run_tasks(work_items, workspace_root, sequential=args.seq)
 
 
