@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/concurrent_basic.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side concurrent orchestrations for Agent Framework and Semantic Kernel."""
@@ -6,7 +15,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilderWorkflowEvent
+from agent_framework import ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration

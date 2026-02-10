@@ -559,7 +559,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Backend successfully returned conversations list
           setAvailableConversations(conversations);
-          
+
           if (conversations.length > 0) {
             // Found conversations on backend - use most recent
             const mostRecent = conversations[0];
@@ -614,7 +614,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
               // Check for incomplete stream and resume if needed
               const state = loadStreamingState(mostRecent.id);
-              
+
               if (state && !state.completed) {
                 accumulatedTextRef.current = state.accumulatedText || "";
                 // Add assistant message with resumed text

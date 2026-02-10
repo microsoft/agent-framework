@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, ClassVar, Literal, overload
 
@@ -213,7 +215,7 @@ class CopilotStudioAgent(BaseAgent):
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[AgentResponse]": ...
+    ) -> Awaitable[AgentResponse]: ...
 
     @overload
     def run(
@@ -232,7 +234,7 @@ class CopilotStudioAgent(BaseAgent):
         stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> "Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]":
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution

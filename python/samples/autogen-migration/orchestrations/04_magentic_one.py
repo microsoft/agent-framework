@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/04_magentic_one.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen MagenticOneGroupChat vs Agent Framework MagenticBuilder.
 

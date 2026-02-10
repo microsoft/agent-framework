@@ -2,6 +2,8 @@
 
 """Task steps agent demonstrating agentic generative UI (Feature 6)."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator
 from enum import Enum
@@ -128,7 +130,7 @@ class TaskStepsAgentWithExecution:
         """Delegate all other attribute access to base agent."""
         return getattr(self._base_agent, name)
 
-    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any, None]:
+    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
         """Run the agent and then simulate step execution."""
         import logging
         import uuid

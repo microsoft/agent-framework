@@ -5,13 +5,20 @@ Instructions for AI coding agents working in the Python codebase.
 **Key Documentation:**
 - [DEV_SETUP.md](DEV_SETUP.md) - Development environment setup and available poe tasks
 - [CODING_STANDARD.md](CODING_STANDARD.md) - Coding standards, docstring format, and performance guidelines
+- [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) - Sample structure and guidelines
+
+**Agent Skills** (`.github/skills/`) — detailed, task-specific instructions loaded on demand:
+- `python-development` — coding standards, type annotations, docstrings, logging, performance
+- `python-testing` — test structure, fixtures, async mode, running tests
+- `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
+- `python-package-management` — monorepo structure, lazy loading, versioning, new packages
+- `python-samples` — sample file structure, PEP 723, documentation guidelines
 
 ## Maintaining Documentation
 
-When making changes to a package, check if the package's `AGENTS.md` file needs updates. This includes:
-- Adding/removing/renaming public classes or functions
-- Changing the package's purpose or architecture
-- Modifying import paths or usage patterns
+When making changes to a package, check if the following need updates:
+- The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
+- The agent skills in `.github/skills/` if conventions, commands, or workflows change
 
 ## Quick Reference
 
@@ -30,6 +37,7 @@ python/
 │   ├── ollama/               # agent-framework-ollama
 │   └── ...                   # Other provider packages
 ├── samples/                  # Sample code and examples
+├── .github/skills/           # Agent skills for Copilot
 └── tests/                    # Integration tests
 ```
 
@@ -38,45 +46,6 @@ python/
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages (`azure-ai`, `anthropic`, etc.) extend core with specific integrations
 - Core uses lazy loading via `__getattr__` in provider folders (e.g., `agent_framework/azure/`)
-
-### Import Patterns
-
-```python
-# Core imports
-from agent_framework import ChatAgent, ChatMessage, tool
-
-# Provider imports (lazy-loaded)
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.azure import AzureOpenAIChatClient, AzureAIAgentClient
-```
-
-## Key Conventions
-
-- **Copyright**: `# Copyright (c) Microsoft. All rights reserved.` at top of all `.py` files
-- **Types**: Always specify return types and parameter types; use `Type | None` not `Optional`
-- **Logging**: `from agent_framework import get_logger` (never `import logging`)
-- **Docstrings**: Google-style for public APIs
-- **Tests**: Do not use `@pytest.mark.asyncio` (auto mode enabled); run only related tests, not the entire suite
-- **Line length**: 120 characters
-- **Comments**: Avoid excessive comments; prefer clear code
-- **Formatting**: Format only files you changed, not the entire codebase
-
-## Sample Structure
-
-1. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-2. Required imports
-3. Module docstring: `"""This sample demonstrates..."""`
-4. Helper functions
-5. Main function(s) demonstrating functionality
-6. Entry point: `if __name__ == "__main__": asyncio.run(main())`
-
-When modifying samples, update associated README files in the same or parent folders.
-
-### Samples Syntax Checking
-
-Run `uv run poe samples-syntax` to check samples for syntax errors and missing imports from `agent_framework`. This uses a relaxed pyright configuration that validates imports without strict type checking.
-
-Some samples depend on external packages (e.g., `azure.ai.agentserver.agentframework`, `microsoft_agents`) that are not installed in the dev environment. These are excluded in `pyrightconfig.samples.json`. When adding or modifying these excluded samples, add them to the exclude list and manually verify they have no import errors from `agent_framework` packages by temporarily removing them from the exclude list and running the check.
 
 ## Package Documentation
 
