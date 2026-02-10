@@ -62,6 +62,7 @@ class OrchestrationState:
         result: dict[str, Any] = {
             "conversation": self.conversation,
             "round_index": self.round_index,
+            "orchestrator_name": self.orchestrator_name,
             "metadata": dict(self.metadata),
         }
         if self.task is not None:
@@ -86,6 +87,7 @@ class OrchestrationState:
         return cls(
             conversation=data.get("conversation", []),
             round_index=data.get("round_index", 0),
+            orchestrator_name=data.get("orchestrator_name", ""),
             metadata=dict(data.get("metadata", {})),
             task=task,
         )

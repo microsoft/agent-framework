@@ -396,7 +396,10 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     assert baseline_output is not None
 
     checkpoints = await storage.list_checkpoints(wf.name)
-    assert checkpoints
+    assert len(checkpoints) >= 2, (
+        "Expected at least 2 checkpoints. The first one is after the start executor, "
+        "and the second one is after the first round of agent executions."
+    )
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[1]
 
