@@ -241,6 +241,7 @@ pytest --import-mode=importlib
 --cov=agent_framework_ag_ui
 --cov=agent_framework_anthropic
 --cov=agent_framework_azure_ai
+--cov=agent_framework_azure_ai_search
 --cov=agent_framework_azurefunctions
 --cov=agent_framework_chatkit
 --cov=agent_framework_copilotstudio
