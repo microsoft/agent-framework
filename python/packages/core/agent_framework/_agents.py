@@ -165,7 +165,7 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["BareAgent", "BaseAgent", "ChatAgent", "RawChatAgent", "SupportsAgentRun"]
+__all__ = ["BaseAgent", "ChatAgent", "RawChatAgent", "SupportsAgentRun"]
 
 
 # region Agent Protocol
@@ -521,10 +521,6 @@ class BaseAgent(SerializationMixin):
         )
         agent_tool._forward_runtime_kwargs = True  # type: ignore
         return agent_tool
-
-
-# Backward compatibility alias
-BareAgent = BaseAgent
 
 
 # region ChatAgent
@@ -908,6 +904,7 @@ class RawChatAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     usage_details=response.usage_details,
                     value=response.value,
                     response_format=response_format,
+                    continuation_token=response.continuation_token,
                     raw_representation=response,
                     additional_properties=response.additional_properties,
                 )

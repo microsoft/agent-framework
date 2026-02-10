@@ -4,9 +4,9 @@ import asyncio
 from dataclasses import dataclass
 
 from agent_framework import (
+    AgentExecutor,  # Wraps a ChatAgent as an Executor for use in workflows
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
-    ChatAgent,  # Tracing event for agent execution steps
     ChatMessage,  # Chat message structure
     Executor,  # Base class for custom Python executors
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
@@ -87,50 +87,44 @@ class AggregateInsights(Executor):
         await ctx.yield_output(consolidated)
 
 
-def create_researcher_agent() -> ChatAgent:
-    """Creates a research domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
-            " opportunities, and risks."
-        ),
-        name="researcher",
-    )
-
-
-def create_marketer_agent() -> ChatAgent:
-    """Creates a marketing domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
-            " aligned to the prompt."
-        ),
-        name="marketer",
-    )
-
-
-def create_legal_agent() -> ChatAgent:
-    """Creates a legal/compliance domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
-            " based on the prompt."
-        ),
-        name="legal",
-    )
-
-
 async def main() -> None:
-    # 1) Build a simple fan out and fan in workflow
+    # 1) Create executor and agent instances
+    dispatcher = DispatchToExperts(id="dispatcher")
+    aggregator = AggregateInsights(id="aggregator")
+
+    researcher = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
+                " opportunities, and risks."
+            ),
+            name="researcher",
+        )
+    )
+    marketer = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
+                " aligned to the prompt."
+            ),
+            name="marketer",
+        )
+    )
+    legal = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
+                " based on the prompt."
+            ),
+            name="legal",
+        )
+    )
+
+    # 2) Build a simple fan out and fan in workflow
     workflow = (
-        WorkflowBuilder(start_executor="dispatcher")
-        .register_agent(create_researcher_agent, name="researcher")
-        .register_agent(create_marketer_agent, name="marketer")
-        .register_agent(create_legal_agent, name="legal")
-        .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
-        .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
-        .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])  # Parallel branches
-        .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")  # Join at the aggregator
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [researcher, marketer, legal])  # Parallel branches
+        .add_fan_in_edges([researcher, marketer, legal], aggregator)  # Join at the aggregator
         .build()
     )
 

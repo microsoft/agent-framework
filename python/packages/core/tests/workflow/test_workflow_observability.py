@@ -474,8 +474,9 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
-    # Test validation error by referencing a non-existent start executor
-    builder = WorkflowBuilder(start_executor="NonExistent")
+    # Create a valid builder, then clear the start executor to trigger a build-time ValueError
+    builder = WorkflowBuilder(start_executor=MockExecutor(id="mock"))
+    builder._start_executor = None  # type: ignore[assignment]
 
     with pytest.raises(ValueError):
         builder.build()

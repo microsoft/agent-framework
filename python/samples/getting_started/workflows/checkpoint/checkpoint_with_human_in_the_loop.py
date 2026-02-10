@@ -17,6 +17,7 @@ else:
 # `agent_framework.builtin` chat client or mock the writer executor. We keep the
 # concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
@@ -178,23 +179,21 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
+    writer_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="Write concise, warm release notes that sound human and helpful.",
+        name="writer",
+    )
+    writer = AgentExecutor(writer_agent)
+    review_gateway = ReviewGateway(id="review_gateway", writer_id="writer")
+    prepare_brief = BriefPreparer(id="prepare_brief", agent_id="writer")
+
     workflow_builder = (
         WorkflowBuilder(
-            max_iterations=6, start_executor="prepare_brief", checkpoint_storage=checkpoint_storage
+            max_iterations=6, start_executor=prepare_brief, checkpoint_storage=checkpoint_storage
         )
-        .register_agent(
-            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-                instructions="Write concise, warm release notes that sound human and helpful.",
-                # The agent name is stable across runs which keeps checkpoints deterministic.
-                name="writer",
-            ),
-            name="writer",
-        )
-        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
-        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
-        .add_edge("prepare_brief", "writer")
-        .add_edge("writer", "review_gateway")
-        .add_edge("review_gateway", "writer")  # revisions loop
+        .add_edge(prepare_brief, writer)
+        .add_edge(writer, review_gateway)
+        .add_edge(review_gateway, writer)  # revisions loop
     )
 
     return workflow_builder.build()

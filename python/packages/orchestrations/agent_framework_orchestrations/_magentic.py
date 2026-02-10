@@ -1374,8 +1374,7 @@ class MagenticBuilder:
     def __init__(
         self,
         *,
-        participants: Sequence[SupportsAgentRun | Executor] | None = None,
-        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
+        participants: Sequence[SupportsAgentRun | Executor],
         # Manager config (exactly one required)
         manager: MagenticManagerBase | None = None,
         manager_factory: Callable[[], MagenticManagerBase] | None = None,
@@ -1401,8 +1400,7 @@ class MagenticBuilder:
         """Initialize the Magentic workflow builder.
 
         Args:
-            participants: Optional sequence of agent or executor instances for the workflow.
-            participant_factories: Optional sequence of callables returning agent or executor instances.
+            participants: Sequence of agent or executor instances for the workflow.
             manager: Pre-configured manager instance (subclass of MagenticManagerBase).
             manager_factory: Callable that returns a new MagenticManagerBase instance.
             manager_agent: Agent instance for creating a StandardMagenticManager.
@@ -1423,7 +1421,6 @@ class MagenticBuilder:
             intermediate_outputs: If True, enables intermediate outputs from agent participants.
         """
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
-        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
         # Manager related members
         self._manager: MagenticManagerBase | None = None
@@ -1437,13 +1434,7 @@ class MagenticBuilder:
         # Intermediate outputs
         self._intermediate_outputs = intermediate_outputs
 
-        if participants is None and participant_factories is None:
-            raise ValueError("Either participants or participant_factories must be provided.")
-
-        if participant_factories is not None:
-            self._set_participant_factories(participant_factories)
-        if participants is not None:
-            self._set_participants(participants)
+        self._set_participants(participants)
 
         # Set manager if provided
         if any(x is not None for x in [manager, manager_factory, manager_agent, manager_agent_factory]):
@@ -1465,27 +1456,8 @@ class MagenticBuilder:
                 max_round_count=max_round_count,
             )
 
-    def _set_participant_factories(
-        self,
-        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
-    ) -> None:
-        """Set participant factories (internal)."""
-        if self._participants:
-            raise ValueError("Cannot provide both participants and participant_factories.")
-
-        if self._participant_factories:
-            raise ValueError("participant_factories already set.")
-
-        if not participant_factories:
-            raise ValueError("participant_factories cannot be empty")
-
-        self._participant_factories = list(participant_factories)
-
     def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
         """Set participants (internal)."""
-        if self._participant_factories:
-            raise ValueError("Cannot provide both participants and participant_factories.")
-
         if self._participants:
             raise ValueError("participants already set.")
 
@@ -1750,17 +1722,10 @@ class MagenticBuilder:
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
-        if not self._participants and not self._participant_factories:
-            raise ValueError("No participants provided. Pass participants or participant_factories to the constructor.")
-        # We don't need to check if both are set since that is handled in the respective methods
+        if not self._participants:
+            raise ValueError("No participants provided. Pass participants to the constructor.")
 
-        participants: list[Executor | SupportsAgentRun] = []
-        if self._participant_factories:
-            for factory in self._participant_factories:
-                participant = factory()
-                participants.append(participant)
-        else:
-            participants = list(self._participants.values())
+        participants: list[Executor | SupportsAgentRun] = list(self._participants.values())
 
         executors: list[Executor] = []
         for participant in participants:

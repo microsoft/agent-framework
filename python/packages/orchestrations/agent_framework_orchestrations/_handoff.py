@@ -32,7 +32,7 @@ Key properties:
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -575,7 +575,6 @@ class HandoffBuilder:
         *,
         name: str | None = None,
         participants: Sequence[SupportsAgentRun] | None = None,
-        participant_factories: Mapping[str, Callable[[], SupportsAgentRun]] | None = None,
         description: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         termination_condition: TerminationCondition | None = None,
@@ -584,8 +583,7 @@ class HandoffBuilder:
 
         The builder starts in an unconfigured state and requires you to call:
         1. `.participants([...])` - Register agents
-        2. or `.participant_factories({...})` - Register agent factories
-        3. `.build()` - Construct the final Workflow
+        2. `.build()` - Construct the final Workflow
 
         Optional configuration methods allow you to customize context management,
         termination logic, and persistence.
@@ -596,9 +594,6 @@ class HandoffBuilder:
             participants: Optional list of agents that will participate in the handoff workflow.
                           You can also call `.participants([...])` later. Each participant must have a
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
-            participant_factories: Optional mapping of factory names to callables that produce agents when invoked.
-                                   This allows for lazy instantiation and state isolation per workflow instance
-                                   created by this builder.
             description: Optional human-readable description explaining the workflow's
                          purpose. Useful for documentation and observability.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
@@ -610,10 +605,7 @@ class HandoffBuilder:
 
         # Participant related members
         self._participants: dict[str, SupportsAgentRun] = {}
-        self._participant_factories: dict[str, Callable[[], SupportsAgentRun]] = {}
         self._start_id: str | None = None
-        if participant_factories:
-            self.register_participants(participant_factories)
 
         if participants:
             self.participants(participants)
@@ -635,68 +627,6 @@ class HandoffBuilder:
             termination_condition
         )
 
-    def register_participants(
-        self, participant_factories: Mapping[str, Callable[[], SupportsAgentRun]]
-    ) -> "HandoffBuilder":
-        """Register factories that produce agents for the handoff workflow.
-
-        Each factory is a callable that returns an SupportsAgentRun instance.
-        Factories are invoked when building the workflow, allowing for lazy instantiation
-        and state isolation per workflow instance.
-
-        Args:
-            participant_factories: Mapping of factory names to callables that return SupportsAgentRun
-                                   instances. Each produced participant must have a unique identifier
-                                   (`.name` is preferred if set, otherwise `.id` is used).
-
-        Returns:
-            Self for method chaining.
-
-        Raises:
-            ValueError: If participant_factories is empty or `.participants(...)`  or `.register_participants(...)`
-                        has already been called.
-
-        Example:
-        .. code-block:: python
-
-            from agent_framework import ChatAgent
-            from agent_framework_orchestrations import HandoffBuilder
-
-
-            def create_triage() -> ChatAgent:
-                return ...
-
-
-            def create_refund_agent() -> ChatAgent:
-                return ...
-
-
-            def create_billing_agent() -> ChatAgent:
-                return ...
-
-
-            factories = {
-                "triage": create_triage,
-                "refund": create_refund_agent,
-                "billing": create_billing_agent,
-            }
-
-            # Handoff will be created automatically unless specified otherwise
-            # The default creates a mesh topology where all agents can handoff to all others
-            builder = HandoffBuilder().register_participants(factories)
-            builder.with_start_agent("triage")
-        """
-        if self._participants:
-            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
-
-        if self._participant_factories:
-            raise ValueError("register_participants() has already been called on this builder instance.")
-        if not participant_factories:
-            raise ValueError("participant_factories cannot be empty")
-
-        self._participant_factories = dict(participant_factories)
-        return self
-
     def participants(self, participants: Sequence[SupportsAgentRun]) -> "HandoffBuilder":
         """Register the agents that will participate in the handoff workflow.
 
@@ -708,8 +638,8 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: If participants is empty, contains duplicates, or `.participants()` or
-                        `.register_participants()` has already been called.
+            ValueError: If participants is empty, contains duplicates, or `.participants()`
+                        has already been called.
             TypeError: If participants are not SupportsAgentRun instances.
 
         Example:
@@ -727,9 +657,6 @@ class HandoffBuilder:
             builder = HandoffBuilder().participants([triage, refund, billing])
             builder.with_start_agent(triage)
         """
-        if self._participant_factories:
-            raise ValueError("Cannot mix .participants() and .register_participants() in the same builder instance.")
-
         if self._participants:
             raise ValueError("participants have already been assigned")
 
@@ -755,8 +682,8 @@ class HandoffBuilder:
 
     def add_handoff(
         self,
-        source: str | SupportsAgentRun,
-        targets: Sequence[str] | Sequence[SupportsAgentRun],
+        source: SupportsAgentRun,
+        targets: Sequence[SupportsAgentRun],
         *,
         description: str | None = None,
     ) -> "HandoffBuilder":
@@ -768,16 +695,8 @@ class HandoffBuilder:
         to all others by default (mesh topology).
 
         Args:
-            source: The agent that can initiate the handoff. Can be:
-                   - Factory name (str): If using participant factories
-                   - SupportsAgentRun instance: The actual agent object
-                   - Cannot mix factory names and instances across source and targets
-            targets: One or more target agents that the source can hand off to. Can be:
-                    - Factory name (str): If using participant factories
-                    - SupportsAgentRun instance: The actual agent object
-                    - Single target: ["billing_agent"] or [agent_instance]
-                    - Multiple targets: ["billing_agent", "support_agent"] or [agent1, agent2]
-                    - Cannot mix factory names and instances across source and targets
+            source: The agent that can initiate the handoff.
+            targets: One or more target agents that the source can hand off to.
             description: Optional custom description for the handoff. If not provided, the description
                          of the target agent(s) will be used. If the target agent has no description,
                          no description will be set for the handoff tool, which is not recommended.
@@ -789,25 +708,10 @@ class HandoffBuilder:
             Self for method chaining.
 
         Raises:
-            ValueError: 1) If source or targets are not in the participants list, or if
-                           participants(...) hasn't been called yet.
-                        2) If source or targets are factory names (str) but participant_factories(...)
-                           hasn't been called yet, or if they are not in the participant_factories list.
-            TypeError: If mixing factory names (str) and SupportsAgentRun/Executor instances
+            ValueError: If source or targets are not in the participants list, or if
+                        participants(...) hasn't been called yet.
 
         Examples:
-            Single target (using factory name):
-
-            .. code-block:: python
-
-                builder.add_handoff("triage_agent", "billing_agent")
-
-            Multiple targets (using factory names):
-
-            .. code-block:: python
-
-                builder.add_handoff("triage_agent", ["billing_agent", "support_agent", "escalation_agent"])
-
             Multiple targets (using agent instances):
 
             .. code-block:: python
@@ -830,96 +734,54 @@ class HandoffBuilder:
             - Handoff tools are automatically registered for each source agent
             - If a source agent is configured multiple times via add_handoff, targets are merged
         """
-        if isinstance(source, str) and all(isinstance(t, str) for t in targets):
-            # Both source and targets are factory names
-            if not self._participant_factories:
-                raise ValueError("Call participant_factories(...) before add_handoff(...)")
+        if not self._participants:
+            raise ValueError("Call participants(...) before add_handoff(...)")
 
-            if source not in self._participant_factories:
-                raise ValueError(f"Source factory name '{source}' is not in the participant_factories list")
+        # Resolve source agent ID
+        source_id = self._resolve_to_id(source)
+        if source_id not in self._participants:
+            raise ValueError(f"Source agent '{source}' is not in the participants list")
 
-            for target in targets:
-                if target not in self._participant_factories:
-                    raise ValueError(f"Target factory name '{target}' is not in the participant_factories list")
+        # Resolve all target IDs
+        target_ids: list[str] = []
+        for target in targets:
+            target_id = self._resolve_to_id(target)
+            if target_id not in self._participants:
+                raise ValueError(f"Target agent '{target}' is not in the participants list")
+            target_ids.append(target_id)
 
-            # Merge with existing handoff configuration for this source
-            if source in self._handoff_config:
-                # Add new targets to existing list, avoiding duplicates
-                for t in targets:
-                    if t in self._handoff_config[source]:
-                        logger.warning(f"Handoff from '{source}' to '{t}' is already configured; overwriting.")
-                    self._handoff_config[source].add(HandoffConfiguration(target=t, description=description))
-            else:
-                self._handoff_config[source] = set()
-                for t in targets:
-                    self._handoff_config[source].add(HandoffConfiguration(target=t, description=description))
-            return self
+        # Merge with existing handoff configuration for this source
+        if source_id not in self._handoff_config:
+            self._handoff_config[source_id] = set()
 
-        if isinstance(source, (SupportsAgentRun)) and all(isinstance(t, SupportsAgentRun) for t in targets):
-            # Both source and targets are instances
-            if not self._participants:
-                raise ValueError("Call participants(...) before add_handoff(...)")
+        for t in target_ids:
+            config = HandoffConfiguration(target=t, description=description)
+            if config in self._handoff_config[source_id]:
+                logger.warning(f"Handoff from '{source_id}' to '{t}' is already configured; overwriting.")
+                # Remove old config so the new one (with updated description) takes effect
+                self._handoff_config[source_id].discard(config)
+            self._handoff_config[source_id].add(config)
 
-            # Resolve source agent ID
-            source_id = self._resolve_to_id(source)
-            if source_id not in self._participants:
-                raise ValueError(f"Source agent '{source}' is not in the participants list")
+        return self
 
-            # Resolve all target IDs
-            target_ids: list[str] = []
-            for target in targets:
-                target_id = self._resolve_to_id(target)
-                if target_id not in self._participants:
-                    raise ValueError(f"Target agent '{target}' is not in the participants list")
-                target_ids.append(target_id)
-
-            # Merge with existing handoff configuration for this source
-            if source_id in self._handoff_config:
-                # Add new targets to existing list, avoiding duplicates
-                for t in target_ids:
-                    if t in self._handoff_config[source_id]:
-                        logger.warning(f"Handoff from '{source_id}' to '{t}' is already configured; overwriting.")
-                    self._handoff_config[source_id].add(HandoffConfiguration(target=t, description=description))
-            else:
-                self._handoff_config[source_id] = set()
-                for t in target_ids:
-                    self._handoff_config[source_id].add(HandoffConfiguration(target=t, description=description))
-
-            return self
-
-        raise TypeError(
-            "Cannot mix factory names (str) and SupportsAgentRun instances across source and targets in add_handoff()"
-        )
-
-    def with_start_agent(self, agent: str | SupportsAgentRun) -> "HandoffBuilder":
+    def with_start_agent(self, agent: SupportsAgentRun) -> "HandoffBuilder":
         """Set the agent that will initiate the handoff workflow.
 
         If not specified, the first registered participant will be used as the starting agent.
 
         Args:
-            agent: The agent that will start the workflow. Can be:
-                   - Factory name (str): If using participant factories
-                   - SupportsAgentRun instance: The actual agent object
+            agent: The agent that will start the workflow.
+
         Returns:
             Self for method chaining.
         """
-        if isinstance(agent, str):
-            if self._participant_factories:
-                if agent not in self._participant_factories:
-                    raise ValueError(f"Start agent factory name '{agent}' is not in the participant_factories list")
-            else:
-                raise ValueError("Call register_participants(...) before with_start_agent(...)")
-            self._start_id = agent
-        elif isinstance(agent, SupportsAgentRun):
-            resolved_id = self._resolve_to_id(agent)
-            if self._participants:
-                if resolved_id not in self._participants:
-                    raise ValueError(f"Start agent '{resolved_id}' is not in the participants list")
-            else:
-                raise ValueError("Call participants(...) before with_start_agent(...)")
-            self._start_id = resolved_id
+        resolved_id = self._resolve_to_id(agent)
+        if self._participants:
+            if resolved_id not in self._participants:
+                raise ValueError(f"Start agent '{resolved_id}' is not in the participants list")
         else:
-            raise TypeError("Start agent must be a factory name (str) or an SupportsAgentRun instance")
+            raise ValueError("Call participants(...) before with_start_agent(...)")
+        self._start_id = resolved_id
 
         return self
 
@@ -1090,48 +952,21 @@ class HandoffBuilder:
     # region Internal Helper Methods
 
     def _resolve_agents(self) -> dict[str, SupportsAgentRun]:
-        """Resolve participant factories into agent instances.
-
-        If agent instances were provided directly via participants(...), those are
-        returned as-is. If participant factories were provided via participant_factories(...),
-        those are invoked to create the agent instances.
+        """Resolve participant instances into agent instances.
 
         Returns:
-            Map of executor IDs or factory names to `SupportsAgentRun` instances
+            Map of executor IDs to `SupportsAgentRun` instances
         """
-        if not self._participants and not self._participant_factories:
-            raise ValueError("No participants provided. Call .participants() or .register_participants() first.")
-        # We don't need to check if both are set since that is handled in the respective methods
+        if not self._participants:
+            raise ValueError("No participants provided. Call .participants() first.")
 
-        if self._participants:
-            return self._participants
+        return self._participants
 
-        if self._participant_factories:
-            # Invoke each factory to create participant instances
-            factory_names_to_agents: dict[str, SupportsAgentRun] = {}
-            for factory_name, factory in self._participant_factories.items():
-                instance = factory()
-                if isinstance(instance, SupportsAgentRun):
-                    resolved_id = self._resolve_to_id(instance)
-                else:
-                    raise TypeError(f"Participants must be SupportsAgentRun instances. Got {type(instance).__name__}.")
-
-                if resolved_id in factory_names_to_agents:
-                    raise ValueError(f"Duplicate participant name '{resolved_id}' detected")
-
-                # Map executors by factory name (not executor.id) because handoff configs reference factory names
-                # This allows users to configure handoffs using the factory names they provided
-                factory_names_to_agents[factory_name] = instance
-
-            return factory_names_to_agents
-
-        raise ValueError("No executors or participant_factories have been configured")
-
-    def _resolve_handoffs(self, agents: Mapping[str, SupportsAgentRun]) -> dict[str, list[HandoffConfiguration]]:
-        """Handoffs may be specified using factory names or instances; resolve to executor IDs.
+    def _resolve_handoffs(self, agents: dict[str, SupportsAgentRun]) -> dict[str, list[HandoffConfiguration]]:
+        """Resolve handoff configurations to executor IDs.
 
         Args:
-            agents: Map of agent IDs or factory names to `SupportsAgentRun` instances
+            agents: Map of agent IDs to `SupportsAgentRun` instances
 
         Returns:
             Map of executor IDs to list of HandoffConfiguration instances
@@ -1145,14 +980,14 @@ class HandoffBuilder:
                 if not source_agent:
                     raise ValueError(
                         f"Handoff source agent '{source_id}' not found. "
-                        "Please make sure source has been added as either a participant or participant_factory."
+                        "Please make sure source has been added as a participant."
                     )
                 for handoff_config in handoff_configurations:
                     target_agent = agents.get(handoff_config.target_id)
                     if not target_agent:
                         raise ValueError(
                             f"Handoff target agent '{handoff_config.target_id}' not found for source '{source_id}'. "
-                            "Please make sure target has been added as either a participant or participant_factory."
+                            "Please make sure target has been added as a participant."
                         )
 
                     updated_handoff_configurations.setdefault(self._resolve_to_id(source_agent), []).append(
@@ -1184,7 +1019,7 @@ class HandoffBuilder:
         """Resolve agents into HandoffAgentExecutors.
 
         Args:
-            agents: Map of agent IDs or factory names to `SupportsAgentRun` instances
+            agents: Map of agent IDs to `SupportsAgentRun` instances
             handoffs: Map of executor IDs to list of HandoffConfiguration instances
 
         Returns:

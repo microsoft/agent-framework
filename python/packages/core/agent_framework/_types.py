@@ -36,6 +36,7 @@ __all__ = [
     "ChatResponse",
     "ChatResponseUpdate",
     "Content",
+    "ContinuationToken",
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
@@ -1760,6 +1761,7 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model_id is not None:
             response.model_id = update.model_id
+    response.continuation_token = update.continuation_token
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
@@ -1794,6 +1796,39 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
+
+
+# region ContinuationToken
+
+
+class ContinuationToken(TypedDict):
+    """Opaque token for resuming long-running agent operations.
+
+    A JSON-serializable dict used to poll for completion or resume a
+    streaming response.  Presence on a response indicates the operation
+    is still in progress; ``None`` means the operation is complete.
+
+    Each provider subclasses this with its own fields; consumers should
+    treat the token as opaque and simply pass it back to the same agent.
+
+    Examples:
+        .. code-block:: python
+
+            import json
+
+            # Persist token across restarts
+            token_json = json.dumps(response.continuation_token)
+
+            # Restore and resume
+            token = json.loads(token_json)
+            response = await agent.run(
+                thread=thread,
+                options={"continuation_token": token},
+            )
+    """
+
+
+# endregion
 
 
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
@@ -1861,6 +1896,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
         response_format: type[BaseModel] | None = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -1876,6 +1912,8 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
@@ -1907,6 +1945,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
+        self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @overload
@@ -2109,6 +2148,7 @@ class ChatResponseUpdate(SerializationMixin):
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2124,6 +2164,8 @@ class ChatResponseUpdate(SerializationMixin):
             model_id: Optional model ID associated with this response update.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update
                 from an underlying implementation.
@@ -2151,6 +2193,7 @@ class ChatResponseUpdate(SerializationMixin):
         self.model_id = model_id
         self.created_at = created_at
         self.finish_reason = finish_reason
+        self.continuation_token = continuation_token
         self.additional_properties = additional_properties
         self.raw_representation = raw_representation
 
@@ -2222,6 +2265,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
         response_format: type[BaseModel] | None = None,
+        continuation_token: ContinuationToken | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
@@ -2236,6 +2280,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
         """
@@ -2262,6 +2308,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = additional_properties or {}
+        self.continuation_token = continuation_token
         self.raw_representation = raw_representation
 
     @property
@@ -2444,6 +2491,7 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2458,6 +2506,8 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update.
 
@@ -2486,6 +2536,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
+        self.continuation_token = continuation_token
         self.additional_properties = additional_properties
         self.raw_representation: Any | list[Any] | None = raw_representation
 
@@ -2514,6 +2565,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
+        continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
     )

@@ -526,8 +526,7 @@ class GroupChatBuilder:
     def __init__(
         self,
         *,
-        participants: Sequence[SupportsAgentRun | Executor] | None = None,
-        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
+        participants: Sequence[SupportsAgentRun | Executor],
         # Orchestrator config (exactly one required)
         orchestrator_agent: ChatAgent | Callable[[], ChatAgent] | None = None,
         orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator] | None = None,
@@ -542,8 +541,7 @@ class GroupChatBuilder:
         """Initialize the GroupChatBuilder.
 
         Args:
-            participants: Optional sequence of agent or executor instances for the group chat.
-            participant_factories: Optional sequence of callables returning agent or executor instances.
+            participants: Sequence of agent or executor instances for the group chat.
             orchestrator_agent: An instance of ChatAgent or a callable that produces one to manage the group chat.
             orchestrator: An instance of BaseGroupChatOrchestrator or a callable that produces one to manage the
                 group chat.
@@ -557,7 +555,6 @@ class GroupChatBuilder:
             intermediate_outputs: If True, enables intermediate outputs from agent participants.
         """
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
-        self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
@@ -578,13 +575,7 @@ class GroupChatBuilder:
         # Intermediate outputs
         self._intermediate_outputs = intermediate_outputs
 
-        if participants is None and participant_factories is None:
-            raise ValueError("Either participants or participant_factories must be provided.")
-
-        if participant_factories is not None:
-            self._set_participant_factories(participant_factories)
-        if participants is not None:
-            self._set_participants(participants)
+        self._set_participants(participants)
 
         # Set orchestrator if provided
         if any(x is not None for x in [orchestrator_agent, orchestrator, selection_func]):
@@ -645,27 +636,8 @@ class GroupChatBuilder:
         else:
             self._orchestrator_factory = orchestrator_agent or orchestrator
 
-    def _set_participant_factories(
-        self,
-        participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]],
-    ) -> None:
-        """Set participant factories (internal)."""
-        if self._participants:
-            raise ValueError("Cannot provide both participants and participant_factories.")
-
-        if self._participant_factories:
-            raise ValueError("participant_factories already set.")
-
-        if not participant_factories:
-            raise ValueError("participant_factories cannot be empty")
-
-        self._participant_factories = list(participant_factories)
-
     def _set_participants(self, participants: Sequence[SupportsAgentRun | Executor]) -> None:
         """Set participants (internal)."""
-        if self._participant_factories:
-            raise ValueError("Cannot provide both participants and participant_factories.")
-
         if self._participants:
             raise ValueError("participants already set.")
 
@@ -874,17 +846,10 @@ class GroupChatBuilder:
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
-        if not self._participants and not self._participant_factories:
-            raise ValueError("No participants provided. Pass participants or participant_factories to the constructor.")
-        # We don't need to check if both are set since that is handled in the respective methods
+        if not self._participants:
+            raise ValueError("No participants provided. Pass participants to the constructor.")
 
-        participants: list[Executor | SupportsAgentRun] = []
-        if self._participant_factories:
-            for factory in self._participant_factories:
-                participant = factory()
-                participants.append(participant)
-        else:
-            participants = list(self._participants.values())
+        participants: list[Executor | SupportsAgentRun] = list(self._participants.values())
 
         executors: list[Executor] = []
         for participant in participants:

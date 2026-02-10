@@ -188,21 +188,17 @@ async def main() -> None:
     #   store_email -> spam_detection_agent -> to_detection_result -> branch:
     #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
     #     True  -> handle_spam
+    spam_detection_agent = create_spam_detection_agent()
+    email_assistant_agent = create_email_assistant_agent()
+
     workflow = (
-        WorkflowBuilder(start_executor="store_email")
-        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
-        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
-        .register_executor(lambda: store_email, name="store_email")
-        .register_executor(lambda: to_detection_result, name="to_detection_result")
-        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
-        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
-        .register_executor(lambda: handle_spam, name="handle_spam")
-        .add_edge("store_email", "spam_detection_agent")
-        .add_edge("spam_detection_agent", "to_detection_result")
-        .add_edge("to_detection_result", "submit_to_email_assistant", condition=get_condition(False))
-        .add_edge("to_detection_result", "handle_spam", condition=get_condition(True))
-        .add_edge("submit_to_email_assistant", "email_assistant_agent")
-        .add_edge("email_assistant_agent", "finalize_and_send")
+        WorkflowBuilder(start_executor=store_email)
+        .add_edge(store_email, spam_detection_agent)
+        .add_edge(spam_detection_agent, to_detection_result)
+        .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))
+        .add_edge(to_detection_result, handle_spam, condition=get_condition(True))
+        .add_edge(submit_to_email_assistant, email_assistant_agent)
+        .add_edge(email_assistant_agent, finalize_and_send)
         .build()
     )
 
