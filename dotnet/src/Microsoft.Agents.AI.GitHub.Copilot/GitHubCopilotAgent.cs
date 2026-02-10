@@ -147,27 +147,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         // Create or resume a session with streaming enabled
         SessionConfig sessionConfig = this._sessionConfig != null
-            ? new SessionConfig
-            {
-                Model = this._sessionConfig.Model,
-                ReasoningEffort = this._sessionConfig.ReasoningEffort,
-                Tools = this._sessionConfig.Tools,
-                SystemMessage = this._sessionConfig.SystemMessage,
-                AvailableTools = this._sessionConfig.AvailableTools,
-                ExcludedTools = this._sessionConfig.ExcludedTools,
-                Provider = this._sessionConfig.Provider,
-                OnPermissionRequest = this._sessionConfig.OnPermissionRequest,
-                OnUserInputRequest = this._sessionConfig.OnUserInputRequest,
-                Hooks = this._sessionConfig.Hooks,
-                WorkingDirectory = this._sessionConfig.WorkingDirectory,
-                ConfigDir = this._sessionConfig.ConfigDir,
-                McpServers = this._sessionConfig.McpServers,
-                CustomAgents = this._sessionConfig.CustomAgents,
-                SkillDirectories = this._sessionConfig.SkillDirectories,
-                DisabledSkills = this._sessionConfig.DisabledSkills,
-                InfiniteSessions = this._sessionConfig.InfiniteSessions,
-                Streaming = true
-            }
+            ? CopySessionConfig(this._sessionConfig)
             : new SessionConfig { Streaming = true };
 
         CopilotSession copilotSession;
@@ -291,25 +271,63 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private ResumeSessionConfig CreateResumeConfig()
     {
+        return CopyResumeSessionConfig(this._sessionConfig);
+    }
+
+    /// <summary>
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
+    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// </summary>
+    internal static SessionConfig CopySessionConfig(SessionConfig source)
+    {
+        return new SessionConfig
+        {
+            Model = source.Model,
+            ReasoningEffort = source.ReasoningEffort,
+            Tools = source.Tools,
+            SystemMessage = source.SystemMessage,
+            AvailableTools = source.AvailableTools,
+            ExcludedTools = source.ExcludedTools,
+            Provider = source.Provider,
+            OnPermissionRequest = source.OnPermissionRequest,
+            OnUserInputRequest = source.OnUserInputRequest,
+            Hooks = source.Hooks,
+            WorkingDirectory = source.WorkingDirectory,
+            ConfigDir = source.ConfigDir,
+            McpServers = source.McpServers,
+            CustomAgents = source.CustomAgents,
+            SkillDirectories = source.SkillDirectories,
+            DisabledSkills = source.DisabledSkills,
+            InfiniteSessions = source.InfiniteSessions,
+            Streaming = true
+        };
+    }
+
+    /// <summary>
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
+    /// <see cref="ResumeSessionConfig"/> with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
+    /// </summary>
+    internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
+    {
         return new ResumeSessionConfig
         {
-            Model = this._sessionConfig?.Model,
-            ReasoningEffort = this._sessionConfig?.ReasoningEffort,
-            Tools = this._sessionConfig?.Tools,
-            SystemMessage = this._sessionConfig?.SystemMessage,
-            AvailableTools = this._sessionConfig?.AvailableTools,
-            ExcludedTools = this._sessionConfig?.ExcludedTools,
-            Provider = this._sessionConfig?.Provider,
-            OnPermissionRequest = this._sessionConfig?.OnPermissionRequest,
-            OnUserInputRequest = this._sessionConfig?.OnUserInputRequest,
-            Hooks = this._sessionConfig?.Hooks,
-            WorkingDirectory = this._sessionConfig?.WorkingDirectory,
-            ConfigDir = this._sessionConfig?.ConfigDir,
-            McpServers = this._sessionConfig?.McpServers,
-            CustomAgents = this._sessionConfig?.CustomAgents,
-            SkillDirectories = this._sessionConfig?.SkillDirectories,
-            DisabledSkills = this._sessionConfig?.DisabledSkills,
-            InfiniteSessions = this._sessionConfig?.InfiniteSessions,
+            Model = source?.Model,
+            ReasoningEffort = source?.ReasoningEffort,
+            Tools = source?.Tools,
+            SystemMessage = source?.SystemMessage,
+            AvailableTools = source?.AvailableTools,
+            ExcludedTools = source?.ExcludedTools,
+            Provider = source?.Provider,
+            OnPermissionRequest = source?.OnPermissionRequest,
+            OnUserInputRequest = source?.OnUserInputRequest,
+            Hooks = source?.Hooks,
+            WorkingDirectory = source?.WorkingDirectory,
+            ConfigDir = source?.ConfigDir,
+            McpServers = source?.McpServers,
+            CustomAgents = source?.CustomAgents,
+            SkillDirectories = source?.SkillDirectories,
+            DisabledSkills = source?.DisabledSkills,
+            InfiniteSessions = source?.InfiniteSessions,
             Streaming = true
         };
     }
