@@ -73,6 +73,19 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
     }
 
     [Fact]
+    public async Task SetMultipleVariablesWithNullVariableAsync()
+    {
+        // Arrange, Act, Assert
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetMultipleVariablesWithNullVariableAsync),
+            assignments: [
+                new AssignmentCase("NullVar1", null, FormulaValue.NewBlank()),
+                new AssignmentCase(null, new StringDataValue("NotNull"), FormulaValue.New("NotNull")),
+                new AssignmentCase("NullVar2", null, FormulaValue.NewBlank())
+            ]);
+    }
+
+    [Fact]
     public async Task SetMultipleVariablesUpdateExistingAsync()
     {
         // Arrange
@@ -116,7 +129,10 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         VerifyModel(model, action);
         foreach (AssignmentCase assignment in assignments)
         {
-            this.VerifyState(assignment.VariableName, assignment.ExpectedValue);
+            if (assignment.VariableName != null)
+            {
+                this.VerifyState(assignment.VariableName, assignment.ExpectedValue);
+            }
         }
     }
 
@@ -138,9 +154,15 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
                 _ => throw new System.ArgumentException($"Unsupported value type: {assignment.ValueExpression?.GetType().Name}")
             };
 
+            InitializablePropertyPath? variablePath = null;
+            if (assignment.VariableName != null)
+            {
+                variablePath = PropertyPath.Create(FormatVariablePath(assignment.VariableName));
+            }
+
             actionBuilder.Assignments.Add(new VariableAssignment.Builder()
             {
-                Variable = PropertyPath.Create(FormatVariablePath(assignment.VariableName)),
+                Variable = variablePath,
                 Value = valueExpressionBuilder,
             });
         }
@@ -148,5 +170,5 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         return AssignParent<SetMultipleVariables>(actionBuilder);
     }
 
-    private sealed record AssignmentCase(string VariableName, object? ValueExpression, FormulaValue ExpectedValue);
+    private sealed record AssignmentCase(string? VariableName, object? ValueExpression, FormulaValue ExpectedValue);
 }
