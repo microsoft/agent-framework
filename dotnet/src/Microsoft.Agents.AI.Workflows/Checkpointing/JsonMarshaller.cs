@@ -13,7 +13,13 @@ internal sealed class JsonMarshaller : IWireMarshaller<JsonElement>
 
     public JsonMarshaller(JsonSerializerOptions? serializerOptions = null)
     {
-        this._internalOptions = new JsonSerializerOptions(WorkflowsJsonUtilities.DefaultOptions);
+        this._internalOptions = new JsonSerializerOptions(WorkflowsJsonUtilities.DefaultOptions)
+        {
+            // Propagate from the user-provided options if set; enables support for databases
+            // like PostgreSQL jsonb that do not preserve property order.
+            AllowOutOfOrderMetadataProperties = serializerOptions?.AllowOutOfOrderMetadataProperties is true,
+        };
+
         this._internalOptions.Converters.Add(new PortableValueConverter(this));
         this._internalOptions.Converters.Add(new ExecutorIdentityConverter());
         this._internalOptions.Converters.Add(new ScopeKeyConverter());
