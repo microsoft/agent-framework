@@ -24,6 +24,7 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
+from opentelemetry import propagate
 from pydantic import BaseModel, create_model
 
 from ._tools import (
@@ -304,11 +305,6 @@ def _normalize_mcp_name(name: str) -> str:
 
 def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
-    try:
-        from opentelemetry import propagate
-    except ImportError:  # pragma: no cover
-        return meta
-
     carrier: dict[str, str] = {}
     propagate.inject(carrier)
     if not carrier:
