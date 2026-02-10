@@ -1728,6 +1728,8 @@ def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
     mock_delta_event.delta = "import pandas as pd\n"
     mock_delta_event.output_index = 0
     mock_delta_event.sequence_number = 1
+    mock_delta_event.call_id = None  # Ensure fallback to item_id
+    mock_delta_event.id = None
 
     result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
@@ -1736,6 +1738,10 @@ def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
     assert result.contents[0].inputs
     assert result.contents[0].inputs[0].type == "text"
     assert result.contents[0].inputs[0].text == "import pandas as pd\n"
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 1
+    assert result.contents[0].additional_properties["item_id"] == "ci_123"
 
 
 def test_parse_chunk_from_openai_code_interpreter_done() -> None:
@@ -1751,6 +1757,8 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     mock_done_event.code = "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2, 3]})\nprint(df)"
     mock_done_event.output_index = 0
     mock_done_event.sequence_number = 5
+    mock_done_event.call_id = None  # Ensure fallback to item_id
+    mock_done_event.id = None
 
     result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
@@ -1759,6 +1767,10 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].inputs
     assert result.contents[0].inputs[0].type == "text"
     assert "import pandas as pd" in result.contents[0].inputs[0].text
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 5
+    assert result.contents[0].additional_properties["item_id"] == "ci_456"
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:

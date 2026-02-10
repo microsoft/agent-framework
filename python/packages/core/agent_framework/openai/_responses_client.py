@@ -1165,20 +1165,46 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
                 contents.append(
                     Content.from_code_interpreter_tool_call(
-                        call_id=event.item_id,
-                        inputs=[Content.from_text(text=event.delta, raw_representation=event)],
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.delta,
+                                raw_representation=event,
+                                additional_properties=additional_properties,
+                            )
+                        ],
                         raw_representation=event,
+                        additional_properties=additional_properties,
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.done":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
                 contents.append(
                     Content.from_code_interpreter_tool_call(
-                        call_id=event.item_id,
-                        inputs=[Content.from_text(text=event.code, raw_representation=event)],
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.code,
+                                raw_representation=event,
+                                additional_properties=additional_properties,
+                            )
+                        ],
                         raw_representation=event,
+                        additional_properties=additional_properties,
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
