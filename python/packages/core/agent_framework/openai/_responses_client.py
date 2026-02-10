@@ -541,11 +541,15 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         }
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
+        # Determine conversation ID early to inform message preparation
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        is_continuation = bool(conversation_id and conversation_id.startswith("resp_"))
+
         # messages
         # Handle instructions by prepending to messages as system message
         if instructions := options.get("instructions"):
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-        request_input = self._prepare_messages_for_openai(messages)
+        request_input = self._prepare_messages_for_openai(messages, filter_for_continuation=is_continuation)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
         run_options["input"] = request_input
@@ -565,7 +569,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 run_options[new_key] = run_options.pop(old_key)
 
         # Handle different conversation ID formats
-        if conversation_id := self._get_current_conversation_id(options, **kwargs):
+        if conversation_id:
             if conversation_id.startswith("resp_"):
                 # For response IDs, set previous_response_id and remove conversation property
                 run_options["previous_response_id"] = conversation_id
@@ -626,7 +630,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """
         return kwargs.get("conversation_id") or options.get("conversation_id")
 
-    def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_openai(
+        self, chat_messages: Sequence[ChatMessage], filter_for_continuation: bool = False
+    ) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
@@ -635,10 +641,16 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
+        When using previous_response_id for conversation continuation, the Responses API expects
+        only NEW user messages (and system/developer messages), not the full conversation history.
+        Assistant messages and function results are already stored server-side.
+
         Override this method to customize the formatting of the chat history for a request.
 
         Args:
             chat_messages: The chat history to prepare.
+            filter_for_continuation: If True, filter out assistant messages and function results
+                for continuation with previous_response_id.
 
         Returns:
             The prepared chat messages for a request.
@@ -652,6 +664,20 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     and "fc_id" in content.additional_properties
                 ):
                     call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
+
+        # Filter messages if continuing a conversation with previous_response_id
+        if filter_for_continuation:
+            # Find the last assistant message index
+            last_assistant_idx = -1
+            for idx, message in enumerate(chat_messages):
+                if message.role == "assistant":
+                    last_assistant_idx = idx
+
+            # Only include messages after the last assistant message
+            # This ensures we only send NEW user messages, not the full history
+            if last_assistant_idx >= 0:
+                chat_messages = chat_messages[last_assistant_idx + 1 :]
+
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
