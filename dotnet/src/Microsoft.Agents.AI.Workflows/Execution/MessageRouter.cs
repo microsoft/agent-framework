@@ -49,7 +49,6 @@ internal sealed class MessageRouter
             }
         }
 
-        this._runtimeTypeMap = handlers.Keys.ToDictionary(t => new TypeId(t), t => t);
         this._catchAllFunc = catchAllFunc;
 
         this.IncomingTypes = [.. handlers.Keys];
@@ -83,17 +82,14 @@ internal sealed class MessageRouter
             }
             else if (this._interfaceHandlers.Count > 0)
             {
-                foreach (Type interfaceType in this._interfaceHandlers)
+                foreach (Type interfaceType in this._interfaceHandlers.Where(it => it.IsAssignableFrom(candidateType)))
                 {
-                    if (interfaceType.IsAssignableFrom(candidateType))
-                    {
-                        handler = this._typedHandlers[interfaceType];
-                        this._typedHandlers[messageType] = handler;
+                    handler = this._typedHandlers[interfaceType];
+                    this._typedHandlers[messageType] = handler;
 
-                        // TODO: This could cause some consternation with Checkpointing (need to ensure we surface errors well)
-                        this._runtimeTypeMap[new TypeId(messageType)] = interfaceType;
-                        return handler;
-                    }
+                    // TODO: This could cause some consternation with Checkpointing (need to ensure we surface errors well)
+                    this._runtimeTypeMap[new TypeId(messageType)] = interfaceType;
+                    return handler;
                 }
             }
         }

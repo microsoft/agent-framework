@@ -848,9 +848,9 @@ public class ExecutorRouteGeneratorTests
             {
                 public TestExecutor() : base("test") { }
 
-                protected override RouteBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+                protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
                 {
-                    return routeBuilder;
+                    return protocolBuilder;
                 }
 
                 [MessageHandler]

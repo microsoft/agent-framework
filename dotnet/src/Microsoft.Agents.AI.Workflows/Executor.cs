@@ -96,7 +96,7 @@ internal sealed class MessageTypeTranslator
         }
     }
 
-    public TypeId? GetDeclaredType(Type messageType, bool allowPolymorphism = true)
+    public TypeId? GetDeclaredType(Type messageType)
     {
         // If the user declares a base type, the user is expected to set up any serialization to be able to deal with
         // the polymorphism transparently to the framework, or be expecting to deal with the appropriate truncation.
@@ -111,10 +111,6 @@ internal sealed class MessageTypeTranslator
                 }
 
                 return declaredTypeId;
-            }
-            if (!allowPolymorphism)
-            {
-                break;
             }
         }
 

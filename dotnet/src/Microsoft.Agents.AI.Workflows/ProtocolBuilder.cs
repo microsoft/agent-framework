@@ -136,7 +136,7 @@ public sealed class ProtocolBuilder
         }
 
         HashSet<Type> yieldTypes = new(this._yieldTypes);
-        if (options.AutoSendMessageHandlerResultObject)
+        if (options.AutoYieldOutputHandlerResultObject)
         {
             yieldTypes.UnionWith(router.DefaultOutputTypes);
         }
