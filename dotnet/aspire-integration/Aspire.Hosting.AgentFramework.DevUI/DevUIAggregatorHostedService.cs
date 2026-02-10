@@ -177,12 +177,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
 
             // SPA fallback: serve index.html for paths without a file extension (client-side routing)
-            if (!resourcePath.Contains('.', StringComparison.Ordinal))
+            if (!resourcePath.Contains('.', StringComparison.Ordinal) &&
+                await this.TryServeResourceAsync(context, "index.html").ConfigureAwait(false))
             {
-                if (await this.TryServeResourceAsync(context, "index.html").ConfigureAwait(false))
-                {
-                    return;
-                }
+                return;
             }
 
             context.Response.StatusCode = StatusCodes.Status404NotFound;
