@@ -552,8 +552,7 @@ class AttributionAwareStrategy(CompactionStrategy):
 
 1. **Naming**: Should we use `CompactionStrategy`, `ChatReducer` (for .NET alignment), or `ContextReducer`?
 2. **Trigger mechanism for in-run**: Should compaction run after every tool call, or only when a threshold is exceeded (e.g., token count, message count)?
-3. **Async vs sync**: Should `compact()` be async (to support LLM-based summarization) or sync with an async variant?
-4. **Chaining**: Should multiple strategies be chainable (e.g., summarize then truncate)?
+3. **Chaining**: Should multiple strategies be chainable (e.g., summarize then truncate)?
 
 ### Related Decisions
 
