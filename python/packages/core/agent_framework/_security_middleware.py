@@ -485,6 +485,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             # Execute the function
             await next(context)
             
+            # If middleware set a FunctionApprovalRequestContent (e.g., policy violation approval),
+            # skip all result processing and let it pass through unchanged
+            from ._types import FunctionApprovalRequestContent
+            if isinstance(context.result, FunctionApprovalRequestContent):
+                logger.info(
+                    f"Tool '{function_name}' returned FunctionApprovalRequestContent - "
+                    f"skipping result processing"
+                )
+                return
+            
             # Result inherits the call label (data-flow: output = f(inputs))
             result_label = call_label
             
@@ -510,19 +520,35 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 
                 # Update context label only if untrusted content actually entered the context
                 # If the entire result was hidden (replaced with VariableReferenceContent),
-                # the untrusted content is NOT in the LLM context, so don't taint it
+                # the untrusted content is NOT in the LLM context, so don't taint INTEGRITY.
+                # However, CONFIDENTIALITY should ALWAYS be updated even for hidden content,
+                # because the data still exists and could be revealed by approving the variable.
                 entire_result_hidden = (
                     isinstance(context.result, VariableReferenceContent) and 
                     not isinstance(original_result, VariableReferenceContent)
                 )
                 
                 if entire_result_hidden:
-                    # Result was hidden - context label stays clean
-                    logger.info(
-                        f"Result from '{function_name}' fully hidden - context label unchanged: "
-                        f"{self._context_label.integrity.value}, "
-                        f"{self._context_label.confidentiality.value}"
-                    )
+                    # Result was hidden - integrity stays clean, but confidentiality MUST be updated
+                    # This prevents data exfiltration: even hidden PRIVATE data taints the context
+                    if result_label.confidentiality != self._context_label.confidentiality:
+                        old_conf = self._context_label.confidentiality
+                        # Only update confidentiality, keep integrity clean
+                        hidden_result_label = ContentLabel(
+                            integrity=self._context_label.integrity,  # Keep existing integrity
+                            confidentiality=result_label.confidentiality,  # Update confidentiality
+                        )
+                        self._update_context_label(hidden_result_label)
+                        logger.info(
+                            f"Result from '{function_name}' hidden (integrity clean) but "
+                            f"confidentiality updated: {old_conf.value} -> {result_label.confidentiality.value}"
+                        )
+                    else:
+                        logger.info(
+                            f"Result from '{function_name}' fully hidden - context label unchanged: "
+                            f"{self._context_label.integrity.value}, "
+                            f"{self._context_label.confidentiality.value}"
+                        )
                 else:
                     # Some content entered context - update context label
                     self._update_context_label(result_label)
@@ -907,18 +933,30 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         allow_untrusted_tools: set[str] | None = None,
         block_on_violation: bool = True,
         enable_audit_log: bool = True,
+        approval_on_violation: bool = False,
     ) -> None:
         """Initialize PolicyEnforcementFunctionMiddleware.
         
         Args:
             allow_untrusted_tools: Set of tool names that can accept untrusted inputs.
             block_on_violation: Whether to block execution on policy violations.
+                Ignored if approval_on_violation is True.
             enable_audit_log: Whether to maintain an audit log of violations.
+            approval_on_violation: Whether to request user approval instead of blocking
+                when a policy violation is detected. If True, the middleware will return
+                a special result that triggers an approval request in the UI. After user
+                approval, the tool will execute with a warning about untrusted context.
         """
         self.allow_untrusted_tools = allow_untrusted_tools or set()
-        self.block_on_violation = block_on_violation
+        self.approval_on_violation = approval_on_violation
+        # If approval_on_violation is True, we don't block - we request approval instead
+        self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
         self.audit_log: list[dict[str, Any]] = []
+        # Track approved violations by call_id (after user approves)
+        self._approved_violations: set[str] = set()
+        # Track call_ids for which we sent approval requests (pending approval)
+        self._pending_policy_approvals: set[str] = set()
     
     async def process(
         self,
@@ -985,7 +1023,69 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     
                     self._log_violation(violation)
                     
-                    if self.block_on_violation:
+                    # Check if this specific call was previously approved
+                    call_id = context.metadata.get("call_id", "")
+                    policy_approved = context.metadata.get("policy_approval_granted", False)
+                    
+                    # Check multiple sources for approval:
+                    # 1. policy_approval_granted from metadata (set by _tools.py)
+                    # 2. call_id in _approved_violations (persisted approvals)
+                    # 3. call_id in _pending_policy_approvals (we sent approval request for this call_id)
+                    is_approved = (
+                        policy_approved 
+                        or call_id in self._approved_violations 
+                        or call_id in self._pending_policy_approvals
+                    )
+                    
+                    if is_approved:
+                        # User approved this violation - proceed with warning
+                        logger.warning(
+                            f"APPROVED BY USER: Tool '{function_name}' executing in UNTRUSTED context. "
+                            f"User acknowledged the security risk and approved execution."
+                        )
+                        self._approved_violations.add(call_id)
+                        self._pending_policy_approvals.discard(call_id)  # Clear pending status
+                        # Continue execution but mark context as user-approved
+                        context.metadata["user_approved_violation"] = True
+                    elif self.approval_on_violation:
+                        # Request user approval instead of blocking
+                        # Create FunctionApprovalRequestContent directly in middleware
+                        logger.info(
+                            f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
+                            f"due to UNTRUSTED context."
+                        )
+                        from ._types import FunctionApprovalRequestContent, FunctionCallContent
+                        
+                        # Track that we're requesting approval for this call_id
+                        self._pending_policy_approvals.add(call_id)
+                        
+                        # Reconstruct FunctionCallContent from context
+                        func_call = FunctionCallContent(
+                            call_id=call_id,
+                            name=function_name,
+                            arguments=context.arguments.model_dump() if hasattr(context.arguments, 'model_dump') else dict(context.arguments),
+                        )
+                        
+                        reason = (
+                            f"Tool '{function_name}' is being called in an UNTRUSTED context. "
+                            f"The conversation contains data from untrusted sources which could "
+                            f"influence this operation. Approve to proceed anyway (the agent will "
+                            f"continue with a warning about untrusted context)."
+                        )
+                        
+                        context.result = FunctionApprovalRequestContent(
+                            id=call_id,
+                            function_call=func_call,
+                            additional_properties={
+                                "policy_violation": True,
+                                "violation_type": "untrusted_context",
+                                "reason": reason,
+                                "context_label": context_label.to_dict(),
+                            },
+                        )
+                        context.terminate = True
+                        return
+                    elif self.block_on_violation:
                         logger.warning(
                             f"BLOCKED: Tool '{function_name}' called in UNTRUSTED context. "
                             f"Context became untrusted due to previous tool results. "
@@ -1017,7 +1117,66 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             
             self._log_violation(violation)
             
-            if self.block_on_violation:
+            # Check if this specific call was previously approved
+            call_id = context.metadata.get("call_id", "")
+            policy_approved = context.metadata.get("policy_approval_granted", False)
+            
+            # Check multiple sources for approval:
+            # 1. policy_approval_granted from metadata (set by _tools.py)
+            # 2. call_id in _approved_violations (persisted approvals)
+            # 3. call_id in _pending_policy_approvals (we sent approval request for this call_id)
+            is_approved = (
+                policy_approved 
+                or call_id in self._approved_violations 
+                or call_id in self._pending_policy_approvals
+            )
+            
+            if is_approved:
+                # User approved this violation - proceed with warning
+                logger.warning(
+                    f"APPROVED BY USER: Tool '{function_name}' executing despite confidentiality "
+                    f"violation. User acknowledged the security risk and approved execution."
+                )
+                self._approved_violations.add(call_id)
+                self._pending_policy_approvals.discard(call_id)  # Clear pending status
+                context.metadata["user_approved_violation"] = True
+            elif self.approval_on_violation:
+                # Request user approval instead of blocking
+                # Create FunctionApprovalRequestContent directly in middleware
+                logger.info(
+                    f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
+                    f"due to confidentiality policy violation."
+                )
+                from ._types import FunctionApprovalRequestContent, FunctionCallContent
+                
+                # Track that we're requesting approval for this call_id
+                self._pending_policy_approvals.add(call_id)
+                
+                # Reconstruct FunctionCallContent from context
+                func_call = FunctionCallContent(
+                    call_id=call_id,
+                    name=function_name,
+                    arguments=context.arguments.model_dump() if hasattr(context.arguments, 'model_dump') else dict(context.arguments),
+                )
+                
+                reason = (
+                    f"Tool '{function_name}' violates confidentiality policy: "
+                    f"{conf_result['reason']}. Approve to proceed anyway."
+                )
+                
+                context.result = FunctionApprovalRequestContent(
+                    id=call_id,
+                    function_call=func_call,
+                    additional_properties={
+                        "policy_violation": True,
+                        "violation_type": conf_result["failure_type"],
+                        "reason": reason,
+                        "context_label": context_label.to_dict(),
+                    },
+                )
+                context.terminate = True
+                return
+            elif self.block_on_violation:
                 logger.warning(
                     f"BLOCKED: Tool '{function_name}' violates confidentiality policy: "
                     f"{conf_result['reason']}"
@@ -1161,6 +1320,7 @@ class SecureAgentConfig:
         default_confidentiality: ConfidentialityLabel = ConfidentialityLabel.PUBLIC,
         allow_untrusted_tools: set[str] | None = None,
         block_on_violation: bool = True,
+        approval_on_violation: bool = False,
         enable_audit_log: bool = True,
         enable_policy_enforcement: bool = True,
         quarantine_chat_client: "ChatClientProtocol | None" = None,
@@ -1173,6 +1333,11 @@ class SecureAgentConfig:
             default_confidentiality: Default confidentiality label for tool calls.
             allow_untrusted_tools: Set of tool names that can accept untrusted inputs.
             block_on_violation: Whether to block execution on policy violations.
+                Ignored if approval_on_violation is True.
+            approval_on_violation: Whether to request user approval instead of blocking
+                when a policy violation is detected. If True, the middleware will return
+                a special result that triggers an approval request in the UI. After user
+                approval, the tool will execute with a warning about untrusted context.
             enable_audit_log: Whether to enable audit logging.
             enable_policy_enforcement: Whether to enable policy enforcement middleware.
             quarantine_chat_client: Optional chat client for real LLM calls in quarantined_llm.
@@ -1197,6 +1362,7 @@ class SecureAgentConfig:
             self.policy_enforcer = PolicyEnforcementFunctionMiddleware(
                 allow_untrusted_tools=tools_allowing_untrusted,
                 block_on_violation=block_on_violation,
+                approval_on_violation=approval_on_violation,
                 enable_audit_log=enable_audit_log,
             )
         else:

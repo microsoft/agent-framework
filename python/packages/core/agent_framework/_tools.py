@@ -1339,7 +1339,10 @@ async def _auto_invoke_function(
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
 
-    tool: FunctionTool | None = None
+    tool: AIFunction[BaseModel, Any] | None = None
+    # Track if this is a re-invocation after policy violation approval
+    policy_approval_granted = False
+    
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
@@ -1361,7 +1364,14 @@ async def _auto_invoke_function(
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = inner_call  # type: ignore[assignment]
+        
+        # Check if this is an approval for a policy violation
+        # The additional_properties may contain {"policy_violation": True, ...} or just truthy value
+        approval_props = getattr(function_call_content, "additional_properties", None) or {}
+        if approval_props.get("policy_violation"):
+            policy_approval_granted = True
+        
+        function_call_content = function_call_content.function_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1437,6 +1447,13 @@ async def _auto_invoke_function(
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
     )
+    
+    # Always pass call_id to middleware for policy violation approval flow
+    middleware_context.metadata["call_id"] = function_call_content.call_id
+    
+    # Pass policy approval flag to middleware via metadata (for re-invocation after approval)
+    if policy_approval_granted:
+        middleware_context.metadata["policy_approval_granted"] = True
 
     async def final_function_handler(context_obj: Any) -> Any:
         return await tool.invoke(
@@ -1449,11 +1466,27 @@ async def _auto_invoke_function(
 
     # MiddlewareTermination bubbles up to signal loop termination
     try:
-        function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
-        return Content.from_function_result(
-            call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            result=function_result,
-            additional_properties=function_call_content.additional_properties,
+        function_result = await middleware_pipeline.execute(
+            function=tool,
+            arguments=args,
+            context=middleware_context,
+            final_handler=final_function_handler,
+        )
+        
+        # Pass through FunctionApprovalRequestContent directly (e.g., from security middleware)
+        from ._types import FunctionApprovalRequestContent
+        if isinstance(function_result, FunctionApprovalRequestContent):
+            return FunctionExecutionResult(
+                content=function_result,
+                terminate=False,
+            )
+        
+        return FunctionExecutionResult(
+            content=FunctionResultContent(
+                call_id=function_call_content.call_id,
+                result=function_result,
+            ),
+            terminate=middleware_context.terminate,
         )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
@@ -1769,10 +1802,27 @@ def _replace_approval_contents_with_results(
     fcc_todo: dict[str, Content],
     approved_function_results: list[Content],
 ) -> None:
-    """Replace approval request/response contents with function call/result contents in-place."""
+    """Replace approval request/response contents with function call/result contents in-place.
+    
+    Also replaces placeholder tool results (marked with [APPROVAL_PENDING]) with actual results.
+    """
     from ._types import (
         Content,
     )
+
+    # Build a map of call_id -> actual result for replacing placeholders
+    result_by_call_id: dict[str, Contents] = {}
+    for resp in fcc_todo.values():
+        if resp.approved:
+            # Map the call_id from the function_call to be replaced
+            call_id = resp.function_call.call_id
+            if call_id not in result_by_call_id and approved_function_results:
+                idx = len(result_by_call_id)
+                if idx < len(approved_function_results):
+                    result_by_call_id[call_id] = approved_function_results[idx]
+    
+    # Track which call_ids had their placeholders replaced
+    placeholders_replaced: set[str] = set()
 
     result_idx = 0
     for msg in messages:
@@ -1797,17 +1847,21 @@ def _replace_approval_contents_with_results(
                     contents_to_remove.append(content_idx)
                 else:
                     # Put back the function call content only if it doesn't exist
-                    msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
-            elif content.type == "function_approval_response":
-                # Skip hosted tool approvals — they must pass through to the API unchanged
-                if _is_hosted_tool_approval(content):
-                    continue
-                if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
-                    # Replace with the corresponding result
-                    if result_idx < len(approved_function_results):
-                        msg.contents[content_idx] = approved_function_results[result_idx]
-                        result_idx += 1
-                        msg.role = "tool"
+                    msg.contents[content_idx] = content.function_call
+            elif isinstance(content, FunctionApprovalResponseContent):
+                call_id = content.function_call.call_id
+                if content.approved and content.id in fcc_todo:
+                    # Check if we already replaced a placeholder for this call_id
+                    if call_id in placeholders_replaced:
+                        # Placeholder was replaced - just remove the approval response
+                        contents_to_remove.append(content_idx)
+                    else:
+                        # No placeholder - replace approval response with result directly
+                        # This handles the original approval_mode="always_require" case
+                        if result_idx < len(approved_function_results):
+                            msg.contents[content_idx] = approved_function_results[result_idx]
+                            result_idx += 1
+                            msg.role = Role.TOOL
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1815,11 +1869,31 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = "tool"
+                    msg.role = Role.TOOL
+            elif isinstance(content, FunctionResultContent):
+                # Check if this is a placeholder result that should be replaced
+                if (
+                    hasattr(content, "result") 
+                    and isinstance(content.result, str)
+                    and "[APPROVAL_PENDING]" in content.result
+                    and content.call_id in result_by_call_id
+                ):
+                    # Replace placeholder with actual result
+                    msg.contents[content_idx] = result_by_call_id[content.call_id]
+                    placeholders_replaced.add(content.call_id)
 
-        # Remove approval requests that were duplicates (in reverse order to preserve indices)
+        # Remove contents marked for removal (in reverse order to preserve indices)
         for idx in reversed(contents_to_remove):
             msg.contents.pop(idx)
+    
+    # Second pass: Remove messages that are now empty after content removal
+    # We need to iterate in reverse to safely remove by index
+    messages_to_remove = []
+    for msg_idx, msg in enumerate(messages):
+        if not msg.contents:
+            messages_to_remove.append(msg_idx)
+    for msg_idx in reversed(messages_to_remove):
+        messages.pop(msg_idx)
 
 
 def _get_result_hooks_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
@@ -1874,6 +1948,53 @@ class FunctionRequestResult(TypedDict, total=False):
         function_call_results: The list of function call results, if any.
         function_call_count: The number of function calls executed in this processing step.
     """
+                # we load the tools here, since middleware might have changed them compared to before calling func.
+                tools = _extract_tools(kwargs)
+                if function_calls and tools:
+                    # Use the stored middleware pipeline instead of extracting from kwargs
+                    # because kwargs may have been modified by the underlying function
+                    function_call_results, should_terminate = await _try_execute_function_calls(
+                        custom_args=kwargs,
+                        attempt_idx=attempt_idx,
+                        function_calls=function_calls,
+                        tools=tools,  # type: ignore
+                        middleware_pipeline=stored_middleware_pipeline,
+                        config=config,
+                    )
+                    # Check if we have approval requests or function calls (not results) in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # When we have approval requests, we also need to add placeholder tool results
+                        # so the conversation history remains valid for the OpenAI API (tool_calls must be
+                        # followed by tool messages). The placeholders will be replaced when approval comes back.
+                        from ._types import Role
+                        
+                        # Create placeholder FunctionResultContent for each approval request
+                        placeholder_results = []
+                        for fccr in function_call_results:
+                            if isinstance(fccr, FunctionApprovalRequestContent):
+                                placeholder_results.append(
+                                    FunctionResultContent(
+                                        call_id=fccr.function_call.call_id,
+                                        result="[APPROVAL_PENDING] This tool call requires user approval before execution.",
+                                    )
+                                )
+                        
+                        # Add approval requests to assistant message
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                        else:
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            response.messages.append(result_message)
+                        
+                        # Also add placeholder tool results so conversation history is valid
+                        if placeholder_results:
+                            placeholder_message = ChatMessage(role="tool", contents=placeholder_results)
+                            response.messages.append(placeholder_message)
+                        
+                        return response
+                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                        # the function calls are already in the response, so we just continue
+                        return response
 
     action: Literal["return", "continue", "stop"]
     errors_in_a_row: int
@@ -2273,10 +2394,53 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         mutable_options["tool_choice"] = "none"
                     errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
 
-                    # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
-                    if mutable_options.get("tool_choice") == "required" or (
-                        isinstance(mutable_options.get("tool_choice"), dict)
-                        and mutable_options.get("tool_choice", {}).get("mode") == "required"
+                    # Check if we have approval requests or function calls (not results) in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # When we have approval requests, we also need to yield placeholder tool results
+                        # so the conversation history remains valid for the OpenAI API (tool_calls must be
+                        # followed by tool messages). The placeholders will be replaced when approval comes back.
+                        from ._types import Role
+                        
+                        # Create placeholder FunctionResultContent for each approval request
+                        placeholder_results = []
+                        for fccr in function_call_results:
+                            if isinstance(fccr, FunctionApprovalRequestContent):
+                                placeholder_results.append(
+                                    FunctionResultContent(
+                                        call_id=fccr.function_call.call_id,
+                                        result="[APPROVAL_PENDING] This tool call requires user approval before execution.",
+                                    )
+                                )
+                        
+                        # Yield approval requests as part of assistant message for the UI
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                        else:
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                            response.messages.append(result_message)
+                        
+                        # Also yield placeholder tool results so conversation history is valid
+                        if placeholder_results:
+                            yield ChatResponseUpdate(contents=placeholder_results, role="tool")
+                        
+                        return
+                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                        # the function calls were already yielded.
+                        return
+
+                    # Check if middleware signaled to terminate the loop (context.terminate=True)
+                    # This allows middleware to short-circuit the tool loop without another LLM call
+                    if should_terminate:
+                        # Yield tool results and return immediately without calling LLM again
+                        yield ChatResponseUpdate(contents=function_call_results, role="tool")
+                        return
+
+                    if any(
+                        fcr.exception is not None
+                        for fcr in function_call_results
+                        if isinstance(fcr, FunctionResultContent)
                     ):
                         mutable_options["tool_choice"] = None  # reset to default for next iteration
 

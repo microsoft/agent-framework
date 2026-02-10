@@ -9,8 +9,12 @@ sending emails.
 Key concepts demonstrated:
 1. Using SecureAgentConfig for automatic security middleware setup
 2. Processing untrusted content safely with quarantined_llm (real LLM calls)
-3. Policy enforcement blocking dangerous operations in untrusted context
+3. Human-in-the-loop approval for policy violations (approval_on_violation=True)
 4. Proper separation between main agent and quarantine LLM clients
+
+When a policy violation is detected (e.g., calling send_email in untrusted context),
+the framework will request user approval via the DevUI instead of blocking. The user
+can see the violation reason and choose to approve or reject the action.
 
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
@@ -30,6 +34,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from agent_framework.devui import serve
 
 
 # =============================================================================
@@ -195,7 +200,7 @@ async def fetch_emails(
 # Main Example
 # =============================================================================
 
-async def main():
+def main():
     """Run the email security demonstration."""
     print("=" * 70)
     print("Email Security Example - Prompt Injection Defense Demo")
@@ -229,12 +234,12 @@ async def main():
     )
 
     # Create secure agent configuration
-    # - enable policy enforcement to block dangerous operations
+    # - enable policy enforcement with approval-on-violation for human-in-the-loop
     # - provide quarantine client for real LLM processing of untrusted content
     # - allow fetch_emails to work in any context (it returns data)
     config = SecureAgentConfig(
         auto_hide_untrusted=True,
-        block_on_violation=True,
+        approval_on_violation=True,  # Request user approval instead of blocking
         enable_policy_enforcement=True,
         allow_untrusted_tools={"fetch_emails"},  # fetch_emails can run anytime
         quarantine_chat_client=quarantine_client,
@@ -282,54 +287,58 @@ When asked to summarize emails:
     print("- Injection attempts in emails are NOT followed")
     print()
 
-    response = await agent.run(
-        "Please fetch my recent emails and give me a brief summary of each one."
-    )
-    print(f"\n📋 Agent Response:\n{'-' * 40}")
-    print(response.text)
+    # Launch debug UI - that's it!
+    serve(entities=[agent], auto_open=True)
+    # → Opens browser to http://localhost:8080
+    
+    # response = await agent.run(
+    #     "Please fetch my recent emails and give me a brief summary of each one."
+    # )
+    # print(f"\n📋 Agent Response:\n{'-' * 40}")
+    # print(response.text)
 
-    # Scenario 2: Try to send an email after context is tainted
-    print("\n" + "=" * 70)
-    print("SCENARIO 2: Attempting to send email after processing untrusted content")
-    print("=" * 70)
-    print()
-    print("User request: 'Now please send an email to colleague@company.com summarizing what you found.'")
-    print()
-    print("Expected behavior:")
-    print("- Context is now tainted (UNTRUSTED) from processing external emails")
-    print("- send_email tool will be BLOCKED by policy enforcement")
-    print("- Agent should explain it cannot send email due to security policy")
-    print()
+    # # Scenario 2: Try to send an email after context is tainted
+    # print("\n" + "=" * 70)
+    # print("SCENARIO 2: Attempting to send email after processing untrusted content")
+    # print("=" * 70)
+    # print()
+    # print("User request: 'Now please send an email to colleague@company.com summarizing what you found.'")
+    # print()
+    # print("Expected behavior:")
+    # print("- Context is now tainted (UNTRUSTED) from processing external emails")
+    # print("- send_email tool will be BLOCKED by policy enforcement")
+    # print("- Agent should explain it cannot send email due to security policy")
+    # print()
 
-    response = await agent.run(
-        "Now please send an email to colleague@company.com summarizing what you found."
-    )
-    print(f"\n📋 Agent Response:\n{'-' * 40}")
-    print(response.text)
+    # response = await agent.run(
+    #     "Now please send an email to colleague@company.com summarizing what you found."
+    # )
+    # print(f"\n📋 Agent Response:\n{'-' * 40}")
+    # print(response.text)
 
-    # Check audit log for any blocked attempts
-    audit_log = config.get_audit_log()
-    if audit_log:
-        print("\n" + "=" * 70)
-        print("SECURITY AUDIT LOG - Policy Violations")
-        print("=" * 70)
-        for i, entry in enumerate(audit_log, 1):
-            print(f"\n⚠️  Violation #{i}")
-            print(f"   Type: {entry.get('type', 'unknown')}")
-            print(f"   Function: {entry.get('function', 'unknown')}")
-            print(f"   Reason: {entry.get('reason', 'Policy violation')}")
-            print(f"   Blocked: {entry.get('blocked', False)}")
+    # # Check audit log for any blocked attempts
+    # audit_log = config.get_audit_log()
+    # if audit_log:
+    #     print("\n" + "=" * 70)
+    #     print("SECURITY AUDIT LOG - Policy Violations")
+    #     print("=" * 70)
+    #     for i, entry in enumerate(audit_log, 1):
+    #         print(f"\n⚠️  Violation #{i}")
+    #         print(f"   Type: {entry.get('type', 'unknown')}")
+    #         print(f"   Function: {entry.get('function', 'unknown')}")
+    #         print(f"   Reason: {entry.get('reason', 'Policy violation')}")
+    #         print(f"   Blocked: {entry.get('blocked', False)}")
 
-    print("\n" + "=" * 70)
-    print("Demo Complete")
-    print("=" * 70)
-    print()
-    print("Key takeaways:")
-    print("1. Injection attempts in emails were safely processed without being followed")
-    print("2. The quarantined_llm made real LLM calls in isolation (no tools)")
-    print("3. send_email was blocked because context was tainted by untrusted content")
-    print("4. All policy violations were logged for audit purposes")
+    # print("\n" + "=" * 70)
+    # print("Demo Complete")
+    # print("=" * 70)
+    # print()
+    # print("Key takeaways:")
+    # print("1. Injection attempts in emails were safely processed without being followed")
+    # print("2. The quarantined_llm made real LLM calls in isolation (no tools)")
+    # print("3. send_email was blocked because context was tainted by untrusted content")
+    # print("4. All policy violations were logged for audit purposes")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
