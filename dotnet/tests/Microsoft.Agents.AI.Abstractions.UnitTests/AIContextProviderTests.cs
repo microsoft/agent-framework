@@ -19,7 +19,7 @@ public class AIContextProviderTests
     #region InvokingAsync Message Stamping Tests
 
     [Fact]
-    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceAsync()
+    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceIdAsync()
     {
         // Arrange
         var provider = new TestAIContextProviderWithMessages();
@@ -32,18 +32,18 @@ public class AIContextProviderTests
         Assert.NotNull(aiContext.Messages);
         ChatMessage message = aiContext.Messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(typeof(TestAIContextProviderWithMessages).FullName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, typedAttribution.SourceType);
+        Assert.Equal(typeof(TestAIContextProviderWithMessages).FullName, typedAttribution.SourceId);
     }
 
     [Fact]
-    public async Task InvokingAsync_WithCustomSourceName_StampsMessagesWithCustomSourceAsync()
+    public async Task InvokingAsync_WithCustomSourceId_StampsMessagesWithCustomSourceIdAsync()
     {
         // Arrange
-        const string CustomSourceName = "CustomContextSource";
-        var provider = new TestAIContextProviderWithCustomSource(CustomSourceName);
+        const string CustomSourceId = "CustomContextSource";
+        var provider = new TestAIContextProviderWithCustomSource(CustomSourceId);
         var context = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Request")]);
 
         // Act
@@ -53,10 +53,10 @@ public class AIContextProviderTests
         Assert.NotNull(aiContext.Messages);
         ChatMessage message = aiContext.Messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(CustomSourceName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, typedAttribution.SourceType);
+        Assert.Equal(CustomSourceId, typedAttribution.SourceId);
     }
 
     [Fact]
@@ -73,10 +73,10 @@ public class AIContextProviderTests
         Assert.NotNull(aiContext.Messages);
         ChatMessage message = aiContext.Messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(typeof(TestAIContextProviderWithPreStampedMessages).FullName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, typedAttribution.SourceType);
+        Assert.Equal(typeof(TestAIContextProviderWithPreStampedMessages).FullName, typedAttribution.SourceId);
     }
 
     [Fact]
@@ -97,10 +97,10 @@ public class AIContextProviderTests
         foreach (ChatMessage message in messageList)
         {
             Assert.NotNull(message.AdditionalProperties);
-            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-            Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, sourceType);
-            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-            Assert.Equal(typeof(TestAIContextProviderWithMultipleMessages).FullName, source);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+            var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+            Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, typedAttribution.SourceType);
+            Assert.Equal(typeof(TestAIContextProviderWithMultipleMessages).FullName, typedAttribution.SourceId);
         }
     }
 
@@ -486,7 +486,7 @@ public class AIContextProviderTests
 
     private sealed class TestAIContextProviderWithCustomSource : AIContextProvider
     {
-        public TestAIContextProviderWithCustomSource(string sourceName) : base(sourceName)
+        public TestAIContextProviderWithCustomSource(string sourceId) : base(sourceId)
         {
         }
 
@@ -504,8 +504,7 @@ public class AIContextProviderTests
             var message = new ChatMessage(ChatRole.System, "Pre-stamped Message");
             message.AdditionalProperties = new AdditionalPropertiesDictionary
             {
-                [AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.AIContextProvider,
-                [AgentRequestMessageSource.AdditionalPropertiesKey] = this.GetType().FullName!
+                [AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] = new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
             };
             return new(new AIContext
             {

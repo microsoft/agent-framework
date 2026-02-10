@@ -182,7 +182,7 @@ class AgentThreadState(SerializationMixin):
                 raise TypeError("Could not parse ChatMessageStoreState.")
 
 
-TChatMessageStore = TypeVar("TChatMessageStore", bound="ChatMessageStore")
+ChatMessageStoreT = TypeVar("ChatMessageStoreT", bound="ChatMessageStore")
 
 
 class ChatMessageStore:
@@ -243,8 +243,8 @@ class ChatMessageStore:
 
     @classmethod
     async def deserialize(
-        cls: type[TChatMessageStore], serialized_store_state: MutableMapping[str, Any], **kwargs: Any
-    ) -> TChatMessageStore:
+        cls: type[ChatMessageStoreT], serialized_store_state: MutableMapping[str, Any], **kwargs: Any
+    ) -> ChatMessageStoreT:
         """Create a new ChatMessageStore instance from serialized state data.
 
         Args:
@@ -289,7 +289,7 @@ class ChatMessageStore:
         return state.to_dict()
 
 
-TAgentThread = TypeVar("TAgentThread", bound="AgentThread")
+AgentThreadT = TypeVar("AgentThreadT", bound="AgentThread")
 
 
 class AgentThread:
@@ -437,12 +437,12 @@ class AgentThread:
 
     @classmethod
     async def deserialize(
-        cls: type[TAgentThread],
+        cls: type[AgentThreadT],
         serialized_thread_state: MutableMapping[str, Any],
         *,
         message_store: ChatMessageStoreProtocol | None = None,
         **kwargs: Any,
-    ) -> TAgentThread:
+    ) -> AgentThreadT:
         """Deserializes the state from a dictionary into a new AgentThread instance.
 
         Args:

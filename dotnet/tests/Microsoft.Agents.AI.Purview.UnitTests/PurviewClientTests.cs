@@ -478,7 +478,7 @@ public sealed class PurviewClientTests : IDisposable
     private static ContentToProcess CreateValidContentToProcess()
     {
         var content = new PurviewTextContent("Test content");
-        var metadata = new ProcessConversationMetadata(content, "msg-123", false, "Test message");
+        var metadata = new ProcessConversationMetadata(content, "msg-123", false, "Test message", "test-correlation-id");
         var activityMetadata = new ActivityMetadata(Activity.UploadText);
         var deviceMetadata = new DeviceMetadata
         {

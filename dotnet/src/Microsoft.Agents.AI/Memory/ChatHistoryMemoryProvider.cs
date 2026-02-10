@@ -189,7 +189,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         {
             // Get the text from the current request messages
             var requestText = string.Join("\n", context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+                .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
@@ -245,7 +245,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
             List<Dictionary<string, object?>> itemsToStore = context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+                .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {

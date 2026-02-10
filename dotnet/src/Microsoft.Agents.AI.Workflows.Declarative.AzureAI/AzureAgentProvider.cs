@@ -123,7 +123,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         IAsyncEnumerable<AgentResponseUpdate> agentResponse =
             messages is not null ?
                 agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
-                agent.RunStreamingAsync([new ChatMessage(ChatRole.User, string.Empty)], null, runOptions, cancellationToken);
+                agent.RunStreamingAsync([], null, runOptions, cancellationToken);
 
         await foreach (AgentResponseUpdate update in agentResponse.ConfigureAwait(false))
         {

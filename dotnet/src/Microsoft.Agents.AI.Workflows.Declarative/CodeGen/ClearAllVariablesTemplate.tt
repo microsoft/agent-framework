@@ -1,7 +1,10 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateEnumExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Reset all the state for the targeted variable scope.
 /// </summary>

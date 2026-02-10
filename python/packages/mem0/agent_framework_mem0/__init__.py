@@ -8,6 +8,7 @@ import os
 if os.environ.get("MEM0_TELEMETRY") is None:
     os.environ["MEM0_TELEMETRY"] = "false"
 
+from ._context_provider import _Mem0ContextProvider
 from ._provider import Mem0Provider
 
 try:
@@ -17,5 +18,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "Mem0Provider",
+    "_Mem0ContextProvider",
     "__version__",
 ]

@@ -232,7 +232,7 @@ class PropertySchema(SerializationMixin):
         return json_schema
 
 
-TConnection = TypeVar("TConnection", bound="Connection")
+ConnectionT = TypeVar("ConnectionT", bound="Connection")
 
 
 class Connection(SerializationMixin):
@@ -250,12 +250,12 @@ class Connection(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TConnection],
+        cls: type[ConnectionT],
         value: MutableMapping[str, Any],
         /,
         *,
         dependencies: MutableMapping[str, Any] | None = None,
-    ) -> TConnection:
+    ) -> ConnectionT:
         """Create a Connection instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
@@ -507,7 +507,7 @@ class AgentDefinition(SerializationMixin):
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
-TTool = TypeVar("TTool", bound="Tool")
+ToolT = TypeVar("ToolT", bound="Tool")
 
 
 class Tool(SerializationMixin):
@@ -538,8 +538,8 @@ class Tool(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TTool], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> TTool:
+        cls: type[ToolT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ToolT:
         """Create a Tool instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:

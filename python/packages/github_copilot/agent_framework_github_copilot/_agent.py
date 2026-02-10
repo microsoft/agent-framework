@@ -91,15 +91,15 @@ class GitHubCopilotOptions(TypedDict, total=False):
     """
 
 
-TOptions = TypeVar(
-    "TOptions",
+OptionsT = TypeVar(
+    "OptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="GitHubCopilotOptions",
     covariant=True,
 )
 
 
-class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
+class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     """A GitHub Copilot Agent.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
@@ -156,7 +156,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TOptions | None = None,
+        default_options: OptionsT | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -225,7 +225,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> GitHubCopilotAgent[TOptions]:
+    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -282,7 +282,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
-        options: TOptions | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
@@ -293,7 +293,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
-        options: TOptions | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
@@ -303,7 +303,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
-        options: TOptions | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
@@ -344,7 +344,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        options: TOptions | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
@@ -392,7 +392,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        options: TOptions | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.

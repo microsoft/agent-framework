@@ -1321,6 +1321,45 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
+    /// Verify that RunStreamingAsync includes chat history in messages sent to the chat client on subsequent calls.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncIncludesChatHistoryInMessagesToChatClientAsync()
+    {
+        // Arrange
+        List<IEnumerable<ChatMessage>> capturedMessages = [];
+        Mock<IChatClient> mockService = new();
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "response"),
+            ];
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(returnUpdates))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, _, _) => capturedMessages.Add(msgs.ToList()));
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunStreamingAsync([new(ChatRole.User, "first")], session).ToListAsync();
+        await agent.RunStreamingAsync([new(ChatRole.User, "second")], session).ToListAsync();
+
+        // Assert - the second call should include chat history (first user message + first response) plus the new message
+        Assert.Equal(2, capturedMessages.Count);
+        var secondCallMessages = capturedMessages[1].ToList();
+        Assert.Equal(3, secondCallMessages.Count);
+        Assert.Equal("first", secondCallMessages[0].Text);
+        Assert.Equal("response", secondCallMessages[1].Text);
+        Assert.Equal("second", secondCallMessages[2].Text);
+    }
+
+    /// <summary>
     /// Verify that RunStreamingAsync throws when a <see cref="ChatHistoryProvider"/> factory is provided and the chat client returns a conversation id.
     /// </summary>
     [Fact]

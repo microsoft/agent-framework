@@ -62,7 +62,7 @@ __all__ = [
     "BedrockSettings",
 ]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -91,7 +91,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.
@@ -183,7 +183,7 @@ BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Bedrock Converse API parameter names."""
 
-TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
+BedrockChatOptionsT = TypeVar("BedrockChatOptionsT", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
@@ -219,11 +219,11 @@ class BedrockSettings(AFBaseSettings):
 
 
 class BedrockChatClient(
-    ChatMiddlewareLayer[TBedrockChatOptions],
-    FunctionInvocationLayer[TBedrockChatOptions],
-    ChatTelemetryLayer[TBedrockChatOptions],
-    BaseChatClient[TBedrockChatOptions],
-    Generic[TBedrockChatOptions],
+    ChatMiddlewareLayer[BedrockChatOptionsT],
+    FunctionInvocationLayer[BedrockChatOptionsT],
+    ChatTelemetryLayer[BedrockChatOptionsT],
+    BaseChatClient[BedrockChatOptionsT],
+    Generic[BedrockChatOptionsT],
 ):
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 

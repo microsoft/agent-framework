@@ -79,7 +79,7 @@ __all__ = [
 
 # region OpenAI Assistants Options TypedDict
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 class VectorStoreToolResource(TypedDict, total=False):
@@ -109,7 +109,7 @@ class AssistantToolResources(TypedDict, total=False):
     """Resources for file search tool, including vector store IDs."""
 
 
-class OpenAIAssistantsOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OpenAIAssistantsOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """OpenAI Assistants API-specific options dict.
 
     Extends base ChatOptions with Assistants API-specific parameters
@@ -193,8 +193,8 @@ ASSISTANTS_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to OpenAI Assistants API parameter names."""
 
-TOpenAIAssistantsOptions = TypeVar(
-    "TOpenAIAssistantsOptions",
+OpenAIAssistantsOptionsT = TypeVar(
+    "OpenAIAssistantsOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
     covariant=True,
@@ -206,11 +206,11 @@ TOpenAIAssistantsOptions = TypeVar(
 
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIAssistantsOptions],
-    FunctionInvocationLayer[TOpenAIAssistantsOptions],
-    ChatTelemetryLayer[TOpenAIAssistantsOptions],
-    BaseChatClient[TOpenAIAssistantsOptions],
-    Generic[TOpenAIAssistantsOptions],
+    ChatMiddlewareLayer[OpenAIAssistantsOptionsT],
+    FunctionInvocationLayer[OpenAIAssistantsOptionsT],
+    ChatTelemetryLayer[OpenAIAssistantsOptionsT],
+    BaseChatClient[OpenAIAssistantsOptionsT],
+    Generic[OpenAIAssistantsOptionsT],
 ):
     """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
 

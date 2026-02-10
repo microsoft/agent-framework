@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from ._tools import FunctionTool
     from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
 
-    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 __all__ = [
     "AgentContext",
@@ -65,21 +65,21 @@ __all__ = [
 ]
 
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
-TContext = TypeVar("TContext")
-TUpdate = TypeVar("TUpdate")
+ContextT = TypeVar("ContextT")
+UpdateT = TypeVar("UpdateT")
 
 
-class _EmptyAsyncIterator(Generic[TUpdate]):
+class _EmptyAsyncIterator(Generic[UpdateT]):
     """Empty async iterator that yields nothing.
 
     Used when middleware terminates without setting a result,
     and we need to provide an empty stream.
     """
 
-    def __aiter__(self) -> _EmptyAsyncIterator[TUpdate]:
+    def __aiter__(self) -> _EmptyAsyncIterator[UpdateT]:
         return self
 
-    async def __anext__(self) -> TUpdate:
+    async def __anext__(self) -> UpdateT:
         raise StopAsyncIteration
 
 
@@ -656,20 +656,20 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
     return func
 
 
-class MiddlewareWrapper(Generic[TContext]):
+class MiddlewareWrapper(Generic[ContextT]):
     """Generic wrapper to convert pure functions into middleware protocol objects.
 
     This wrapper allows function-based middleware to be used alongside class-based middleware
     by providing a unified interface.
 
     Type Parameters:
-        TContext: The type of context object this middleware operates on.
+        ContextT: The type of context object this middleware operates on.
     """
 
-    def __init__(self, func: Callable[[TContext, Callable[[TContext], Awaitable[None]]], Awaitable[None]]) -> None:
+    def __init__(self, func: Callable[[ContextT, Callable[[ContextT], Awaitable[None]]], Awaitable[None]]) -> None:
         self.func = func
 
-    async def process(self, context: TContext, call_next: Callable[[TContext], Awaitable[None]]) -> None:
+    async def process(self, context: ContextT, call_next: Callable[[ContextT], Awaitable[None]]) -> None:
         await self.func(context, call_next)
 
 
@@ -953,15 +953,15 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
 
 # Covariant for chat client options
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
 
 
-class ChatMiddlewareLayer(Generic[TOptions_co]):
+class ChatMiddlewareLayer(Generic[OptionsCoT]):
     """Layer for chat clients to apply chat middleware around response generation."""
 
     def __init__(
@@ -983,9 +983,9 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
@@ -993,7 +993,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1003,7 +1003,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1012,7 +1012,7 @@ class ChatMiddlewareLayer(Generic[TOptions_co]):
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Execute the chat pipeline if middleware is configured."""
@@ -1102,9 +1102,9 @@ class AgentMiddlewareLayer:
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
     @overload
     def run(

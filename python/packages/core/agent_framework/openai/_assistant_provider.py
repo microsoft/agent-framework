@@ -33,10 +33,10 @@ else:
 
 __all__ = ["OpenAIAssistantProvider"]
 
-# Type variable for options - allows typed ChatAgent[TOptions] returns
+# Type variable for options - allows typed OpenAIAssistantProvider[OptionsCoT] returns
 # Default matches OpenAIAssistantsClient's default options type
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
     covariant=True,
@@ -50,7 +50,7 @@ _ToolsType = (
 )
 
 
-class OpenAIAssistantProvider(Generic[TOptions_co]):
+class OpenAIAssistantProvider(Generic[OptionsCoT]):
     """Provider for creating ChatAgent instances from OpenAI Assistants API.
 
     This provider allows you to create, retrieve, and wrap OpenAI Assistants
@@ -205,10 +205,10 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         description: str | None = None,
         tools: _ToolsType | None = None,
         metadata: dict[str, str] | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[TOptions_co]:
+    ) -> ChatAgent[OptionsCoT]:
         """Create a new assistant on OpenAI and return a ChatAgent.
 
         This method creates a new assistant on the OpenAI service and wraps it
@@ -313,10 +313,10 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         *,
         tools: _ToolsType | None = None,
         instructions: str | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[TOptions_co]:
+    ) -> ChatAgent[OptionsCoT]:
         """Retrieve an existing assistant by ID and return a ChatAgent.
 
         This method fetches an existing assistant from OpenAI by its ID
@@ -379,10 +379,10 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         *,
         tools: _ToolsType | None = None,
         instructions: str | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[TOptions_co]:
+    ) -> ChatAgent[OptionsCoT]:
         """Wrap an existing SDK Assistant object as a ChatAgent.
 
         This method does NOT make any HTTP calls. It simply wraps an already-
@@ -524,9 +524,9 @@ class OpenAIAssistantProvider(Generic[TOptions_co]):
         instructions: str | None,
         middleware: Sequence[MiddlewareTypes] | None,
         context_provider: ContextProvider | None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[TOptions_co]:
+    ) -> ChatAgent[OptionsCoT]:
         """Create a ChatAgent from an Assistant.
 
         Args:

@@ -2,6 +2,8 @@
 import importlib.metadata
 
 from ._chat_message_store import RedisChatMessageStore
+from ._context_provider import _RedisContextProvider
+from ._history_provider import _RedisHistoryProvider
 from ._provider import RedisProvider
 
 try:
@@ -12,5 +14,7 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "RedisChatMessageStore",
     "RedisProvider",
+    "_RedisContextProvider",
+    "_RedisHistoryProvider",
     "__version__",
 ]

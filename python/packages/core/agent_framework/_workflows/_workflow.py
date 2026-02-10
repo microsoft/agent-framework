@@ -744,10 +744,19 @@ class Workflow(DictConvertible):
         ignoring data/state changes. Used to verify that a workflow's structure hasn't
         changed when resuming from checkpoints.
         """
-        executors_signature = {
-            executor_id: f"{executor.__class__.__module__}.{executor.__class__.__name__}"
-            for executor_id, executor in self.executors.items()
-        }
+        from ._workflow_executor import WorkflowExecutor
+
+        executors_signature = {}
+        for executor_id, executor in self.executors.items():
+            executor_sig: Any = f"{executor.__class__.__module__}.{executor.__class__.__name__}"
+
+            if isinstance(executor, WorkflowExecutor):
+                executor_sig = {
+                    "type": executor_sig,
+                    "sub_workflow": executor.workflow._graph_signature,
+                }
+
+            executors_signature[executor_id] = executor_sig
 
         edge_groups_signature: list[dict[str, Any]] = []
         for group in self.edge_groups:

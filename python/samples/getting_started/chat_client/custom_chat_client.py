@@ -17,7 +17,7 @@ from agent_framework import (
     ResponseStream,
     Role,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -38,7 +38,7 @@ middleware, telemetry, and function invocation layers explicitly.
 """
 
 
-class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient
@@ -112,11 +112,11 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
 
 
 class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
-    ChatMiddlewareLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
-    FunctionInvocationLayer[TOptions_co],
-    EchoingChatClient[TOptions_co],
-    Generic[TOptions_co],
+    ChatMiddlewareLayer[OptionsCoT],
+    ChatTelemetryLayer[OptionsCoT],
+    FunctionInvocationLayer[OptionsCoT],
+    EchoingChatClient[OptionsCoT],
+    Generic[OptionsCoT],
 ):
     """Echoing chat client that explicitly composes middleware, telemetry, and function layers."""
 

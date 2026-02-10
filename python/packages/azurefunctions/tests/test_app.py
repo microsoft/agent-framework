@@ -27,10 +27,10 @@ from agent_framework_durabletask import (
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._entities import create_agent_entity
 
-TFunc = TypeVar("TFunc", bound=Callable[..., Any])
+FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
 
-def _identity_decorator(func: TFunc) -> TFunc:
+def _identity_decorator(func: FuncT) -> FuncT:
     return func
 
 
@@ -165,8 +165,8 @@ class TestAgentFunctionAppSetup:
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -190,15 +190,15 @@ class TestAgentFunctionAppSetup:
 
         def capture_function_name(
             self: AgentFunctionApp, name: str, *args: Any, **kwargs: Any
-        ) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        ) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 captured_names.append(name)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -220,16 +220,16 @@ class TestAgentFunctionAppSetup:
 
         captured_routes: list[str | None] = []
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_routes.append(route_key)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -738,14 +738,14 @@ class TestHttpRunRoute:
     def _get_run_handler(agent: Mock) -> Callable[[func.HttpRequest, Any], Awaitable[func.HttpResponse]]:
         captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
 
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_handlers[route_key] = func
                 return func
@@ -1144,8 +1144,8 @@ class TestMCPToolEndpoint:
         # Capture the health check handler function
         captured_handler: Callable[[func.HttpRequest], func.HttpResponse] | None = None
 
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 nonlocal captured_handler
                 captured_handler = func
                 return func

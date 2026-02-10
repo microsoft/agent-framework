@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -14,15 +13,10 @@ namespace Microsoft.Agents.AI;
 /// This type helps to identify whether a message came from outside the agent pipeline,
 /// whether it was produced by middleware, or came from chat history.
 /// </remarks>
-public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessageSourceType>
+public readonly struct AgentRequestMessageSourceType : IEquatable<AgentRequestMessageSourceType>
 {
     /// <summary>
-    /// Provides the key used in <see cref="ChatMessage.AdditionalProperties"/> to store the source type of the agent request message.
-    /// </summary>
-    public static readonly string AdditionalPropertiesKey = "Agent.RequestMessageSourceType";
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRequestMessageSourceType"/> class.
+    /// Initializes a new instance of the <see cref="AgentRequestMessageSourceType"/> struct.
     /// </summary>
     /// <param name="value">The string value representing the source of the agent request message.</param>
     public AgentRequestMessageSourceType(string value) => this.Value = Throw.IfNullOrWhitespace(value);
@@ -30,7 +24,7 @@ public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessa
     /// <summary>
     /// Get the string value representing the source of the agent request message.
     /// </summary>
-    public string Value { get; }
+    public string Value { get { return field ?? External.Value; } }
 
     /// <summary>
     /// The message came from outside the agent pipeline (e.g., user input).
@@ -52,18 +46,8 @@ public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessa
     /// </summary>
     /// <param name="other">The <see cref="AgentRequestMessageSourceType"/> to compare to this instance.</param>
     /// <returns><see langword="true"/> if the value of the <paramref name="other"/> parameter is the same as the value of this instance; otherwise, <see langword="false"/>.</returns>
-    public bool Equals(AgentRequestMessageSourceType? other)
+    public bool Equals(AgentRequestMessageSourceType other)
     {
-        if (other is null)
-        {
-            return false;
-        }
-
-        if (ReferenceEquals(this, other))
-        {
-            return true;
-        }
-
         return string.Equals(this.Value, other.Value, StringComparison.Ordinal);
     }
 
@@ -72,7 +56,7 @@ public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessa
     /// </summary>
     /// <param name="obj">The object to compare to this instance.</param>
     /// <returns><see langword="true"/> if <paramref name="obj"/> is a <see cref="AgentRequestMessageSourceType"/> and its value is the same as this instance; otherwise, <see langword="false"/>.</returns>
-    public override bool Equals(object? obj) => this.Equals(obj as AgentRequestMessageSourceType);
+    public override bool Equals(object? obj) => obj is AgentRequestMessageSourceType other && this.Equals(other);
 
     /// <summary>
     /// Returns the hash code for this instance.
@@ -86,13 +70,8 @@ public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessa
     /// <param name="left">The first <see cref="AgentRequestMessageSourceType"/> to compare.</param>
     /// <param name="right">The second <see cref="AgentRequestMessageSourceType"/> to compare.</param>
     /// <returns><see langword="true"/> if the value of <paramref name="left"/> is the same as the value of <paramref name="right"/>; otherwise, <see langword="false"/>.</returns>
-    public static bool operator ==(AgentRequestMessageSourceType? left, AgentRequestMessageSourceType? right)
+    public static bool operator ==(AgentRequestMessageSourceType left, AgentRequestMessageSourceType right)
     {
-        if (left is null)
-        {
-            return right is null;
-        }
-
         return left.Equals(right);
     }
 
@@ -102,5 +81,5 @@ public sealed class AgentRequestMessageSourceType : IEquatable<AgentRequestMessa
     /// <param name="left">The first <see cref="AgentRequestMessageSourceType"/> to compare.</param>
     /// <param name="right">The second <see cref="AgentRequestMessageSourceType"/> to compare.</param>
     /// <returns><see langword="true"/> if the value of <paramref name="left"/> is different from the value of <paramref name="right"/>; otherwise, <see langword="false"/>.</returns>
-    public static bool operator !=(AgentRequestMessageSourceType? left, AgentRequestMessageSourceType? right) => !(left == right);
+    public static bool operator !=(AgentRequestMessageSourceType left, AgentRequestMessageSourceType right) => !(left == right);
 }

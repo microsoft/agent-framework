@@ -64,7 +64,7 @@ public sealed class ChatHistoryProviderExtensionsTests
         Mock<ChatHistoryProvider> providerMock = new();
         List<ChatMessage> requestMessages =
         [
-            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceType.AdditionalPropertiesKey, AgentRequestMessageSourceType.ChatHistory } } },
+            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "TestSource") } } },
             new(ChatRole.User, "Hello")
         ];
         ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages)
@@ -114,9 +114,9 @@ public sealed class ChatHistoryProviderExtensionsTests
         Mock<ChatHistoryProvider> providerMock = new();
         List<ChatMessage> requestMessages =
         [
-            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceType.AdditionalPropertiesKey, AgentRequestMessageSourceType.ChatHistory } } },
+            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "TestSource") } } },
             new(ChatRole.User, "Hello"),
-            new(ChatRole.System, "Context") { AdditionalProperties = new() { { AgentRequestMessageSourceType.AdditionalPropertiesKey, AgentRequestMessageSourceType.AIContextProvider } } }
+            new(ChatRole.System, "Context") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "TestContextSource") } } }
         ];
         ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages);
 

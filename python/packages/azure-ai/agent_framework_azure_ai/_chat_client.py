@@ -193,8 +193,8 @@ AZURE_AI_AGENT_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Azure AI Agents API parameter names."""
 
-TAzureAIAgentOptions = TypeVar(
-    "TAzureAIAgentOptions",
+AzureAIAgentOptionsT = TypeVar(
+    "AzureAIAgentOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureAIAgentOptions",
     covariant=True,
@@ -205,11 +205,11 @@ TAzureAIAgentOptions = TypeVar(
 
 
 class AzureAIAgentClient(
-    ChatMiddlewareLayer[TAzureAIAgentOptions],
-    FunctionInvocationLayer[TAzureAIAgentOptions],
-    ChatTelemetryLayer[TAzureAIAgentOptions],
-    BaseChatClient[TAzureAIAgentOptions],
-    Generic[TAzureAIAgentOptions],
+    ChatMiddlewareLayer[AzureAIAgentOptionsT],
+    FunctionInvocationLayer[AzureAIAgentOptionsT],
+    ChatTelemetryLayer[AzureAIAgentOptionsT],
+    BaseChatClient[AzureAIAgentOptionsT],
+    Generic[AzureAIAgentOptionsT],
 ):
     """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
 
@@ -1296,12 +1296,12 @@ class AzureAIAgentClient(
         | MutableMapping[str, Any]
         | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIAgentOptions | Mapping[str, Any] | None = None,
+        default_options: AzureAIAgentOptionsT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[TAzureAIAgentOptions]:
+    ) -> ChatAgent[AzureAIAgentOptionsT]:
         """Convert this chat client to a ChatAgent.
 
         This method creates a ChatAgent instance with this client pre-configured.

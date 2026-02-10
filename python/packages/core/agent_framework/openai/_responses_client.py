@@ -56,6 +56,7 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContinuationToken,
     ResponseStream,
     Role,
     TextSpanRegion,
@@ -98,7 +99,14 @@ if TYPE_CHECKING:
 logger = get_logger("agent_framework.openai")
 
 
-__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+__all__ = ["OpenAIContinuationToken", "OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+
+
+class OpenAIContinuationToken(ContinuationToken):
+    """Continuation token for OpenAI Responses API background operations."""
+
+    response_id: str
+    """OpenAI Responses API response ID."""
 
 
 # region OpenAI Responses Options TypedDict
@@ -124,10 +132,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+ResponseFormatT = TypeVar("ResponseFormatT", bound=BaseModel | None, default=None)
 
 
-class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
+class OpenAIResponsesOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -190,9 +198,20 @@ class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseForm
     - 'auto': Truncate from beginning if exceeds context
     - 'disabled': Fail with 400 error if exceeds context"""
 
+    background: bool
+    """Whether to run the model response in the background.
+    When True, the response returns immediately with a continuation token
+    that can be used to poll for the result.
+    See: https://platform.openai.com/docs/guides/background"""
 
-TOpenAIResponsesOptions = TypeVar(
-    "TOpenAIResponsesOptions",
+    continuation_token: OpenAIContinuationToken
+    """Token for resuming or polling a long-running background operation.
+    Pass the ``continuation_token`` from a previous response to poll for
+    completion or resume a streaming response."""
+
+
+OpenAIResponsesOptionsT = TypeVar(
+    "OpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
@@ -207,8 +226,8 @@ TOpenAIResponsesOptions = TypeVar(
 
 class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    BaseChatClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
 
@@ -266,33 +285,60 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
+
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
             validated_options: dict[str, Any] | None = None
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 nonlocal validated_options
-                client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
-                try:
-                    if "text_format" in run_options:
-                        async with client.responses.stream(**run_options) as response:
-                            async for chunk in response:
-                                yield self._parse_chunk_from_openai(
-                                    chunk, options=validated_options, function_call_ids=function_call_ids
-                                )
-                    else:
-                        async for chunk in await client.responses.create(stream=True, **run_options):
+                if continuation_token is not None:
+                    # Resume a background streaming response by retrieving with stream=True
+                    client = await self._ensure_client()
+                    validated_options = await self._validate_options(options)
+                    try:
+                        stream_response = await client.responses.retrieve(
+                            continuation_token["response_id"],
+                            stream=True,
+                        )
+                        async for chunk in stream_response:
                             yield self._parse_chunk_from_openai(
                                 chunk, options=validated_options, function_call_ids=function_call_ids
                             )
-                except Exception as ex:
-                    self._handle_request_error(ex)
+                    except Exception as ex:
+                        self._handle_request_error(ex)
+                else:
+                    client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+                    try:
+                        if "text_format" in run_options:
+                            async with client.responses.stream(**run_options) as response:
+                                async for chunk in response:
+                                    yield self._parse_chunk_from_openai(
+                                        chunk, options=validated_options, function_call_ids=function_call_ids
+                                    )
+                        else:
+                            async for chunk in await client.responses.create(stream=True, **run_options):
+                                yield self._parse_chunk_from_openai(
+                                    chunk, options=validated_options, function_call_ids=function_call_ids
+                                )
+                    except Exception as ex:
+                        self._handle_request_error(ex)
 
             response_format = validated_options.get("response_format") if validated_options else None
             return self._build_response_stream(_stream(), response_format=response_format)
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
+            if continuation_token is not None:
+                # Poll a background response by retrieving without stream
+                client = await self._ensure_client()
+                validated_options = await self._validate_options(options)
+                try:
+                    response = await client.responses.retrieve(continuation_token["response_id"])
+                except Exception as ex:
+                    self._handle_request_error(ex)
+                return self._parse_response_from_openai(response, options=validated_options)
             client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
             try:
                 if "text_format" in run_options:
@@ -538,6 +584,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             "response_format",  # handled separately
             "conversation_id",  # handled separately
             "tool_choice",  # handled separately
+            "continuation_token",  # handled separately in _inner_get_response
         }
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
@@ -1070,6 +1117,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             # Only pass response_format to ChatResponse if it's a Pydantic model type,
             # not a runtime JSON schema dict
             args["response_format"] = response_format
+        # Set continuation_token when background operation is still in progress
+        if response.status and response.status in ("in_progress", "queued"):
+            args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
         return ChatResponse(**args)
 
     def _parse_chunk_from_openai(
@@ -1083,6 +1133,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         contents: list[Content] = []
         conversation_id: str | None = None
         response_id: str | None = None
+        continuation_token: OpenAIContinuationToken | None = None
         model = self.model_id
         match event.type:
             # types:
@@ -1164,12 +1215,59 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.reasoning_summary_text.done":
                 contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.delta":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.delta,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.done":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.code,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
+                if event.response.status and event.response.status in ("in_progress", "queued"):
+                    continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
+                continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
@@ -1410,6 +1508,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             response_id=response_id,
             role="assistant",
             model_id=model,
+            continuation_token=continuation_token,
             additional_properties=metadata,
             raw_representation=event,
         )
@@ -1437,11 +1536,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIResponsesOptions],
-    FunctionInvocationLayer[TOpenAIResponsesOptions],
-    ChatTelemetryLayer[TOpenAIResponsesOptions],
-    RawOpenAIResponsesClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
+    FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatTelemetryLayer[OpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
