@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
@@ -384,3 +385,207 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
     # Assert
     assert output is not None
     assert output == "Tool executed successfully."
+
+
+# --- Declaration-only tool tests ---
+
+declaration_only_tool = FunctionTool(
+    name="client_side_tool",
+    func=None,
+    description="A client-side tool that the framework cannot execute.",
+    input_model={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+)
+
+
+class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    """Mock chat client that calls a declaration-only tool on first iteration."""
+
+    def __init__(self, parallel_request: bool = False) -> None:
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self._iteration: int = 0
+        self._parallel_request: bool = parallel_request
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            return self._build_response_stream(self._stream_response())
+
+        async def _get_response() -> ChatResponse:
+            return self._create_response()
+
+        return _get_response()
+
+    def _create_response(self) -> ChatResponse:
+        if self._iteration == 0:
+            if self._parallel_request:
+                response = ChatResponse(
+                    messages=ChatMessage(
+                        "assistant",
+                        [
+                            Content.from_function_call(
+                                call_id="1", name="client_side_tool", arguments='{"query": "test"}'
+                            ),
+                            Content.from_function_call(
+                                call_id="2", name="client_side_tool", arguments='{"query": "test2"}'
+                            ),
+                        ],
+                    )
+                )
+            else:
+                response = ChatResponse(
+                    messages=ChatMessage(
+                        "assistant",
+                        [
+                            Content.from_function_call(
+                                call_id="1", name="client_side_tool", arguments='{"query": "test"}'
+                            )
+                        ],
+                    )
+                )
+        else:
+            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
+
+        self._iteration += 1
+        return response
+
+    async def _stream_response(self) -> AsyncIterable[ChatResponseUpdate]:
+        if self._iteration == 0:
+            if self._parallel_request:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}'),
+                        Content.from_function_call(
+                            call_id="2", name="client_side_tool", arguments='{"query": "test2"}'
+                        ),
+                    ],
+                    role="assistant",
+                )
+            else:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}')
+                    ],
+                    role="assistant",
+                )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
+
+        self._iteration += 1
+
+
+async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:
+    """Test that AgentExecutor emits request_info when agent calls a declaration-only tool."""
+    agent = ChatAgent(
+        chat_client=DeclarationOnlyMockChatClient(),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = (
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
+    )
+
+    # Act
+    events = await workflow.run("Use the client side tool")
+
+    # Assert - workflow should pause with a request_info event
+    request_info_events = events.get_request_info_events()
+    assert len(request_info_events) == 1
+    request = request_info_events[0]
+    assert request.data.type == "function_call"
+    assert request.data.name == "client_side_tool"
+    assert request.data.call_id == "1"
+
+    # Act - provide the function result to resume the workflow
+    events = await workflow.run(
+        responses={
+            request.request_id: Content.from_function_result(call_id=request.data.call_id, result="client result")
+        }
+    )
+
+    # Assert - workflow should complete
+    final_response = events.get_outputs()
+    assert len(final_response) == 1
+    assert final_response[0] == "Tool executed successfully."
+
+
+async def test_agent_executor_declaration_only_tool_emits_request_info_streaming() -> None:
+    """Test that AgentExecutor emits request_info for declaration-only tools in streaming mode."""
+    agent = ChatAgent(
+        chat_client=DeclarationOnlyMockChatClient(),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = WorkflowBuilder(start_executor=agent).add_edge(agent, test_executor).build()
+
+    # Act
+    request_info_events: list[WorkflowEvent] = []
+    async for event in workflow.run("Use the client side tool", stream=True):
+        if event.type == "request_info":
+            request_info_events.append(event)
+
+    # Assert
+    assert len(request_info_events) == 1
+    request = request_info_events[0]
+    assert request.data.type == "function_call"
+    assert request.data.name == "client_side_tool"
+    assert request.data.call_id == "1"
+
+    # Act - provide the function result
+    output: str | None = None
+    async for event in workflow.run(
+        stream=True,
+        responses={
+            request.request_id: Content.from_function_result(call_id=request.data.call_id, result="client result")
+        },
+    ):
+        if event.type == "output":
+            output = event.data
+
+    # Assert
+    assert output is not None
+    assert output == "Tool executed successfully."
+
+
+async def test_agent_executor_parallel_declaration_only_tool_emits_request_info() -> None:
+    """Test that AgentExecutor emits request_info for parallel declaration-only tool calls."""
+    agent = ChatAgent(
+        chat_client=DeclarationOnlyMockChatClient(parallel_request=True),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = (
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
+    )
+
+    # Act
+    events = await workflow.run("Use the client side tool")
+
+    # Assert - should get 2 request_info events
+    request_info_events = events.get_request_info_events()
+    assert len(request_info_events) == 2
+    for req in request_info_events:
+        assert req.data.type == "function_call"
+        assert req.data.name == "client_side_tool"
+
+    # Act - provide both function results
+    responses = {
+        req.request_id: Content.from_function_result(call_id=req.data.call_id, result=f"result for {req.data.call_id}")
+        for req in request_info_events
+    }
+    events = await workflow.run(responses=responses)
+
+    # Assert - workflow should complete
+    final_response = events.get_outputs()
+    assert len(final_response) == 1
+    assert final_response[0] == "Tool executed successfully."
