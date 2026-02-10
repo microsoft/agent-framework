@@ -484,7 +484,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:
     """Test that AgentExecutor emits request_info when agent calls a declaration-only tool."""
     agent = Agent(
-        chat_client=DeclarationOnlyMockChatClient(),
+        client=DeclarationOnlyMockChatClient(),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )
@@ -520,7 +520,7 @@ async def test_agent_executor_declaration_only_tool_emits_request_info() -> None
 async def test_agent_executor_declaration_only_tool_emits_request_info_streaming() -> None:
     """Test that AgentExecutor emits request_info for declaration-only tools in streaming mode."""
     agent = Agent(
-        chat_client=DeclarationOnlyMockChatClient(),
+        client=DeclarationOnlyMockChatClient(),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )
@@ -559,7 +559,7 @@ async def test_agent_executor_declaration_only_tool_emits_request_info_streaming
 async def test_agent_executor_parallel_declaration_only_tool_emits_request_info() -> None:
     """Test that AgentExecutor emits request_info for parallel declaration-only tool calls."""
     agent = Agent(
-        chat_client=DeclarationOnlyMockChatClient(parallel_request=True),
+        client=DeclarationOnlyMockChatClient(parallel_request=True),
         name="DeclarationOnlyAgent",
         tools=[declaration_only_tool],
     )
