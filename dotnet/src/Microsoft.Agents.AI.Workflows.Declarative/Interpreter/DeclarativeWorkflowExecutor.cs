@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.AI;
 
@@ -25,6 +26,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         return default;
     }
 
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // No state to restore if we're starting from the beginning.

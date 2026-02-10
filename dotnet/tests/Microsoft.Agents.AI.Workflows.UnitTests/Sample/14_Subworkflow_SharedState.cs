@@ -109,7 +109,7 @@ internal static partial class Step14EntryPoint
     internal sealed partial class TextReadExecutor() : Executor("TextReadExecutor")
     {
         [MessageHandler]
-        private async ValueTask<string> HandleAsync(string text, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public async ValueTask<string> HandleAsync(string text, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string key = Guid.NewGuid().ToString();
             await context.QueueStateUpdateAsync(key, text, scopeName: WordStateScope, cancellationToken);
@@ -123,7 +123,7 @@ internal static partial class Step14EntryPoint
     internal sealed partial class TextTrimExecutor() : Executor("TextTrimExecutor")
     {
         [MessageHandler]
-        private async ValueTask<string> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public async ValueTask<string> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string? content = await context.ReadStateAsync<string>(key, scopeName: WordStateScope, cancellationToken);
             if (content is null)
@@ -143,7 +143,7 @@ internal static partial class Step14EntryPoint
     internal sealed partial class CharCountingExecutor() : Executor("CharCountingExecutor")
     {
         [MessageHandler]
-        private async ValueTask<int> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public async ValueTask<int> HandleAsync(string key, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string? content = await context.ReadStateAsync<string>(key, scopeName: WordStateScope, cancellationToken);
             return content?.Length ?? 0;

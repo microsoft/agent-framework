@@ -40,6 +40,7 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettabl
         return default;
     }
 
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (this._action is not null)

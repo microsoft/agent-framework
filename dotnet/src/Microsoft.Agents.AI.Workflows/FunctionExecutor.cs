@@ -31,7 +31,7 @@ public class FunctionExecutor<TInput>(string id,
         if (handlerSync.Method != null)
         {
             MethodInfo method = handlerSync.Method;
-            (sentTypes, yieldedTypes) = GetAttributeTypes(method);
+            (sentTypes, yieldedTypes) = method.GetAttributeTypes();
         }
         else
         {
@@ -47,19 +47,10 @@ public class FunctionExecutor<TInput>(string id,
         }
     }
 
-    private static (IEnumerable<Type> Sent, IEnumerable<Type> Yielded) GetAttributeTypes(MethodInfo method)
-    {
-        IEnumerable<SendsMessageAttribute> sendsMessageAttrs = method.GetCustomAttributes<SendsMessageAttribute>();
-        IEnumerable<YieldsOutputAttribute> yieldsOutputAttrs = method.GetCustomAttributes<YieldsOutputAttribute>();
-        // TODO: Should we include [MessageHandler]?
-
-        return (Sent: sendsMessageAttrs.Select(attr => attr.Type), Yielded: yieldsOutputAttrs.Select(attr => attr.Type));
-    }
-
     /// <inheritdoc/>
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        (IEnumerable<Type> attributeSentTypes, IEnumerable<Type> attributeYieldTypes) = GetAttributeTypes(handlerAsync.Method);
+        (IEnumerable<Type> attributeSentTypes, IEnumerable<Type> attributeYieldTypes) = handlerAsync.Method.GetAttributeTypes();
 
         return base.ConfigureProtocol(protocolBuilder)
                .SendsMessageTypes(attributeSentTypes.Concat(sentMessageTypes ?? []))

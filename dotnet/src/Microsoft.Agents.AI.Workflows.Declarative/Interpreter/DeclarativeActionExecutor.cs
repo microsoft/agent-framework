@@ -60,6 +60,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     }
 
     /// <inheritdoc/>
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (this.Model.Disabled)

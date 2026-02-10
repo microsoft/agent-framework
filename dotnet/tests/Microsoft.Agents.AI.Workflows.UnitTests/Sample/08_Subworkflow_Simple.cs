@@ -110,7 +110,7 @@ internal static partial class Step8EntryPoint
         }
 
         [MessageHandler(Send = [typeof(TextProcessingRequest)])]
-        private async ValueTask StartProcessingAsync(List<string> texts, IWorkflowContext context, CancellationToken cancellationToken)
+        public async ValueTask StartProcessingAsync(List<string> texts, IWorkflowContext context, CancellationToken cancellationToken)
         {
             await this.InvokeWithStateAsync(QueueProcessingTasksAsync, context, cancellationToken: cancellationToken);
 
@@ -127,7 +127,7 @@ internal static partial class Step8EntryPoint
         }
 
         [MessageHandler(Yield = [typeof(List<TextProcessingResult>)])]
-        private async ValueTask CollectResultAsync(TextProcessingResult result, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public async ValueTask CollectResultAsync(TextProcessingResult result, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             await this.InvokeWithStateAsync(CollectResultAndCheckCompletionAsync, context, cancellationToken: cancellationToken);
 

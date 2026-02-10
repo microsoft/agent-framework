@@ -201,24 +201,6 @@ public abstract class Executor : IIdentified
     /// RouteBuilder.</remarks>
     /// <returns>An instance of <see cref="ExecutorProtocol"/> that represents the fully configured protocol.</returns>
     protected abstract ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder);
-    //{
-    //    // TODO: Eventually we want this to be the primary way to configure the protocol, but for now
-    //    // we will drive it from the RouteBuilder for backward compatibility.
-    //    this.ConfigureRoutes(protocolBuilder.RouteBuilder);
-
-    //    // Avoid re-entrancy issues. TODO: Remove old ConfigureXYZ calls once this is the primary configuration path.
-    //    //this._configuringProtocol = true;
-    //    //protocolBuilder.SendsMessageTypes(this.ConfigureSentTypes());
-    //    //protocolBuilder.YieldsOutputTypes(this.ConfigureYieldTypes());
-    //    //this._configuringProtocol = false;
-
-    //    return protocolBuilder;
-    //}
-
-    /// <summary>
-    /// Override this method to register handlers for the executor.
-    /// </summary>
-    //protected virtual RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
 
     internal void AttachRequestContext(IExternalRequestContext externalRequestContext)
     {
@@ -228,9 +210,6 @@ public abstract class Executor : IIdentified
         //   .AttachRequestContext()
         // >>> only usable now
 
-        // This can be removed once we can obsolete the old RegisterRoutes/RegisterXYZTypes methods in favour of the ConfigureProtocol
-        // method. Then instead of relying on the Executor instance to drive routing through .MessageRouter, the execution environment
-        // will rely on the Protocol instance directly.
         this.DelayedPortRegistrations.ApplyPortRegistrations(externalRequestContext);
         _ = this.Protocol; // Force protocol to be built if not already done.
     }
@@ -244,34 +223,6 @@ public abstract class Executor : IIdentified
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     protected internal virtual ValueTask InitializeAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
         => default;
-
-    ///// <summary>
-    ///// Override this method to declare the types of messages this executor can send.
-    ///// </summary>
-    ///// <returns></returns>
-    //protected virtual ISet<Type> ConfigureSentTypes()
-    //{
-    //    if (this.Options.AutoSendMessageHandlerResultObject && !this._configuringProtocol)
-    //    {
-    //        return this.Router.DefaultOutputTypes;
-    //    }
-
-    //    return new HashSet<Type>();
-    //}
-
-    ///// <summary>
-    ///// Override this method to declare the types of messages this executor can yield as workflow outputs.
-    ///// </summary>
-    ///// <returns></returns>
-    //protected virtual ISet<Type> ConfigureYieldTypes()
-    //{
-    //    if (this.Options.AutoYieldOutputHandlerResultObject && !this._configuringProtocol)
-    //    {
-    //        return this.Router.DefaultOutputTypes;
-    //    }
-
-    //    return new HashSet<Type>();
-    //}
 
     internal MessageRouter Router => this.Protocol.Router;
 
@@ -387,8 +338,6 @@ public abstract class Executor : IIdentified
     /// <returns></returns>
     public bool CanHandle(Type messageType) => this.Protocol.CanHandle(messageType);
 
-    //internal bool CanHandle(TypeId messageType) => this.Protocol.CanHandle(messageType);
-
     internal bool CanOutput(Type messageType) => this.Protocol.CanOutput(messageType);
 }
 
@@ -404,7 +353,12 @@ public abstract class Executor<TInput>(string id, ExecutorOptions? options = nul
 {
     /// <inheritdoc/>
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
-        => protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<TInput>(this.HandleAsync));
+    {
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerDelegate = this.HandleAsync;
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddHandlerAttributeTypes(handlerDelegate.Method);
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
@@ -424,7 +378,12 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
 {
     /// <inheritdoc/>
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
-        => protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync));
+    {
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerDelegate = this.HandleAsync;
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddHandlerAttributeTypes(handlerDelegate.Method);
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);

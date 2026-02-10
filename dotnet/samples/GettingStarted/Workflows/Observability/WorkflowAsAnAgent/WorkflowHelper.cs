@@ -53,13 +53,13 @@ internal static partial class WorkflowHelper
     private sealed partial class ConcurrentStartExecutor() : Executor("ConcurrentStartExecutor")
     {
         [MessageHandler]
-        private ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+        internal ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
         {
             return context.SendMessageAsync(messages, cancellationToken: cancellationToken);
         }
 
         [MessageHandler]
-        private ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
+        internal ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
         {
             return context.SendMessageAsync(token, cancellationToken: cancellationToken);
         }
