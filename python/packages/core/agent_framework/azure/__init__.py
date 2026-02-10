@@ -29,6 +29,9 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "DurableAIAgentOrchestrationContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentWorker": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
+    "AzureOpenAIRealtimeClient": ("agent_framework.azure._realtime_client", "agent-framework-core"),
+    "AzureVoiceLiveClient": ("agent_framework_azure_voice_live", "agent-framework-azure-voice-live"),
+    "AzureVoiceLiveSettings": ("agent_framework_azure_voice_live", "agent-framework-azure-voice-live"),
 }
 
 

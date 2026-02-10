@@ -79,6 +79,7 @@ agent-framework-azure-ai-search = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
+agent-framework-azure-voice-live = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }

@@ -32,6 +32,7 @@ members = [
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azure-ai-search",
+    "agent-framework-azure-voice-live",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
     "agent-framework-chatkit",
@@ -233,6 +234,21 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "azure-search-documents", specifier = "==11.7.0b2" },
+]
+
+[[package]]
+name = "agent-framework-azure-voice-live"
+version = "1.0.0b260116"
+source = { editable = "packages/azure-ai-voice-live" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-voicelive", extra = ["aiohttp"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-ai-voicelive", extras = ["aiohttp"], specifier = ">=1.0.0" },
 ]
 
 [[package]]
@@ -990,6 +1006,25 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-ai-voicelive"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/46/e304076e2bdca64a3b77bf9b6c79b8b4f29b994cc22196ff8c72b93faf09/azure_ai_voicelive-1.1.0.tar.gz", hash = "sha256:9398d0a3ad8a3c43844e89dfb8c61a39422f294770820f405b114c4d752d3f43", size = 127417, upload-time = "2025-11-04T18:26:00.036Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/4b/48a81dae63b3fa1208603a71bffda884bc9cec46f04d223e867efd132357/azure_ai_voicelive-1.1.0-py3-none-any.whl", hash = "sha256:29f2ab8bef67dd41cddafb0239f059351ddb44a7d95bcc4e706516e0c2bfdcc4", size = 83156, upload-time = "2025-11-04T18:26:01.214Z" },
+]
+
+[package.optional-dependencies]
+aiohttp = [
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[package]]
 name = "azure-common"
 version = "1.1.28"
 source = { registry = "https://pypi.org/simple" }
@@ -1085,6 +1120,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/71/24/072ba8e27b0e2d8fec401e9969b429d4f5fc4c8d4f0f05f4661e11f7234a/azure_storage_blob-12.28.0.tar.gz", hash = "sha256:e7d98ea108258d29aa0efbfd591b2e2075fa1722a2fae8699f0b3c9de11eff41", size = 604225, upload-time = "2026-01-06T23:48:57.282Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/3a/6ef2047a072e54e1142718d433d50e9514c999a58f51abfff7902f3a72f8/azure_storage_blob-12.28.0-py3-none-any.whl", hash = "sha256:00fb1db28bf6a7b7ecaa48e3b1d5c83bfadacc5a678b77826081304bd87d6461", size = 431499, upload-time = "2026-01-06T23:48:58.995Z" },
+]
+
+[[package]]
+name = "babel"
+version = "2.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/6b/d52e42361e1aa00709585ecc30b3f9684b3ab62530771402248b1b1d6240/babel-2.17.0.tar.gz", hash = "sha256:0c54cffb19f690cdcc52a3b50bcbf71e07a808d1c80d549f2459b9d2cf0afb9d", size = 9951852, upload-time = "2025-02-01T15:17:41.026Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/b8/3fe70c75fe32afc4bb507f75563d39bc5642255d1d94f1f23604725780bf/babel-2.17.0-py3-none-any.whl", hash = "sha256:4d0b53093fdfb4b21c92b5213dba5a1b23885afa8383709427046b21c366e5f2", size = 10182537, upload-time = "2025-02-01T15:17:37.39Z" },
 ]
 
 [[package]]
