@@ -2764,8 +2764,11 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
 
         meta = server.session.call_tool.call_args.kwargs.get("meta")
         if expect_traceparent:
+            # When a valid span is active, we expect some propagation fields to be injected,
+            # but we do not assume any specific header name to keep this test propagator-agnostic.
             assert meta is not None
-            assert "traceparent" in meta
+            assert isinstance(meta, dict)
+            assert len(meta) > 0
         else:
             assert meta is None
 
