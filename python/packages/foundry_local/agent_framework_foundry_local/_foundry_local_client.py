@@ -38,13 +38,13 @@ __all__ = [
     "FoundryLocalSettings",
 ]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Foundry Local Chat Options TypedDict
 
 
-class FoundryLocalChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Azure Foundry Local (local model deployment) chat options dict.
 
     Extends base ChatOptions for local model inference via Foundry Local.
@@ -104,8 +104,8 @@ FOUNDRY_LOCAL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to OpenAI API parameter names (for compatibility)."""
 
-TFoundryLocalChatOptions = TypeVar(
-    "TFoundryLocalChatOptions",
+FoundryLocalChatOptionsT = TypeVar(
+    "FoundryLocalChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="FoundryLocalChatOptions",
     covariant=True,
@@ -137,11 +137,11 @@ class FoundryLocalSettings(AFBaseSettings):
 
 
 class FoundryLocalClient(
-    ChatMiddlewareLayer[TFoundryLocalChatOptions],
-    FunctionInvocationLayer[TFoundryLocalChatOptions],
-    ChatTelemetryLayer[TFoundryLocalChatOptions],
-    RawOpenAIChatClient[TFoundryLocalChatOptions],
-    Generic[TFoundryLocalChatOptions],
+    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
+    FunctionInvocationLayer[FoundryLocalChatOptionsT],
+    ChatTelemetryLayer[FoundryLocalChatOptionsT],
+    RawOpenAIChatClient[FoundryLocalChatOptionsT],
+    Generic[FoundryLocalChatOptionsT],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
 

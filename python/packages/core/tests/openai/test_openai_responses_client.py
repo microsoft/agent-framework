@@ -1715,6 +1715,64 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     assert any(out.type == "uri" and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs)
 
 
+def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
+    """Test _parse_chunk_from_openai with code_interpreter_call_code delta events."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    # Test delta event
+    mock_delta_event = MagicMock()
+    mock_delta_event.type = "response.code_interpreter_call_code.delta"
+    mock_delta_event.item_id = "ci_123"
+    mock_delta_event.delta = "import pandas as pd\n"
+    mock_delta_event.output_index = 0
+    mock_delta_event.sequence_number = 1
+    mock_delta_event.call_id = None  # Ensure fallback to item_id
+    mock_delta_event.id = None
+
+    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert result.contents[0].type == "code_interpreter_tool_call"
+    assert result.contents[0].call_id == "ci_123"
+    assert result.contents[0].inputs
+    assert result.contents[0].inputs[0].type == "text"
+    assert result.contents[0].inputs[0].text == "import pandas as pd\n"
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 1
+    assert result.contents[0].additional_properties["item_id"] == "ci_123"
+
+
+def test_parse_chunk_from_openai_code_interpreter_done() -> None:
+    """Test _parse_chunk_from_openai with code_interpreter_call_code done event."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    # Test done event
+    mock_done_event = MagicMock()
+    mock_done_event.type = "response.code_interpreter_call_code.done"
+    mock_done_event.item_id = "ci_456"
+    mock_done_event.code = "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2, 3]})\nprint(df)"
+    mock_done_event.output_index = 0
+    mock_done_event.sequence_number = 5
+    mock_done_event.call_id = None  # Ensure fallback to item_id
+    mock_done_event.id = None
+
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert result.contents[0].type == "code_interpreter_tool_call"
+    assert result.contents[0].call_id == "ci_456"
+    assert result.contents[0].inputs
+    assert result.contents[0].inputs[0].type == "text"
+    assert "import pandas as pd" in result.contents[0].inputs[0].text
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 5
+    assert result.contents[0].additional_properties["item_id"] == "ci_456"
+
+
 def test_parse_chunk_from_openai_reasoning() -> None:
     """Test _parse_chunk_from_openai with reasoning content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -2376,3 +2434,263 @@ async def test_integration_streaming_file_search() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+# region Background Response / ContinuationToken Tests
+
+
+def test_continuation_token_json_serializable() -> None:
+    """Test that OpenAIContinuationToken is a plain dict and JSON-serializable."""
+    from agent_framework.openai import OpenAIContinuationToken
+
+    token = OpenAIContinuationToken(response_id="resp_abc123")
+    assert token["response_id"] == "resp_abc123"
+
+    # JSON round-trip
+    serialized = json.dumps(token)
+    restored = json.loads(serialized)
+    assert restored["response_id"] == "resp_abc123"
+
+
+def test_chat_response_with_continuation_token() -> None:
+    """Test that ChatResponse accepts and stores continuation_token."""
+    from agent_framework.openai import OpenAIContinuationToken
+
+    token = OpenAIContinuationToken(response_id="resp_123")
+    response = ChatResponse(
+        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+        response_id="resp_123",
+        continuation_token=token,
+    )
+    assert response.continuation_token is not None
+    assert response.continuation_token["response_id"] == "resp_123"
+
+
+def test_chat_response_without_continuation_token() -> None:
+    """Test that ChatResponse defaults continuation_token to None."""
+    response = ChatResponse(
+        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+    )
+    assert response.continuation_token is None
+
+
+def test_chat_response_update_with_continuation_token() -> None:
+    """Test that ChatResponseUpdate accepts and stores continuation_token."""
+    from agent_framework.openai import OpenAIContinuationToken
+
+    token = OpenAIContinuationToken(response_id="resp_456")
+    update = ChatResponseUpdate(
+        contents=[Content.from_text(text="chunk")],
+        role="assistant",
+        continuation_token=token,
+    )
+    assert update.continuation_token is not None
+    assert update.continuation_token["response_id"] == "resp_456"
+
+
+def test_agent_response_with_continuation_token() -> None:
+    """Test that AgentResponse accepts and stores continuation_token."""
+    from agent_framework import AgentResponse
+    from agent_framework.openai import OpenAIContinuationToken
+
+    token = OpenAIContinuationToken(response_id="resp_789")
+    response = AgentResponse(
+        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="done")]),
+        continuation_token=token,
+    )
+    assert response.continuation_token is not None
+    assert response.continuation_token["response_id"] == "resp_789"
+
+
+def test_agent_response_update_with_continuation_token() -> None:
+    """Test that AgentResponseUpdate accepts and stores continuation_token."""
+    from agent_framework import AgentResponseUpdate
+    from agent_framework.openai import OpenAIContinuationToken
+
+    token = OpenAIContinuationToken(response_id="resp_012")
+    update = AgentResponseUpdate(
+        contents=[Content.from_text(text="streaming")],
+        role="assistant",
+        continuation_token=token,
+    )
+    assert update.continuation_token is not None
+    assert update.continuation_token["response_id"] == "resp_012"
+
+
+def test_parse_response_from_openai_with_background_in_progress() -> None:
+    """Test that _parse_response_from_openai sets continuation_token when status is in_progress."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp_bg_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "in_progress"
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = []
+    mock_response.output = [mock_message]
+
+    options: dict[str, Any] = {"store": False}
+    result = client._parse_response_from_openai(mock_response, options=options)
+
+    assert result.continuation_token is not None
+    assert result.continuation_token["response_id"] == "resp_bg_123"
+
+
+def test_parse_response_from_openai_with_background_queued() -> None:
+    """Test that _parse_response_from_openai sets continuation_token when status is queued."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp_bg_456"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "queued"
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = []
+    mock_response.output = [mock_message]
+
+    options: dict[str, Any] = {"store": False}
+    result = client._parse_response_from_openai(mock_response, options=options)
+
+    assert result.continuation_token is not None
+    assert result.continuation_token["response_id"] == "resp_bg_456"
+
+
+def test_parse_response_from_openai_with_background_completed() -> None:
+    """Test that _parse_response_from_openai does NOT set continuation_token when status is completed."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp_bg_789"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Final answer"
+    mock_text_content.annotations = []
+    mock_text_content.logprobs = None
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = [mock_text_content]
+    mock_response.output = [mock_message]
+
+    options: dict[str, Any] = {"store": False}
+    result = client._parse_response_from_openai(mock_response, options=options)
+
+    assert result.continuation_token is None
+
+
+def test_streaming_response_in_progress_sets_continuation_token() -> None:
+    """Test that _parse_chunk_from_openai sets continuation_token for in_progress events."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.in_progress"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_stream_123"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_456"
+    mock_event.response.status = "in_progress"
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.continuation_token is not None
+    assert update.continuation_token["response_id"] == "resp_stream_123"
+
+
+def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
+    """Test that response.created with in_progress status sets continuation_token."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.created"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_created_123"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_789"
+    mock_event.response.status = "in_progress"
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.continuation_token is not None
+    assert update.continuation_token["response_id"] == "resp_created_123"
+
+
+def test_streaming_response_completed_no_continuation_token() -> None:
+    """Test that response.completed does NOT set continuation_token."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_done_123"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_done"
+    mock_event.response.model = "test-model"
+    mock_event.response.usage = None
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.continuation_token is None
+
+
+def test_map_chat_to_agent_update_preserves_continuation_token() -> None:
+    """Test that map_chat_to_agent_update propagates continuation_token."""
+    from agent_framework._types import map_chat_to_agent_update
+
+    token = {"response_id": "resp_map_123"}
+    chat_update = ChatResponseUpdate(
+        contents=[Content.from_text(text="chunk")],
+        role="assistant",
+        response_id="resp_map_123",
+        continuation_token=token,
+    )
+
+    agent_update = map_chat_to_agent_update(chat_update, agent_name="test-agent")
+
+    assert agent_update.continuation_token is not None
+    assert agent_update.continuation_token["response_id"] == "resp_map_123"
+
+
+async def test_prepare_options_excludes_continuation_token() -> None:
+    """Test that _prepare_options does not pass continuation_token to OpenAI API."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model_id": "test-model",
+        "continuation_token": {"response_id": "resp_123"},
+        "background": True,
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert "continuation_token" not in run_options
+    assert "background" in run_options
+    assert run_options["background"] is True
+
+
+# endregion
