@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 
 """Background Responses Sample.
@@ -22,10 +22,10 @@ Prerequisites:
 
 
 # 1. Create the agent with an OpenAI Responses client.
-agent = ChatAgent(
+agent = Agent(
     name="researcher",
     instructions="You are a helpful research assistant. Be concise.",
-    chat_client=OpenAIResponsesClient(model_id="o3"),
+    client=OpenAIResponsesClient(model_id="o3"),
 )
 
 

@@ -28,12 +28,12 @@ from .._tools import (
     FunctionTool,
 )
 from .._types import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FinishReason,
+    Message,
     ResponseStream,
     UsageDetails,
     prepare_function_call_results,
@@ -209,7 +209,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -303,7 +303,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             result["web_search_options"] = web_search_options
         return result
 
-    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist
         from .._types import prepend_instructions_to_messages, validate_tool_mode
 
@@ -361,7 +361,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         finish_reason: FinishReason | None = None
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
@@ -374,7 +374,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
-            messages.append(ChatMessage(role="assistant", contents=contents))
+            messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -499,7 +499,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     def _prepare_messages_for_openai(
         self,
-        chat_messages: Sequence[ChatMessage],
+        chat_messages: Sequence[Message],
         role_key: str = "role",
         content_key: str = "content",
     ) -> list[dict[str, Any]]:
@@ -527,7 +527,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region Parsers
 
-    def _prepare_message_for_openai(self, message: ChatMessage) -> list[dict[str, Any]]:
+    def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:

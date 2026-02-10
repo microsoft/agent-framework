@@ -13,7 +13,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._logging import get_logger
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
@@ -343,8 +343,8 @@ class _AzureAISearchContextProvider(BaseContextProvider):
         if not search_result_parts:
             return
 
-        context_messages = [ChatMessage(role="user", text=self.context_prompt)]
-        context_messages.extend([ChatMessage(role="user", text=part) for part in search_result_parts])
+        context_messages = [Message(role="user", text=self.context_prompt)]
+        context_messages.extend([Message(role="user", text=part) for part in search_result_parts])
         context.extend_messages(self.source_id, context_messages)
 
     # -- Internal methods (ported from AzureAISearchContextProvider) -----------
@@ -546,7 +546,7 @@ class _AzureAISearchContextProvider(BaseContextProvider):
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
-    async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:
+    async def _agentic_search(self, messages: list[Message]) -> list[str]:
         """Perform agentic retrieval with multi-hop reasoning."""
         await self._ensure_knowledge_base()
 

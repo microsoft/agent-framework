@@ -31,16 +31,16 @@ class SerializationProtocol(Protocol):
     ensuring consistent behavior across the framework.
 
     Examples:
-        The framework's ``ChatMessage`` class demonstrates the protocol in action:
+        The framework's ``Message`` class demonstrates the protocol in action:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework._serialization import SerializationProtocol
 
 
-            # ChatMessage implements SerializationProtocol via SerializationMixin
-            user_msg = ChatMessage(role="user", text="What's the weather like today?")
+            # Message implements SerializationProtocol via SerializationMixin
+            user_msg = Message(role="user", text="What's the weather like today?")
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -52,8 +52,8 @@ class SerializationProtocol(Protocol):
             #     "additional_properties": {}
             # }
 
-            # Deserialize back to ChatMessage instance - automatic type reconstruction
-            restored_msg = ChatMessage.from_dict(msg_dict)
+            # Deserialize back to Message instance - automatic type reconstruction
+            restored_msg = Message.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
             print(restored_msg.role)  # "user"
 
@@ -170,15 +170,15 @@ class SerializationMixin:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework._threads import AgentThreadState, ChatMessageStoreState
 
 
-            # ChatMessageStoreState handles nested ChatMessage serialization
+            # ChatMessageStoreState handles nested Message serialization
             store_state = ChatMessageStoreState(
                 messages=[
-                    ChatMessage(role="user", text="Hello agent"),
-                    ChatMessage(role="assistant", text="Hi! How can I help?"),
+                    Message(role="user", text="Hello agent"),
+                    Message(role="assistant", text="Hi! How can I help?"),
                 ]
             )
 
@@ -443,7 +443,7 @@ class SerializationMixin:
                 dependencies = {"open_ai_chat_client": {"client": openai_client}}
 
                 # The chat client is reconstructed with the OpenAI client injected
-                chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
+                client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
             **Function Injection for Tools** - FunctionTool runtime dependency:

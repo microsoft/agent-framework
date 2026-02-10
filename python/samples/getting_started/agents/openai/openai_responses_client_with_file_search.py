@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, Content
+from agent_framework import Agent, Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -46,8 +46,8 @@ async def main() -> None:
     print(f"User: {message}")
     file_id, vector_store_id = await create_vector_store(client)
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
         tools=[client.get_file_search_tool(vector_store_ids=[vector_store_id])],
     )

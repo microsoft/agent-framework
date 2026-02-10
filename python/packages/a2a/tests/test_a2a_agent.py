@@ -12,19 +12,19 @@ from a2a.types import (
     DataPart,
     FilePart,
     FileWithUri,
-    Message,
     Part,
     Task,
     TaskState,
     TaskStatus,
     TextPart,
 )
+from a2a.types import Message as A2AMessage
 from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Content,
+    Message,
 )
 from agent_framework.a2a import A2AAgent
 from pytest import fixture, raises
@@ -49,7 +49,7 @@ class MockA2AClient:
         text_part = Part(root=TextPart(text=text))
 
         # Create actual Message instance
-        message = Message(
+        message = A2AMessage(
             message_id=message_id, role=A2ARole.agent if role == "agent" else A2ARole.user, parts=[text_part]
         )
         self.responses.append(message)
@@ -281,7 +281,7 @@ def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
 
     result = a2a_agent._parse_message_from_artifact(artifact)
 
-    assert isinstance(result, ChatMessage)
+    assert isinstance(result, Message)
     assert result.role == "assistant"
     assert result.text == "Artifact content"
     assert result.raw_representation == artifact
@@ -324,9 +324,9 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
 def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with ErrorContent."""
 
-    # Create ChatMessage with ErrorContent
+    # Create Message with ErrorContent
     error_content = Content.from_error(message="Test error message")
-    message = ChatMessage(role="user", contents=[error_content])
+    message = Message(role="user", contents=[error_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -339,9 +339,9 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
 def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with UriContent."""
 
-    # Create ChatMessage with UriContent
+    # Create Message with UriContent
     uri_content = Content.from_uri(uri="http://example.com/file.pdf", media_type="application/pdf")
-    message = ChatMessage(role="user", contents=[uri_content])
+    message = Message(role="user", contents=[uri_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -355,9 +355,9 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
 def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with DataContent."""
 
-    # Create ChatMessage with DataContent (base64 data URI)
+    # Create Message with DataContent (base64 data URI)
     data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
-    message = ChatMessage(role="user", contents=[data_content])
+    message = Message(role="user", contents=[data_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -370,11 +370,11 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
 
 def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with empty contents raises ValueError."""
-    # Create ChatMessage with no contents
-    message = ChatMessage(role="user", contents=[])
+    # Create Message with no contents
+    message = Message(role="user", contents=[])
 
     # Should raise ValueError for empty contents
-    with raises(ValueError, match="ChatMessage.contents is empty"):
+    with raises(ValueError, match="Message.contents is empty"):
         a2a_agent._prepare_message_for_a2a(message)
 
 
@@ -432,12 +432,12 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
 
 def test_prepare_message_for_a2a_with_multiple_contents() -> None:
-    """Test conversion of ChatMessage with multiple contents."""
+    """Test conversion of Message with multiple contents."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with multiple content types
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="Here's the analysis:"),
@@ -489,12 +489,12 @@ def test_parse_contents_from_a2a_unknown_part_kind() -> None:
 
 
 def test_prepare_message_for_a2a_with_hosted_file() -> None:
-    """Test conversion of ChatMessage with HostedFileContent to A2A message."""
+    """Test conversion of Message with HostedFileContent to A2A message."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with hosted file content
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[Content.from_hosted_file(file_id="hosted://storage/document.pdf")],
     )

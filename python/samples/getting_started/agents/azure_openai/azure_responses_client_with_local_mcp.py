@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent, MCPStreamableHTTPTool
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -37,7 +37,7 @@ async def main():
         credential=credential,
     )
 
-    agent: ChatAgent = responses_client.as_agent(
+    agent: Agent = responses_client.as_agent(
         name="DocsAgent",
         instructions=("You are a helpful assistant that can help with Microsoft documentation questions."),
     )

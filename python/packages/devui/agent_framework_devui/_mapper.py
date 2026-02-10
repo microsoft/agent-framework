@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -453,7 +453,7 @@ class MessageMapper:
         Handles:
         - Primitives (str, int, float, bool, None)
         - Collections (list, tuple, set, dict)
-        - SerializationMixin objects (ChatMessage, etc.) - calls to_dict()
+        - SerializationMixin objects (Message, etc.) - calls to_dict()
         - Pydantic models - calls model_dump()
         - Dataclasses - recursively serializes with asdict()
         - Enums - extracts value
@@ -502,7 +502,7 @@ class MessageMapper:
         if isinstance(value, dict):
             return {k: self._serialize_value(v) for k, v in value.items()}
 
-        # Handle SerializationMixin (like ChatMessage) - call to_dict()
+        # Handle SerializationMixin (like Message) - call to_dict()
         if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
             try:
                 return value.to_dict()  # type: ignore[attr-defined, no-any-return]
@@ -536,7 +536,7 @@ class MessageMapper:
     def _serialize_request_data(self, request_data: Any) -> dict[str, Any]:
         """Serialize RequestInfoMessage to dict for JSON transmission.
 
-        Handles nested SerializationMixin objects (like ChatMessage) within dataclasses.
+        Handles nested SerializationMixin objects (like Message) within dataclasses.
 
         Args:
             request_data: The RequestInfoMessage instance
@@ -554,7 +554,7 @@ class MessageMapper:
             return {k: self._serialize_value(v) for k, v in request_data.items()}
 
         # Handle dataclasses with nested SerializationMixin objects
-        # We can't use asdict() directly because it doesn't handle ChatMessage
+        # We can't use asdict() directly because it doesn't handle Message
         if is_dataclass(request_data) and not isinstance(request_data, type):
             try:
                 # Manually serialize each field to handle nested SerializationMixin
@@ -892,17 +892,17 @@ class MessageMapper:
 
                     # Extract text from output data based on type
                     text = None
-                    if isinstance(output_data, ChatMessage):
-                        # Handle ChatMessage (from Magentic and AgentExecutor with output_response=True)
+                    if isinstance(output_data, Message):
+                        # Handle Message (from Magentic and AgentExecutor with output_response=True)
                         text = getattr(output_data, "text", None)
                         if not text:
                             # Fallback to string representation
                             text = str(output_data)
                     elif isinstance(output_data, list):
-                        # Handle list of ChatMessage objects (from Magentic yield_output([final_answer]))
+                        # Handle list of Message objects (from Magentic yield_output([final_answer]))
                         text_parts = []
                         for item in output_data:
-                            if isinstance(item, ChatMessage):
+                            if isinstance(item, Message):
                                 item_text = getattr(item, "text", None)
                                 if item_text:
                                     text_parts.append(item_text)
@@ -1047,7 +1047,7 @@ class MessageMapper:
                 # Create ExecutorActionItem with completed status
                 # executor_completed event (type='executor_completed') uses 'data' field, not 'result'
                 # Serialize the result data to ensure it's JSON-serializable
-                # (AgentExecutorResponse contains AgentResponse/ChatMessage which are SerializationMixin)
+                # (AgentExecutorResponse contains AgentResponse/Message which are SerializationMixin)
                 raw_result = getattr(event, "data", None)
                 serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(

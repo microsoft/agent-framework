@@ -48,8 +48,8 @@ from _tools import (
 from agent_framework import (
     AgentExecutorResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -65,17 +65,17 @@ load_dotenv()
 
 
 @executor(id="start_executor")
-async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+async def start_executor(input: str, ctx: WorkflowContext[list[Message]]) -> None:
     """Initiates the workflow by sending the user query to all specialized agents."""
-    await ctx.send_message([ChatMessage("user", [input])])
+    await ctx.send_message([Message("user", [input])])
 
 
 class ResearchLead(Executor):
     """Aggregates and summarizes travel planning findings from all specialized agents."""
 
-    def __init__(self, chat_client: AzureAIClient, id: str = "travel-planning-coordinator"):
+    def __init__(self, client: AzureAIClient, id: str = "travel-planning-coordinator"):
         # store=True to preserve conversation history for evaluation
-        self.agent = chat_client.as_agent(
+        self.agent = client.as_agent(
             id="travel-planning-coordinator",
             instructions=(
                 "You are the final coordinator. You will receive responses from multiple agents: "
@@ -102,11 +102,11 @@ class ResearchLead(Executor):
 
         # Generate comprehensive travel plan summary
         messages = [
-            ChatMessage(
+            Message(
                 role="system",
                 text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
             ),
-            ChatMessage(
+            Message(
                 role="user",
                 text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
             ),
@@ -142,17 +142,17 @@ class ResearchLead(Executor):
         return agent_findings
 
 
-async def run_workflow_with_response_tracking(query: str, chat_client: AzureAIClient | None = None) -> dict:
+async def run_workflow_with_response_tracking(query: str, client: AzureAIClient | None = None) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
 
     Args:
         query: The user query to process through the multi-agent workflow
-        chat_client: Optional AzureAIClient instance
+        client: Optional AzureAIClient instance
 
     Returns:
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
     """
-    if chat_client is None:
+    if client is None:
         try:
             async with DefaultAzureCredential() as credential:
                 # Create AIProjectClient with the correct API version for V2 prompt agents
@@ -171,10 +171,10 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
             print(f"Error during workflow execution: {e}")
             raise
     else:
-        return await _run_workflow_with_client(query, chat_client)
+        return await _run_workflow_with_client(query, client)
 
 
-async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> dict:
+async def _run_workflow_with_client(query: str, client: AzureAIClient) -> dict:
     """Execute workflow with given client and track all interactions."""
 
     # Initialize tracking variables - use lists to track multiple responses per agent
@@ -184,7 +184,7 @@ async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> d
 
     # Create workflow components and keep agent references
     # Pass project_client and credential to create separate client instances per agent
-    workflow, agent_map = await _create_workflow(chat_client.project_client, chat_client.credential)
+    workflow, agent_map = await _create_workflow(client.project_client, client.credential)
 
     # Process workflow events
     events = workflow.run(query, stream=True)
@@ -210,7 +210,7 @@ async def _create_workflow(project_client, credential):
     final_coordinator_client = AzureAIClient(
         project_client=project_client, credential=credential, agent_name="final-coordinator"
     )
-    final_coordinator = ResearchLead(chat_client=final_coordinator_client, id="final-coordinator")
+    final_coordinator = ResearchLead(client=final_coordinator_client, id="final-coordinator")
 
     # Agent 1: Travel Request Handler (initial coordinator)
     # Create separate client with unique agent_name

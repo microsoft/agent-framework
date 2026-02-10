@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent, tool
+from agent_framework import Agent, AgentThread, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
@@ -35,8 +35,8 @@ async def example_with_automatic_thread_creation() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+    agent = Agent(
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -64,8 +64,8 @@ async def example_with_thread_persistence_in_memory() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+    agent = Agent(
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -105,8 +105,8 @@ async def example_with_existing_thread_id() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+    agent = Agent(
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -127,8 +127,8 @@ async def example_with_existing_thread_id() -> None:
     if existing_thread_id:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
-        agent = ChatAgent(
-            chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        agent = Agent(
+            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )

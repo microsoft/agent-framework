@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from openai import AsyncAzureOpenAI
@@ -81,8 +81,8 @@ async def main() -> None:
     # Create code interpreter tool with file access
     code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=[code_interpreter_tool],
     )

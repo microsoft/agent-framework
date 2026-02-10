@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -21,8 +21,8 @@ async def main() -> None:
         user_location={"city": "Seattle", "country": "US"},
     )
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search the web for current information.",
         tools=[web_search_tool],
     )

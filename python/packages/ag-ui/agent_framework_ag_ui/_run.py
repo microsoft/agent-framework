@@ -28,8 +28,8 @@ from ag_ui.core import (
 )
 from agent_framework import (
     AgentThread,
-    ChatMessage,
     Content,
+    Message,
     SupportsAgentRun,
     prepare_function_call_results,
 )
@@ -195,7 +195,7 @@ class FlowState:
 def _create_state_context_message(
     current_state: dict[str, Any],
     state_schema: dict[str, Any],
-) -> ChatMessage | None:
+) -> Message | None:
     """Create a system message with current state context.
 
     This injects the current state into the conversation so the model
@@ -206,13 +206,13 @@ def _create_state_context_message(
         state_schema: The state schema (used to determine if injection is needed)
 
     Returns:
-        ChatMessage with state context, or None if not needed
+        Message with state context, or None if not needed
     """
     if not current_state or not state_schema:
         return None
 
     state_json = json.dumps(current_state, indent=2)
-    return ChatMessage(
+    return Message(
         role="system",
         contents=[
             Content.from_text(
@@ -229,10 +229,10 @@ def _create_state_context_message(
 
 
 def _inject_state_context(
-    messages: list[ChatMessage],
+    messages: list[Message],
     current_state: dict[str, Any],
     state_schema: dict[str, Any],
-) -> list[ChatMessage]:
+) -> list[Message]:
     """Inject state context message into messages if appropriate.
 
     The state context is injected before the last user message to give
@@ -592,7 +592,7 @@ async def _resolve_approval_responses(
     Args:
         messages: List of messages (will be modified in place)
         tools: List of available tools
-        agent: The agent instance (to get chat_client and config)
+        agent: The agent instance (to get client and config)
         run_kwargs: Kwargs for tool execution
     """
     fcc_todo = _collect_approval_responses(messages)
@@ -605,12 +605,10 @@ async def _resolve_approval_responses(
 
     # Execute approved tool calls
     if approved_responses and tools:
-        chat_client = getattr(agent, "chat_client", None)
-        config = normalize_function_invocation_configuration(
-            getattr(chat_client, "function_invocation_configuration", None)
-        )
+        client = getattr(agent, "client", None)
+        config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
-            *getattr(chat_client, "function_middleware", ()),
+            *getattr(client, "function_middleware", ()),
             *run_kwargs.get("middleware", ()),
         )
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
@@ -672,7 +670,7 @@ def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
     This modifies the messages list in place.
 
     Args:
-        messages: List of ChatMessage objects to process
+        messages: List of Message objects to process
     """
     result: list[Any] = []
 
@@ -694,11 +692,11 @@ def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
 
         # Tool messages first (right after the preceding assistant message per OpenAI requirements)
         for func_result in function_results:
-            result.append(ChatMessage(role="tool", contents=[func_result]))
+            result.append(Message(role="tool", contents=[func_result]))
 
         # Then user message with remaining content (if any)
         if other_contents:
-            result.append(ChatMessage(role=msg.role, contents=other_contents))
+            result.append(Message(role=msg.role, contents=other_contents))
 
     messages[:] = result
 
@@ -793,9 +791,9 @@ async def run_agent_stream(
     # Check for structured output mode (skip text content)
     skip_text = False
     response_format = None
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
-    if isinstance(agent, ChatAgent):
+    if isinstance(agent, Agent):
         response_format = agent.default_options.get("response_format")
         skip_text = response_format is not None
 

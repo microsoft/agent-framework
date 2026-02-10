@@ -10,12 +10,12 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
+    Agent,
     AgentResponse,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatResponse,
     Content,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -72,7 +72,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
-    assert isinstance(azure_responses_client, ChatClientProtocol)
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
 def test_init_validation_fail() -> None:
@@ -87,7 +87,7 @@ def test_init_model_id_constructor(azure_openai_unit_test_env: dict[str, str]) -
     azure_responses_client = AzureOpenAIResponsesClient(deployment_name=model_id)
 
     assert azure_responses_client.model_id == model_id
-    assert isinstance(azure_responses_client, ChatClientProtocol)
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
 def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -99,7 +99,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
     )
 
     assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
-    assert isinstance(azure_responses_client, ChatClientProtocol)
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -217,14 +217,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name == "tools" or option_name == "tool_choice":
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [Message(role="user", text="What is the weather in Seattle?")]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [Message(role="user", text="The weather in Seattle is sunny")]
+            messages.append(Message(role="user", text="What is the weather in Seattle?"))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -328,7 +328,7 @@ async def test_integration_client_file_search() -> None:
         # Test that the client will use the file search tool
         response = await azure_responses_client.get_response(
             messages=[
-                ChatMessage(
+                Message(
                     role="user",
                     text="What is the weather today? Do a file search to find the answer.",
                 )
@@ -357,7 +357,7 @@ async def test_integration_client_file_search_streaming() -> None:
     try:
         response_stream = azure_responses_client.get_response(
             messages=[
-                ChatMessage(
+                Message(
                     role="user",
                     text="What is the weather today? Do a file search to find the answer.",
                 )
@@ -428,8 +428,8 @@ async def test_integration_client_agent_existing_thread():
     # First conversation - capture the thread
     preserved_thread = None
 
-    async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -444,8 +444,8 @@ async def test_integration_client_agent_existing_thread():
 
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
-        async with ChatAgent(
-            chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        async with Agent(
+            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread

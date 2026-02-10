@@ -11,13 +11,13 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     Content,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -85,19 +85,19 @@ async def temporary_chat_client(agent_name: str) -> AsyncIterator[AzureAIClient]
     """Async context manager that creates an Azure AI agent and yields an `AzureAIClient`.
 
     The underlying agent version is cleaned up automatically after use.
-    Tests can construct their own `ChatAgent` instances from the yielded client.
+    Tests can construct their own `Agent` instances from the yielded client.
     """
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
     ):
-        chat_client = AzureAIClient(
+        client = AzureAIClient(
             project_client=project_client,
             agent_name=agent_name,
         )
         try:
-            yield chat_client
+            yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
 
@@ -176,7 +176,7 @@ def test_init_with_project_client(mock_project_client: MagicMock) -> None:
         assert client.agent_name == "test-agent"
         assert client.agent_version == "1.0"
         assert not client._should_close_client  # type: ignore
-        assert isinstance(client, ChatClientProtocol)
+        assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_init_auto_create_client(
@@ -295,9 +295,9 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role="system", contents=[Content.from_text(text="You are a helpful assistant.")]),
-        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role="assistant", contents=[Content.from_text(text="System response")]),
+        Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")]),
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -315,8 +315,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role="assistant", contents=[Content.from_text(text="Hi there!")]),
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -416,7 +416,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -453,7 +453,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -495,7 +495,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -974,7 +974,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (
@@ -1232,10 +1232,10 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", text="What is the weather in Seattle?")]
     else:
         # Generic prompt for simple options
-        messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value, "tools": [get_weather]}
@@ -1349,11 +1349,11 @@ async def test_integration_agent_options(
             # Prepare test message
             if option_name.startswith("response_format"):
                 # Use prompt that works well with structured output
-                messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-                messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+                messages = [Message(role="user", text="The weather in Seattle is sunny")]
+                messages.append(Message(role="user", text="What is the weather in Seattle?"))
             else:
                 # Generic prompt for simple options
-                messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+                messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
             # Build options dict
             options = {option_name: option_value}
@@ -1484,8 +1484,8 @@ async def test_integration_agent_existing_thread():
 
     async with (
         temporary_chat_client(agent_name="af-int-test-existing-thread") as client,
-        ChatAgent(
-            chat_client=client,
+        Agent(
+            client=client,
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent,
     ):
@@ -1503,8 +1503,8 @@ async def test_integration_agent_existing_thread():
     if preserved_thread:
         async with (
             temporary_chat_client(agent_name="af-int-test-existing-thread-2") as client,
-            ChatAgent(
-                chat_client=client,
+            Agent(
+                client=client,
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent,
         ):

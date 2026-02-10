@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from .._agents import ChatAgent
+from .._agents import Agent
 from .._memory import ContextProvider
 from .._middleware import MiddlewareTypes
 from .._tools import FunctionTool
@@ -51,10 +51,10 @@ _ToolsType = (
 
 
 class OpenAIAssistantProvider(Generic[OptionsCoT]):
-    """Provider for creating ChatAgent instances from OpenAI Assistants API.
+    """Provider for creating Agent instances from OpenAI Assistants API.
 
     This provider allows you to create, retrieve, and wrap OpenAI Assistants
-    as ChatAgent instances for use in the agent framework.
+    as Agent instances for use in the agent framework.
 
     Examples:
         Basic usage with automatic client creation:
@@ -208,11 +208,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Create a new assistant on OpenAI and return a ChatAgent.
+    ) -> Agent[OptionsCoT]:
+        """Create a new assistant on OpenAI and return a Agent.
 
         This method creates a new assistant on the OpenAI service and wraps it
-        in a ChatAgent instance. The assistant will persist on OpenAI until deleted.
+        in a Agent instance. The assistant will persist on OpenAI until deleted.
 
         Keyword Args:
             name: The name of the assistant (required).
@@ -228,11 +228,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
                 Include ``response_format`` here for structured output responses.
-            middleware: MiddlewareTypes for the ChatAgent.
-            context_provider: Context provider for the ChatAgent.
+            middleware: MiddlewareTypes for the Agent.
+            context_provider: Context provider for the Agent.
 
         Returns:
-            A ChatAgent instance wrapping the created assistant.
+            A Agent instance wrapping the created assistant.
 
         Raises:
             ServiceInitializationError: If assistant creation fails.
@@ -297,7 +297,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
         assistant = await self._client.beta.assistants.create(**create_params)
 
-        # Create ChatAgent - pass default_options which contains response_format
+        # Create Agent - pass default_options which contains response_format
         return self._create_chat_agent_from_assistant(
             assistant=assistant,
             tools=normalized_tools,
@@ -316,11 +316,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Retrieve an existing assistant by ID and return a ChatAgent.
+    ) -> Agent[OptionsCoT]:
+        """Retrieve an existing assistant by ID and return a Agent.
 
         This method fetches an existing assistant from OpenAI by its ID
-        and wraps it in a ChatAgent instance.
+        and wraps it in a Agent instance.
 
         Args:
             assistant_id: The ID of the assistant to retrieve (e.g., "asst_123").
@@ -333,11 +333,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             instructions: Override the assistant's instructions (optional).
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-            middleware: MiddlewareTypes for the ChatAgent.
-            context_provider: Context provider for the ChatAgent.
+            middleware: MiddlewareTypes for the Agent.
+            context_provider: Context provider for the Agent.
 
         Returns:
-            A ChatAgent instance wrapping the retrieved assistant.
+            A Agent instance wrapping the retrieved assistant.
 
         Raises:
             ServiceInitializationError: If the assistant cannot be retrieved.
@@ -382,11 +382,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> ChatAgent[OptionsCoT]:
-        """Wrap an existing SDK Assistant object as a ChatAgent.
+    ) -> Agent[OptionsCoT]:
+        """Wrap an existing SDK Assistant object as a Agent.
 
         This method does NOT make any HTTP calls. It simply wraps an already-
-        fetched Assistant object in a ChatAgent.
+        fetched Assistant object in a Agent.
 
         Args:
             assistant: The OpenAI Assistant SDK object to wrap.
@@ -398,11 +398,11 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             instructions: Override the assistant's instructions (optional).
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
-            middleware: MiddlewareTypes for the ChatAgent.
-            context_provider: Context provider for the ChatAgent.
+            middleware: MiddlewareTypes for the Agent.
+            context_provider: Context provider for the Agent.
 
         Returns:
-            A ChatAgent instance wrapping the assistant.
+            A Agent instance wrapping the assistant.
 
         Raises:
             ValueError: If required function tools are missing.
@@ -429,7 +429,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         # Merge hosted tools with user-provided function tools
         merged_tools = self._merge_tools(assistant.tools or [], tools)
 
-        # Create ChatAgent
+        # Create Agent
         return self._create_chat_agent_from_assistant(
             assistant=assistant,
             tools=merged_tools,
@@ -526,8 +526,8 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         context_provider: ContextProvider | None,
         default_options: OptionsCoT | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[OptionsCoT]:
-        """Create a ChatAgent from an Assistant.
+    ) -> Agent[OptionsCoT]:
+        """Create a Agent from an Assistant.
 
         Args:
             assistant: The OpenAI Assistant object.
@@ -536,13 +536,13 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             middleware: MiddlewareTypes for the agent.
             context_provider: Context provider for the agent.
             default_options: Default chat options for the agent (may include response_format).
-            **kwargs: Additional arguments passed to ChatAgent.
+            **kwargs: Additional arguments passed to Agent.
 
         Returns:
-            A configured ChatAgent instance.
+            A configured Agent instance.
         """
         # Create the chat client with the assistant
-        chat_client = OpenAIAssistantsClient(
+        client = OpenAIAssistantsClient(
             model_id=assistant.model,
             assistant_id=assistant.id,
             assistant_name=assistant.name,
@@ -553,9 +553,9 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         # Use instructions from assistant if not overridden
         final_instructions = instructions if instructions is not None else assistant.instructions
 
-        # Create and return ChatAgent
-        return ChatAgent(
-            chat_client=chat_client,
+        # Create and return Agent
+        return Agent(
+            client=client,
             id=assistant.id,
             name=assistant.name,
             description=assistant.description,

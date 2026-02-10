@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from openai import AsyncOpenAI
 
@@ -67,8 +67,8 @@ async def main() -> None:
 
     # Create agent using OpenAI Responses client
     client = OpenAIResponsesClient()
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can analyze data files using Python code.",
         tools=client.get_code_interpreter_tool(file_ids=[file_id]),
     )

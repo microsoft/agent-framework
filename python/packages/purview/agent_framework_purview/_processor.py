@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._logging import get_logger
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
@@ -64,7 +64,7 @@ class ScopedContentProcessor:
 
     async def process_messages(
         self,
-        messages: Iterable[ChatMessage],
+        messages: Iterable[Message],
         activity: Activity,
         session_id: str | None = None,
         user_id: str | None = None,
@@ -97,7 +97,7 @@ class ScopedContentProcessor:
 
     async def _map_messages(
         self,
-        messages: Iterable[ChatMessage],
+        messages: Iterable[Message],
         activity: Activity,
         session_id: str | None = None,
         provided_user_id: str | None = None,

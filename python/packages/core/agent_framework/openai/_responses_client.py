@@ -45,12 +45,12 @@ from .._tools import (
 )
 from .._types import (
     Annotation,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     ContinuationToken,
+    Message,
     ResponseStream,
     Role,
     TextSpanRegion,
@@ -244,7 +244,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
     async def _prepare_request(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
@@ -274,7 +274,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -757,7 +757,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
     async def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -863,7 +863,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """
         return kwargs.get("conversation_id") or options.get("conversation_id")
 
-    def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
@@ -895,7 +895,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
     def _prepare_message_for_openai(
         self,
-        message: ChatMessage,
+        message: Message,
         call_id_to_id: dict[str, str],
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
@@ -1285,7 +1285,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        response_message = ChatMessage(role="assistant", contents=contents)
+        response_message = Message(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(

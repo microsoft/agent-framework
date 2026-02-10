@@ -26,13 +26,13 @@ Example:
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 
 @asynccontextmanager
-async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
+async def create_gaia_agent() -> AsyncIterator[Agent]:
     """Create an Azure AI agent configured for GAIA benchmark tasks.
 
     The agent is configured with:
@@ -40,7 +40,7 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     - Code Interpreter tool for calculations and data analysis
 
     Yields:
-        ChatAgent: A configured agent ready to run GAIA tasks.
+        Agent: A configured agent ready to run GAIA tasks.
 
     Example:
         async with create_gaia_agent() as agent:

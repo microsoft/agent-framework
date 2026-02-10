@@ -10,7 +10,7 @@
 #   uv run samples/autogen-migration/single_agent/02_assistant_agent_with_tool.py
 
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen AssistantAgent vs Agent Framework ChatAgent with function tools.
+"""AutoGen AssistantAgent vs Agent Framework Agent with function tools.
 
 Demonstrates how to create and attach tools to agents in both frameworks.
 """

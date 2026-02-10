@@ -31,7 +31,6 @@ __all__ = [
     "AgentResponse",
     "AgentResponseUpdate",
     "Annotation",
-    "ChatMessage",
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
@@ -40,6 +39,7 @@ __all__ = [
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
+    "Message",
     "OuterFinalT",
     "OuterUpdateT",
     "ResponseStream",
@@ -1420,14 +1420,14 @@ Known values: "system", "user", "assistant", "tool"
 Examples:
     .. code-block:: python
 
-        from agent_framework import ChatMessage
+        from agent_framework import Message
 
         # Use string values directly
-        user_msg = ChatMessage("user", ["Hello"])
-        assistant_msg = ChatMessage("assistant", ["Hi there!"])
+        user_msg = Message("user", ["Hello"])
+        assistant_msg = Message("assistant", ["Hi there!"])
 
         # Custom roles are also supported
-        custom_msg = ChatMessage("custom", ["Custom role message"])
+        custom_msg = Message("custom", ["Custom role message"])
 
         # Compare roles directly as strings
         if user_msg.role == "user":
@@ -1461,10 +1461,10 @@ Examples:
 """
 
 
-# region ChatMessage
+# region Message
 
 
-class ChatMessage(SerializationMixin):
+class Message(SerializationMixin):
     """Represents a chat message.
 
     Attributes:
@@ -1479,17 +1479,17 @@ class ChatMessage(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessage, Content
+            from agent_framework import Message, Content
 
             # Create a message with text content
-            user_msg = ChatMessage("user", ["What's the weather?"])
+            user_msg = Message("user", ["What's the weather?"])
             print(user_msg.text)  # "What's the weather?"
 
             # Create a system message
-            system_msg = ChatMessage("system", ["You are a helpful assistant."])
+            system_msg = Message("system", ["You are a helpful assistant."])
 
             # Create a message with mixed content types
-            assistant_msg = ChatMessage(
+            assistant_msg = Message(
                 "assistant",
                 ["The weather is sunny!", Content.from_image_uri("https://...")],
             )
@@ -1499,13 +1499,13 @@ class ChatMessage(SerializationMixin):
             msg_dict = user_msg.to_dict()
             # {'type': 'chat_message', 'role': 'user',
             #  'contents': [{'type': 'text', 'text': "What's the weather?"}], 'additional_properties': {}}
-            restored_msg = ChatMessage.from_dict(msg_dict)
+            restored_msg = Message.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather?"
 
             # Serialization - to_json and from_json
             msg_json = user_msg.to_json()
             # '{"type": "chat_message", "role": "user", "contents": [...], ...}'
-            restored_from_json = ChatMessage.from_json(msg_json)
+            restored_from_json = Message.from_json(msg_json)
             print(restored_from_json.role)  # "user"
 
     """
@@ -1523,7 +1523,7 @@ class ChatMessage(SerializationMixin):
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
-        """Initialize ChatMessage.
+        """Initialize Message.
 
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
@@ -1568,86 +1568,86 @@ class ChatMessage(SerializationMixin):
 
 
 def prepare_messages(
-    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
+    messages: str | Content | Message | Sequence[str | Content | Message],
     system_instructions: str | Sequence[str] | None = None,
-) -> list[ChatMessage]:
-    """Convert various message input formats into a list of ChatMessage objects.
+) -> list[Message]:
+    """Convert various message input formats into a list of Message objects.
 
     Args:
         messages: The input messages in various supported formats. Can be:
             - A string (converted to a user message)
-            - A Content object (wrapped in a user ChatMessage)
-            - A ChatMessage object
+            - A Content object (wrapped in a user Message)
+            - A Message object
             - A sequence containing any mix of the above
         system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
-        A list of ChatMessage objects.
+        A list of Message objects.
     """
     if system_instructions is not None:
         if isinstance(system_instructions, str):
             system_instructions = [system_instructions]
-        system_instruction_messages = [ChatMessage("system", [instr]) for instr in system_instructions]
+        system_instruction_messages = [Message("system", [instr]) for instr in system_instructions]
     else:
         system_instruction_messages = []
 
     if isinstance(messages, str):
-        return [*system_instruction_messages, ChatMessage("user", [messages])]
+        return [*system_instruction_messages, Message("user", [messages])]
     if isinstance(messages, Content):
-        return [*system_instruction_messages, ChatMessage("user", [messages])]
-    if isinstance(messages, ChatMessage):
+        return [*system_instruction_messages, Message("user", [messages])]
+    if isinstance(messages, Message):
         return [*system_instruction_messages, messages]
 
-    return_messages: list[ChatMessage] = system_instruction_messages
+    return_messages: list[Message] = system_instruction_messages
     for msg in messages:
         if isinstance(msg, (str, Content)):
-            msg = ChatMessage("user", [msg])
+            msg = Message("user", [msg])
         return_messages.append(msg)
     return return_messages
 
 
 def normalize_messages(
-    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
-) -> list[ChatMessage]:
-    """Normalize message inputs to a list of ChatMessage objects.
+    messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+) -> list[Message]:
+    """Normalize message inputs to a list of Message objects.
 
     Args:
         messages: The input messages in various supported formats. Can be:
             - None (returns empty list)
             - A string (converted to a user message)
-            - A Content object (wrapped in a user ChatMessage)
-            - A ChatMessage object
+            - A Content object (wrapped in a user Message)
+            - A Message object
             - A sequence containing any mix of the above
 
     Returns:
-        A list of ChatMessage objects.
+        A list of Message objects.
     """
     if messages is None:
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage("user", [messages])]
+        return [Message("user", [messages])]
 
     if isinstance(messages, Content):
-        return [ChatMessage("user", [messages])]
+        return [Message("user", [messages])]
 
-    if isinstance(messages, ChatMessage):
+    if isinstance(messages, Message):
         return [messages]
 
-    result: list[ChatMessage] = []
+    result: list[Message] = []
     for msg in messages:
         if isinstance(msg, (str, Content)):
-            result.append(ChatMessage("user", [msg]))
+            result.append(Message("user", [msg]))
         else:
             result.append(msg)
     return result
 
 
 def prepend_instructions_to_messages(
-    messages: list[ChatMessage],
+    messages: list[Message],
     instructions: str | Sequence[str] | None,
     role: RoleLiteral | str = "system",
-) -> list[ChatMessage]:
+) -> list[Message]:
     """Prepend instructions to a list of messages with a specified role.
 
     This is a helper method for chat clients that need to add instructions
@@ -1655,7 +1655,7 @@ def prepend_instructions_to_messages(
     instructions (e.g., OpenAI uses "system", some providers might use "user").
 
     Args:
-        messages: The existing list of ChatMessage objects.
+        messages: The existing list of Message objects.
         instructions: The instructions to prepend. Can be a single string or a sequence of strings.
         role: The role to use for the instruction messages. Defaults to "system".
 
@@ -1665,9 +1665,9 @@ def prepend_instructions_to_messages(
     Examples:
         .. code-block:: python
 
-            from agent_framework import prepend_instructions_to_messages, ChatMessage
+            from agent_framework import prepend_instructions_to_messages, Message
 
-            messages = [ChatMessage("user", ["Hello"])]
+            messages = [Message("user", ["Hello"])]
             instructions = "You are a helpful assistant"
 
             # Prepend as system message (default)
@@ -1682,7 +1682,7 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [ChatMessage(role, [instr]) for instr in instructions]
+    instruction_messages = [Message(role, [instr]) for instr in instructions]
     return [*instruction_messages, *messages]
 
 
@@ -1704,7 +1704,7 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage("assistant", [])
+        message = Message("assistant", [])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -1847,17 +1847,17 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         raw_representation: The raw representation of the chat response from an underlying implementation.
 
     Note:
-        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        The `author_name` attribute is available on the `Message` objects inside `messages`,
         not on the `ChatResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponse, ChatMessage
+            from agent_framework import ChatResponse, Message
 
             # Create a response with messages
-            msg = ChatMessage("assistant", ["The weather is sunny."])
+            msg = Message("assistant", ["The weather is sunny."])
             response = ChatResponse(
                 messages=[msg],
                 finish_reason="stop",
@@ -1887,7 +1887,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     def __init__(
         self,
         *,
-        messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
         model_id: str | None = None,
@@ -1903,7 +1903,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         """Initializes a ChatResponse with the provided parameters.
 
         Keyword Args:
-            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
+            messages: A single Message or sequence of Message objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
             model_id: Optional model ID used in the creation of the chat response.
@@ -1918,17 +1918,17 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
         if messages is None:
-            self.messages: list[ChatMessage] = []
-        elif isinstance(messages, ChatMessage):
+            self.messages: list[Message] = []
+        elif isinstance(messages, Message):
             self.messages = [messages]
         else:
-            # Handle both ChatMessage objects and dicts (for from_dict support)
-            processed_messages: list[ChatMessage] = []
+            # Handle both Message objects and dicts (for from_dict support)
+            processed_messages: list[Message] = []
             for msg in messages:
-                if isinstance(msg, ChatMessage):
+                if isinstance(msg, Message):
                     processed_messages.append(msg)
                 elif isinstance(msg, dict):
-                    processed_messages.append(ChatMessage.from_dict(msg))
+                    processed_messages.append(Message.from_dict(msg))
                 else:
                     processed_messages.append(msg)
             self.messages = processed_messages
@@ -2057,7 +2057,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
-        return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
+        return ("\n".join(message.text for message in self.messages if isinstance(message, Message))).strip()
 
     @property
     def value(self) -> ResponseModelT | None:
@@ -2096,7 +2096,7 @@ class ChatResponseUpdate(SerializationMixin):
         author_name: The name of the author of the response update. This is primarily used in
             multi-agent scenarios to identify which agent or participant generated the response.
             When updates are combined into a `ChatResponse`, the `author_name` is propagated
-            to the resulting `ChatMessage` objects.
+            to the resulting `Message` objects.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
@@ -2217,17 +2217,17 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
 
     Note:
-        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        The `author_name` attribute is available on the `Message` objects inside `messages`,
         not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentResponse, ChatMessage
+            from agent_framework import AgentResponse, Message
 
             # Create agent response
-            msg = ChatMessage("assistant", ["Task completed successfully."])
+            msg = Message("assistant", ["Task completed successfully."])
             response = AgentResponse(messages=[msg], response_id="run_123")
             print(response.text)  # "Task completed successfully."
 
@@ -2258,7 +2258,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     def __init__(
         self,
         *,
-        messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
@@ -2272,7 +2272,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         """Initialize an AgentResponse.
 
         Keyword Args:
-            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
+            messages: A single Message or sequence of Message objects to include in the response.
             response_id: The ID of the chat response.
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
@@ -2286,17 +2286,17 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             raw_representation: The raw representation of the chat response from an underlying implementation.
         """
         if messages is None:
-            self.messages: list[ChatMessage] = []
-        elif isinstance(messages, ChatMessage):
+            self.messages: list[Message] = []
+        elif isinstance(messages, Message):
             self.messages = [messages]
         else:
-            # Handle both ChatMessage objects and dicts (for from_dict support)
-            processed_messages: list[ChatMessage] = []
+            # Handle both Message objects and dicts (for from_dict support)
+            processed_messages: list[Message] = []
             for msg in messages:
-                if isinstance(msg, ChatMessage):
+                if isinstance(msg, Message):
                     processed_messages.append(msg)
                 elif isinstance(msg, dict):
-                    processed_messages.append(ChatMessage.from_dict(msg))
+                    processed_messages.append(Message.from_dict(msg))
                 else:
                     processed_messages.append(msg)
             self.messages = processed_messages
@@ -2440,7 +2440,7 @@ class AgentResponseUpdate(SerializationMixin):
         role: The role of the author of the response update.
         author_name: The name of the author of the response update. In multi-agent scenarios,
             this identifies which agent generated this update. When updates are combined into
-            an `AgentResponse`, the `author_name` is propagated to the resulting `ChatMessage` objects.
+            an `AgentResponse`, the `author_name` is propagated to the resulting `Message` objects.
         agent_id: The identifier of the agent that produced this update. Useful in multi-agent
             scenarios to track which agent generated specific parts of the response.
         response_id: The ID of the response of which this update is a part.

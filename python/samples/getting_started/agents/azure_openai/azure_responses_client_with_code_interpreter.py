@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, ChatResponse
+from agent_framework import Agent, ChatResponse
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from openai.types.responses.response import Response as OpenAIResponse
@@ -27,8 +27,8 @@ async def main() -> None:
     # Create code interpreter tool using instance method
     code_interpreter_tool = client.get_code_interpreter_tool()
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=[code_interpreter_tool],
     )

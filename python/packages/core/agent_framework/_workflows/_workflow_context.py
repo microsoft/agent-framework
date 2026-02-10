@@ -19,7 +19,7 @@ from ._events import (
     WorkflowEventSource,
     _framework_event_origin,  # type: ignore
 )
-from ._runner_context import Message, RunnerContext
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 
 if TYPE_CHECKING:
@@ -321,7 +321,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             attributes[OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID] = target_id
         with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN, attributes, kind=SpanKind.PRODUCER) as span:
             # Create Message wrapper
-            msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
+            msg = WorkflowMessage(data=message, source_id=self._executor_id, target_id=target_id)
 
             # Track sent message for executor_completed event (type='executor_completed')
             self._sent_messages.append(message)

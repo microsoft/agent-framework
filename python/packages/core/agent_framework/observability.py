@@ -39,18 +39,18 @@ if TYPE_CHECKING:  # pragma: no cover
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
     from ._threads import AgentThread
     from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
-        ChatMessage,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
         Content,
         FinishReason,
+        Message,
         ResponseStream,
     )
 
@@ -71,7 +71,7 @@ __all__ = [
 
 
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
-ChatClientT = TypeVar("ChatClientT", bound="ChatClientProtocol[Any]")
+ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
 logger = get_logger()
@@ -122,7 +122,7 @@ OPERATION_DURATION_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
 #
 # This is a workaround, we'll find a generic and better solution - see
 # https://github.com/open-telemetry/semantic-conventions/issues/1701
-class ChatMessageListTimestampFilter(logging.Filter):
+class MessageListTimestampFilter(logging.Filter):
     """A filter to increment the timestamp of INFO logs by 1 microsecond."""
 
     INDEX_KEY: ClassVar[str] = "chat_message_index"
@@ -135,7 +135,7 @@ class ChatMessageListTimestampFilter(logging.Filter):
         return True
 
 
-logger.addFilter(ChatMessageListTimestampFilter())
+logger.addFilter(MessageListTimestampFilter())
 
 
 class OtelAttr(str, Enum):
@@ -1070,7 +1070,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1080,7 +1080,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1090,7 +1090,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1099,7 +1099,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1263,7 +1263,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -1273,7 +1273,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -1282,7 +1282,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -1600,7 +1600,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | ChatMessage | Sequence[str | ChatMessage],
+    messages: str | Message | Sequence[str | Message],
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
@@ -1620,7 +1620,7 @@ def _capture_messages(
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
                 OtelAttr.PROVIDER_NAME: provider_name,
-                ChatMessageListTimestampFilter.INDEX_KEY: index,
+                MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
     if finish_reason:
@@ -1633,7 +1633,7 @@ def _capture_messages(
         span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
 
 
-def _to_otel_message(message: ChatMessage) -> dict[str, Any]:
+def _to_otel_message(message: Message) -> dict[str, Any]:
     """Create a otel representation of a message."""
     return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
 

@@ -3,22 +3,19 @@
 """New-pattern Redis history provider using BaseHistoryProvider.
 
 This module provides ``_RedisHistoryProvider``, a side-by-side implementation of
-:class:`RedisChatMessageStore` built on the new :class:`BaseHistoryProvider` hooks pattern.
+:class:`RedisMessageStore` built on the new :class:`BaseHistoryProvider` hooks pattern.
 It will be renamed to ``RedisHistoryProvider`` in PR2 when the old class is removed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import redis.asyncio as redis
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._sessions import BaseHistoryProvider
 from redis.credentials import CredentialProvider
-
-if TYPE_CHECKING:
-    pass
 
 
 class _RedisHistoryProvider(BaseHistoryProvider):
@@ -26,11 +23,11 @@ class _RedisHistoryProvider(BaseHistoryProvider):
 
     Stores conversation history in Redis Lists, with each session isolated by a
     unique Redis key. This is the new-pattern equivalent of
-    :class:`RedisChatMessageStore`.
+    :class:`RedisMessageStore`.
 
     Note:
         This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`RedisChatMessageStore`. It will be renamed to ``RedisHistoryProvider``
+        :class:`RedisMessageStore`. It will be renamed to ``RedisHistoryProvider``
         in PR2.
     """
 
@@ -115,7 +112,7 @@ class _RedisHistoryProvider(BaseHistoryProvider):
         """Get the Redis key for a given session's messages."""
         return f"{self.key_prefix}:{session_id or 'default'}"
 
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[ChatMessage]:
+    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
         """Retrieve stored messages for this session from Redis.
 
         Args:
@@ -123,17 +120,17 @@ class _RedisHistoryProvider(BaseHistoryProvider):
             **kwargs: Additional arguments (unused).
 
         Returns:
-            List of stored ChatMessage objects in chronological order.
+            List of stored Message objects in chronological order.
         """
         key = self._redis_key(session_id)
         redis_messages = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         if redis_messages:
             for serialized in redis_messages:
-                messages.append(ChatMessage.from_dict(self._deserialize_json(serialized)))
+                messages.append(Message.from_dict(self._deserialize_json(serialized)))
         return messages
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage], **kwargs: Any) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
         """Persist messages for this session to Redis.
 
         Args:
@@ -158,8 +155,8 @@ class _RedisHistoryProvider(BaseHistoryProvider):
                 await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
 
     @staticmethod
-    def _serialize_json(message: ChatMessage) -> str:
-        """Serialize a ChatMessage to a JSON string for Redis storage."""
+    def _serialize_json(message: Message) -> str:
+        """Serialize a Message to a JSON string for Redis storage."""
         import json
 
         return json.dumps(message.to_dict())

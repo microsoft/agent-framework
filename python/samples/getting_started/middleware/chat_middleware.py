@@ -7,9 +7,9 @@ from typing import Annotated
 
 from agent_framework import (
     ChatContext,
-    ChatMessage,
     ChatMiddleware,
     ChatResponse,
+    Message,
     MiddlewareTermination,
     chat_middleware,
     tool,
@@ -69,7 +69,7 @@ class InputObserverMiddleware(ChatMiddleware):
         print(f"[InputObserverMiddleware] Total messages: {len(context.messages)}")
 
         # Modify user messages by creating new messages with enhanced text
-        modified_messages: list[ChatMessage] = []
+        modified_messages: list[Message] = []
         modified_count = 0
 
         for message in context.messages:
@@ -81,7 +81,7 @@ class InputObserverMiddleware(ChatMiddleware):
                     updated_text = self.replacement
                     print(f"[InputObserverMiddleware] Updated: '{original_text}' -> '{updated_text}'")
 
-                modified_message = ChatMessage(message.role, [updated_text])
+                modified_message = Message(message.role, [updated_text])
                 modified_messages.append(modified_message)
                 modified_count += 1
             else:
@@ -118,7 +118,7 @@ async def security_and_override_middleware(
                     # Override the response instead of calling AI
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "

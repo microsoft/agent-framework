@@ -8,7 +8,7 @@ import pytest
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
-from agent_framework import ChatAgent, normalize_tools, tool
+from agent_framework import Agent, normalize_tools, tool
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
@@ -202,7 +202,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             instructions="You are helpful.",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "CreatedAssistant"
         mock_async_openai.beta.assistants.create.assert_called_once()
 
@@ -235,7 +235,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             tools=[get_weather],
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
         # Verify tools were passed to create
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -347,7 +347,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         assert call_kwargs["response_format"]["json_schema"]["name"] == "WeatherResponse"
 
     async def test_create_agent_returns_chat_agent(self, mock_async_openai: MagicMock) -> None:
-        """Test that create_agent returns a ChatAgent instance."""
+        """Test that create_agent returns a Agent instance."""
         provider = OpenAIAssistantProvider(mock_async_openai)
 
         agent = await provider.create_agent(
@@ -355,7 +355,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             model="gpt-4",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion
@@ -373,7 +373,7 @@ class TestOpenAIAssistantProviderGetAgent:
 
         agent = await provider.get_agent(assistant_id="asst_123")
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         mock_async_openai.beta.assistants.retrieve.assert_called_once_with("asst_123")
 
     async def test_get_agent_with_instructions_override(self, mock_async_openai: MagicMock) -> None:
@@ -386,7 +386,7 @@ class TestOpenAIAssistantProviderGetAgent:
         )
 
         # Agent should be created successfully with the custom instructions
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.id == "asst_retrieved123"
 
     async def test_get_agent_with_function_tools(self, mock_async_openai: MagicMock) -> None:
@@ -402,7 +402,7 @@ class TestOpenAIAssistantProviderGetAgent:
             tools=[get_weather],
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     async def test_get_agent_validates_missing_function_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that missing function tools raise ValueError."""
@@ -443,7 +443,7 @@ class TestOpenAIAssistantProviderGetAgent:
         agent = await provider.get_agent(assistant_id="asst_123")
 
         # Hosted tools should be merged automatically
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion
@@ -462,7 +462,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         # Verify no HTTP calls were made
         mock_async_openai.beta.assistants.create.assert_not_called()
         mock_async_openai.beta.assistants.retrieve.assert_not_called()
@@ -481,7 +481,7 @@ class TestOpenAIAssistantProviderAsAgent:
         assert agent.id == "asst_wrap123"
         assert agent.name == "WrappedAssistant"
         # Instructions are passed to ChatOptions, not exposed as attribute
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_with_instructions_override(self, mock_async_openai: MagicMock) -> None:
         """Test as_agent with instruction override."""
@@ -491,7 +491,7 @@ class TestOpenAIAssistantProviderAsAgent:
         agent = provider.as_agent(assistant, instructions="Override")
 
         # Agent should be created successfully with override instructions
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_validates_function_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that missing function tools raise ValueError."""
@@ -510,7 +510,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant, tools=[get_weather])
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_merges_hosted_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that hosted tools are merged automatically."""
@@ -519,7 +519,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_hosted_tools_not_required(self, mock_async_openai: MagicMock) -> None:
         """Test that hosted tools don't require user implementations."""
@@ -529,7 +529,7 @@ class TestOpenAIAssistantProviderAsAgent:
         # Should not raise - hosted tools don't need implementations
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion

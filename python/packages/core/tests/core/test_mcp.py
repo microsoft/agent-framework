@@ -13,11 +13,11 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, BaseModel, ValidationError
 
 from agent_framework import (
-    ChatMessage,
     Content,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
+    Message,
 )
 from agent_framework._mcp import (
     MCPTool,
@@ -60,7 +60,7 @@ def test_mcp_prompt_message_to_ai_content():
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
     ai_content = _parse_message_from_mcp(mcp_message)
 
-    assert isinstance(ai_content, ChatMessage)
+    assert isinstance(ai_content, Message)
     assert ai_content.role == "user"
     assert len(ai_content.contents) == 1
     assert ai_content.contents[0].type == "text"
@@ -348,7 +348,7 @@ def test_ai_content_to_mcp_content_types_uri():
 
 
 def test_prepare_message_for_mcp():
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="test"),
@@ -1058,7 +1058,7 @@ async def test_local_mcp_server_prompt_execution():
         result = await prompt.invoke(arg="test_value")
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
+        assert isinstance(result[0], Message)
         assert result[0].role == "user"
         assert len(result[0].contents) == 1
         assert result[0].contents[0].text == "Test message"
@@ -1395,7 +1395,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_chat_client = AsyncMock()
     mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -1417,7 +1417,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
 
 async def test_mcp_tool_sampling_callback_no_valid_content():
     """Test sampling callback when response has no valid content types."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python")
 
@@ -1425,7 +1425,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_uri(
@@ -1438,7 +1438,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_response.model_id = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()

@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
-    ChatAgent,
-    ChatMessage,
+    Agent,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Context,
     ContextProvider,
+    Message,
     ResponseStream,
     WorkflowEvent,
     resolve_agent_id,
@@ -50,7 +50,7 @@ class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], Bas
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -60,7 +60,7 @@ class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], Bas
 
         async def _get() -> ChatResponse:
             contents = _build_reply_contents(self._name, self._handoff_to, self._next_call_id())
-            reply = ChatMessage(
+            reply = Message(
                 role="assistant",
                 contents=contents,
             )
@@ -105,7 +105,7 @@ def _build_reply_contents(
     return contents
 
 
-class MockHandoffAgent(ChatAgent):
+class MockHandoffAgent(Agent):
     """Mock agent that can hand off to another agent."""
 
     def __init__(
@@ -121,7 +121,7 @@ class MockHandoffAgent(ChatAgent):
             handoff_to: The name of the agent to hand off to, or None for no handoff.
                 This is hardcoded for testing purposes so that the agent always attempts to hand off.
         """
-        super().__init__(chat_client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
+        super().__init__(client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
@@ -196,7 +196,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
 
     final_conversation = outputs[-1].data
     assert isinstance(final_conversation, list)
-    conversation_list = cast(list[ChatMessage], final_conversation)
+    conversation_list = cast(list[Message], final_conversation)
     assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
 
 
@@ -229,17 +229,15 @@ def test_build_fails_without_start_agent():
 
 def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
-    with pytest.raises(
-        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first."
-    ):
-        HandoffBuilder().build()
+    with pytest.raises(ValueError):
+        HandoffBuilder(participants=[]).build()
 
 
 async def test_handoff_async_termination_condition() -> None:
     """Test that async termination conditions work correctly."""
     termination_call_count = 0
 
-    async def async_termination(conv: list[ChatMessage]) -> bool:
+    async def async_termination(conv: list[Message]) -> bool:
         nonlocal termination_call_count
         termination_call_count += 1
         user_count = sum(1 for msg in conv if msg.role == "user")
@@ -260,7 +258,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     events = await _drain(
         workflow.run(
-            stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="Second user message")]}
+            stream=True, responses={requests[-1].request_id: [Message(role="user", text="Second user message")]}
         )
     )
     outputs = [ev for ev in events if ev.type == "output"]
@@ -268,7 +266,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     final_conversation = outputs[0].data
     assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[ChatMessage], final_conversation)
+    final_conv_list = cast(list[Message], final_conversation)
     user_messages = [msg for msg in final_conv_list if msg.role == "user"]
     assert len(user_messages) == 2
     assert termination_call_count > 0
@@ -283,7 +281,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", text="Response")],
+            messages=[Message(role="assistant", text="Response")],
             response_id="test_response",
         )
 
@@ -291,8 +289,8 @@ async def test_tool_choice_preserved_from_agent_config():
     mock_client.get_response = AsyncMock(side_effect=mock_get_response)
 
     # Create agent with specific tool_choice configuration via default_options
-    agent = ChatAgent(
-        chat_client=mock_client,
+    agent = Agent(
+        client=mock_client,
         name="test_agent",
         default_options={"tool_choice": {"mode": "required"}},  # type: ignore
     )
@@ -315,7 +313,7 @@ async def test_context_provider_preserved_during_handoff():
     class TestContextProvider(ContextProvider):
         """A test context provider that tracks its invocations."""
 
-        async def invoking(self, messages: Sequence[ChatMessage], **kwargs: Any) -> Context:
+        async def invoking(self, messages: Sequence[Message], **kwargs: Any) -> Context:
             provider_calls.append("invoking")
             return Context(instructions="Test context from provider.")
 
@@ -326,8 +324,8 @@ async def test_context_provider_preserved_during_handoff():
     mock_client = MockChatClient(name="test_agent")
 
     # Create agent with context provider using proper constructor
-    agent = ChatAgent(
-        chat_client=mock_client,
+    agent = Agent(
+        client=mock_client,
         name="test_agent",
         id="test_agent",
         context_provider=context_provider,
@@ -349,162 +347,6 @@ async def test_context_provider_preserved_during_handoff():
     )
 
 
-# region Participant Factory Tests
-
-
-def test_handoff_builder_rejects_empty_participant_factories():
-    """Test that HandoffBuilder rejects empty participant_factories dictionary."""
-    # Empty factories are rejected immediately when calling participant_factories()
-    with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
-        HandoffBuilder().register_participants({})
-
-    with pytest.raises(
-        ValueError, match=r"No participants provided\. Call \.participants\(\) or \.register_participants\(\) first\."
-    ):
-        HandoffBuilder(participant_factories={}).build()
-
-
-def test_handoff_builder_rejects_mixing_participants_and_factories():
-    """Test that mixing participants and participant_factories in __init__ raises an error."""
-    triage = MockHandoffAgent(name="triage")
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder(participants=[triage], participant_factories={"triage": lambda: triage})
-
-
-def test_handoff_builder_rejects_mixing_participants_and_participant_factories_methods():
-    """Test that mixing .participants() and .participant_factories() raises an error."""
-    triage = MockHandoffAgent(name="triage")
-
-    # Case 1: participants first, then participant_factories
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder(participants=[triage]).register_participants({
-            "specialist": lambda: MockHandoffAgent(name="specialist")
-        })
-
-    # Case 2: participant_factories first, then participants
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder(participant_factories={"triage": lambda: triage}).participants([
-            MockHandoffAgent(name="specialist")
-        ])
-
-    # Case 3: participants(), then participant_factories()
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder().participants([triage]).register_participants({
-            "specialist": lambda: MockHandoffAgent(name="specialist")
-        })
-
-    # Case 4: participant_factories(), then participants()
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder().register_participants({"triage": lambda: triage}).participants([
-            MockHandoffAgent(name="specialist")
-        ])
-
-    # Case 5: mix during initialization
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        HandoffBuilder(
-            participants=[triage], participant_factories={"specialist": lambda: MockHandoffAgent(name="specialist")}
-        )
-
-
-def test_handoff_builder_rejects_multiple_calls_to_participant_factories():
-    """Test that multiple calls to .participant_factories() raises an error."""
-    with pytest.raises(
-        ValueError, match=r"register_participants\(\) has already been called on this builder instance."
-    ):
-        (
-            HandoffBuilder()
-            .register_participants({"agent1": lambda: MockHandoffAgent(name="agent1")})
-            .register_participants({"agent2": lambda: MockHandoffAgent(name="agent2")})
-        )
-
-
-def test_handoff_builder_rejects_multiple_calls_to_participants():
-    """Test that multiple calls to .participants() raises an error."""
-    with pytest.raises(ValueError, match="participants have already been assigned"):
-        (
-            HandoffBuilder()
-            .participants([MockHandoffAgent(name="agent1")])
-            .participants([MockHandoffAgent(name="agent2")])
-        )
-
-
-def test_handoff_builder_rejects_instance_coordinator_with_factories():
-    """Test that using an agent instance for set_coordinator when using factories raises an error."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage")
-
-    def create_specialist() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist")
-
-    # Create an agent instance
-    coordinator_instance = MockHandoffAgent(name="coordinator")
-
-    with pytest.raises(ValueError, match=r"Call participants\(\.\.\.\) before with_start_agent\(\.\.\.\)"):
-        (
-            HandoffBuilder(
-                participant_factories={"triage": create_triage, "specialist": create_specialist}
-            ).with_start_agent(coordinator_instance)  # Instance, not factory name
-        )
-
-
-def test_handoff_builder_rejects_factory_name_coordinator_with_instances():
-    """Test that using a factory name for set_coordinator when using instances raises an error."""
-    triage = MockHandoffAgent(name="triage")
-    specialist = MockHandoffAgent(name="specialist")
-
-    with pytest.raises(ValueError, match=r"Call register_participants\(...\) before with_start_agent\(...\)"):
-        (
-            HandoffBuilder(participants=[triage, specialist]).with_start_agent(
-                "triage"
-            )  # String factory name, not instance
-        )
-
-
-def test_handoff_builder_rejects_mixed_types_in_add_handoff_source():
-    """Test that add_handoff rejects factory name source with instance-based participants."""
-    triage = MockHandoffAgent(name="triage")
-    specialist = MockHandoffAgent(name="specialist")
-
-    with pytest.raises(TypeError, match="Cannot mix factory names \\(str\\) and SupportsAgentRun.*instances"):
-        (
-            HandoffBuilder(participants=[triage, specialist])
-            .with_start_agent(triage)
-            .add_handoff("triage", [specialist])  # String source with instance participants
-        )
-
-
-def test_handoff_builder_accepts_all_factory_names_in_add_handoff():
-    """Test that add_handoff accepts all factory names when using participant_factories."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage")
-
-    def create_specialist_a() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_a")
-
-    def create_specialist_b() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_b")
-
-    # This should work - all strings with participant_factories
-    builder = (
-        HandoffBuilder(
-            participant_factories={
-                "triage": create_triage,
-                "specialist_a": create_specialist_a,
-                "specialist_b": create_specialist_b,
-            }
-        )
-        .with_start_agent("triage")
-        .add_handoff("triage", ["specialist_a", "specialist_b"])
-    )
-
-    workflow = builder.build()
-    assert "triage" in workflow.executors
-    assert "specialist_a" in workflow.executors
-    assert "specialist_b" in workflow.executors
-
-
 def test_handoff_builder_accepts_all_instances_in_add_handoff():
     """Test that add_handoff accepts all instances when using participants."""
     triage = MockHandoffAgent(name="triage", handoff_to="specialist_a")
@@ -522,260 +364,3 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
     assert "triage" in workflow.executors
     assert "specialist_a" in workflow.executors
     assert "specialist_b" in workflow.executors
-
-
-async def test_handoff_with_participant_factories():
-    """Test workflow creation using participant_factories."""
-    call_count = 0
-
-    def create_triage() -> MockHandoffAgent:
-        nonlocal call_count
-        call_count += 1
-        return MockHandoffAgent(name="triage", handoff_to="specialist")
-
-    def create_specialist() -> MockHandoffAgent:
-        nonlocal call_count
-        call_count += 1
-        return MockHandoffAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(
-            participant_factories={"triage": create_triage, "specialist": create_specialist},
-            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
-        )
-        .with_start_agent("triage")
-        .build()
-    )
-
-    # Factories should be called during build
-    assert call_count == 2
-
-    events = await _drain(workflow.run("Need help", stream=True))
-    requests = [ev for ev in events if ev.type == "request_info"]
-    assert requests
-
-    # Follow-up message
-    events = await _drain(
-        workflow.run(stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="More details")]})
-    )
-    outputs = [ev for ev in events if ev.type == "output"]
-    assert outputs
-
-
-async def test_handoff_participant_factories_reusable_builder():
-    """Test that the builder can be reused to build multiple workflows with factories."""
-    call_count = 0
-
-    def create_triage() -> MockHandoffAgent:
-        nonlocal call_count
-        call_count += 1
-        return MockHandoffAgent(name="triage", handoff_to="specialist")
-
-    def create_specialist() -> MockHandoffAgent:
-        nonlocal call_count
-        call_count += 1
-        return MockHandoffAgent(name="specialist")
-
-    builder = HandoffBuilder(
-        participant_factories={"triage": create_triage, "specialist": create_specialist}
-    ).with_start_agent("triage")
-
-    # Build first workflow
-    wf1 = builder.build()
-    assert call_count == 2
-
-    # Build second workflow
-    wf2 = builder.build()
-    assert call_count == 4
-
-    # Verify that the two workflows have different agent instances
-    assert wf1.executors["triage"] is not wf2.executors["triage"]
-    assert wf1.executors["specialist"] is not wf2.executors["specialist"]
-
-
-async def test_handoff_with_participant_factories_and_add_handoff():
-    """Test that .add_handoff() works correctly with participant_factories."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage", handoff_to="specialist_a")
-
-    def create_specialist_a() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_a", handoff_to="specialist_b")
-
-    def create_specialist_b() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_b")
-
-    workflow = (
-        HandoffBuilder(
-            participant_factories={
-                "triage": create_triage,
-                "specialist_a": create_specialist_a,
-                "specialist_b": create_specialist_b,
-            },
-            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 3,
-        )
-        .with_start_agent("triage")
-        .add_handoff("triage", ["specialist_a", "specialist_b"])
-        .add_handoff("specialist_a", ["specialist_b"])
-        .build()
-    )
-
-    # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run("Initial request", stream=True))
-    requests = [ev for ev in events if ev.type == "request_info"]
-    assert requests
-
-    # Verify specialist_a executor exists and was called
-    assert "specialist_a" in workflow.executors
-
-    # Second user message - specialist_a hands off to specialist_b
-    events = await _drain(
-        workflow.run(
-            stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="Need escalation")]}
-        )
-    )
-    requests = [ev for ev in events if ev.type == "request_info"]
-    assert requests
-
-    # Verify specialist_b executor exists
-    assert "specialist_b" in workflow.executors
-
-
-async def test_handoff_participant_factories_with_checkpointing():
-    """Test checkpointing with participant_factories."""
-    from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-
-    storage = InMemoryCheckpointStorage()
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage", handoff_to="specialist")
-
-    def create_specialist() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(
-            participant_factories={"triage": create_triage, "specialist": create_specialist},
-            checkpoint_storage=storage,
-            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
-        )
-        .with_start_agent("triage")
-        .build()
-    )
-
-    # Run workflow and capture output
-    events = await _drain(workflow.run("checkpoint test", stream=True))
-    requests = [ev for ev in events if ev.type == "request_info"]
-    assert requests
-
-    events = await _drain(
-        workflow.run(stream=True, responses={requests[-1].request_id: [ChatMessage(role="user", text="follow up")]})
-    )
-    outputs = [ev for ev in events if ev.type == "output"]
-    assert outputs, "Should have workflow output after termination condition is met"
-
-    # List checkpoints - just verify they were created
-    checkpoints = await storage.list_checkpoints()
-    assert checkpoints, "Checkpoints should be created during workflow execution"
-
-
-def test_handoff_set_coordinator_with_factory_name():
-    """Test that set_coordinator accepts factory name as string."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage")
-
-    def create_specialist() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist")
-
-    builder = HandoffBuilder(
-        participant_factories={"triage": create_triage, "specialist": create_specialist}
-    ).with_start_agent("triage")
-
-    workflow = builder.build()
-    assert "triage" in workflow.executors
-
-
-def test_handoff_add_handoff_with_factory_names():
-    """Test that add_handoff accepts factory names as strings."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage", handoff_to="specialist_a")
-
-    def create_specialist_a() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_a")
-
-    def create_specialist_b() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist_b")
-
-    builder = (
-        HandoffBuilder(
-            participant_factories={
-                "triage": create_triage,
-                "specialist_a": create_specialist_a,
-                "specialist_b": create_specialist_b,
-            }
-        )
-        .with_start_agent("triage")
-        .add_handoff("triage", ["specialist_a", "specialist_b"])
-    )
-
-    workflow = builder.build()
-    assert "triage" in workflow.executors
-    assert "specialist_a" in workflow.executors
-    assert "specialist_b" in workflow.executors
-
-
-async def test_handoff_participant_factories_autonomous_mode():
-    """Test autonomous mode with participant_factories."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage", handoff_to="specialist")
-
-    def create_specialist() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-        .with_start_agent("triage")
-        .with_autonomous_mode(agents=["specialist"], turn_limits={"specialist": 1})
-        .build()
-    )
-
-    events = await _drain(workflow.run("Issue", stream=True))
-    requests = [ev for ev in events if ev.type == "request_info"]
-    assert requests and len(requests) == 1
-    assert requests[0].source_executor_id == "specialist"
-
-
-def test_handoff_participant_factories_invalid_coordinator_name():
-    """Test that set_coordinator raises error for non-existent factory name."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage")
-
-    with pytest.raises(
-        ValueError, match="Start agent factory name 'nonexistent' is not in the participant_factories list"
-    ):
-        (HandoffBuilder(participant_factories={"triage": create_triage}).with_start_agent("nonexistent").build())
-
-
-def test_handoff_participant_factories_invalid_handoff_target():
-    """Test that add_handoff raises error for non-existent target factory name."""
-
-    def create_triage() -> MockHandoffAgent:
-        return MockHandoffAgent(name="triage")
-
-    def create_specialist() -> MockHandoffAgent:
-        return MockHandoffAgent(name="specialist")
-
-    with pytest.raises(ValueError, match="Target factory name 'nonexistent' is not in the participant_factories list"):
-        (
-            HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-            .with_start_agent("triage")
-            .add_handoff("triage", ["nonexistent"])
-            .build()
-        )
-
-
-# endregion Participant Factory Tests

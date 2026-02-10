@@ -6,7 +6,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage
+from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 
@@ -84,7 +84,7 @@ class TestBeforeRun:
         ]
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="Hello")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -100,7 +100,7 @@ class TestBeforeRun:
         """Empty input messages → no search performed."""
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="")], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -112,7 +112,7 @@ class TestBeforeRun:
         mock_mem0_client.search.return_value = []
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="test")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -122,7 +122,7 @@ class TestBeforeRun:
         """Raises ServiceInitializationError when no filters."""
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="test")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
 
         with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
             await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -132,7 +132,7 @@ class TestBeforeRun:
         mock_mem0_client.search.return_value = {"results": [{"memory": "remembered fact"}]}
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="test")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
 
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -146,8 +146,8 @@ class TestBeforeRun:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
             input_messages=[
-                ChatMessage(role="user", text="Hello"),
-                ChatMessage(role="user", text="World"),
+                Message(role="user", text="Hello"),
+                Message(role="user", text="World"),
             ],
             session_id="s1",
         )
@@ -168,8 +168,8 @@ class TestAfterRun:
         """Stores input+response messages to mem0 via client.add."""
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="question")], session_id="s1")
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", text="answer")])
+        ctx = SessionContext(input_messages=[Message(role="user", text="question")], session_id="s1")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="answer")])
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -188,12 +188,12 @@ class TestAfterRun:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
             input_messages=[
-                ChatMessage(role="user", text="hello"),
-                ChatMessage(role="tool", text="tool output"),
+                Message(role="user", text="hello"),
+                Message(role="tool", text="tool output"),
             ],
             session_id="s1",
         )
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", text="reply")])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="reply")])
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -208,8 +208,8 @@ class TestAfterRun:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
             input_messages=[
-                ChatMessage(role="user", text=""),
-                ChatMessage(role="user", text="   "),
+                Message(role="user", text=""),
+                Message(role="user", text="   "),
             ],
             session_id="s1",
         )
@@ -223,8 +223,8 @@ class TestAfterRun:
         """Uses session_id as run_id."""
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="hi")], session_id="my-session")
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", text="hey")])
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="my-session")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
@@ -234,8 +234,8 @@ class TestAfterRun:
         """Raises ServiceInitializationError when no filters."""
         provider = _Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="hi")], session_id="s1")
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", text="hey")])
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
 
         with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
             await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -246,7 +246,7 @@ class TestAfterRun:
             source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
         )
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[ChatMessage(role="user", text="hi")], session_id="s1")
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
         ctx._response = AgentResponse(messages=[])
 
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]

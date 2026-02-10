@@ -28,7 +28,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, tool
+from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -217,8 +217,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # Create Agent Framework agent with Azure OpenAI
         # For authentication, run `az login` command in terminal
         try:
-            self.weather_agent = ChatAgent(
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+            self.weather_agent = Agent(
+                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
@@ -290,8 +290,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             conversation_context = "\n".join(user_messages[:3])
 
             title_prompt = [
-                ChatMessage(
-                    role="user",
+                Message(
+                    role=Role.USER,
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -301,7 +301,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             ]
 
             # Use the chat client directly for a quick, lightweight call
-            response = await self.weather_agent.chat_client.get_response(
+            response = await self.weather_agent.client.get_response(
                 messages=title_prompt,
                 options={
                     "temperature": 0.3,
@@ -342,6 +342,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
+        from agent_framework import FunctionResultContent
 
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
@@ -384,7 +385,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if content.type == "function_result":
+                            if isinstance(content, FunctionResultContent):
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -467,7 +468,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role="user", text=f"What's the weather in {city_label}?")]
+            agent_messages = [Message(role=Role.USER, text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
@@ -481,7 +482,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if content.type == "function_result":
+                            if isinstance(content, FunctionResultContent):
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -572,7 +573,7 @@ async def chatkit_endpoint(request: Request):
 
 
 @app.post("/upload/{attachment_id}")
-async def upload_file(attachment_id: str, file: Annotated[UploadFile, File()]):
+async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa: B008
     """Handle file upload for two-phase upload.
 
     The client POSTs the file bytes here after creating the attachment
@@ -594,7 +595,7 @@ async def upload_file(attachment_id: str, file: Annotated[UploadFile, File()]):
         attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
 
         # Clear the upload_url since upload is complete
-        attachment.upload_url = None  # type: ignore[union-attr]
+        attachment.upload_url = None
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})

@@ -13,9 +13,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     Executor,
+    Message,
     ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
@@ -34,7 +34,7 @@ class _SimpleAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -48,7 +48,7 @@ class _SimpleAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+            return AgentResponse(messages=[Message("assistant", [self._reply_text])])
 
         return _run()
 
@@ -96,7 +96,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
 class _CaptureAgent(BaseAgent):
     """Streaming-capable agent that records the messages it received."""
 
-    _last_messages: list[ChatMessage] = PrivateAttr(default_factory=list)  # type: ignore
+    _last_messages: list[Message] = PrivateAttr(default_factory=list)  # type: ignore
 
     def __init__(self, *, reply_text: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -104,20 +104,20 @@ class _CaptureAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         # Normalize and record messages for verification
-        norm: list[ChatMessage] = []
+        norm: list[Message] = []
         if messages:
             for m in messages:  # type: ignore[iteration-over-optional]
-                if isinstance(m, ChatMessage):
+                if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(ChatMessage("user", [m]))
+                    norm.append(Message("user", [m]))
         self._last_messages = norm
 
         if stream:
@@ -128,7 +128,7 @@ class _CaptureAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+            return AgentResponse(messages=[Message("assistant", [self._reply_text])])
 
         return _run()
 

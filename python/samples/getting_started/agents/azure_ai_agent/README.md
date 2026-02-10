@@ -8,7 +8,7 @@ All examples in this folder use the `AzureAIAgentsProvider` class which provides
 
 - **`create_agent()`** - Create a new agent on the Azure AI service
 - **`get_agent()`** - Retrieve an existing agent by ID or from a pre-fetched Agent object
-- **`as_agent()`** - Wrap an SDK Agent object as a ChatAgent without HTTP calls
+- **`as_agent()`** - Wrap an SDK Agent object as a Agent without HTTP calls
 
 ```python
 from agent_framework.azure import AzureAIAgentsProvider

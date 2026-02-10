@@ -11,10 +11,11 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     ChatContext,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
+    Role,
     tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
@@ -78,9 +79,9 @@ async def weather_override_middleware(context: ChatContext, call_next: Callable[
             context.result.with_transform_hook(_update_hook)
         else:
             # For non-streaming: just replace with a new message
-            current_text = context.result.text or ""  # type: ignore
+            current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
             custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
-            context.result = ChatResponse(messages=[ChatMessage(role="assistant", text=custom_message)])
+            context.result = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=custom_message)])
 
 
 async def validate_weather_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
@@ -95,12 +96,12 @@ async def validate_weather_middleware(context: ChatContext, call_next: Callable[
     if context.stream and isinstance(context.result, ResponseStream):
 
         def _append_validation_note(response: ChatResponse) -> ChatResponse:
-            response.messages.append(ChatMessage(role="assistant", text=validation_note))
+            response.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
             return response
 
-        context.result.with_result_hook(_append_validation_note)
+        context.result.with_finalizer(_append_validation_note)
     elif isinstance(context.result, ChatResponse):
-        context.result.messages.append(ChatMessage(role="assistant", text=validation_note))
+        context.result.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
 
 
 async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
@@ -117,7 +118,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[A
     def _sanitize(response: AgentResponse) -> AgentResponse:
         found_prefix = state["found_prefix"]
         found_validation = False
-        cleaned_messages: list[ChatMessage] = []
+        cleaned_messages: list[Message] = []
 
         for message in response.messages:
             text = message.text
@@ -138,7 +139,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[A
             text = re.sub(r"\[\d+\]\s*", "", text)
 
             cleaned_messages.append(
-                ChatMessage(
+                Message(
                     role=message.role,
                     text=text.strip(),
                     author_name=message.author_name,
@@ -153,7 +154,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[A
         if not found_validation:
             raise RuntimeError("Expected validation note not found in agent response.")
 
-        cleaned_messages.append(ChatMessage(role="assistant", text=" Agent: OK"))
+        cleaned_messages.append(Message(role=Role.ASSISTANT, text=" Agent: OK"))
         response.messages = cleaned_messages
         return response
 
@@ -172,7 +173,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[A
             return update
 
         context.result.with_transform_hook(_clean_update)
-        context.result.with_result_hook(_sanitize)
+        context.result.with_finalizer(_sanitize)
     elif isinstance(context.result, AgentResponse):
         context.result = _sanitize(context.result)
 
@@ -191,25 +192,24 @@ async def main() -> None:
         tools=get_weather,
         middleware=[agent_cleanup_middleware],
     )
-    # Streaming example
-    print("\n--- Streaming Example ---")
-    query = "What's the weather like in Portland?"
-    print(f"User: {query}")
-    print("Agent: ", end="", flush=True)
-    response = agent.run(query, stream=True)
-    # add the hooks to print what you want to see
-    response.with_transform_hook(lambda chunk: print(chunk.text, end="", flush=True)).with_result_hook(
-        lambda final: print(f"\nFinal streamed response: {final.text}", flush=True)
-    )
-    # consume the stream to trigger the hooks
-    await response.get_final_response()
-
     # Non-streaming example
     print("\n--- Non-streaming Example ---")
     query = "What's the weather like in Seattle?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}")
+
+    # Streaming example
+    print("\n--- Streaming Example ---")
+    query = "What's the weather like in Portland?"
+    print(f"User: {query}")
+    print("Agent: ", end="", flush=True)
+    response = agent.run(query, stream=True)
+    async for chunk in response:
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+    print("\n")
+    print(f"Final Result: {(await response.get_final_response()).text}")
 
 
 if __name__ == "__main__":

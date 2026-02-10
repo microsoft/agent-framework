@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -14,7 +14,7 @@ Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator
 Build a high-level concurrent workflow using ConcurrentBuilder and three domain agents.
 The default dispatcher fans out the same user prompt to all agents in parallel.
 The default aggregator fans in their results and yields output containing
-a list[ChatMessage] representing the concatenated conversations from all agents.
+a list[Message] representing the concatenated conversations from all agents.
 
 Demonstrates:
 - Minimal wiring with ConcurrentBuilder(participants=[...]).build()
@@ -29,9 +29,9 @@ Prerequisites:
 
 async def main() -> None:
     # 1) Create three domain agents using AzureOpenAIChatClient
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = chat_client.as_agent(
+    researcher = client.as_agent(
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -39,7 +39,7 @@ async def main() -> None:
         name="researcher",
     )
 
-    marketer = chat_client.as_agent(
+    marketer = client.as_agent(
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -47,7 +47,7 @@ async def main() -> None:
         name="marketer",
     )
 
-    legal = chat_client.as_agent(
+    legal = client.as_agent(
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."
@@ -66,7 +66,7 @@ async def main() -> None:
     if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
         for output in outputs:
-            messages: list[ChatMessage] | Any = output
+            messages: list[Message] | Any = output
             for i, msg in enumerate(messages, start=1):
                 name = msg.author_name if msg.author_name else "user"
                 print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")

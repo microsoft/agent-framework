@@ -5,7 +5,7 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 
@@ -179,7 +179,7 @@ class TestBeforeRunSemantic:
 
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
-            input_messages=[ChatMessage(role="user", contents=["test query"])],
+            input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -206,7 +206,7 @@ class TestBeforeRunSemantic:
 
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
-            input_messages=[ChatMessage(role="user", contents=["test query"])],
+            input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -221,7 +221,7 @@ class TestBeforeRunSemantic:
 
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
-            input_messages=[ChatMessage(role="user", contents=["test query"])],
+            input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
@@ -243,8 +243,8 @@ class TestBeforeRunFiltering:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
             input_messages=[
-                ChatMessage(role="system", contents=["system prompt"]),
-                ChatMessage(role="user", contents=["actual question"]),
+                Message(role="system", contents=["system prompt"]),
+                Message(role="user", contents=["actual question"]),
             ],
             session_id="s1",
         )
@@ -262,7 +262,7 @@ class TestBeforeRunFiltering:
 
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
-            input_messages=[ChatMessage(role="system", contents=["system prompt"])],
+            input_messages=[Message(role="system", contents=["system prompt"])],
             session_id="s1",
         )
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]

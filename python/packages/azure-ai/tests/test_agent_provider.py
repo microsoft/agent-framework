@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
-    ChatAgent,
+    Agent,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
-    Agent,
+    Agent as AzureAgent,
+)
+from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
 )
 from azure.identity.aio import AzureCliCredential
@@ -152,7 +154,7 @@ async def test_create_agent_basic(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating a basic agent."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = "A test agent"
@@ -171,7 +173,7 @@ async def test_create_agent_basic(
         description="A test agent",
     )
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "TestAgent"
     assert agent.id == "test-agent-id"
     mock_agents_client.create_agent.assert_called_once()
@@ -182,7 +184,7 @@ async def test_create_agent_with_model(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating an agent with explicit model."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -206,7 +208,7 @@ async def test_create_agent_with_tools(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating an agent with tools."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -241,7 +243,7 @@ async def test_create_agent_with_response_format(
         temperature: float
         description: str
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -293,7 +295,7 @@ async def test_get_agent_by_id(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test getting an agent by ID."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "existing-agent-id"
     mock_agent.name = "ExistingAgent"
     mock_agent.description = "An existing agent"
@@ -308,7 +310,7 @@ async def test_get_agent_by_id(
 
     agent = await provider.get_agent("existing-agent-id")
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "existing-agent-id"
     mock_agents_client.get_agent.assert_called_once_with("existing-agent-id")
 
@@ -323,7 +325,7 @@ async def test_get_agent_with_function_tools(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "get_weather"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-with-tools"
     mock_agent.name = "AgentWithTools"
     mock_agent.description = None
@@ -352,7 +354,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "get_weather"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-with-tools"
     mock_agent.name = "AgentWithTools"
     mock_agent.description = None
@@ -372,7 +374,7 @@ async def test_get_agent_with_provided_function_tools(
 
     agent = await provider.get_agent("agent-with-tools", tools=get_weather)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "agent-with-tools"
 
 
@@ -387,7 +389,7 @@ def test_as_agent_wraps_without_http(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test as_agent wraps Agent object without making HTTP calls."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "wrap-agent-id"
     mock_agent.name = "WrapAgent"
     mock_agent.description = "Wrapped agent"
@@ -401,7 +403,7 @@ def test_as_agent_wraps_without_http(
 
     agent = provider.as_agent(mock_agent)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "wrap-agent-id"
     assert agent.name == "WrapAgent"
     # Ensure no HTTP calls were made
@@ -419,7 +421,7 @@ def test_as_agent_with_function_tools_validates(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "my_function"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -445,7 +447,7 @@ def test_as_agent_with_hosted_tools(
     mock_code_interpreter = MagicMock()
     mock_code_interpreter.type = "code_interpreter"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -459,7 +461,7 @@ def test_as_agent_with_hosted_tools(
 
     agent = provider.as_agent(mock_agent)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     # Should have code_interpreter dict tool in the default_options tools
     tools = agent.default_options.get("tools") or []
     assert any(isinstance(t, dict) and t.get("type") == "code_interpreter" for t in tools)
@@ -480,7 +482,7 @@ def test_as_agent_with_dict_function_tools_validates(
         },
     }
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -512,7 +514,7 @@ def test_as_agent_with_dict_function_tools_provided(
         },
     }
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -531,7 +533,7 @@ def test_as_agent_with_dict_function_tools_provided(
 
     agent = provider.as_agent(mock_agent, tools=dict_based_function)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "agent-id"
 
 
@@ -804,7 +806,7 @@ async def test_integration_create_agent() -> None:
         )
 
         try:
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.name == "IntegrationTestAgent"
             assert agent.id is not None
         finally:
@@ -831,7 +833,7 @@ async def test_integration_get_agent() -> None:
             # Then get it using the provider
             agent = await provider.get_agent(created.id)
 
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.id == created.id
         finally:
             await provider._agents_client.delete_agent(created.id)  # type: ignore

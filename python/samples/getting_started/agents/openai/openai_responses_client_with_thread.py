@@ -4,7 +4,7 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent, tool
+from agent_framework import Agent, AgentThread, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
@@ -32,8 +32,8 @@ async def example_with_automatic_thread_creation() -> None:
     """Example showing automatic thread creation."""
     print("=== Automatic Thread Creation Example ===")
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -59,8 +59,8 @@ async def example_with_thread_persistence_in_memory() -> None:
     """
     print("=== Thread Persistence Example (In-Memory) ===")
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -98,8 +98,8 @@ async def example_with_existing_thread_id() -> None:
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -119,8 +119,8 @@ async def example_with_existing_thread_id() -> None:
     if existing_thread_id:
         print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
-        agent = ChatAgent(
-            chat_client=OpenAIResponsesClient(),
+        agent = Agent(
+            client=OpenAIResponsesClient(),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )

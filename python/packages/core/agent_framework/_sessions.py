@@ -18,7 +18,7 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from ._types import AgentResponse, ChatMessage
+from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -79,7 +79,7 @@ def _deserialize_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 # Register known types
-_register_state_type(ChatMessage)
+_register_state_type(Message)
 
 
 class SessionContext:
@@ -106,8 +106,8 @@ class SessionContext:
         *,
         session_id: str | None = None,
         service_session_id: str | None = None,
-        input_messages: list[ChatMessage],
-        context_messages: dict[str, list[ChatMessage]] | None = None,
+        input_messages: list[Message],
+        context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
         tools: list[Any] | None = None,
         options: dict[str, Any] | None = None,
@@ -128,7 +128,7 @@ class SessionContext:
         self.session_id = session_id
         self.service_session_id = service_session_id
         self.input_messages = input_messages
-        self.context_messages: dict[str, list[ChatMessage]] = context_messages or {}
+        self.context_messages: dict[str, list[Message]] = context_messages or {}
         self.instructions: list[str] = instructions or []
         self.tools: list[Any] = tools or []
         self._response: AgentResponse | None = None
@@ -140,7 +140,7 @@ class SessionContext:
         """The agent's response. Set by the framework after invocation, read-only for providers."""
         return self._response
 
-    def extend_messages(self, source: str | object, messages: Sequence[ChatMessage]) -> None:
+    def extend_messages(self, source: str | object, messages: Sequence[Message]) -> None:
         """Add context messages from a specific source.
 
         Messages are copied before attribution is added, so the caller's
@@ -163,7 +163,7 @@ class SessionContext:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
 
-        copied: list[ChatMessage] = []
+        copied: list[Message] = []
         for message in messages:
             msg_copy = copy.copy(message)
             msg_copy.additional_properties = dict(message.additional_properties)
@@ -205,7 +205,7 @@ class SessionContext:
         exclude_sources: set[str] | None = None,
         include_input: bool = False,
         include_response: bool = False,
-    ) -> list[ChatMessage]:
+    ) -> list[Message]:
         """Get context messages, optionally filtered and including input/response.
 
         Returns messages in provider execution order (dict insertion order),
@@ -220,7 +220,7 @@ class SessionContext:
         Returns:
             Flattened list of messages in conversation order.
         """
-        result: list[ChatMessage] = []
+        result: list[Message] = []
         for source_id, messages in self.context_messages.items():
             if sources is not None and source_id not in sources:
                 continue
@@ -352,7 +352,7 @@ class BaseHistoryProvider(BaseContextProvider):
         self.store_outputs = store_outputs
 
     @abstractmethod
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[ChatMessage]:
+    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
         """Retrieve stored messages for this session.
 
         Args:
@@ -365,7 +365,7 @@ class BaseHistoryProvider(BaseContextProvider):
         ...
 
     @abstractmethod
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage], **kwargs: Any) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
         """Persist messages for this session.
 
         Args:
@@ -375,7 +375,7 @@ class BaseHistoryProvider(BaseContextProvider):
         """
         ...
 
-    def _get_context_messages_to_store(self, context: SessionContext) -> list[ChatMessage]:
+    def _get_context_messages_to_store(self, context: SessionContext) -> list[Message]:
         """Get context messages that should be stored based on configuration."""
         if not self.store_context_messages:
             return []
@@ -404,7 +404,7 @@ class BaseHistoryProvider(BaseContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store messages based on configuration."""
-        messages_to_store: list[ChatMessage] = []
+        messages_to_store: list[Message] = []
         messages_to_store.extend(self._get_context_messages_to_store(context))
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
@@ -486,7 +486,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
     """Built-in history provider that stores messages in session.state.
 
     Messages are stored in ``state[source_id]["messages"]`` as a list of
-    ``ChatMessage`` objects. Serialization to/from dicts is handled by
+    ``Message`` objects. Serialization to/from dicts is handled by
     ``AgentSession.to_dict()``/``from_dict()`` using ``SerializationProtocol``.
 
     This provider holds no instance state — all data lives in the session's
@@ -498,7 +498,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
 
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[ChatMessage]:
+    ) -> list[Message]:
         """Retrieve messages from session state."""
         if state is None:
             return []
@@ -508,7 +508,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
     async def save_messages(
         self,
         session_id: str | None,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         *,
         state: dict[str, Any] | None = None,
         **kwargs: Any,

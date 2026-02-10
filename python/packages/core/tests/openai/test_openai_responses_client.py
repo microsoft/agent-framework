@@ -27,12 +27,12 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework.exceptions import (
@@ -101,7 +101,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     openai_responses_client = OpenAIResponsesClient()
 
     assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClientProtocol)
+    assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
 def test_init_validation_fail() -> None:
@@ -116,7 +116,7 @@ def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None
     openai_responses_client = OpenAIResponsesClient(model_id=model_id)
 
     assert openai_responses_client.model_id == model_id
-    assert isinstance(openai_responses_client, ChatClientProtocol)
+    assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
 def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
@@ -128,7 +128,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     )
 
     assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert isinstance(openai_responses_client, ChatClientProtocol)
+    assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
@@ -206,7 +206,7 @@ async def test_get_response_with_all_parameters() -> None:
     # Test with comprehensive parameter set - should fail due to invalid API key
     with pytest.raises(ServiceResponseException):
         await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")],
+            messages=[Message(role="user", text="Test message")],
             options={
                 "include": ["message.output_text.logprobs"],
                 "instructions": "You are a helpful assistant",
@@ -249,12 +249,11 @@ async def test_web_search_tool_with_location() -> None:
     # Should raise an authentication error due to invalid API key
     with pytest.raises(ServiceResponseException):
         await client.get_response(
-            messages=[ChatMessage(role="user", text="What's the weather?")],
+            messages=[Message(role="user", text="What's the weather?")],
             options={"tools": [web_search_tool], "tool_choice": "auto"},
         )
 
 
-@pytest.mark.asyncio
 async def test_code_interpreter_tool_variations() -> None:
     """Test HostedCodeInterpreterTool with and without file inputs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -264,7 +263,7 @@ async def test_code_interpreter_tool_variations() -> None:
 
     with pytest.raises(ServiceResponseException):
         await client.get_response(
-            messages=[ChatMessage("user", ["Run some code"])],
+            messages=[Message("user", ["Run some code"])],
             options={"tools": [code_tool]},
         )
 
@@ -273,7 +272,7 @@ async def test_code_interpreter_tool_variations() -> None:
 
     with pytest.raises(ServiceResponseException):
         await client.get_response(
-            messages=[ChatMessage(role="user", text="Process these files")],
+            messages=[Message(role="user", text="Process these files")],
             options={"tools": [code_tool_with_files]},
         )
 
@@ -292,7 +291,7 @@ async def test_content_filter_exception() -> None:
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
-            await client.get_response(messages=[ChatMessage(role="user", text="Test message")])
+            await client.get_response(messages=[Message(role="user", text="Test message")])
 
         assert "content error" in str(exc_info.value)
 
@@ -309,7 +308,7 @@ async def test_hosted_file_search_tool_validation() -> None:
     # Test using file search tool - may raise various exceptions depending on API response
     with pytest.raises((ValueError, ServiceInvalidRequestError, ServiceResponseException)):
         await client.get_response(
-            messages=[ChatMessage("user", ["Test"])],
+            messages=[Message("user", ["Test"])],
             options={"tools": [file_search_tool]},
         )
 
@@ -329,9 +328,9 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     function_result = Content.from_function_result(call_id="test-call-id", result="Function executed successfully")
 
     messages = [
-        ChatMessage(role="user", text="Call a function"),
-        ChatMessage(role="assistant", contents=[function_call]),
-        ChatMessage(role="tool", contents=[function_result]),
+        Message(role="user", text="Call a function"),
+        Message(role="assistant", contents=[function_call]),
+        Message(role="tool", contents=[function_result]),
     ]
 
     # This should exercise the message parsing logic - will fail due to invalid API key
@@ -357,7 +356,7 @@ async def test_response_format_parse_path() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")],
+            messages=[Message(role="user", text="Test message")],
             options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
@@ -384,7 +383,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test message")],
+            messages=[Message(role="user", text="Test message")],
             options={"response_format": OutputStruct, "store": True},
         )
         assert response.response_id == "parsed_response_123"
@@ -407,7 +406,7 @@ async def test_bad_request_error_non_content_filter() -> None:
     with patch.object(client.client.responses, "parse", side_effect=mock_error):
         with pytest.raises(ServiceResponseException) as exc_info:
             await client.get_response(
-                messages=[ChatMessage(role="user", text="Test message")],
+                messages=[Message(role="user", text="Test message")],
                 options={"response_format": OutputStruct},
             )
 
@@ -428,7 +427,7 @@ async def test_streaming_content_filter_exception_handling() -> None:
         mock_create.side_effect.code = "content_filter"
 
         with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
-            response_stream = client.get_response(stream=True, messages=[ChatMessage(role="user", text="Test")])
+            response_stream = client.get_response(stream=True, messages=[Message(role="user", text="Test")])
             async for _ in response_stream:
                 break
 
@@ -772,7 +771,7 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
         function_call=function_call,
     )
 
-    message = ChatMessage(role="user", contents=[approval_response])
+    message = Message(role="user", contents=[approval_response])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -794,7 +793,7 @@ def test_chat_message_with_error_content() -> None:
         error_code="TEST_ERR",
     )
 
-    message = ChatMessage(role="assistant", contents=[error_content])
+    message = Message(role="assistant", contents=[error_content])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -819,7 +818,7 @@ def test_chat_message_with_usage_content() -> None:
         }
     )
 
-    message = ChatMessage(role="assistant", contents=[usage_content])
+    message = Message(role="assistant", contents=[usage_content])
     call_id_to_id: dict[str, str] = {}
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
@@ -1323,14 +1322,14 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     # Patch the create call to return the two mocked responses in sequence
     with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
         # First call: get the approval request
-        response = await client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")])
+        response = await client.get_response(messages=[Message(role="user", text="Trigger approval")])
         assert response.messages[0].contents[0].type == "function_approval_request"
         req = response.messages[0].contents[0]
         assert req.id == "approval-1"
 
         # Build a user approval and send it (include required function_call)
         approval = Content.from_function_approval_response(approved=True, id=req.id, function_call=req.function_call)
-        approval_message = ChatMessage(role="user", contents=[approval])
+        approval_message = Message(role="user", contents=[approval])
         _ = await client.get_response(messages=[approval_message])
 
         # After approval is processed, the model is called again to get the final response
@@ -1575,7 +1574,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
 async def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="test message")]
+    messages = [Message(role="user", text="test message")]
 
     mock_response = MagicMock()
     original_error_message = "Request rate limit exceeded"
@@ -1600,7 +1599,7 @@ async def test_service_response_exception_includes_original_error_details() -> N
 async def test_get_response_streaming_with_response_format() -> None:
     """Test get_response streaming with response_format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Test streaming with format")]
+    messages = [Message(role="user", text="Test streaming with format")]
 
     # It will fail due to invalid API key, but exercises the code path
     with pytest.raises(ServiceResponseException):
@@ -2106,7 +2105,7 @@ def test_parse_response_from_openai_image_generation_fallback():
 
 async def test_prepare_options_store_parameter_handling() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
 
     test_conversation_id = "test-conversation-123"
     chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
@@ -2132,7 +2131,7 @@ async def test_prepare_options_store_parameter_handling() -> None:
 async def test_conversation_id_precedence_kwargs_over_options() -> None:
     """When both kwargs and options contain conversation_id, kwargs wins."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
     # options has a stale response id, kwargs carries the freshest one
     opts = {"conversation_id": "resp_old_123"}
@@ -2239,14 +2238,14 @@ async def test_integration_options(
         # Prepare test message
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
             # Use weather-related prompt for tool tests
-            messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+            messages = [Message(role="user", text="What is the weather in Seattle?")]
         elif option_name.startswith("response_format"):
             # Use prompt that works well with structured output
-            messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-            messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+            messages = [Message(role="user", text="The weather in Seattle is sunny")]
+            messages.append(Message(role="user", text="What is the weather in Seattle?"))
         else:
             # Generic prompt for simple options
-            messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+            messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
         # Build options dict
         options: dict[str, Any] = {option_name: option_value}
@@ -2351,7 +2350,7 @@ async def test_integration_web_search() -> None:
 async def test_integration_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClientProtocol)
+    assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Use static method for file search tool
@@ -2359,7 +2358,7 @@ async def test_integration_file_search() -> None:
     # Test that the client will use the file search tool
     response = await openai_responses_client.get_response(
         messages=[
-            ChatMessage(
+            Message(
                 role="user",
                 text="What is the weather today? Do a file search to find the answer.",
             )
@@ -2384,7 +2383,7 @@ async def test_integration_file_search() -> None:
 async def test_integration_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
 
-    assert isinstance(openai_responses_client, ChatClientProtocol)
+    assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Use static method for file search tool
@@ -2392,7 +2391,7 @@ async def test_integration_streaming_file_search() -> None:
     # Test that the client will use the web search tool
     response = openai_responses_client.get_streaming_response(
         messages=[
-            ChatMessage(
+            Message(
                 role="user",
                 text="What is the weather today? Do a file search to find the answer.",
             )
@@ -2440,7 +2439,7 @@ def test_chat_response_with_continuation_token() -> None:
 
     token = OpenAIContinuationToken(response_id="resp_123")
     response = ChatResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="Hello")]),
         response_id="resp_123",
         continuation_token=token,
     )
@@ -2451,7 +2450,7 @@ def test_chat_response_with_continuation_token() -> None:
 def test_chat_response_without_continuation_token() -> None:
     """Test that ChatResponse defaults continuation_token to None."""
     response = ChatResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="Hello")]),
     )
     assert response.continuation_token is None
 
@@ -2477,7 +2476,7 @@ def test_agent_response_with_continuation_token() -> None:
 
     token = OpenAIContinuationToken(response_id="resp_789")
     response = AgentResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="done")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="done")]),
         continuation_token=token,
     )
     assert response.continuation_token is not None
@@ -2661,7 +2660,7 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     """Test that _prepare_options does not pass continuation_token to OpenAI API."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
     options: dict[str, Any] = {
         "model_id": "test-model",
         "continuation_token": {"response_id": "resp_123"},

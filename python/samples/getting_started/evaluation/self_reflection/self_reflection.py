@@ -17,7 +17,7 @@ from typing import Any
 
 import openai
 import pandas as pd
-from agent_framework import ChatAgent, ChatMessage
+from agent_framework import Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
@@ -142,7 +142,7 @@ def run_eval(
 async def execute_query_with_self_reflection(
     *,
     client: openai.OpenAI,
-    agent: ChatAgent,
+    agent: Agent,
     eval_object: openai.types.EvalCreateResponse,
     full_user_query: str,
     context: str,
@@ -152,7 +152,7 @@ async def execute_query_with_self_reflection(
     Execute a query with self-reflection loop.
 
     Args:
-        agent: ChatAgent instance to use for generating responses
+        agent: Agent instance to use for generating responses
         full_user_query: Complete prompt including system prompt, user request, and context
         context: Context document for groundedness evaluation
         evaluator: Groundedness evaluator function
@@ -170,7 +170,7 @@ async def execute_query_with_self_reflection(
             - total_groundedness_eval_time: Time spent on evaluations (seconds)
             - total_end_to_end_time: Total execution time (seconds)
     """
-    messages = [ChatMessage("user", [full_user_query])]
+    messages = [Message("user", [full_user_query])]
 
     best_score = 0
     max_score = 5
@@ -223,14 +223,14 @@ async def execute_query_with_self_reflection(
             print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
 
         # Add to conversation history
-        messages.append(ChatMessage("assistant", [agent_response]))
+        messages.append(Message("assistant", [agent_response]))
 
         # Request improvement
         reflection_prompt = (
             f"The groundedness score of your response is {score}/{max_score}. "
             f"Reflect on your answer and improve it to get the maximum score of {max_score} "
         )
-        messages.append(ChatMessage("user", [reflection_prompt]))
+        messages.append(Message("user", [reflection_prompt]))
 
     end_time = time.time()
     latency = end_time - start_time

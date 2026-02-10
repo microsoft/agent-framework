@@ -4,7 +4,7 @@ import asyncio
 from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
-from agent_framework import AgentResponse, ChatAgent, ChatMessage, tool
+from agent_framework import Agent, AgentResponse, Message, tool
 from agent_framework.openai import OpenAIResponsesClient
 
 if TYPE_CHECKING:
@@ -59,14 +59,14 @@ async def handle_approvals(query: str, agent: "SupportsAgentRun") -> AgentRespon
             )
 
             # Add the assistant message with the approval request
-            new_inputs.append(ChatMessage("assistant", [user_input_needed]))
+            new_inputs.append(Message("assistant", [user_input_needed]))
 
             # Get user approval
             user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
             # Add the user's approval response
             new_inputs.append(
-                ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                Message("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
             )
 
         # Run again with all the context
@@ -109,14 +109,14 @@ async def handle_approvals_streaming(query: str, agent: "SupportsAgentRun") -> N
                 )
 
                 # Add the assistant message with the approval request
-                new_inputs.append(ChatMessage("assistant", [user_input_needed]))
+                new_inputs.append(Message("assistant", [user_input_needed]))
 
                 # Get user approval
                 user_approval = await asyncio.to_thread(input, "\nApprove function call? (y/n): ")
 
                 # Add the user's approval response
                 new_inputs.append(
-                    ChatMessage("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                    Message("user", [user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
                 )
 
             # Update input with all the context for next iteration
@@ -127,8 +127,8 @@ async def run_weather_agent_with_approval(stream: bool) -> None:
     """Example showing AI function with approval requirement."""
     print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=OpenAIResponsesClient(),
         name="WeatherAgent",
         instructions=("You are a helpful weather assistant. Use the get_weather tool to provide weather information."),
         tools=[get_weather, get_weather_detail],

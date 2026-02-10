@@ -3,7 +3,7 @@
 import json
 from collections.abc import Sequence
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._sessions import (
     AgentSession,
     BaseContextProvider,
@@ -32,7 +32,7 @@ class TestSessionContext:
 
     def test_extend_messages_creates_key(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="user", contents=["hello"])
+        msg = Message(role="user", contents=["hello"])
         ctx.extend_messages("rag", [msg])
         assert "rag" in ctx.context_messages
         assert len(ctx.context_messages["rag"]) == 1
@@ -40,22 +40,22 @@ class TestSessionContext:
 
     def test_extend_messages_appends_to_existing(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg1 = ChatMessage(role="user", contents=["first"])
-        msg2 = ChatMessage(role="user", contents=["second"])
+        msg1 = Message(role="user", contents=["first"])
+        msg2 = Message(role="user", contents=["second"])
         ctx.extend_messages("src", [msg1])
         ctx.extend_messages("src", [msg2])
         assert len(ctx.context_messages["src"]) == 2
 
     def test_extend_messages_preserves_source_order(self) -> None:
         ctx = SessionContext(input_messages=[])
-        ctx.extend_messages("a", [ChatMessage(role="user", contents=["a"])])
-        ctx.extend_messages("b", [ChatMessage(role="user", contents=["b"])])
-        ctx.extend_messages("c", [ChatMessage(role="user", contents=["c"])])
+        ctx.extend_messages("a", [Message(role="user", contents=["a"])])
+        ctx.extend_messages("b", [Message(role="user", contents=["b"])])
+        ctx.extend_messages("c", [Message(role="user", contents=["c"])])
         assert list(ctx.context_messages.keys()) == ["a", "b", "c"]
 
     def test_extend_messages_sets_attribution(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="system", contents=["context"])
+        msg = Message(role="system", contents=["context"])
         ctx.extend_messages("rag", [msg])
         stored = ctx.context_messages["rag"][0]
         assert stored.additional_properties["_attribution"] == {"source_id": "rag"}
@@ -64,7 +64,7 @@ class TestSessionContext:
 
     def test_extend_messages_does_not_overwrite_existing_attribution(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(
+        msg = Message(
             role="system", contents=["context"], additional_properties={"_attribution": {"source_id": "custom"}}
         )
         ctx.extend_messages("rag", [msg])
@@ -73,7 +73,7 @@ class TestSessionContext:
 
     def test_extend_messages_copies_messages(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="user", contents=["hello"])
+        msg = Message(role="user", contents=["hello"])
         ctx.extend_messages("src", [msg])
         stored = ctx.context_messages["src"][0]
         assert stored is not msg
@@ -87,7 +87,7 @@ class TestSessionContext:
             source_id = "rag"
 
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="system", contents=["ctx"])
+        msg = Message(role="system", contents=["ctx"])
         ctx.extend_messages(MyProvider(), [msg])
         stored = ctx.context_messages["rag"][0]
         assert stored.additional_properties["_attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
@@ -104,8 +104,8 @@ class TestSessionContext:
 
     def test_get_messages_all(self) -> None:
         ctx = SessionContext(input_messages=[])
-        ctx.extend_messages("a", [ChatMessage(role="user", contents=["a"])])
-        ctx.extend_messages("b", [ChatMessage(role="user", contents=["b"])])
+        ctx.extend_messages("a", [Message(role="user", contents=["a"])])
+        ctx.extend_messages("b", [Message(role="user", contents=["b"])])
         result = ctx.get_messages()
         assert len(result) == 2
         assert result[0].text == "a"
@@ -113,24 +113,24 @@ class TestSessionContext:
 
     def test_get_messages_filter_sources(self) -> None:
         ctx = SessionContext(input_messages=[])
-        ctx.extend_messages("a", [ChatMessage(role="user", contents=["a"])])
-        ctx.extend_messages("b", [ChatMessage(role="user", contents=["b"])])
+        ctx.extend_messages("a", [Message(role="user", contents=["a"])])
+        ctx.extend_messages("b", [Message(role="user", contents=["b"])])
         result = ctx.get_messages(sources=["a"])
         assert len(result) == 1
         assert result[0].text == "a"
 
     def test_get_messages_exclude_sources(self) -> None:
         ctx = SessionContext(input_messages=[])
-        ctx.extend_messages("a", [ChatMessage(role="user", contents=["a"])])
-        ctx.extend_messages("b", [ChatMessage(role="user", contents=["b"])])
+        ctx.extend_messages("a", [Message(role="user", contents=["a"])])
+        ctx.extend_messages("b", [Message(role="user", contents=["b"])])
         result = ctx.get_messages(exclude_sources=["a"])
         assert len(result) == 1
         assert result[0].text == "b"
 
     def test_get_messages_include_input(self) -> None:
-        input_msg = ChatMessage(role="user", contents=["input"])
+        input_msg = Message(role="user", contents=["input"])
         ctx = SessionContext(input_messages=[input_msg])
-        ctx.extend_messages("a", [ChatMessage(role="user", contents=["context"])])
+        ctx.extend_messages("a", [Message(role="user", contents=["context"])])
         result = ctx.get_messages(include_input=True)
         assert len(result) == 2
         assert result[1].text == "input"
@@ -139,7 +139,7 @@ class TestSessionContext:
         from agent_framework import AgentResponse
 
         ctx = SessionContext(input_messages=[])
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["reply"])])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
         result = ctx.get_messages(include_response=True)
         assert len(result) == 1
         assert result[0].text == "reply"
@@ -187,15 +187,15 @@ class TestContextProviderBase:
 class ConcreteHistoryProvider(BaseHistoryProvider):
     """Concrete test implementation."""
 
-    def __init__(self, source_id: str, stored_messages: list[ChatMessage] | None = None, **kwargs) -> None:
+    def __init__(self, source_id: str, stored_messages: list[Message] | None = None, **kwargs) -> None:
         super().__init__(source_id, **kwargs)
-        self.stored: list[ChatMessage] = []
+        self.stored: list[Message] = []
         self._stored_messages = stored_messages or []
 
-    async def get_messages(self, session_id: str | None, **kwargs) -> list[ChatMessage]:
+    async def get_messages(self, session_id: str | None, **kwargs) -> list[Message]:
         return list(self._stored_messages)
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage], **kwargs) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs) -> None:
         self.stored.extend(messages)
 
 
@@ -222,7 +222,7 @@ class TestHistoryProviderBase:
         assert provider.store_context_from == {"rag"}
 
     async def test_before_run_loads_messages(self) -> None:
-        msgs = [ChatMessage(role="user", contents=["history"])]
+        msgs = [Message(role="user", contents=["history"])]
         provider = ConcreteHistoryProvider("mem", stored_messages=msgs)
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
@@ -235,8 +235,8 @@ class TestHistoryProviderBase:
 
         provider = ConcreteHistoryProvider("mem")
         session = AgentSession()
-        input_msg = ChatMessage(role="user", contents=["hello"])
-        resp_msg = ChatMessage(role="assistant", contents=["hi"])
+        input_msg = Message(role="user", contents=["hello"])
+        resp_msg = Message(role="assistant", contents=["hi"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         ctx._response = AgentResponse(messages=[resp_msg])
         await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
@@ -248,8 +248,8 @@ class TestHistoryProviderBase:
         from agent_framework import AgentResponse
 
         provider = ConcreteHistoryProvider("mem", store_inputs=False)
-        ctx = SessionContext(session_id="s1", input_messages=[ChatMessage(role="user", contents=["hello"])])
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["hi"])])
+        ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
         await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hi"
@@ -258,8 +258,8 @@ class TestHistoryProviderBase:
         from agent_framework import AgentResponse
 
         provider = ConcreteHistoryProvider("mem", store_outputs=False)
-        ctx = SessionContext(session_id="s1", input_messages=[ChatMessage(role="user", contents=["hello"])])
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["hi"])])
+        ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
         await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hello"
@@ -268,9 +268,9 @@ class TestHistoryProviderBase:
         from agent_framework import AgentResponse
 
         provider = ConcreteHistoryProvider("audit", load_messages=False, store_context_messages=True)
-        ctx = SessionContext(session_id="s1", input_messages=[ChatMessage(role="user", contents=["hello"])])
-        ctx.extend_messages("rag", [ChatMessage(role="system", contents=["context"])])
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["hi"])])
+        ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
+        ctx.extend_messages("rag", [Message(role="system", contents=["context"])])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
         await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
         # Should store: context from rag + input + response
         texts = [m.text for m in provider.stored]
@@ -285,8 +285,8 @@ class TestHistoryProviderBase:
             "audit", load_messages=False, store_context_messages=True, store_context_from={"rag"}
         )
         ctx = SessionContext(session_id="s1", input_messages=[])
-        ctx.extend_messages("rag", [ChatMessage(role="system", contents=["rag-context"])])
-        ctx.extend_messages("other", [ChatMessage(role="system", contents=["other-context"])])
+        ctx.extend_messages("rag", [Message(role="system", contents=["rag-context"])])
+        ctx.extend_messages("other", [Message(role="system", contents=["other-context"])])
         ctx._response = AgentResponse(messages=[])
         await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
         texts = [m.text for m in provider.stored]
@@ -372,15 +372,15 @@ class TestInMemoryHistoryProvider:
         session = AgentSession()
 
         # First run: send input, get response
-        input_msg = ChatMessage(role="user", contents=["hello"])
-        resp_msg = ChatMessage(role="assistant", contents=["hi there"])
+        input_msg = Message(role="user", contents=["hello"])
+        resp_msg = Message(role="assistant", contents=["hi there"])
         ctx1 = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(agent=None, session=session, context=ctx1, state=session.state)  # type: ignore[arg-type]
         ctx1._response = AgentResponse(messages=[resp_msg])
         await provider.after_run(agent=None, session=session, context=ctx1, state=session.state)  # type: ignore[arg-type]
 
         # Second run: should load previous messages
-        ctx2 = SessionContext(session_id="s1", input_messages=[ChatMessage(role="user", contents=["again"])])
+        ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["again"])])
         await provider.before_run(agent=None, session=session, context=ctx2, state=session.state)  # type: ignore[arg-type]
         loaded = ctx2.context_messages.get("memory", [])
         assert len(loaded) == 2
@@ -393,23 +393,23 @@ class TestInMemoryHistoryProvider:
         provider = InMemoryHistoryProvider("memory")
         session = AgentSession()
 
-        input_msg = ChatMessage(role="user", contents=["test"])
+        input_msg = Message(role="user", contents=["test"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
-        ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["reply"])])
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
-        # State contains ChatMessage objects (not dicts)
-        assert isinstance(session.state["memory"]["messages"][0], ChatMessage)
+        # State contains Message objects (not dicts)
+        assert isinstance(session.state["memory"]["messages"][0], Message)
 
         # to_dict() serializes them via SerializationProtocol
         session_dict = session.to_dict()
         json_str = json.dumps(session_dict)
         assert json_str  # no error
 
-        # Round-trip through session serialization restores ChatMessage objects
+        # Round-trip through session serialization restores Message objects
         restored = AgentSession.from_dict(json.loads(json_str))
-        assert isinstance(restored.state["memory"]["messages"][0], ChatMessage)
+        assert isinstance(restored.state["memory"]["messages"][0], Message)
         assert restored.state["memory"]["messages"][0].text == "test"
         assert restored.state["memory"]["messages"][1].text == "reply"
 
@@ -417,5 +417,5 @@ class TestInMemoryHistoryProvider:
         provider = InMemoryHistoryProvider("custom-source")
         assert provider.source_id == "custom-source"
         ctx = SessionContext(session_id="s1", input_messages=[])
-        ctx.extend_messages("custom-source", [ChatMessage(role="user", contents=["test"])])
+        ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages

@@ -14,7 +14,6 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -24,6 +23,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    Message,
     ResponseStream,
     UsageDetails,
     get_logger,
@@ -324,7 +324,7 @@ class BedrockChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -358,7 +358,7 @@ class BedrockChatClient(
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -409,7 +409,7 @@ class BedrockChatClient(
         return run_options
 
     def _prepare_bedrock_messages(
-        self, messages: Sequence[ChatMessage]
+        self, messages: Sequence[Message]
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
         prompts: list[dict[str, str]] = []
         conversation: list[dict[str, Any]] = []
@@ -481,7 +481,7 @@ class BedrockChatClient(
 
         return aligned_blocks
 
-    def _convert_message_to_content_blocks(self, message: ChatMessage) -> list[dict[str, Any]]:
+    def _convert_message_to_content_blocks(self, message: Message) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
@@ -592,7 +592,7 @@ class BedrockChatClient(
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage(role="assistant", contents=contents, raw_representation=message)
+        chat_message = Message(role="assistant", contents=contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")

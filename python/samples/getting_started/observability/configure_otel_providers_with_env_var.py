@@ -14,7 +14,7 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from agent_framework import ChatClientProtocol
+    from agent_framework import SupportsChatGetResponse
 
 """
 This sample, show how you can configure observability of an application via the
@@ -28,7 +28,7 @@ output traces, logs, and metrics to the console.
 """
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
-SCENARIOS = ["chat_client", "chat_client_stream", "tool", "all"]
+SCENARIOS = ["client", "client_stream", "tool", "all"]
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
@@ -42,7 +42,7 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) -> None:
+async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = False) -> None:
     """Run an AI service.
 
     This function runs an AI service and prints the output.
@@ -97,7 +97,7 @@ async def run_tool() -> None:
         print(f"Weather in Amsterdam:\n{weather}")
 
 
-async def main(scenario: Literal["chat_client", "chat_client_stream", "tool", "all"] = "all"):
+async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "all"):
     """Run the selected scenario(s)."""
 
     # This will enable tracing and create the necessary tracing, logging and metrics providers
@@ -113,10 +113,10 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "tool", "a
         if scenario == "tool" or scenario == "all":
             with suppress(Exception):
                 await run_tool()
-        if scenario == "chat_client_stream" or scenario == "all":
+        if scenario == "client_stream" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=True)
-        if scenario == "chat_client" or scenario == "all":
+        if scenario == "client" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=False)
 

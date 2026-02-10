@@ -161,7 +161,7 @@ Notes
 
 Sequential orchestration uses a few small adapter nodes for plumbing:
 
-- "input-conversation" normalizes input to `list[ChatMessage]`
+- "input-conversation" normalizes input to `list[Message]`
 - "to-conversation:<participant>" converts agent responses into the shared conversation
 - "complete" publishes the final output event (type='output')
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to

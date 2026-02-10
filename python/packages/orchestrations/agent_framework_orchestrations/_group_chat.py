@@ -28,9 +28,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
-from agent_framework import ChatAgent, SupportsAgentRun
-from agent_framework._threads import AgentThread
-from agent_framework._types import ChatMessage
+from agent_framework import Agent, AgentThread, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -69,7 +67,7 @@ class GroupChatState:
     Attributes:
         current_round: The current round index of the group chat, starting from 0.
         participants: A mapping of participant names to their descriptions in the group chat.
-        conversation: The full conversation history up to this point as a list of ChatMessage.
+        conversation: The full conversation history up to this point as a list of Message.
     """
 
     # Round index, starting from 0
@@ -77,7 +75,7 @@ class GroupChatState:
     # participant name to description mapping as a ordered dict
     participants: OrderedDict[str, str]
     # Full conversation history up to this point
-    conversation: list[ChatMessage]
+    conversation: list[Message]
 
 
 # region Default orchestrator
@@ -165,13 +163,13 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     @override
     async def _handle_messages(
         self,
-        messages: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        messages: list[Message],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -192,7 +190,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
@@ -200,9 +198,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
 
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -287,7 +285,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
     def __init__(
         self,
-        agent: ChatAgent,
+        agent: Agent,
         participant_registry: ParticipantRegistry,
         *,
         max_rounds: int | None = None,
@@ -318,29 +316,29 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         self._thread = thread or agent.get_new_thread()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
-        self._cache: list[ChatMessage] = []
+        self._cache: list[Message] = []
 
     @override
-    def _append_messages(self, messages: Sequence[ChatMessage]) -> None:
+    def _append_messages(self, messages: Sequence[Message]) -> None:
         self._cache.extend(messages)
         return super()._append_messages(messages)
 
     @override
     async def _handle_messages(
         self,
-        messages: list[ChatMessage],
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        messages: list[Message],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[ChatMessage]], ctx),
+            cast(WorkflowContext[Never, list[Message]], ctx),
         ):
             return
 
@@ -361,22 +359,22 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
-        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[ChatMessage]],
+        ctx: WorkflowContext[GroupChatWorkflowContextOutT, list[Message]],
     ) -> None:
         """Handle a participant response."""
         messages = self._process_participant_response(response)
         # Remove tool-related content to prevent API errors from empty messages
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[ChatMessage]], ctx)):
+        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[ChatMessage]], ctx),
+            cast(WorkflowContext[Never, list[Message]], ctx),
         ):
             return
 
@@ -399,7 +397,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _invoke_agent(self) -> AgentOrchestrationOutput:
         """Invoke the orchestrator agent to determine the next speaker and termination."""
 
-        async def _invoke_agent_helper(conversation: list[ChatMessage]) -> AgentOrchestrationOutput:
+        async def _invoke_agent_helper(conversation: list[Message]) -> AgentOrchestrationOutput:
             # Run the agent in non-streaming mode for simplicity
             agent_response = await self._agent.run(
                 messages=conversation,
@@ -431,7 +429,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(ChatMessage(role="user", text=instruction))
+        current_conversation.append(Message(role="user", text=instruction))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -445,7 +443,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 logger.debug(f"Retrying agent orchestration invocation, attempts left: {retry_attempts}")
                 # We don't need the full conversation since the thread should maintain history
                 current_conversation = [
-                    ChatMessage(
+                    Message(
                         role="user",
                         text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
                     )
@@ -454,7 +452,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def _check_agent_terminate_and_yield(
         self,
         agent_orchestration_output: AgentOrchestrationOutput,
-        ctx: WorkflowContext[Never, list[ChatMessage]],
+        ctx: WorkflowContext[Never, list[Message]],
     ) -> bool:
         """Check if the agent requested termination and yield completion if so.
 
@@ -518,7 +516,7 @@ class GroupChatBuilder:
     into a complete workflow graph that can be executed.
 
     Outputs:
-    The final conversation history as a list of ChatMessage once the group chat completes.
+    The final conversation history as a list of Message once the group chat completes.
     """
 
     DEFAULT_ORCHESTRATOR_ID: ClassVar[str] = "group_chat_orchestrator"
@@ -529,7 +527,7 @@ class GroupChatBuilder:
         participants: Sequence[SupportsAgentRun | Executor] | None = None,
         participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
         # Orchestrator config (exactly one required)
-        orchestrator_agent: ChatAgent | Callable[[], ChatAgent] | None = None,
+        orchestrator_agent: Agent | Callable[[], Agent] | None = None,
         orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator] | None = None,
         selection_func: GroupChatSelectionFunction | None = None,
         orchestrator_name: str | None = None,
@@ -544,7 +542,7 @@ class GroupChatBuilder:
         Args:
             participants: Optional sequence of agent or executor instances for the group chat.
             participant_factories: Optional sequence of callables returning agent or executor instances.
-            orchestrator_agent: An instance of ChatAgent or a callable that produces one to manage the group chat.
+            orchestrator_agent: An instance of Agent or a callable that produces one to manage the group chat.
             orchestrator: An instance of BaseGroupChatOrchestrator or a callable that produces one to manage the
                 group chat.
             selection_func: Callable that receives the current GroupChatState and returns the name of the next
@@ -561,9 +559,9 @@ class GroupChatBuilder:
 
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
-        self._orchestrator_factory: Callable[[], ChatAgent | BaseGroupChatOrchestrator] | None = None
+        self._orchestrator_factory: Callable[[], Agent | BaseGroupChatOrchestrator] | None = None
         self._selection_func: GroupChatSelectionFunction | None = None
-        self._agent_orchestrator: ChatAgent | None = None
+        self._agent_orchestrator: Agent | None = None
         self._termination_condition: TerminationCondition | None = termination_condition
         self._max_rounds: int | None = max_rounds
         self._orchestrator_name: str | None = None
@@ -598,7 +596,7 @@ class GroupChatBuilder:
     def _set_orchestrator(
         self,
         *,
-        orchestrator_agent: ChatAgent | Callable[[], ChatAgent] | None = None,
+        orchestrator_agent: Agent | Callable[[], Agent] | None = None,
         orchestrator: BaseGroupChatOrchestrator | Callable[[], BaseGroupChatOrchestrator] | None = None,
         selection_func: GroupChatSelectionFunction | None = None,
         orchestrator_name: str | None = None,
@@ -606,7 +604,7 @@ class GroupChatBuilder:
         """Set the orchestrator for this group chat workflow (internal).
 
         Args:
-            orchestrator_agent: An instance of ChatAgent or a callable that produces one to manage the group chat.
+            orchestrator_agent: An instance of Agent or a callable that produces one to manage the group chat.
             orchestrator: An instance of BaseGroupChatOrchestrator or a callable that produces one to manage the group
                           chat.
             selection_func: Callable that receives the current GroupChatState and returns
@@ -635,7 +633,7 @@ class GroupChatBuilder:
         if sum(x is not None for x in [orchestrator_agent, orchestrator, selection_func]) != 1:
             raise ValueError("Exactly one of orchestrator_agent, orchestrator, or selection_func must be provided.")
 
-        if orchestrator_agent is not None and isinstance(orchestrator_agent, ChatAgent):
+        if orchestrator_agent is not None and isinstance(orchestrator_agent, Agent):
             self._agent_orchestrator = orchestrator_agent
         elif orchestrator is not None and isinstance(orchestrator, BaseGroupChatOrchestrator):
             self._orchestrator = orchestrator
@@ -707,11 +705,11 @@ class GroupChatBuilder:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework_orchestrations import GroupChatBuilder
 
 
-            def stop_after_two_calls(conversation: list[ChatMessage]) -> bool:
+            def stop_after_two_calls(conversation: list[Message]) -> bool:
                 calls = sum(1 for msg in conversation if msg.role == "assistant" and msg.author_name == "specialist")
                 return calls >= 2
 
@@ -852,7 +850,7 @@ class GroupChatBuilder:
 
         if self._orchestrator_factory:
             orchestrator_instance = self._orchestrator_factory()
-            if isinstance(orchestrator_instance, ChatAgent):
+            if isinstance(orchestrator_instance, Agent):
                 return AgentBasedGroupChatOrchestrator(
                     agent=orchestrator_instance,
                     participant_registry=ParticipantRegistry(participants),
@@ -862,7 +860,7 @@ class GroupChatBuilder:
             if isinstance(orchestrator_instance, BaseGroupChatOrchestrator):
                 return orchestrator_instance
             raise TypeError(
-                f"Orchestrator factory must return ChatAgent or BaseGroupChatOrchestrator instance. "
+                f"Orchestrator factory must return Agent or BaseGroupChatOrchestrator instance. "
                 f"Got {type(orchestrator_instance).__name__}."
             )
 
