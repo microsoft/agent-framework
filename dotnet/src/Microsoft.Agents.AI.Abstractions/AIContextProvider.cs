@@ -32,23 +32,23 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public abstract class AIContextProvider
 {
-    private readonly string _sourceName;
+    private readonly string _sourceId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIContextProvider"/> class.
     /// </summary>
     protected AIContextProvider()
     {
-        this._sourceName = this.GetType().FullName!;
+        this._sourceId = this.GetType().FullName!;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AIContextProvider"/> class with the specified source name.
+    /// Initializes a new instance of the <see cref="AIContextProvider"/> class with the specified source id.
     /// </summary>
-    /// <param name="sourceName">The source name to stamp on <see cref="ChatMessage.AdditionalProperties"/> for each messages produced by the <see cref="AIContextProvider"/>.</param>
-    protected AIContextProvider(string sourceName)
+    /// <param name="sourceId">The source id to stamp on <see cref="ChatMessage.AdditionalProperties"/> for each messages produced by the <see cref="AIContextProvider"/>.</param>
+    protected AIContextProvider(string sourceId)
     {
-        this._sourceName = sourceName;
+        this._sourceId = sourceId;
     }
 
     /// <summary>
@@ -76,27 +76,9 @@ public abstract class AIContextProvider
             return aiContext;
         }
 
-        aiContext.Messages = aiContext.Messages.Select(message =>
-        {
-            if (message.AdditionalProperties != null
-                // Check if the message was already tagged with this provider's source type
-                && message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out var messageSourceType)
-                && messageSourceType is AgentRequestMessageSourceType typedMessageSourceType
-                && typedMessageSourceType == AgentRequestMessageSourceType.AIContextProvider
-                // Check if the message was already tagged with this provider's source
-                && message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out var messageSource)
-                && messageSource is string typedMessageSource
-                && typedMessageSource == this._sourceName)
-            {
-                return message;
-            }
-
-            message = message.Clone();
-            message.AdditionalProperties ??= new();
-            message.AdditionalProperties[AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.AIContextProvider;
-            message.AdditionalProperties[AgentRequestMessageSource.AdditionalPropertiesKey] = this._sourceName;
-            return message;
-        }).ToList();
+        aiContext.Messages = aiContext.Messages
+            .Select(message => message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.AIContextProvider, this._sourceId))
+            .ToList();
 
         return aiContext;
     }

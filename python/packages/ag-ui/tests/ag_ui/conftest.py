@@ -21,7 +21,7 @@ from agent_framework import (
     Content,
     SupportsAgentRun,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework._middleware import ChatMiddlewareLayer
 from agent_framework._tools import FunctionInvocationLayer
 from agent_framework._types import ResponseStream
@@ -37,11 +37,11 @@ ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
 class StreamingChatClientStub(
-    ChatMiddlewareLayer[TOptions_co],
-    FunctionInvocationLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
-    BaseChatClient[TOptions_co],
-    Generic[TOptions_co],
+    ChatMiddlewareLayer[OptionsCoT],
+    FunctionInvocationLayer[OptionsCoT],
+    ChatTelemetryLayer[OptionsCoT],
+    BaseChatClient[OptionsCoT],
+    Generic[OptionsCoT],
 ):
     """Typed streaming stub that satisfies ChatClientProtocol."""
 
@@ -68,7 +68,7 @@ class StreamingChatClientStub(
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = ...,
+        options: OptionsCoT | ChatOptions[None] | None = ...,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -78,7 +78,7 @@ class StreamingChatClientStub(
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = ...,
+        options: OptionsCoT | ChatOptions[Any] | None = ...,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -87,7 +87,7 @@ class StreamingChatClientStub(
         messages: str | ChatMessage | Sequence[str | ChatMessage],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         self.last_thread = kwargs.get("thread")

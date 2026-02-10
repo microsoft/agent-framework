@@ -165,10 +165,10 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
     For other requests, use the appropriate tool (create_chart, display_timeline, show_comparison_table).
     """
 
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
+OptionsT = TypeVar("OptionsT", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
 
-def ui_generator_agent(chat_client: ChatClientProtocol[TOptions]) -> AgentFrameworkAgent:
+def ui_generator_agent(chat_client: ChatClientProtocol[OptionsT]) -> AgentFrameworkAgent:
     """Create a UI generator agent with custom React component rendering.
 
     Args:

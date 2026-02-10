@@ -53,7 +53,7 @@ internal sealed class PurviewWrapper : IDisposable
             }
         }
 
-        return Guid.NewGuid().ToString();
+        return string.Empty;
     }
 
     /// <summary>
@@ -136,12 +136,15 @@ internal sealed class PurviewWrapper : IDisposable
     /// <returns>The agent's response. This could be the response from the agent or a message indicating that Purview has blocked the prompt or response.</returns>
     public async Task<AgentResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
     {
-        string sessionId = GetSessionIdFromAgentSession(session, messages);
-
         string? resolvedUserId = null;
-
+        string sessionId = string.Empty;
         try
         {
+            sessionId = GetSessionIdFromAgentSession(session, messages);
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                sessionId = Guid.NewGuid().ToString();
+            }
             (bool shouldBlockPrompt, resolvedUserId) = await this._scopedProcessor.ProcessMessagesAsync(messages, sessionId, Activity.UploadText, this._purviewSettings, null, cancellationToken).ConfigureAwait(false);
 
             if (shouldBlockPrompt)
@@ -171,7 +174,19 @@ internal sealed class PurviewWrapper : IDisposable
 
         try
         {
-            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, sessionId, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
+            string sessionIdResponse = GetSessionIdFromAgentSession(session, messages);
+            if (string.IsNullOrEmpty(sessionIdResponse))
+            {
+                if (string.IsNullOrEmpty(sessionId))
+                {
+                    sessionIdResponse = Guid.NewGuid().ToString();
+                }
+                else
+                {
+                    sessionIdResponse = sessionId;
+                }
+            }
+            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, sessionIdResponse, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
 
             if (shouldBlockResponse)
             {

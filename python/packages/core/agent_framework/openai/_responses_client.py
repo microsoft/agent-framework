@@ -124,10 +124,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel | None, default=None)
+ResponseFormatT = TypeVar("ResponseFormatT", bound=BaseModel | None, default=None)
 
 
-class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseFormat], total=False):
+class OpenAIResponsesOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -191,8 +191,8 @@ class OpenAIResponsesOptions(ChatOptions[TResponseFormat], Generic[TResponseForm
     - 'disabled': Fail with 400 error if exceeds context"""
 
 
-TOpenAIResponsesOptions = TypeVar(
-    "TOpenAIResponsesOptions",
+OpenAIResponsesOptionsT = TypeVar(
+    "OpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
@@ -207,8 +207,8 @@ TOpenAIResponsesOptions = TypeVar(
 
 class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    BaseChatClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
 
@@ -1164,6 +1164,50 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.reasoning_summary_text.done":
                 contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.delta":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.delta,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.done":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.code,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
@@ -1437,11 +1481,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIResponsesOptions],
-    FunctionInvocationLayer[TOpenAIResponsesOptions],
-    ChatTelemetryLayer[TOpenAIResponsesOptions],
-    RawOpenAIResponsesClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
+    FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatTelemetryLayer[OpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
     """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 

@@ -11,8 +11,8 @@ from ._logging import get_logger
 
 logger = get_logger()
 
-TClass = TypeVar("TClass", bound="SerializationMixin")
-TProtocol = TypeVar("TProtocol", bound="SerializationProtocol")
+ClassT = TypeVar("ClassT", bound="SerializationMixin")
+ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
@@ -95,7 +95,7 @@ class SerializationProtocol(Protocol):
         ...
 
     @classmethod
-    def from_dict(cls: type[TProtocol], value: MutableMapping[str, Any], /, **kwargs: Any) -> TProtocol:
+    def from_dict(cls: type[ProtocolT], value: MutableMapping[str, Any], /, **kwargs: Any) -> ProtocolT:
         """Create an instance from a dictionary.
 
         Args:
@@ -392,8 +392,8 @@ class SerializationMixin:
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> TClass:
+        cls: type[ClassT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ClassT:
         """Create an instance from a dictionary with optional dependency injection.
 
         This method reconstructs an object from its dictionary representation, automatically
@@ -560,7 +560,7 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[ClassT], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> ClassT:
         """Create an instance from a JSON string.
 
         This is a convenience method that parses the JSON string using ``json.loads()``

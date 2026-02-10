@@ -1715,6 +1715,64 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     assert any(out.type == "uri" and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs)
 
 
+def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
+    """Test _parse_chunk_from_openai with code_interpreter_call_code delta events."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    # Test delta event
+    mock_delta_event = MagicMock()
+    mock_delta_event.type = "response.code_interpreter_call_code.delta"
+    mock_delta_event.item_id = "ci_123"
+    mock_delta_event.delta = "import pandas as pd\n"
+    mock_delta_event.output_index = 0
+    mock_delta_event.sequence_number = 1
+    mock_delta_event.call_id = None  # Ensure fallback to item_id
+    mock_delta_event.id = None
+
+    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert result.contents[0].type == "code_interpreter_tool_call"
+    assert result.contents[0].call_id == "ci_123"
+    assert result.contents[0].inputs
+    assert result.contents[0].inputs[0].type == "text"
+    assert result.contents[0].inputs[0].text == "import pandas as pd\n"
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 1
+    assert result.contents[0].additional_properties["item_id"] == "ci_123"
+
+
+def test_parse_chunk_from_openai_code_interpreter_done() -> None:
+    """Test _parse_chunk_from_openai with code_interpreter_call_code done event."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    # Test done event
+    mock_done_event = MagicMock()
+    mock_done_event.type = "response.code_interpreter_call_code.done"
+    mock_done_event.item_id = "ci_456"
+    mock_done_event.code = "import pandas as pd\ndf = pd.DataFrame({'a': [1, 2, 3]})\nprint(df)"
+    mock_done_event.output_index = 0
+    mock_done_event.sequence_number = 5
+    mock_done_event.call_id = None  # Ensure fallback to item_id
+    mock_done_event.id = None
+
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)  # type: ignore
+    assert len(result.contents) == 1
+    assert result.contents[0].type == "code_interpreter_tool_call"
+    assert result.contents[0].call_id == "ci_456"
+    assert result.contents[0].inputs
+    assert result.contents[0].inputs[0].type == "text"
+    assert "import pandas as pd" in result.contents[0].inputs[0].text
+    # Verify additional_properties for stream ordering
+    assert result.contents[0].additional_properties["output_index"] == 0
+    assert result.contents[0].additional_properties["sequence_number"] == 5
+    assert result.contents[0].additional_properties["item_id"] == "ci_456"
+
+
 def test_parse_chunk_from_openai_reasoning() -> None:
     """Test _parse_chunk_from_openai with reasoning content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

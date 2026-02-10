@@ -26,7 +26,7 @@ from agent_framework_durabletask import (
 )
 from agent_framework_durabletask._entities import DurableTaskEntityStateProvider
 
-TState = TypeVar("TState")
+StateT = TypeVar("StateT")
 
 
 class MockEntityContext:
@@ -37,8 +37,8 @@ class MockEntityContext:
 
     def get_state(
         self,
-        intended_type: type[TState] | None = None,
-        default: TState | None = None,
+        intended_type: type[StateT] | None = None,
+        default: StateT | None = None,
     ) -> Any:
         del intended_type
         if self._state is None:
