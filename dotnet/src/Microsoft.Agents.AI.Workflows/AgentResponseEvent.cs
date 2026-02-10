@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Represents an event triggered when an agent produces a response.
 /// </summary>
-public class AgentResponseEvent : WorkflowOutputEvent
+public sealed class AgentResponseEvent : WorkflowOutputEvent
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentResponseEvent"/> class.
