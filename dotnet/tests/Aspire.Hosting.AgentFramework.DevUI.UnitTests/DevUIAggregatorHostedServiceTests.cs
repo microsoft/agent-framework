@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
-using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.AspNetCore.Http;
 
