@@ -2458,7 +2458,7 @@ def test_chat_response_with_continuation_token() -> None:
 
     token = OpenAIContinuationToken(response_id="resp_123")
     response = ChatResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="Hello")]),
         response_id="resp_123",
         continuation_token=token,
     )
@@ -2469,7 +2469,7 @@ def test_chat_response_with_continuation_token() -> None:
 def test_chat_response_without_continuation_token() -> None:
     """Test that ChatResponse defaults continuation_token to None."""
     response = ChatResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="Hello")]),
     )
     assert response.continuation_token is None
 
@@ -2495,7 +2495,7 @@ def test_agent_response_with_continuation_token() -> None:
 
     token = OpenAIContinuationToken(response_id="resp_789")
     response = AgentResponse(
-        messages=ChatMessage(role="assistant", contents=[Content.from_text(text="done")]),
+        messages=Message(role="assistant", contents=[Content.from_text(text="done")]),
         continuation_token=token,
     )
     assert response.continuation_token is not None
@@ -2679,7 +2679,7 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     """Test that _prepare_options does not pass continuation_token to OpenAI API."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
     options: dict[str, Any] = {
         "model_id": "test-model",
         "continuation_token": {"response_id": "resp_123"},

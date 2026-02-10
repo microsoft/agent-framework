@@ -82,7 +82,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
-    via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
+    via HTTP/JSON-RPC. Converts framework Messages to A2A Messages on send, and converts
     A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
     while managing the underlying A2A protocol communication.
 
@@ -377,8 +377,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: ChatMessage) -> A2AMessage:
-        """Prepare a ChatMessage for the A2A protocol.
+    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+        """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
         - Converting all message contents to appropriate A2A Part types
@@ -512,7 +512,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         return contents
 
     def _parse_messages_from_task(self, task: Task) -> list[Message]:
-        """Parse A2A Task artifacts into ChatMessages with ASSISTANT role."""
+        """Parse A2A Task artifacts into Messages with ASSISTANT role."""
         messages: list[Message] = []
 
         if task.artifacts is not None:
