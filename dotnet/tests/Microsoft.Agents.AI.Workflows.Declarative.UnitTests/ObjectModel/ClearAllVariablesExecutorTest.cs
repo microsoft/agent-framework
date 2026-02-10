@@ -14,38 +14,65 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public async Task ClearWorkflowScopeAsync()
+    public async Task ClearGlobalScopeAsync()
     {
         // Arrange
-        this.State.Set("NoVar", FormulaValue.New("Old value"));
-        this.State.Bind();
+        this.State.Set("GlobalVar", FormulaValue.New("Old value"), VariableScopeNames.Global);
 
         // Act & Assert
         await this.ExecuteTestAsync(
-                this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
-                VariablesToClear.ConversationScopedVariables,
-                "NoVar");
+                this.FormatDisplayName(nameof(ClearWorkflowScopeAsync)),
+                VariablesToClear.AllGlobalVariables,
+                "GlobalVar",
+                VariableScopeNames.Global);
     }
 
     [Fact]
-    public async Task ClearUndefinedScopeAsync()
+    public async Task ClearWorkflowScopeAsync()
     {
         // Arrange
-        this.State.Set("NoVar", FormulaValue.New("Old value"));
-        this.State.Bind();
+        this.State.Set("LocalVar", FormulaValue.New("Old value"));
 
         // Act & Assert
         await this.ExecuteTestAsync(
-                this.FormatDisplayName(nameof(ClearUndefinedScopeAsync)),
+                this.FormatDisplayName(nameof(ClearWorkflowScopeAsync)),
+                VariablesToClear.ConversationScopedVariables,
+                "LocalVar");
+    }
+
+    [Fact]
+    public async Task ClearUserScopeAsync()
+    {
+        // Arrange
+        this.State.Set("LocalVar", FormulaValue.New("Old value"));
+
+        // Act & Assert
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(ClearUserScopeAsync)),
                 VariablesToClear.UserScopedVariables,
-                "NoVar",
-                FormulaValue.New("Old value"));
+                "LocalVar",
+                expectedValue: FormulaValue.New("Old value"));
+    }
+
+    [Fact]
+    public async Task ClearWorkflowHistoryAsync()
+    {
+        // Arrange
+        this.State.Set("LocalVar", FormulaValue.New("Old value"));
+
+        // Act & Assert
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(ClearWorkflowHistoryAsync)),
+                VariablesToClear.ConversationHistory,
+                "LocalVar",
+                expectedValue: FormulaValue.New("Old value"));
     }
 
     private async Task ExecuteTestAsync(
         string displayName,
         VariablesToClear scope,
         string variableName,
+        string variableScope = VariableScopeNames.Local,
         FormulaValue? expectedValue = null)
     {
         // Arrange
@@ -55,19 +82,21 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
 
         ClearAllVariablesExecutor action = new(model, this.State);
 
+        this.State.Bind();
+
         // Act
         await this.ExecuteAsync(action);
 
         // Assert
         VerifyModel(model, action);
-
+        this.VerifyUndefined("NoVar");
         if (expectedValue is null)
         {
-            this.VerifyUndefined(variableName);
+            this.VerifyUndefined(variableName, variableScope);
         }
         else
         {
-            this.VerifyState(variableName, expectedValue);
+            this.VerifyState(variableName, variableScope, expectedValue);
         }
     }
 

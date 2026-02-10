@@ -32,7 +32,6 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         // Arrange
         this.State.Set("SourceNumber", FormulaValue.New(10));
         this.State.Set("SourceText", FormulaValue.New("Hello"));
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -50,7 +49,6 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         // Arrange
         this.State.Set("Source1", FormulaValue.New(123));
         this.State.Set("Source2", FormulaValue.New("Reference"));
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(

@@ -39,7 +39,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("NotATable", FormulaValue.New("I am a string"));
-        this.State.Bind();
 
         EditTableV2 model = this.CreateModel(
             nameof(InvalidModelVariableNotTableAsync),
@@ -73,7 +72,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         EditTableV2Executor action = new(model, this.State);
@@ -98,7 +96,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act, Assert
         EditTableV2Executor action = new(model, this.State);
@@ -116,7 +113,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
 
         // Set a string value instead of a table for removal
         this.State.Set("RemoveItems", FormulaValue.New("NotATable"));
-        this.State.Bind();
 
         EditTableV2 model = new EditTableV2.Builder
         {
@@ -147,7 +143,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Name", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Arrange, Act, Assert
         await this.ExecuteTestAsync<RecordValue>(
@@ -172,7 +167,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act & Assert
         await this.ExecuteTestAsync<RecordValue>(
@@ -193,7 +187,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act & Assert
         await this.ExecuteTestAsync<BlankValue>(
@@ -211,7 +204,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act & Assert
         await this.ExecuteTestAsync<BlankValue>(
@@ -230,7 +222,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordValue record3 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item3")));
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2, record3);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Arrange, Act, Assert
         await this.ExecuteTestAsync<RecordValue>(
@@ -249,7 +240,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Arrange, Act, Assert
         await this.ExecuteTestAsync<TableValue>(
@@ -268,7 +258,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordValue record3 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item3")));
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2, record3);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act & Assert
         await this.ExecuteTestAsync<RecordValue>(
@@ -287,7 +276,6 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
-        this.State.Bind();
 
         // Act & Assert
         await this.ExecuteTestAsync<TableValue>(
@@ -305,8 +293,9 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         // Arrange
         EditTableV2 model = this.CreateModel(displayName, variableName, changeType);
 
-        // Act
         EditTableV2Executor action = new(model, this.State);
+
+        // Act
         await this.ExecuteAsync(action);
 
         // Assert
