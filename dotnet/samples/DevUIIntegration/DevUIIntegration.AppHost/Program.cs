@@ -1,9 +1,8 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
-// The .NET Foundation licenses this file to you under the MIT license.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-var tenantId = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
+_ = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
 var existingFoundryName = builder.AddParameter("existingFoundryName")
     .WithDescription("The name of the existing Azure Foundry resource.");
 var existingFoundryResourceGroup = builder.AddParameter("existingFoundryResourceGroup")
@@ -24,7 +23,7 @@ var editorAgent = builder.AddProject<Projects.EditorAgent>("editor-agent")
 
 // Add DevUI integration that aggregates agents from all agent services.
 // Agent metadata is declared here so backends don't need a /v1/entities endpoint.
-var devui = builder.AddDevUI("devui")
+_ = builder.AddDevUI("devui")
     .WithAgentService(writerAgent, agents: [new("writer")])
     .WithAgentService(editorAgent, agents: [new("editor")])
     .WaitFor(writerAgent)
