@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, Final, Literal, cast, overload
+from typing import Any, Final, Literal, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -401,11 +401,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 case _:
                     raise ValueError(f"Unknown content type: {content.type}")
 
+        # Exclude framework-internal keys (e.g. attribution) from wire metadata
+        internal_keys = {"attribution"}
+        metadata = {k: v for k, v in message.additional_properties.items() if k not in internal_keys} or None
+
         return A2AMessage(
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            metadata=cast(dict[str, Any], message.additional_properties),
+            metadata=metadata,
         )
 
     def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:

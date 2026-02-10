@@ -12,6 +12,7 @@ This module provides the core types for the context provider pipeline:
 
 from __future__ import annotations
 
+import copy
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
@@ -130,22 +131,38 @@ class SessionContext:
         """The agent's response. Set by the framework after invocation, read-only for providers."""
         return self._response
 
-    def extend_messages(self, source_id: str, messages: Sequence[ChatMessage]) -> None:
+    def extend_messages(self, source: str | object, messages: Sequence[ChatMessage]) -> None:
         """Add context messages from a specific source.
 
-        Messages are stored keyed by source_id, maintaining insertion order
-        based on provider execution order. Each message gets an ``attribution``
-        marker in ``additional_properties`` for downstream filtering.
+        Messages are copied before attribution is added, so the caller's
+        original message objects are never mutated. The copies are stored
+        keyed by source_id, maintaining insertion order based on provider
+        execution order. Each message gets an ``attribution`` marker in
+        ``additional_properties`` for downstream filtering.
 
         Args:
-            source_id: The provider source_id adding these messages.
+            source: Either a plain ``source_id`` string, or an object with a
+                ``source_id`` attribute (e.g. a context provider). When an
+                object is passed, its class name is recorded as
+                ``source_type`` in the attribution.
             messages: The messages to add.
         """
+        if isinstance(source, str):
+            source_id = source
+            attribution: dict[str, str] = {"source_id": source_id}
+        else:
+            source_id = source.source_id  # type: ignore[union-attr]
+            attribution = {"source_id": source_id, "source_type": type(source).__name__}
+
+        copied: list[ChatMessage] = []
         for message in messages:
-            message.additional_properties.setdefault("attribution", {"source_id": source_id})
+            msg_copy = copy.copy(message)
+            msg_copy.additional_properties = dict(message.additional_properties)
+            msg_copy.additional_properties.setdefault("attribution", attribution)
+            copied.append(msg_copy)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []
-        self.context_messages[source_id].extend(messages)
+        self.context_messages[source_id].extend(copied)
 
     def extend_instructions(self, source_id: str, instructions: str | Sequence[str]) -> None:
         """Add instructions to be prepended to the conversation.
@@ -367,7 +384,7 @@ class BaseHistoryProvider(BaseContextProvider):
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
         history = await self.get_messages(context.session_id, state=state)
-        context.extend_messages(self.source_id, history)
+        context.extend_messages(self, history)
 
     async def after_run(
         self,
