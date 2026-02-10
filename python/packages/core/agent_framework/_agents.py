@@ -69,15 +69,15 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
-TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
 logger = get_logger("agent_framework")
 
-TThreadType = TypeVar("TThreadType", bound="AgentThread")
-TOptions_co = TypeVar(
-    "TOptions_co",
+ThreadTypeT = TypeVar("ThreadTypeT", bound="AgentThread")
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
@@ -529,7 +529,7 @@ BareAgent = BaseAgent
 # region ChatAgent
 
 
-class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
+class RawChatAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     """A Chat Client Agent without middleware or telemetry layers.
 
     This is the core chat agent implementation. For most use cases,
@@ -612,7 +612,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 
     def __init__(
         self,
-        chat_client: ChatClientProtocol[TOptions_co],
+        chat_client: ChatClientProtocol[OptionsCoT],
         instructions: str | None = None,
         *,
         id: str | None = None,
@@ -624,7 +624,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | Any
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         **kwargs: Any,
@@ -790,9 +790,9 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | Any
         | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
     @overload
     def run(
@@ -807,7 +807,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | Any
         | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        options: TOptions_co | ChatOptions[None] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -824,7 +824,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | Any
         | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -840,7 +840,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | Any
         | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
@@ -1380,8 +1380,8 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
 class ChatAgent(
     AgentTelemetryLayer,
     AgentMiddlewareLayer,
-    RawChatAgent[TOptions_co],
-    Generic[TOptions_co],
+    RawChatAgent[OptionsCoT],
+    Generic[OptionsCoT],
 ):
     """A Chat Client Agent with middleware, telemetry, and full layer support.
 
@@ -1394,7 +1394,7 @@ class ChatAgent(
 
     def __init__(
         self,
-        chat_client: ChatClientProtocol[TOptions_co],
+        chat_client: ChatClientProtocol[OptionsCoT],
         instructions: str | None = None,
         *,
         id: str | None = None,
@@ -1406,7 +1406,7 @@ class ChatAgent(
         | Any
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
         | None = None,
-        default_options: TOptions_co | None = None,
+        default_options: OptionsCoT | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,

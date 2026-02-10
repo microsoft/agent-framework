@@ -26,7 +26,7 @@ from agent_framework import (
     SupportsAgentRun,
     tool,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 12):
@@ -128,11 +128,11 @@ class MockChatClient:
 
 
 class MockBaseChatClient(
-    ChatMiddlewareLayer[TOptions_co],
-    FunctionInvocationLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
-    BaseChatClient[TOptions_co],
-    Generic[TOptions_co],
+    ChatMiddlewareLayer[OptionsCoT],
+    FunctionInvocationLayer[OptionsCoT],
+    ChatTelemetryLayer[OptionsCoT],
+    BaseChatClient[OptionsCoT],
+    Generic[OptionsCoT],
 ):
     """Mock implementation of a full-featured ChatClient."""
 

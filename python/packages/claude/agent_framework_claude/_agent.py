@@ -138,15 +138,15 @@ class ClaudeAgentOptions(TypedDict, total=False):
     """Beta features to enable."""
 
 
-TOptions = TypeVar(
-    "TOptions",
+OptionsT = TypeVar(
+    "OptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ClaudeAgentOptions",
     covariant=True,
 )
 
 
-class ClaudeAgent(BaseAgent, Generic[TOptions]):
+class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     """Claude Agent using Claude Code CLI.
 
     Wraps the Claude Agent SDK to provide agentic capabilities including
@@ -222,7 +222,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         | str
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
         | None = None,
-        default_options: TOptions | MutableMapping[str, Any] | None = None,
+        default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -329,7 +329,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
                 normalized = normalize_tools(tool)
                 self._custom_tools.extend(normalized)
 
-    async def __aenter__(self) -> ClaudeAgent[TOptions]:
+    async def __aenter__(self) -> ClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -561,7 +561,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
-        options: TOptions | MutableMapping[str, Any] | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]: ...
 
@@ -572,7 +572,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
-        options: TOptions | MutableMapping[str, Any] | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]: ...
 
@@ -582,7 +582,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
-        options: TOptions | MutableMapping[str, Any] | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
         """Run the agent with the given messages.
@@ -611,7 +611,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        options: TOptions | MutableMapping[str, Any] | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]:
         """Internal non-streaming implementation."""
@@ -625,7 +625,7 @@ class ClaudeAgent(BaseAgent, Generic[TOptions]):
         messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
-        options: TOptions | MutableMapping[str, Any] | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""

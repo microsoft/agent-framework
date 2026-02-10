@@ -29,7 +29,7 @@ from agent_framework import (
     Content,
     ResponseStream,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._events import (
     WorkflowErrorDetails,
@@ -88,7 +88,7 @@ class MockChatClient:
             yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response")], role="assistant")
 
 
-class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class MockBaseChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
     """Full BaseChatClient mock with middleware support.
 
     Use this when testing features that require the full BaseChatClient interface.

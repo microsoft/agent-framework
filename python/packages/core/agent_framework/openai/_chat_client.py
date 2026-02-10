@@ -64,7 +64,7 @@ __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region OpenAI Chat Options TypedDict
@@ -84,7 +84,7 @@ class Prediction(TypedDict, total=False):
     content: str | list[PredictionTextContent]
 
 
-class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OpenAIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """OpenAI-specific chat options dict.
 
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.
@@ -123,7 +123,7 @@ class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], to
     prediction: Prediction
 
 
-TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
+OpenAIChatOptionsT = TypeVar("OpenAIChatOptionsT", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 OPTION_TRANSLATIONS: dict[str, str] = {
     "model_id": "model",
@@ -135,8 +135,8 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 # region Base Client
 class RawOpenAIChatClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIChatOptions],
-    Generic[TOpenAIChatOptions],
+    BaseChatClient[OpenAIChatOptionsT],
+    Generic[OpenAIChatOptionsT],
 ):
     """Raw OpenAI Chat completion class without middleware, telemetry, or function invocation.
 
@@ -644,11 +644,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
 class OpenAIChatClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIChatOptions],
-    FunctionInvocationLayer[TOpenAIChatOptions],
-    ChatTelemetryLayer[TOpenAIChatOptions],
-    RawOpenAIChatClient[TOpenAIChatOptions],
-    Generic[TOpenAIChatOptions],
+    ChatMiddlewareLayer[OpenAIChatOptionsT],
+    FunctionInvocationLayer[OpenAIChatOptionsT],
+    ChatTelemetryLayer[OpenAIChatOptionsT],
+    RawOpenAIChatClient[OpenAIChatOptionsT],
+    Generic[OpenAIChatOptionsT],
 ):
     """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 

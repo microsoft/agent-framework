@@ -5,7 +5,7 @@ using System;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
-/// Contains tests for the <see cref="AgentRequestMessageSourceType"/> class.
+/// Contains tests for the <see cref="AgentRequestMessageSourceType"/> struct.
 /// </summary>
 public sealed class AgentRequestMessageSourceTypeTests
 {
@@ -38,6 +38,16 @@ public sealed class AgentRequestMessageSourceTypeTests
         Assert.Throws<ArgumentException>(() => new AgentRequestMessageSourceType(string.Empty));
     }
 
+    [Fact]
+    public void Default_DefaultsToExternal()
+    {
+        // Act
+        AgentRequestMessageSourceType defaultSource = default;
+
+        // Assert
+        Assert.Equal(AgentRequestMessageSourceType.External, defaultSource);
+    }
+
     #endregion
 
     #region Static Properties Tests
@@ -49,7 +59,6 @@ public sealed class AgentRequestMessageSourceTypeTests
         AgentRequestMessageSourceType source = AgentRequestMessageSourceType.External;
 
         // Assert
-        Assert.NotNull(source);
         Assert.Equal("External", source.Value);
     }
 
@@ -60,7 +69,6 @@ public sealed class AgentRequestMessageSourceTypeTests
         AgentRequestMessageSourceType source = AgentRequestMessageSourceType.AIContextProvider;
 
         // Assert
-        Assert.NotNull(source);
         Assert.Equal("AIContextProvider", source.Value);
     }
 
@@ -71,22 +79,11 @@ public sealed class AgentRequestMessageSourceTypeTests
         AgentRequestMessageSourceType source = AgentRequestMessageSourceType.ChatHistory;
 
         // Assert
-        Assert.NotNull(source);
         Assert.Equal("ChatHistory", source.Value);
     }
 
     [Fact]
-    public void AdditionalPropertiesKey_ReturnsExpectedValue()
-    {
-        // Arrange & Act
-        string key = AgentRequestMessageSourceType.AdditionalPropertiesKey;
-
-        // Assert
-        Assert.Equal("Agent.RequestMessageSourceType", key);
-    }
-
-    [Fact]
-    public void StaticProperties_ReturnSameInstanceOnMultipleCalls()
+    public void StaticProperties_ReturnEqualValuesOnMultipleCalls()
     {
         // Arrange & Act
         AgentRequestMessageSourceType external1 = AgentRequestMessageSourceType.External;
@@ -97,9 +94,9 @@ public sealed class AgentRequestMessageSourceTypeTests
         AgentRequestMessageSourceType chatHistory2 = AgentRequestMessageSourceType.ChatHistory;
 
         // Assert
-        Assert.Same(external1, external2);
-        Assert.Same(aiContextProvider1, aiContextProvider2);
-        Assert.Same(chatHistory1, chatHistory2);
+        Assert.Equal(external1, external2);
+        Assert.Equal(aiContextProvider1, aiContextProvider2);
+        Assert.Equal(chatHistory1, chatHistory2);
     }
 
     #endregion
@@ -148,7 +145,7 @@ public sealed class AgentRequestMessageSourceTypeTests
     }
 
     [Fact]
-    public void Equals_WithNull_ReturnsFalse()
+    public void Equals_WithNullObject_ReturnsFalse()
     {
         // Arrange
         AgentRequestMessageSourceType source = new("Test");
@@ -314,45 +311,17 @@ public sealed class AgentRequestMessageSourceTypeTests
     }
 
     [Fact]
-    public void EqualityOperator_WithBothNull_ReturnsTrue()
+    public void EqualityOperator_WithDefaultValues_ReturnsTrue()
     {
         // Arrange
-        AgentRequestMessageSourceType? source1 = null;
-        AgentRequestMessageSourceType? source2 = null;
+        AgentRequestMessageSourceType source1 = default;
+        AgentRequestMessageSourceType source2 = default;
 
         // Act
         bool result = source1 == source2;
 
         // Assert
         Assert.True(result);
-    }
-
-    [Fact]
-    public void EqualityOperator_WithLeftNull_ReturnsFalse()
-    {
-        // Arrange
-        AgentRequestMessageSourceType? source1 = null;
-        AgentRequestMessageSourceType source2 = new("Test");
-
-        // Act
-        bool result = source1 == source2;
-
-        // Assert
-        Assert.False(result);
-    }
-
-    [Fact]
-    public void EqualityOperator_WithRightNull_ReturnsFalse()
-    {
-        // Arrange
-        AgentRequestMessageSourceType source1 = new("Test");
-        AgentRequestMessageSourceType? source2 = null;
-
-        // Act
-        bool result = source1 == source2;
-
-        // Assert
-        Assert.False(result);
     }
 
     [Fact]
@@ -416,45 +385,17 @@ public sealed class AgentRequestMessageSourceTypeTests
     }
 
     [Fact]
-    public void InequalityOperator_WithBothNull_ReturnsFalse()
+    public void InequalityOperator_WithBothDefault_ReturnsFalse()
     {
         // Arrange
-        AgentRequestMessageSourceType? source1 = null;
-        AgentRequestMessageSourceType? source2 = null;
+        AgentRequestMessageSourceType source1 = default;
+        AgentRequestMessageSourceType source2 = default;
 
         // Act
         bool result = source1 != source2;
 
         // Assert
         Assert.False(result);
-    }
-
-    [Fact]
-    public void InequalityOperator_WithLeftNull_ReturnsTrue()
-    {
-        // Arrange
-        AgentRequestMessageSourceType? source1 = null;
-        AgentRequestMessageSourceType source2 = new("Test");
-
-        // Act
-        bool result = source1 != source2;
-
-        // Assert
-        Assert.True(result);
-    }
-
-    [Fact]
-    public void InequalityOperator_WithRightNull_ReturnsTrue()
-    {
-        // Arrange
-        AgentRequestMessageSourceType source1 = new("Test");
-        AgentRequestMessageSourceType? source2 = null;
-
-        // Act
-        bool result = source1 != source2;
-
-        // Assert
-        Assert.True(result);
     }
 
     [Fact]

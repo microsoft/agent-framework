@@ -35,7 +35,7 @@ class PurviewAppLocation(BaseModel):
 
 
 class PurviewSettings(AFBaseSettings):
-    """Settings for Purview integration mirroring .NET PurviewSettings.
+    """Settings for Purview integration.
 
     Attributes:
         app_name: Public app name.

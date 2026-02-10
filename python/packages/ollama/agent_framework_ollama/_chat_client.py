@@ -62,13 +62,13 @@ else:
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.
@@ -269,7 +269,7 @@ OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Ollama model option parameter names."""
 
-TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
+OllamaChatOptionsT = TypeVar("OllamaChatOptionsT", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
@@ -288,10 +288,10 @@ logger = get_logger("agent_framework.ollama")
 
 
 class OllamaChatClient(
-    ChatMiddlewareLayer[TOllamaChatOptions],
-    FunctionInvocationLayer[TOllamaChatOptions],
-    ChatTelemetryLayer[TOllamaChatOptions],
-    BaseChatClient[TOllamaChatOptions],
+    ChatMiddlewareLayer[OllamaChatOptionsT],
+    FunctionInvocationLayer[OllamaChatOptionsT],
+    ChatTelemetryLayer[OllamaChatOptionsT],
+    BaseChatClient[OllamaChatOptionsT],
 ):
     """Ollama Chat completion class with middleware, telemetry, and function invocation support."""
 

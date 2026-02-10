@@ -45,7 +45,7 @@ public static class ChatHistoryProviderExtensions
             innerProvider: provider,
             invokedMessagesFilter: (ctx) =>
             {
-                ctx.RequestMessages = ctx.RequestMessages.Where(x => x.GetAgentRequestMessageSource() != AgentRequestMessageSourceType.AIContextProvider);
+                ctx.RequestMessages = ctx.RequestMessages.Where(x => x.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider);
                 return ctx;
             });
     }
