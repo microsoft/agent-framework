@@ -7,6 +7,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
+    AgentExecutor,
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
     Case,
@@ -178,28 +179,23 @@ async def main():
     """Main function to run the workflow."""
     # Build workflow: store -> detection agent -> to_detection_result -> switch (NotSpam or Spam or Default).
     # The switch-case group evaluates cases in order, then falls back to Default when none match.
+    spam_detection_agent = AgentExecutor(create_spam_detection_agent())
+    email_assistant_agent = AgentExecutor(create_email_assistant_agent())
+
     workflow = (
-        WorkflowBuilder(start_executor="store_email")
-        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
-        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
-        .register_executor(lambda: store_email, name="store_email")
-        .register_executor(lambda: to_detection_result, name="to_detection_result")
-        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
-        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
-        .register_executor(lambda: handle_spam, name="handle_spam")
-        .register_executor(lambda: handle_uncertain, name="handle_uncertain")
-        .add_edge("store_email", "spam_detection_agent")
-        .add_edge("spam_detection_agent", "to_detection_result")
+        WorkflowBuilder(start_executor=store_email)
+        .add_edge(store_email, spam_detection_agent)
+        .add_edge(spam_detection_agent, to_detection_result)
         .add_switch_case_edge_group(
-            "to_detection_result",
+            to_detection_result,
             [
-                Case(condition=get_case("NotSpam"), target="submit_to_email_assistant"),
-                Case(condition=get_case("Spam"), target="handle_spam"),
-                Default(target="handle_uncertain"),
+                Case(condition=get_case("NotSpam"), target=submit_to_email_assistant),
+                Case(condition=get_case("Spam"), target=handle_spam),
+                Default(target=handle_uncertain),
             ],
         )
-        .add_edge("submit_to_email_assistant", "email_assistant_agent")
-        .add_edge("email_assistant_agent", "finalize_and_send")
+        .add_edge(submit_to_email_assistant, email_assistant_agent)
+        .add_edge(email_assistant_agent, finalize_and_send)
         .build()
     )
 

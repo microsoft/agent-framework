@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentThread, ChatAgent, ChatMessageStore
+from agent_framework import AgentThread, ChatMessageStore
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 
@@ -39,27 +39,24 @@ async def main() -> None:
     # Create a chat client
     chat_client = OpenAIChatClient()
 
-    # Define factory functions for workflow participants
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="assistant",
-            instructions=(
-                "You are a helpful assistant. Answer questions based on the conversation "
-                "history. If the user asks about something mentioned earlier, reference it."
-            ),
-        )
+    assistant = chat_client.as_agent(
+        name="assistant",
+        instructions=(
+            "You are a helpful assistant. Answer questions based on the conversation "
+            "history. If the user asks about something mentioned earlier, reference it."
+        ),
+    )
 
-    def create_summarizer() -> ChatAgent:
-        return chat_client.as_agent(
-            name="summarizer",
-            instructions=(
-                "You are a summarizer. After the assistant responds, provide a brief "
-                "one-sentence summary of the key point from the conversation so far."
-            ),
-        )
+    summarizer = chat_client.as_agent(
+        name="summarizer",
+        instructions=(
+            "You are a summarizer. After the assistant responds, provide a brief "
+            "one-sentence summary of the key point from the conversation so far."
+        ),
+    )
 
     # Build a sequential workflow: assistant -> summarizer
-    workflow = SequentialBuilder(participant_factories=[create_assistant, create_summarizer]).build()
+    workflow = SequentialBuilder(participants=[assistant, summarizer]).build()
 
     # Wrap the workflow as an agent
     agent = workflow.as_agent(name="ConversationalWorkflowAgent")
@@ -124,13 +121,12 @@ async def demonstrate_thread_serialization() -> None:
     """
     chat_client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="memory_assistant",
-            instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
-        )
+    memory_assistant = chat_client.as_agent(
+        name="memory_assistant",
+        instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
+    )
 
-    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
+    workflow = SequentialBuilder(participants=[memory_assistant]).build()
     agent = workflow.as_agent(name="MemoryWorkflowAgent")
 
     # Create initial thread and have a conversation

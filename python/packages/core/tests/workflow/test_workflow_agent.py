@@ -670,16 +670,20 @@ class TestWorkflowAgent:
                 return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
-        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
+        async def start_exec(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest, str]) -> None:
             await ctx.yield_output("Start output")
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-        # Build workflow: start -> agent1 (no output) -> agent2 (output_response=True)
-        builder = WorkflowBuilder(start_executor="start", output_executors=["start", "agent2"])
-        builder.register_executor(lambda: start_executor, "start")
-        builder.register_agent(lambda: MockAgent("agent1", "Agent1 output - should NOT appear"), "agent1")
-        builder.register_agent(lambda: MockAgent("agent2", "Agent2 output - SHOULD appear"), "agent2")
-        workflow = builder.add_edge("start", "agent1").add_edge("agent1", "agent2").build()
+        agent1 = MockAgent("agent1", "Agent1 output - should NOT appear")
+        agent2 = MockAgent("agent2", "Agent2 output - SHOULD appear")
+
+        # Build workflow: start -> agent1 (no output) -> agent2 (output visible)
+        workflow = (
+            WorkflowBuilder(start_executor=start_exec, output_executors=[start_exec, agent2])
+            .add_edge(start_exec, agent1)
+            .add_edge(agent1, agent2)
+            .build()
+        )
 
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
         result = await agent.run("Test input")
@@ -754,17 +758,13 @@ class TestWorkflowAgent:
                 return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
         @executor
-        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        async def start_exec(messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
+        mock_agent = MockAgent("agent", "Unique response text")
+
         # Build workflow with single agent
-        workflow = (
-            WorkflowBuilder(start_executor="start")
-            .register_executor(lambda: start_executor, "start")
-            .register_agent(lambda: MockAgent("agent", "Unique response text"), "agent")
-            .add_edge("start", "agent")
-            .build()
-        )
+        workflow = WorkflowBuilder(start_executor=start_exec).add_edge(start_exec, mock_agent).build()
 
         agent = WorkflowAgent(workflow=workflow, name="Test Agent")
         result = await agent.run("Test input")

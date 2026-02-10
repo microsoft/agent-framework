@@ -98,21 +98,16 @@ async def main() -> None:
     print("Building workflow with Worker-Reviewer cycle...")
     # Build a workflow with bidirectional communication between Worker and Reviewer,
     # and escalation paths for human review.
+    worker = Worker(
+        id="worker",
+        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+    )
+    reviewer = ReviewerWithHumanInTheLoop(worker_id="worker")
+
     agent = (
-        WorkflowBuilder(start_executor="worker")
-        .register_executor(
-            lambda: Worker(
-                id="sub-worker",
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
-            ),
-            name="worker",
-        )
-        .register_executor(
-            lambda: ReviewerWithHumanInTheLoop(worker_id="sub-worker"),
-            name="reviewer",
-        )
-        .add_edge("worker", "reviewer")  # Worker sends requests to Reviewer
-        .add_edge("reviewer", "worker")  # Reviewer sends feedback to Worker
+        WorkflowBuilder(start_executor=worker)
+        .add_edge(worker, reviewer)  # Worker sends requests to Reviewer
+        .add_edge(reviewer, worker)  # Reviewer sends feedback to Worker
         .build()
         .as_agent()  # Convert workflow into an agent interface
     )
