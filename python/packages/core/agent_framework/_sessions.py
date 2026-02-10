@@ -158,7 +158,7 @@ class SessionContext:
         for message in messages:
             msg_copy = copy.copy(message)
             msg_copy.additional_properties = dict(message.additional_properties)
-            msg_copy.additional_properties.setdefault("attribution", attribution)
+            msg_copy.additional_properties.setdefault("_attribution", attribution)
             copied.append(msg_copy)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []

@@ -58,18 +58,18 @@ class TestSessionContext:
         msg = ChatMessage(role="system", contents=["context"])
         ctx.extend_messages("rag", [msg])
         stored = ctx.context_messages["rag"][0]
-        assert stored.additional_properties["attribution"] == {"source_id": "rag"}
+        assert stored.additional_properties["_attribution"] == {"source_id": "rag"}
         # Original message is not mutated
-        assert "attribution" not in msg.additional_properties
+        assert "_attribution" not in msg.additional_properties
 
     def test_extend_messages_does_not_overwrite_existing_attribution(self) -> None:
         ctx = SessionContext(input_messages=[])
         msg = ChatMessage(
-            role="system", contents=["context"], additional_properties={"attribution": {"source_id": "custom"}}
+            role="system", contents=["context"], additional_properties={"_attribution": {"source_id": "custom"}}
         )
         ctx.extend_messages("rag", [msg])
         stored = ctx.context_messages["rag"][0]
-        assert stored.additional_properties["attribution"] == {"source_id": "custom"}
+        assert stored.additional_properties["_attribution"] == {"source_id": "custom"}
 
     def test_extend_messages_copies_messages(self) -> None:
         ctx = SessionContext(input_messages=[])
@@ -90,7 +90,7 @@ class TestSessionContext:
         msg = ChatMessage(role="system", contents=["ctx"])
         ctx.extend_messages(MyProvider(), [msg])
         stored = ctx.context_messages["rag"][0]
-        assert stored.additional_properties["attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
+        assert stored.additional_properties["_attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
 
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
