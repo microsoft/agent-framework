@@ -194,8 +194,11 @@ class AgentExecutor(Executor):
         self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
         if not self._pending_agent_requests:
-            # All pending requests have been resolved; resume agent execution
-            self._cache = normalize_messages_input(ChatMessage(role="user", contents=self._pending_responses_to_agent))
+            # All pending requests have been resolved; resume agent execution.
+            # Use role="tool" for function_result responses (from declaration-only tools)
+            # so the LLM receives proper tool results instead of orphaned tool_calls.
+            role = "tool" if all(r.type == "function_result" for r in self._pending_responses_to_agent) else "user"
+            self._cache = normalize_messages_input(ChatMessage(role=role, contents=self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 

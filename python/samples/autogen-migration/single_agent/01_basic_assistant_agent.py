@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/01_basic_assistant_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Basic AutoGen AssistantAgent vs Agent Framework ChatAgent.
 

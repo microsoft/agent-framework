@@ -2,6 +2,8 @@
 
 """Agent Framework executor implementation."""
 
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -184,7 +186,7 @@ class AgentFrameworkExecutor:
             raise EntityNotFoundError(f"Entity '{entity_id}' not found")
         return entity_info
 
-    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
+    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
         """Execute request and stream results in OpenAI format.
 
         Args:
@@ -229,7 +231,7 @@ class AgentFrameworkExecutor:
         # Aggregate into final response
         return await self.message_mapper.aggregate_to_response(events, request)
 
-    async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
+    async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
         """Execute the entity and yield raw Agent Framework events plus trace events.
 
         Args:
@@ -286,7 +288,7 @@ class AgentFrameworkExecutor:
 
     async def _execute_agent(
         self, agent: SupportsAgentRun, request: AgentFrameworkRequest, trace_collector: Any
-    ) -> AsyncGenerator[Any, None]:
+    ) -> AsyncGenerator[Any]:
         """Execute Agent Framework agent with trace collection and optional thread support.
 
         Args:
@@ -361,7 +363,7 @@ class AgentFrameworkExecutor:
 
     async def _execute_workflow(
         self, workflow: Workflow, request: AgentFrameworkRequest, trace_collector: Any
-    ) -> AsyncGenerator[Any, None]:
+    ) -> AsyncGenerator[Any]:
         """Execute Agent Framework workflow with checkpoint support via conversation items.
 
         Args:

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
@@ -141,7 +143,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
             )
             self._should_close_client = True
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
@@ -177,7 +179,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a new agent on the Azure AI service and return a ChatAgent.
 
         This method creates a persistent agent on the Azure AI service with the specified
@@ -274,7 +276,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Retrieve an existing agent from the service and return a ChatAgent.
 
         This method fetches an agent by ID from the Azure AI service
@@ -330,7 +332,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Wrap an existing Agent SDK object as a ChatAgent without making HTTP calls.
 
         Use this method when you already have an Agent object from a previous
@@ -383,7 +385,7 @@ class AzureAIAgentsProvider(Generic[TOptions_co]):
         default_options: TOptions_co | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
-    ) -> "ChatAgent[TOptions_co]":
+    ) -> ChatAgent[TOptions_co]:
         """Create a ChatAgent from an Agent SDK object.
 
         Args:

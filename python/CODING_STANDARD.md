@@ -264,6 +264,13 @@ After the package has been released and gained a measure of confidence:
 2. Add the package to the `[all]` extra in `packages/core/pyproject.toml`
 3. Create a provider folder in `agent_framework/` with lazy loading `__init__.py`
 
+### Versioning and Core Dependency
+
+All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"agent-framework-core>=1.0.0b260130"`). Follow these rules when bumping versions:
+
+- **Core version changes**: When `agent-framework-core` is updated with breaking or significant changes and its version is bumped, update the `agent-framework-core>=...` lower bound in every other package's `pyproject.toml` to match the new core version.
+- **Non-core version changes**: Non-core packages (connectors, extensions) can have their own versions incremented independently while keeping the existing core lower bound pinned. Only raise the core lower bound if the non-core package actually depends on new core APIs.
+
 ### Installation Options
 
 Connectors are distributed as separate packages and are not imported by default in the core package. Users install the specific connectors they need:

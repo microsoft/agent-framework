@@ -37,7 +37,7 @@ sequenceDiagram
     AML->>AMP: execute(AgentContext)
 
     loop Agent Middleware Chain
-        AMP->>AMP: middleware[i].process(context, next)
+        AMP->>AMP: middleware[i].process(context, call_next)
         Note right of AMP: Can modify: messages, options, thread
     end
 
@@ -60,7 +60,7 @@ sequenceDiagram
     CML->>CMP: execute(ChatContext)
 
     loop Chat Middleware Chain
-        CMP->>CMP: middleware[i].process(context, next)
+        CMP->>CMP: middleware[i].process(context, call_next)
         Note right of CMP: Can modify: messages, options
     end
 
@@ -81,7 +81,7 @@ sequenceDiagram
             loop For each function_call
                 FIL->>FMP: execute(FunctionInvocationContext)
                 loop Function Middleware Chain
-                    FMP->>FMP: middleware[i].process(context, next)
+                    FMP->>FMP: middleware[i].process(context, call_next)
                     Note right of FMP: Can modify: arguments
                 end
                 FMP->>Tool: invoke(arguments)
@@ -137,7 +137,7 @@ sequenceDiagram
 | `options` | `Mapping[str, Any]` | Chat options dict |
 | `stream` | `bool` | Whether streaming is enabled |
 | `metadata` | `dict` | Shared data between middleware |
-| `result` | `AgentResponse \| None` | Set after `next()` is called |
+| `result` | `AgentResponse \| None` | Set after `call_next()` is called |
 | `kwargs` | `Mapping[str, Any]` | Additional run arguments |
 
 **Key Operations:**
@@ -150,7 +150,7 @@ sequenceDiagram
 - `context.messages` - Add, remove, or modify input messages
 - `context.options` - Change model parameters, temperature, etc.
 - `context.thread` - Replace or modify the thread
-- `context.result` - Override the final response (after `next()`)
+- `context.result` - Override the final response (after `call_next()`)
 
 ### 2. Chat Middleware Layer (`ChatMiddlewareLayer`)
 
@@ -165,7 +165,7 @@ sequenceDiagram
 | `options` | `Mapping[str, Any]` | Chat options |
 | `stream` | `bool` | Whether streaming |
 | `metadata` | `dict` | Shared data between middleware |
-| `result` | `ChatResponse \| None` | Set after `next()` is called |
+| `result` | `ChatResponse \| None` | Set after `call_next()` is called |
 | `kwargs` | `Mapping[str, Any]` | Additional arguments |
 
 **Key Operations:**
@@ -176,7 +176,7 @@ sequenceDiagram
 **What Can Be Modified:**
 - `context.messages` - Inject system prompts, filter content
 - `context.options` - Change model, temperature, tool_choice
-- `context.result` - Override the response (after `next()`)
+- `context.result` - Override the response (after `call_next()`)
 
 ### 3. Function Invocation Layer (`FunctionInvocationLayer`)
 
@@ -251,23 +251,23 @@ response = await client.get_response(
 | `function` | `FunctionTool` | The function being invoked |
 | `arguments` | `BaseModel` | Validated Pydantic arguments |
 | `metadata` | `dict` | Shared data between middleware |
-| `result` | `Any` | Set after `next()` is called |
+| `result` | `Any` | Set after `call_next()` is called |
 | `kwargs` | `Mapping[str, Any]` | Runtime kwargs |
 
 **What Can Be Modified:**
 - `context.arguments` - Modify validated arguments before execution
-- `context.result` - Override the function result (after `next()`)
+- `context.result` - Override the function result (after `call_next()`)
 - Raise `MiddlewareTermination` to skip execution and terminate the function invocation loop
 
 **Special Behavior:** When `MiddlewareTermination` is raised in function middleware, it signals that the function invocation loop should exit **without making another LLM call**. This is useful when middleware determines that no further processing is needed (e.g., a termination condition is met).
 
 ```python
 class TerminatingMiddleware(FunctionMiddleware):
-    async def process(self, context: FunctionInvocationContext, next):
+    async def process(self, context: FunctionInvocationContext, call_next):
         if self.should_terminate(context):
             context.result = "terminated by middleware"
             raise MiddlewareTermination  # Exit function invocation loop
-        await next(context)
+        await call_next(context)
 ```
 
 ## Arguments Added/Altered at Each Layer
@@ -334,20 +334,20 @@ class TerminatingMiddleware(FunctionMiddleware):
 
 There are three ways to exit a middleware's `process()` method:
 
-### 1. Return Normally (with or without calling `next`)
+### 1. Return Normally (with or without calling `call_next`)
 
 Returns control to the upstream middleware, allowing its post-processing code to run.
 
 ```python
 class CachingMiddleware(FunctionMiddleware):
-    async def process(self, context: FunctionInvocationContext, next):
-        # Option A: Return early WITHOUT calling next (skip downstream)
+    async def process(self, context: FunctionInvocationContext, call_next):
+        # Option A: Return early WITHOUT calling call_next (skip downstream)
         if cached := self.cache.get(context.function.name):
             context.result = cached
             return  # Upstream post-processing still runs
 
-        # Option B: Call next, then return normally
-        await next(context)
+        # Option B: Call call_next, then return normally
+        await call_next(context)
         self.cache[context.function.name] = context.result
         return  # Normal completion
 ```
@@ -358,11 +358,11 @@ Immediately exits the entire middleware chain. Upstream middleware's post-proces
 
 ```python
 class BlockedFunctionMiddleware(FunctionMiddleware):
-    async def process(self, context: FunctionInvocationContext, next):
+    async def process(self, context: FunctionInvocationContext, call_next):
         if context.function.name in self.blocked_functions:
             context.result = "Function blocked by policy"
             raise MiddlewareTermination("Blocked")  # Skips ALL post-processing
-        await next(context)
+        await call_next(context)
 ```
 
 ### 3. Raise Any Other Exception
@@ -371,10 +371,10 @@ Bubbles up to the caller. The middleware chain is aborted and the exception prop
 
 ```python
 class ValidationMiddleware(FunctionMiddleware):
-    async def process(self, context: FunctionInvocationContext, next):
+    async def process(self, context: FunctionInvocationContext, call_next):
         if not self.is_valid(context.arguments):
             raise ValueError("Invalid arguments")  # Bubbles up to user
-        await next(context)
+        await call_next(context)
 ```
 
 ## `return` vs `raise MiddlewareTermination`
@@ -383,13 +383,13 @@ The key difference is what happens to **upstream middleware's post-processing**:
 
 ```python
 class MiddlewareA(AgentMiddleware):
-    async def process(self, context, next):
+    async def process(self, context, call_next):
         print("A: before")
-        await next(context)
+        await call_next(context)
         print("A: after")  # Does this run?
 
 class MiddlewareB(AgentMiddleware):
-    async def process(self, context, next):
+    async def process(self, context, call_next):
         print("B: before")
         context.result = "early result"
         # Choose one:
@@ -408,14 +408,14 @@ With middleware registered as `[MiddlewareA, MiddlewareB]`:
 
 **Use `raise MiddlewareTermination`** when you want to completely bypass all remaining processing (e.g., blocking a request, returning cached response without any modification).
 
-## Calling `next()` or Not
+## Calling `call_next()` or Not
 
-The decision to call `next(context)` determines whether downstream middleware and the actual operation execute:
+The decision to call `call_next(context)` determines whether downstream middleware and the actual operation execute:
 
-### Without calling `next()` - Skip downstream
+### Without calling `call_next()` - Skip downstream
 
 ```python
-async def process(self, context, next):
+async def process(self, context, call_next):
     context.result = "replacement result"
     return  # Downstream middleware and actual execution are SKIPPED
 ```
@@ -425,12 +425,12 @@ async def process(self, context, next):
 - Upstream middleware post-processing: ✅ Still runs (unless `MiddlewareTermination` raised)
 - Result: Whatever you set in `context.result`
 
-### With calling `next()` - Full execution
+### With calling `call_next()` - Full execution
 
 ```python
-async def process(self, context, next):
+async def process(self, context, call_next):
     # Pre-processing
-    await next(context)  # Execute downstream + actual operation
+    await call_next(context)  # Execute downstream + actual operation
     # Post-processing (context.result now contains real result)
     return
 ```
@@ -442,7 +442,7 @@ async def process(self, context, next):
 
 ### Summary Table
 
-| Exit Method | Call `next()`? | Downstream Executes? | Actual Op Executes? | Upstream Post-Processing? |
+| Exit Method | Call `call_next()`? | Downstream Executes? | Actual Op Executes? | Upstream Post-Processing? |
 |-------------|----------------|---------------------|---------------------|--------------------------|
 | `return` (or implicit) | Yes | ✅ | ✅ | ✅ Yes |
 | `return` | No | ❌ | ❌ | ✅ Yes |
@@ -450,7 +450,7 @@ async def process(self, context, next):
 | `raise MiddlewareTermination` | Yes | ✅ | ✅ | ❌ No |
 | `raise OtherException` | Either | Depends | Depends | ❌ No (exception propagates) |
 
-> **Note:** The first row (`return` after calling `next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await next(context)` without an explicit `return` statement achieves this pattern.
+> **Note:** The first row (`return` after calling `call_next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await call_next(context)` without an explicit `return` statement achieves this pattern.
 
 ## Streaming vs Non-Streaming
 
