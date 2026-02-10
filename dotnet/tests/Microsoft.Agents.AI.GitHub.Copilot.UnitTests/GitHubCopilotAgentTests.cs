@@ -100,4 +100,69 @@ public sealed class GitHubCopilotAgentTests
         Assert.NotNull(agent);
         Assert.NotNull(agent.Id);
     }
+
+    [Fact]
+    public void Constructor_WithSessionConfigNewProperties_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var sessionConfig = new SessionConfig
+        {
+            ReasoningEffort = "high",
+            WorkingDirectory = "/tmp/test",
+            ConfigDir = "/tmp/config",
+            Hooks = new SessionHooks(),
+            InfiniteSessions = new InfiniteSessionConfig(),
+        };
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig: sessionConfig, id: "test-id");
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-id", agent.Id);
+    }
+
+    [Fact]
+    public void Constructor_WithSessionConfigAllProperties_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        var sessionConfig = new SessionConfig
+        {
+            Model = "gpt-4o",
+            ReasoningEffort = "medium",
+            Tools = tools,
+            SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" },
+            AvailableTools = ["tool1", "tool2"],
+            ExcludedTools = ["tool3"],
+            WorkingDirectory = "/workspace",
+            ConfigDir = "/config",
+            Hooks = new SessionHooks(),
+            InfiniteSessions = new InfiniteSessionConfig(),
+            DisabledSkills = ["skill1"],
+        };
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig: sessionConfig);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("GitHub Copilot Agent", agent.Name);
+    }
+
+    [Fact]
+    public void Constructor_WithNullSessionConfig_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("GitHub Copilot Agent", agent.Name);
+    }
 }

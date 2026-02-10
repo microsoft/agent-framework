@@ -150,16 +150,22 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             ? new SessionConfig
             {
                 Model = this._sessionConfig.Model,
+                ReasoningEffort = this._sessionConfig.ReasoningEffort,
                 Tools = this._sessionConfig.Tools,
                 SystemMessage = this._sessionConfig.SystemMessage,
                 AvailableTools = this._sessionConfig.AvailableTools,
                 ExcludedTools = this._sessionConfig.ExcludedTools,
                 Provider = this._sessionConfig.Provider,
                 OnPermissionRequest = this._sessionConfig.OnPermissionRequest,
+                OnUserInputRequest = this._sessionConfig.OnUserInputRequest,
+                Hooks = this._sessionConfig.Hooks,
+                WorkingDirectory = this._sessionConfig.WorkingDirectory,
+                ConfigDir = this._sessionConfig.ConfigDir,
                 McpServers = this._sessionConfig.McpServers,
                 CustomAgents = this._sessionConfig.CustomAgents,
                 SkillDirectories = this._sessionConfig.SkillDirectories,
                 DisabledSkills = this._sessionConfig.DisabledSkills,
+                InfiniteSessions = this._sessionConfig.InfiniteSessions,
                 Streaming = true
             }
             : new SessionConfig { Streaming = true };
@@ -287,13 +293,23 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     {
         return new ResumeSessionConfig
         {
+            Model = this._sessionConfig?.Model,
+            ReasoningEffort = this._sessionConfig?.ReasoningEffort,
             Tools = this._sessionConfig?.Tools,
+            SystemMessage = this._sessionConfig?.SystemMessage,
+            AvailableTools = this._sessionConfig?.AvailableTools,
+            ExcludedTools = this._sessionConfig?.ExcludedTools,
             Provider = this._sessionConfig?.Provider,
             OnPermissionRequest = this._sessionConfig?.OnPermissionRequest,
+            OnUserInputRequest = this._sessionConfig?.OnUserInputRequest,
+            Hooks = this._sessionConfig?.Hooks,
+            WorkingDirectory = this._sessionConfig?.WorkingDirectory,
+            ConfigDir = this._sessionConfig?.ConfigDir,
             McpServers = this._sessionConfig?.McpServers,
             CustomAgents = this._sessionConfig?.CustomAgents,
             SkillDirectories = this._sessionConfig?.SkillDirectories,
             DisabledSkills = this._sessionConfig?.DisabledSkills,
+            InfiniteSessions = this._sessionConfig?.InfiniteSessions,
             Streaming = true
         };
     }
@@ -450,9 +466,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
                     // Create attachment
                     attachments ??= [];
-                    attachments.Add(new UserMessageDataAttachmentsItem
+                    attachments.Add(new UserMessageDataAttachmentsItemFile
                     {
-                        Type = UserMessageDataAttachmentsItemType.File,
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)
                     });

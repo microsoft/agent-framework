@@ -89,7 +89,7 @@
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.67.0-preview" />
     <PackageVersion Include="Microsoft.SemanticKernel.Plugins.OpenApi" Version="1.67.0" />
     <!-- Agent SDKs -->
-    <PackageVersion Include="GitHub.Copilot.SDK" Version="0.1.18" />
+    <PackageVersion Include="GitHub.Copilot.SDK" Version="0.1.23" />
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.3.171-beta" />
     <!-- M365 Agents SDK -->
     <PackageVersion Include="AdaptiveCards" Version="3.1.0" />
