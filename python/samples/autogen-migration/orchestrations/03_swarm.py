@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/03_swarm.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen Swarm pattern vs Agent Framework HandoffBuilder.
 

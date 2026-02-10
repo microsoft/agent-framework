@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict

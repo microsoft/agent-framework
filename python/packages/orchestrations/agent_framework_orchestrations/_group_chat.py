@@ -18,6 +18,8 @@ The default wiring uses AgentExecutor under the hood for agent participants so
 existing observability and streaming semantics continue to apply.
 """
 
+from __future__ import annotations
+
 import inspect
 import logging
 import sys
@@ -691,7 +693,7 @@ class GroupChatBuilder:
 
         self._participants = named
 
-    def with_termination_condition(self, termination_condition: TerminationCondition) -> "GroupChatBuilder":
+    def with_termination_condition(self, termination_condition: TerminationCondition) -> GroupChatBuilder:
         """Set a custom termination condition for the group chat workflow.
 
         Args:
@@ -732,7 +734,7 @@ class GroupChatBuilder:
         self._termination_condition = termination_condition
         return self
 
-    def with_max_rounds(self, max_rounds: int | None) -> "GroupChatBuilder":
+    def with_max_rounds(self, max_rounds: int | None) -> GroupChatBuilder:
         """Set a maximum number of orchestrator rounds to prevent infinite conversations.
 
         When the round limit is reached, the workflow automatically completes with
@@ -750,7 +752,7 @@ class GroupChatBuilder:
         self._max_rounds = max_rounds
         return self
 
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "GroupChatBuilder":
+    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> GroupChatBuilder:
         """Enable checkpointing for the built workflow using the provided storage.
 
         Checkpointing allows the workflow to persist state and resume from interruption
@@ -782,7 +784,7 @@ class GroupChatBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> "GroupChatBuilder":
+    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> GroupChatBuilder:
         """Enable request info after agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.

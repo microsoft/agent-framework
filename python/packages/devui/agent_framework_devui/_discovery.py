@@ -2,6 +2,8 @@
 
 """Agent Framework entity discovery implementation."""
 
+from __future__ import annotations
+
 import ast
 import importlib
 import importlib.util

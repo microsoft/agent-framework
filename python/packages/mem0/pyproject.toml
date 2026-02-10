@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
+    "agent-framework-core>=1.0.0b260130",
     "mem0ai>=1.0.0",
 ]
 

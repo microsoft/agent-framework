@@ -2,7 +2,7 @@
 # This workflow demonstrates using multiple agents to provide automated
 # troubleshooting steps to resolve common issues with escalation options.
 #
-# Example input: 
+# Example input:
 # My PC keeps rebooting and I can't use it.
 #
 kind: Workflow
@@ -12,7 +12,7 @@ trigger:
   id: workflow_demo
   actions:
 
-    # Interact with user until the issue has been resolved or 
+    # Interact with user until the issue has been resolved or
     # a determination is made that a ticket is required.
     - kind: InvokeAzureAgent
       id: service_agent
@@ -23,7 +23,7 @@ trigger:
         externalLoop:
           when: |-
             =Not(Local.ServiceParameters.IsResolved)
-             And 
+             And
              Not(Local.ServiceParameters.NeedsTicket)
       output:
         responseObject: Local.ServiceParameters
@@ -32,14 +32,14 @@ trigger:
     - kind: ConditionGroup
       id: check_if_resolved
       conditions:
-    
+
         - condition: =Local.ServiceParameters.IsResolved
           id: test_if_resolved
           actions:
             - kind: GotoAction
               id: end_when_resolved
               actionId: all_done
-    
+
     # Create the ticket.
     - kind: InvokeAzureAgent
       id: ticket_agent
@@ -103,7 +103,7 @@ trigger:
                 externalLoop:
                   when: |-
                     =Not(Local.SupportParameters.IsResolved)
-                     And 
+                     And
                      Not(Local.SupportParameters.NeedsEscalation)
               output:
                 autoSend: true
@@ -124,7 +124,7 @@ trigger:
                 - condition: =Local.SupportParameters.IsResolved
                   id: handle_if_resolved
                   actions:
-        
+
                     - kind: InvokeAzureAgent
                       id: resolution_agent
                       agent:

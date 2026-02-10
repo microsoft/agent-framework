@@ -277,7 +277,7 @@ If you're updating from a previous version of the Agent Framework, here are the 
 ### OTLP Configuration
 
 **Before (Deprecated):**
-```python
+```
 from agent_framework.observability import setup_observability
 # Via parameter
 setup_observability(otlp_endpoint="http://localhost:4317")
@@ -309,7 +309,7 @@ configure_otel_providers(exporters=[
 ### Azure Monitor Configuration
 
 **Before (Deprecated):**
-```python
+```
 from agent_framework.observability import setup_observability
 
 setup_observability(
@@ -345,7 +345,7 @@ enable_instrumentation()
 ### Console Output
 
 **Before (Deprecated):**
-```python
+```
 from agent_framework.observability import setup_observability
 
 # Console was used as automatic fallback

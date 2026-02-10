@@ -6,5 +6,5 @@ uv venv --python $PYTHON_VERSION
 uv sync --dev
 # Install all the tools and dependencies
 uv run poe install
-# Install pre-commit hooks
-uv run poe pre-commit-install
+# Install prek hooks
+uv run poe prek-install

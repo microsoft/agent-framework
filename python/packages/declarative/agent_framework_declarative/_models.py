@@ -1,4 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
+from __future__ import annotations
+
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
@@ -101,7 +103,7 @@ class Property(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Property":
+    ) -> Property:
         """Create a Property instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Property class
         if cls is not Property:
@@ -211,7 +213,7 @@ class PropertySchema(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "PropertySchema":
+    ) -> PropertySchema:
         """Create a PropertySchema instance from a dictionary, filtering out 'kind' field."""
         # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
         # but aren't PropertySchema params
@@ -491,7 +493,7 @@ class AgentDefinition(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "AgentDefinition":
+    ) -> AgentDefinition:
         """Create an AgentDefinition instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base AgentDefinition class
         if cls is not AgentDefinition:
@@ -537,7 +539,7 @@ class Tool(SerializationMixin):
     @classmethod
     def from_dict(
         cls: type[TTool], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "TTool":
+    ) -> TTool:
         """Create a Tool instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:
@@ -867,7 +869,7 @@ class Resource(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Resource":
+    ) -> Resource:
         """Create a Resource instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Resource class
         if cls is not Resource:

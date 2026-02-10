@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import inspect
 import re
 import sys
@@ -729,7 +731,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Enter the async context manager.
 
         If any of the chat_client or local_mcp_tools are context managers,
@@ -787,7 +789,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: "ChatOptions[TResponseModelT]",
+        options: ChatOptions[TResponseModelT],
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[TResponseModelT]]: ...
 
@@ -803,7 +805,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: "TOptions_co | ChatOptions[None] | None" = None,
+        options: TOptions_co | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -819,7 +821,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -834,7 +836,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        options: "TOptions_co | ChatOptions[Any] | None" = None,
+        options: TOptions_co | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
@@ -1149,9 +1151,9 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         server_name: str = "Agent",
         version: str | None = None,
         instructions: str | None = None,
-        lifespan: Callable[["Server[Any]"], AbstractAsyncContextManager[Any]] | None = None,
+        lifespan: Callable[[Server[Any]], AbstractAsyncContextManager[Any]] | None = None,
         **kwargs: Any,
-    ) -> "Server[Any]":
+    ) -> Server[Any]:
         """Create an MCP server from an agent instance.
 
         This function automatically creates a MCP server from an agent instance, it uses the provided arguments to
@@ -1177,7 +1179,7 @@ class RawChatAgent(BaseAgent, Generic[TOptions_co]):  # type: ignore[misc]
         if kwargs:
             server_args.update(kwargs)
 
-        server: "Server[Any]" = Server(**server_args)  # type: ignore[call-arg]
+        server: Server[Any] = Server(**server_args)  # type: ignore[call-arg]
 
         agent_tool = self.as_tool(name=self._get_agent_name())
 
