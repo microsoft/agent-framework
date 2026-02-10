@@ -2117,18 +2117,19 @@ async def test_message_filtering_with_previous_response_id() -> None:
         ChatMessage(role="user", text="What's my name?"),
     ]
     
-    # When using previous_response_id, only new messages after last assistant should be included
+    # When using previous_response_id, assistant messages should be filtered but system messages preserved
     options = await client._prepare_options(
         messages, 
         {"conversation_id": "resp_12345"},  # Using resp_ prefix
     )  # type: ignore
     
-    # Should only include the last user message
+    # Should include: system message + last user message
     assert "input" in options
     input_messages = options["input"]
-    assert len(input_messages) == 1
-    assert input_messages[0]["role"] == "user"
-    assert "What's my name?" in str(input_messages[0])
+    assert len(input_messages) == 2, f"Expected 2 messages (system + user), got {len(input_messages)}"
+    assert input_messages[0]["role"] == "system"
+    assert input_messages[1]["role"] == "user"
+    assert "What's my name?" in str(input_messages[1])
     
     # Verify previous_response_id is set
     assert options["previous_response_id"] == "resp_12345"

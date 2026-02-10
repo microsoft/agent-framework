@@ -673,10 +673,18 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 if message.role == "assistant":
                     last_assistant_idx = idx
 
-            # Only include messages after the last assistant message
-            # This ensures we only send NEW user messages, not the full history
+            # When using previous_response_id, filter out assistant and function result messages
+            # but keep system/developer/user messages (the API accepts these roles)
             if last_assistant_idx >= 0:
-                chat_messages = chat_messages[last_assistant_idx + 1 :]
+                # Collect system/developer messages from before the last assistant
+                system_messages = [
+                    msg for msg in chat_messages[:last_assistant_idx] 
+                    if msg.role in ("system", "developer")
+                ]
+                # Get all messages after the last assistant (new user messages)
+                new_messages = chat_messages[last_assistant_idx + 1 :]
+                # Combine: system messages + new messages
+                chat_messages = system_messages + list(new_messages)
 
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
