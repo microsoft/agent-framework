@@ -7,6 +7,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor

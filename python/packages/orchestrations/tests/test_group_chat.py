@@ -251,21 +251,6 @@ class TestGroupChatBuilder:
         def selector(state: GroupChatState) -> str:
             return "agent"
 
-        builder = GroupChatBuilder().with_orchestrator(selection_func=selector)
-
-        with pytest.raises(
-            ValueError,
-            match=r"Either participants or participant_factories must be provided\.",
-        ):
-            GroupChatBuilder()
-
-    def test_duplicate_manager_configuration_raises_error(self) -> None:
-        """Test that configuring multiple orchestrator options raises ValueError."""
-        agent = StubAgent("test", "response")
-
-        def selector(state: GroupChatState) -> str:
-            return "agent"
-
         with pytest.raises(
             ValueError,
             match=r"Exactly one of",

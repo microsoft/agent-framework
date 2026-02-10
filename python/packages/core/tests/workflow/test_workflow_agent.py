@@ -12,10 +12,10 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
+    ChatMessageStore,
     Content,
     Executor,
     Message,
-    MessageStore,
     ResponseStream,
     SupportsAgentRun,
     UsageDetails,
@@ -527,7 +527,7 @@ class TestWorkflowAgent:
             Message(role="user", text="Previous user message"),
             Message(role="assistant", text="Previous assistant response"),
         ]
-        message_store = MessageStore(messages=history_messages)
+        message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
 
         # Run the agent with the thread and a new message
@@ -558,7 +558,7 @@ class TestWorkflowAgent:
             Message(role="user", text="Hello"),
             Message("assistant", ["Hi there!"]),
         ]
-        message_store = MessageStore(messages=history_messages)
+        message_store = ChatMessageStore(messages=history_messages)
         thread = AgentThread(message_store=message_store)
 
         # Stream from the agent with the thread and a new message

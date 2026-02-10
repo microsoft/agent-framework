@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from agent_framework import (  # Core chat primitives used to build requests
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
     AgentExecutorResponse,

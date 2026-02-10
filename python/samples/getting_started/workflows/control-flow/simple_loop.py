@@ -4,6 +4,7 @@ import asyncio
 from enum import Enum
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,

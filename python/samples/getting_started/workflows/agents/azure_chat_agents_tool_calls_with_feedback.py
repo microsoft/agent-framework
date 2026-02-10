@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
