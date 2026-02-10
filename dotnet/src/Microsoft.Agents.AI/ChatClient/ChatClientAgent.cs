@@ -226,7 +226,7 @@ public sealed partial class ChatClientAgent : AIAgent
         try
         {
             // Using the enumerator to ensure we consider the case where no updates are returned for notification.
-            responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(inputMessagesForProviders, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(inputMessagesForChatClient, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
         catch (Exception ex)
         {

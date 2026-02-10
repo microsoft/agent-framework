@@ -2259,6 +2259,7 @@ async def test_integration_options(
                     assert "seattle" in response_value["location"].lower()
 
 
+@pytest.mark.timeout(300)
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
