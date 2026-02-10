@@ -54,7 +54,7 @@ uv run prek run -a
 uv run prek run --last-commit
 ```
 
-When core package changes, type-checking (pyright) runs across all packages
+When core package changes, type-checking (mypy, pyright) runs across all packages
 since type changes propagate. Format and lint only run in changed packages.
 
 ## Ruff Configuration

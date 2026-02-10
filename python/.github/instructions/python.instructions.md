@@ -1,5 +1,5 @@
 ---
-applyTo: '**/agent-framework/python/**'
+applyTo: 'python/**'
 ---
 
 See [AGENTS.md](../../AGENTS.md) for project structure and package documentation.
