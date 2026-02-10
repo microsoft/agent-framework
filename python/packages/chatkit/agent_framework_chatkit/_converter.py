@@ -2,6 +2,8 @@
 
 """Converter utilities for converting ChatKit thread items to Agent Framework messages."""
 
+from __future__ import annotations
+
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence

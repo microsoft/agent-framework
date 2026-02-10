@@ -40,7 +40,6 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 
 ```python
 import asyncio
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 async def main():
@@ -48,7 +47,7 @@ async def main():
         # Stream responses
         async for update in client.get_response("Hello!", stream=True):
             for content in update.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text" and content.text:
                     print(content.text, end="", flush=True)
         print()
 

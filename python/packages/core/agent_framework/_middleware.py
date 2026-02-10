@@ -122,7 +122,7 @@ class AgentContext:
         options: The options for the agent invocation as a dict.
         stream: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between agent middleware.
-        result: Agent execution result. Can be observed after calling ``next()``
+        result: Agent execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be AgentResponse.
                 For streaming: should be ResponseStream[AgentResponseUpdate, AgentResponse].
@@ -135,7 +135,7 @@ class AgentContext:
 
 
             class LoggingMiddleware(AgentMiddleware):
-                async def process(self, context: AgentContext, next):
+                async def process(self, context: AgentContext, call_next):
                     print(f"Agent: {context.agent.name}")
                     print(f"Messages: {len(context.messages)}")
                     print(f"Thread: {context.thread}")
@@ -145,7 +145,7 @@ class AgentContext:
                     context.metadata["start_time"] = time.time()
 
                     # Continue execution
-                    await next(context)
+                    await call_next(context)
 
                     # Access result after execution
                     print(f"Result: {context.result}")
@@ -208,7 +208,7 @@ class FunctionInvocationContext:
         function: The function being invoked.
         arguments: The validated arguments for the function.
         metadata: Metadata dictionary for sharing data between function middleware.
-        result: Function execution result. Can be observed after calling ``next()``
+        result: Function execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
 
         kwargs: Additional keyword arguments passed to the chat method that invoked this function.
@@ -220,7 +220,7 @@ class FunctionInvocationContext:
 
 
             class ValidationMiddleware(FunctionMiddleware):
-                async def process(self, context: FunctionInvocationContext, next):
+                async def process(self, context: FunctionInvocationContext, call_next):
                     print(f"Function: {context.function.name}")
                     print(f"Arguments: {context.arguments}")
 
@@ -229,7 +229,7 @@ class FunctionInvocationContext:
                         raise MiddlewareTermination("Validation failed")
 
                     # Continue execution
-                    await next(context)
+                    await call_next(context)
     """
 
     def __init__(
@@ -268,7 +268,7 @@ class ChatContext:
         options: The options for the chat request as a dict.
         stream: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between chat middleware.
-        result: Chat execution result. Can be observed after calling ``next()``
+        result: Chat execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
                 For non-streaming: should be ChatResponse.
                 For streaming: should be ResponseStream[ChatResponseUpdate, ChatResponse].
@@ -284,7 +284,7 @@ class ChatContext:
 
 
             class TokenCounterMiddleware(ChatMiddleware):
-                async def process(self, context: ChatContext, next):
+                async def process(self, context: ChatContext, call_next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
                     print(f"Model: {context.options.get('model_id')}")
@@ -293,7 +293,7 @@ class ChatContext:
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)
 
                     # Continue execution
-                    await next(context)
+                    await call_next(context)
 
                     # Access result and count output tokens
                     if context.result:
@@ -363,9 +363,9 @@ class AgentMiddleware(ABC):
                 def __init__(self, max_retries: int = 3):
                     self.max_retries = max_retries
 
-                async def process(self, context: AgentContext, next):
+                async def process(self, context: AgentContext, call_next):
                     for attempt in range(self.max_retries):
-                        await next(context)
+                        await call_next(context)
                         if context.result and not context.result.is_error:
                             break
                         print(f"Retry {attempt + 1}/{self.max_retries}")
@@ -379,7 +379,7 @@ class AgentMiddleware(ABC):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[AgentContext], Awaitable[None]],
     ) -> None:
         """Process an agent invocation.
 
@@ -387,16 +387,16 @@ class AgentMiddleware(ABC):
             context: Agent invocation context containing agent, messages, and metadata.
                     Use context.stream to determine if this is a streaming call.
                     MiddlewareTypes can set context.result to override execution, or observe
-                    the actual execution result after calling next().
+                    the actual execution result after calling call_next().
                     For non-streaming: AgentResponse
                     For streaming: AsyncIterable[AgentResponseUpdate]
-            next: Function to call the next middleware or final agent execution.
+            call_next: Function to call the next middleware or final agent execution.
                   Does not return anything - all data flows through the context.
 
         Note:
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
-            or observe context.result after calling next() for actual results.
+            or observe context.result after calling call_next() for actual results.
         """
         ...
 
@@ -422,7 +422,7 @@ class FunctionMiddleware(ABC):
                 def __init__(self):
                     self.cache = {}
 
-                async def process(self, context: FunctionInvocationContext, next):
+                async def process(self, context: FunctionInvocationContext, call_next):
                     cache_key = f"{context.function.name}:{context.arguments}"
 
                     # Check cache
@@ -431,7 +431,7 @@ class FunctionMiddleware(ABC):
                         raise MiddlewareTermination()
 
                     # Execute function
-                    await next(context)
+                    await call_next(context)
 
                     # Cache result
                     if context.result:
@@ -446,21 +446,21 @@ class FunctionMiddleware(ABC):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
     ) -> None:
         """Process a function invocation.
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
                     MiddlewareTypes can set context.result to override execution, or observe
-                    the actual execution result after calling next().
-            next: Function to call the next middleware or final function execution.
+                    the actual execution result after calling call_next().
+            call_next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 
         Note:
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
-            or observe context.result after calling next() for actual results.
+            or observe context.result after calling call_next() for actual results.
         """
         ...
 
@@ -486,14 +486,14 @@ class ChatMiddleware(ABC):
                 def __init__(self, system_prompt: str):
                     self.system_prompt = system_prompt
 
-                async def process(self, context: ChatContext, next):
+                async def process(self, context: ChatContext, call_next):
                     # Add system prompt to messages
                     from agent_framework import ChatMessage
 
                     context.messages.insert(0, ChatMessage(role="system", text=self.system_prompt))
 
                     # Continue execution
-                    await next(context)
+                    await call_next(context)
 
 
             # Use with an agent
@@ -508,7 +508,7 @@ class ChatMiddleware(ABC):
     async def process(
         self,
         context: ChatContext,
-        next: Callable[[ChatContext], Awaitable[None]],
+        call_next: Callable[[ChatContext], Awaitable[None]],
     ) -> None:
         """Process a chat client request.
 
@@ -516,16 +516,16 @@ class ChatMiddleware(ABC):
             context: Chat invocation context containing chat client, messages, options, and metadata.
                     Use context.stream to determine if this is a streaming call.
                     MiddlewareTypes can set context.result to override execution, or observe
-                    the actual execution result after calling next().
+                    the actual execution result after calling call_next().
                     For non-streaming: ChatResponse
                     For streaming: ResponseStream[ChatResponseUpdate, ChatResponse]
-            next: Function to call the next middleware or final chat execution.
+            call_next: Function to call the next middleware or final chat execution.
                   Does not return anything - all data flows through the context.
 
         Note:
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
-            or observe context.result after calling next() for actual results.
+            or observe context.result after calling call_next() for actual results.
         """
         ...
 
@@ -576,9 +576,9 @@ def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
 
 
             @agent_middleware
-            async def logging_middleware(context: AgentContext, next):
+            async def logging_middleware(context: AgentContext, call_next):
                 print(f"Before: {context.agent.name}")
-                await next(context)
+                await call_next(context)
                 print(f"After: {context.result}")
 
 
@@ -609,9 +609,9 @@ def function_middleware(func: FunctionMiddlewareCallable) -> FunctionMiddlewareC
 
 
             @function_middleware
-            async def logging_middleware(context: FunctionInvocationContext, next):
+            async def logging_middleware(context: FunctionInvocationContext, call_next):
                 print(f"Calling: {context.function.name}")
-                await next(context)
+                await call_next(context)
                 print(f"Result: {context.result}")
 
 
@@ -642,9 +642,9 @@ def chat_middleware(func: ChatMiddlewareCallable) -> ChatMiddlewareCallable:
 
 
             @chat_middleware
-            async def logging_middleware(context: ChatContext, next):
+            async def logging_middleware(context: ChatContext, call_next):
                 print(f"Messages: {len(context.messages)}")
-                await next(context)
+                await call_next(context)
                 print(f"Response: {context.result}")
 
 
@@ -669,8 +669,8 @@ class MiddlewareWrapper(Generic[TContext]):
     def __init__(self, func: Callable[[TContext, Callable[[TContext], Awaitable[None]]], Awaitable[None]]) -> None:
         self.func = func
 
-    async def process(self, context: TContext, next: Callable[[TContext], Awaitable[None]]) -> None:
-        await self.func(context, next)
+    async def process(self, context: TContext, call_next: Callable[[TContext], Awaitable[None]]) -> None:
+        await self.func(context, call_next)
 
 
 class BaseMiddlewarePipeline(ABC):
@@ -1226,7 +1226,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         sig = inspect.signature(middleware)
         params = list(sig.parameters.values())
 
-        # Must have at least 2 parameters (context and next)
+        # Must have at least 2 parameters (context and call_next)
         if len(params) >= 2:
             first_param = params[0]
             if hasattr(first_param.annotation, "__name__"):
@@ -1240,7 +1240,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         else:
             # Not enough parameters - can't be valid middleware
             raise MiddlewareException(
-                f"MiddlewareTypes function must have at least 2 parameters (context, next), "
+                f"Middleware function must have at least 2 parameters (context, call_next), "
                 f"but {middleware.__name__} has {len(params)}"
             )
     except Exception as e:

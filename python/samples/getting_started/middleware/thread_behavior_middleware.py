@@ -21,14 +21,14 @@ The example shows:
 
 - How AgentContext.thread property behaves across multiple runs
 - How middleware can access conversation history through the thread
-- The timing of when thread messages are populated (before vs after next() call)
+- The timing of when thread messages are populated (before vs after call_next() call)
 - How to track thread state changes across runs
 
 Key behaviors demonstrated:
-1. First run: context.messages is populated, context.thread is initially empty (before next())
-2. After next(): thread contains input message + response from agent
+1. First run: context.messages is populated, context.thread is initially empty (before call_next())
+2. After call_next(): thread contains input message + response from agent
 3. Second run: context.messages contains only current input, thread contains previous history
-4. After next(): thread contains full conversation history (all previous + current messages)
+4. After call_next(): thread contains full conversation history (all previous + current messages)
 """
 
 
@@ -46,7 +46,7 @@ def get_weather(
 
 async def thread_tracking_middleware(
     context: AgentContext,
-    next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[AgentContext], Awaitable[None]],
 ) -> None:
     """MiddlewareTypes that tracks and logs thread behavior across runs."""
     thread_messages = []
@@ -56,8 +56,8 @@ async def thread_tracking_middleware(
     print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
     print(f"[MiddlewareTypes pre-execution] Thread history messages: {len(thread_messages)}")
 
-    # Call next to execute the agent
-    await next(context)
+    # Call call_next to execute the agent
+    await call_next(context)
 
     # Check thread state after agent execution
     updated_thread_messages = []

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
@@ -295,7 +297,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[TAzureAIClientOptions], Generic[
         # Complete setup with core observability
         enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 

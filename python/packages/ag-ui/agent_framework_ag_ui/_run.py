@@ -2,6 +2,8 @@
 
 """Simplified AG-UI orchestration - single linear flow."""
 
+from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -742,8 +744,8 @@ def _build_messages_snapshot(
 async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
-    config: "AgentConfig",
-) -> "AsyncGenerator[BaseEvent, None]":
+    config: AgentConfig,
+) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
     This is the single entry point for all AG-UI agent runs. It follows a simple
