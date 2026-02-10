@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Linq;
@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
-using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
