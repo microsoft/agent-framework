@@ -631,12 +631,9 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     {
         context.Response.StatusCode = (int)response.StatusCode;
 
-        foreach (var header in response.Headers)
+        foreach (var header in response.Headers.Where(h => !IsHopByHopHeader(h.Key)))
         {
-            if (!IsHopByHopHeader(header.Key))
-            {
-                context.Response.Headers[header.Key] = header.Value.ToArray();
-            }
+            context.Response.Headers[header.Key] = header.Value.ToArray();
         }
 
         foreach (var header in response.Content.Headers)
