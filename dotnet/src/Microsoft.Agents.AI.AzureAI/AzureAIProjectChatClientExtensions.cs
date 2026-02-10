@@ -283,8 +283,13 @@ public static partial class AzureAIProjectChatClientExtensions
             TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
         };
 
-        // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
+        // Map reasoning options from the abstraction-level ChatOptions.Reasoning,
+        // falling back to extracting from the raw representation factory for breaking glass scenarios.
+        if (options.ChatOptions?.Reasoning is { } reasoning)
+        {
+            agentDefinition.ReasoningOptions = ToResponseReasoningOptions(reasoning);
+        }
+        else if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }
@@ -769,6 +774,36 @@ public static partial class AzureAIProjectChatClientExtensions
             throw new ArgumentException("Agent name must be 1-63 characters long, start and end with an alphanumeric character, and can only contain alphanumeric characters or hyphens.", nameof(name));
         }
         return name;
+    }
+
+    private static ResponseReasoningOptions? ToResponseReasoningOptions(ReasoningOptions reasoning)
+    {
+        ResponseReasoningEffortLevel? effortLevel = reasoning.Effort switch
+        {
+            ReasoningEffort.Low => ResponseReasoningEffortLevel.Low,
+            ReasoningEffort.Medium => ResponseReasoningEffortLevel.Medium,
+            ReasoningEffort.High => ResponseReasoningEffortLevel.High,
+            ReasoningEffort.ExtraHigh => ResponseReasoningEffortLevel.High,
+            _ => null,
+        };
+
+        ResponseReasoningSummaryVerbosity? summary = reasoning.Output switch
+        {
+            ReasoningOutput.Summary => ResponseReasoningSummaryVerbosity.Concise,
+            ReasoningOutput.Full => ResponseReasoningSummaryVerbosity.Detailed,
+            _ => null,
+        };
+
+        if (effortLevel is null && summary is null)
+        {
+            return null;
+        }
+
+        return new ResponseReasoningOptions
+        {
+            ReasoningEffortLevel = effortLevel,
+            ReasoningSummaryVerbosity = summary,
+        };
     }
 }
 
