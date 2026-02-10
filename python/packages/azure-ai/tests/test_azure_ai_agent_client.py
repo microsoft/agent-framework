@@ -788,12 +788,6 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_g
         # Verify the factory method created the tool with correct args
         mock_bing_grounding.assert_called_once_with(connection_id="test-connection-id")
 
-        # get_web_search_tool now returns a BingGroundingTool directly
-        web_search_tool = client.get_web_search_tool(bing_connection_id="test-connection-id")
-
-        # Verify the factory method created the tool with correct args
-        mock_bing_grounding.assert_called_once_with(connection_id="test-connection-id")
-
         result = await client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
         # BingGroundingTool.definitions should be extended into result
@@ -818,10 +812,6 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_g
 
         mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id")
 
-        web_search_tool = client.get_web_search_tool(bing_connection_id="direct-connection-id")
-
-        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id")
-
         result = await client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
         assert len(result) == 1
@@ -840,16 +830,6 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_custom
         mock_custom_tool = MagicMock()
         mock_custom_tool.definitions = [{"type": "bing_custom_search"}]
         mock_custom_bing.return_value = mock_custom_tool
-
-        web_search_tool = client.get_web_search_tool(
-            bing_custom_connection_id="custom-connection-id",
-            bing_custom_instance_id="custom-instance",
-        )
-
-        mock_custom_bing.assert_called_once_with(
-            connection_id="custom-connection-id",
-            instance_name="custom-instance",
-        )
 
         web_search_tool = client.get_web_search_tool(
             bing_custom_connection_id="custom-connection-id",
