@@ -151,7 +151,7 @@ class SessionContext:
             source_id = source
             attribution: dict[str, str] = {"source_id": source_id}
         else:
-            source_id = source.source_id  # type: ignore[union-attr]
+            source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
 
         copied: list[ChatMessage] = []
