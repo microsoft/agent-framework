@@ -1761,8 +1761,7 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model_id is not None:
             response.model_id = update.model_id
-    if update.continuation_token is not None:
-        response.continuation_token = update.continuation_token
+    response.continuation_token = update.continuation_token
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
