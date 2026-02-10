@@ -1166,7 +1166,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
-                additional_properties = {
+                ci_additional_properties = {
                     "output_index": event.output_index,
                     "sequence_number": event.sequence_number,
                     "item_id": event.item_id,
@@ -1178,17 +1178,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             Content.from_text(
                                 text=event.delta,
                                 raw_representation=event,
-                                additional_properties=additional_properties,
+                                additional_properties=ci_additional_properties,
                             )
                         ],
                         raw_representation=event,
-                        additional_properties=additional_properties,
+                        additional_properties=ci_additional_properties,
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.done":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
-                additional_properties = {
+                ci_additional_properties = {
                     "output_index": event.output_index,
                     "sequence_number": event.sequence_number,
                     "item_id": event.item_id,
@@ -1200,11 +1200,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             Content.from_text(
                                 text=event.code,
                                 raw_representation=event,
-                                additional_properties=additional_properties,
+                                additional_properties=ci_additional_properties,
                             )
                         ],
                         raw_representation=event,
-                        additional_properties=additional_properties,
+                        additional_properties=ci_additional_properties,
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
