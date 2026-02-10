@@ -653,4 +653,6 @@ For cross-cutting aspects, the `useJsonSchemaResponseFormat` parameter will not 
 For handling primitives and array types, option 3 was selected: wrap only for `RunAsync<T>` and do not wrap the schema provided via `ResponseFormat`.
 This avoids the issues described in the Approach 1 section note.
 
-Finally, the `StructuredOutputAgent` decorator will be implemented to provide structured output capabilities to agents without native SO support.
+Finally, it was decided not to include the `StructuredOutputAgent` decorator in the framework, since the reliability of producing structured output via an additional
+LLM call may not be sufficient for all scenarios. Instead, this pattern is provided as a sample to demonstrate how structured output can be achieved for agents without native support,
+giving users a reference implementation they can adapt to their own requirements.
