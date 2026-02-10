@@ -7,7 +7,7 @@ This sample demonstrates **parallel execution** of executors and agents in Azure
 This sample showcases three different parallel execution patterns:
 
 1. **Two Executors in Parallel** - Fan-out to multiple activities
-2. **Two Agents in Parallel** - Fan-out to multiple entities  
+2. **Two Agents in Parallel** - Fan-out to multiple entities
 3. **Mixed Execution** - Agents and executors can run concurrently
 
 ## Workflow Architecture
