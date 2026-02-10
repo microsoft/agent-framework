@@ -22,13 +22,11 @@ Usage:
 import time
 
 import pytest
-from conftest import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("12_workflow_hitl"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -37,15 +35,16 @@ class TestWorkflowHITL:
     """Tests for 12_workflow_hitl sample."""
 
     @pytest.fixture(autouse=True)
-    def _set_base_url(self, base_url: str) -> None:
-        """Store the base URL for tests."""
+    def _setup(self, base_url: str, sample_helper) -> None:
+        """Provide the helper and base URL for each test."""
         self.base_url = base_url
+        self.helper = sample_helper
 
     def _wait_for_hitl_request(self, instance_id: str, timeout: int = 40) -> dict:
         """Polls for a pending HITL request."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            status_response = SampleTestHelper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
+            status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
             if status_response.status_code == 200:
                 status = status_response.json()
                 pending_requests = status.get("pendingHumanInputRequests", [])
@@ -68,7 +67,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -87,14 +86,14 @@ class TestWorkflowHITL:
         request_id = pending_requests[0]["requestId"]
 
         # Send approval
-        approval_response = SampleTestHelper.post_json(
+        approval_response = self.helper.post_json(
             f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Content is appropriate and well-written."},
         )
         assert approval_response.status_code == 200
 
         # Wait for orchestration to complete
-        final_status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
         assert "output" in final_status
 
@@ -111,7 +110,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -125,14 +124,14 @@ class TestWorkflowHITL:
         request_id = pending_requests[0]["requestId"]
 
         # Send rejection
-        rejection_response = SampleTestHelper.post_json(
+        rejection_response = self.helper.post_json(
             f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
             {"approved": False, "reviewer_notes": "Content appears to be spam/scam material."},
         )
         assert rejection_response.status_code == 200
 
         # Wait for orchestration to complete
-        final_status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
         assert "output" in final_status
         # The output should indicate rejection
@@ -149,7 +148,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -167,13 +166,13 @@ class TestWorkflowHITL:
         pending_requests = status.get("pendingHumanInputRequests", [])
         if pending_requests:
             request_id = pending_requests[0]["requestId"]
-            SampleTestHelper.post_json(
+            self.helper.post_json(
                 f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
                 {"approved": True, "reviewer_notes": ""},
             )
 
         # Wait for completion
-        SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        self.helper.wait_for_orchestration(data["statusQueryGetUri"])
 
     def test_hitl_workflow_with_neutral_content(self) -> None:
         """Test HITL workflow with neutral content that should get medium risk."""
@@ -188,7 +187,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -201,13 +200,13 @@ class TestWorkflowHITL:
         request_id = pending_requests[0]["requestId"]
 
         # Approve
-        SampleTestHelper.post_json(
+        self.helper.post_json(
             f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Approved after review."},
         )
 
         # Wait for completion
-        final_status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
 
 

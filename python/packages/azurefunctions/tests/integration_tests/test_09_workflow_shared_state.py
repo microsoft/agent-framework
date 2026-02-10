@@ -20,13 +20,11 @@ Usage:
 """
 
 import pytest
-from conftest import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("09_workflow_shared_state"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -34,23 +32,29 @@ pytestmark = [
 class TestWorkflowSharedState:
     """Tests for 09_workflow_shared_state sample."""
 
-    def test_workflow_with_spam_email(self, base_url: str) -> None:
+    @pytest.fixture(autouse=True)
+    def _setup(self, base_url: str, sample_helper) -> None:
+        """Provide the helper and base URL for each test."""
+        self.base_url = base_url
+        self.helper = sample_helper
+
+    def test_workflow_with_spam_email(self) -> None:
         """Test workflow with spam email content - should be detected and handled as spam."""
         spam_content = "URGENT! You have won $1,000,000! Click here to claim your prize now before it expires!"
 
         # Start orchestration with spam email
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", spam_content)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", spam_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
         assert "statusQueryGetUri" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
 
-    def test_workflow_with_legitimate_email(self, base_url: str) -> None:
+    def test_workflow_with_legitimate_email(self) -> None:
         """Test workflow with legitimate email content - should generate response."""
         legitimate_content = (
             "Hi team, just a reminder about the sprint planning meeting tomorrow at 10 AM. "
@@ -58,18 +62,18 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with legitimate email
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", legitimate_content)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", legitimate_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
         assert "statusQueryGetUri" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
 
-    def test_workflow_with_phishing_email(self, base_url: str) -> None:
+    def test_workflow_with_phishing_email(self) -> None:
         """Test workflow with phishing email - should be detected as spam."""
         phishing_content = (
             "Dear Customer, Your account has been compromised! "
@@ -77,13 +81,13 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with phishing email
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", phishing_content)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", phishing_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
 
 

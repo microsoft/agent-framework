@@ -22,13 +22,11 @@ Usage:
 """
 
 import pytest
-from conftest import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("11_workflow_parallel"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -36,7 +34,13 @@ pytestmark = [
 class TestWorkflowParallel:
     """Tests for 11_workflow_parallel sample."""
 
-    def test_parallel_workflow_document_analysis(self, base_url: str) -> None:
+    @pytest.fixture(autouse=True)
+    def _setup(self, base_url: str, sample_helper) -> None:
+        """Provide the helper and base URL for each test."""
+        self.base_url = base_url
+        self.helper = sample_helper
+
+    def test_parallel_workflow_document_analysis(self) -> None:
         """Test parallel workflow with a standard document."""
         payload = {
             "document_id": "doc-test-001",
@@ -50,21 +54,21 @@ class TestWorkflowParallel:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
         assert "statusQueryGetUri" in data
 
         # Wait for completion - parallel workflows may take longer
-        status = SampleTestHelper.wait_for_orchestration_with_output(
+        status = self.helper.wait_for_orchestration_with_output(
             data["statusQueryGetUri"],
             max_wait=300,  # 5 minutes for parallel execution
         )
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
 
-    def test_parallel_workflow_short_document(self, base_url: str) -> None:
+    def test_parallel_workflow_short_document(self) -> None:
         """Test parallel workflow with a short document."""
         payload = {
             "document_id": "doc-test-002",
@@ -72,18 +76,18 @@ class TestWorkflowParallel:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
         assert "statusQueryGetUri" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
 
-    def test_parallel_workflow_technical_document(self, base_url: str) -> None:
+    def test_parallel_workflow_technical_document(self) -> None:
         """Test parallel workflow with a technical document."""
         payload = {
             "document_id": "doc-test-003",
@@ -97,16 +101,16 @@ class TestWorkflowParallel:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
         assert status["runtimeStatus"] == "Completed"
 
-    def test_workflow_status_endpoint(self, base_url: str) -> None:
+    def test_workflow_status_endpoint(self) -> None:
         """Test that the workflow status endpoint works correctly."""
         payload = {
             "document_id": "doc-test-004",
@@ -114,20 +118,20 @@ class TestWorkflowParallel:
         }
 
         # Start orchestration
-        response = SampleTestHelper.post_json(f"{base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
 
         # Check status
-        status_response = SampleTestHelper.get(f"{base_url}/api/workflow/status/{instance_id}")
+        status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
         assert status_response.status_code == 200
         status = status_response.json()
         assert "instanceId" in status
         assert status["instanceId"] == instance_id
 
         # Wait for completion
-        SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"], max_wait=300)
+        self.helper.wait_for_orchestration(data["statusQueryGetUri"], max_wait=300)
 
 
 if __name__ == "__main__":
