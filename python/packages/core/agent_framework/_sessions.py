@@ -142,7 +142,7 @@ class SessionContext:
             messages: The messages to add.
         """
         for message in messages:
-            message.additional_properties.setdefault("attribution", source_id)
+            message.additional_properties.setdefault("attribution", {"source_id": source_id})
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []
         self.context_messages[source_id].extend(messages)

@@ -57,13 +57,13 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         msg = ChatMessage(role="system", contents=["context"])
         ctx.extend_messages("rag", [msg])
-        assert msg.additional_properties["attribution"] == "rag"
+        assert msg.additional_properties["attribution"] == {"source_id": "rag"}
 
     def test_extend_messages_does_not_overwrite_existing_attribution(self) -> None:
         ctx = SessionContext(input_messages=[])
-        msg = ChatMessage(role="system", contents=["context"], additional_properties={"attribution": "custom"})
+        msg = ChatMessage(role="system", contents=["context"], additional_properties={"attribution": {"source_id": "custom"}})
         ctx.extend_messages("rag", [msg])
-        assert msg.additional_properties["attribution"] == "custom"
+        assert msg.additional_properties["attribution"] == {"source_id": "custom"}
 
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
