@@ -168,7 +168,7 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
 OptionsT = TypeVar("OptionsT", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
 
-def ui_generator_agent(client: SupportsChatGetResponse[TOptions]) -> AgentFrameworkAgent:
+def ui_generator_agent(client: SupportsChatGetResponse[OptionsT]) -> AgentFrameworkAgent:
     """Create a UI generator agent with custom React component rendering.
 
     Args:
