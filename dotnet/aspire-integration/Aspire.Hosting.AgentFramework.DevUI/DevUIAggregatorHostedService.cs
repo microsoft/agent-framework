@@ -1,5 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
-// The .NET Foundation licenses this file to you under the MIT license.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -34,7 +33,6 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     private WebApplication? _app;
     private readonly DevUIResource _resource;
     private readonly ILogger _logger;
-    private int _allocatedPort;
 
     // Frontend resources loaded from the Microsoft.Agents.AI.DevUI assembly (null if unavailable)
     private readonly Dictionary<string, (string ResourceName, string ContentType)>? _frontendResources;
@@ -46,15 +44,15 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         DevUIResource resource,
         ILogger logger)
     {
-        _resource = resource;
-        _logger = logger;
-        _frontendResources = LoadFrontendResources(logger);
+        this._resource = resource;
+        this._logger = logger;
+        this._frontendResources = LoadFrontendResources(logger);
     }
 
     /// <summary>
     /// Gets the port the aggregator is listening on, available after <see cref="StartAsync"/>.
     /// </summary>
-    internal int AllocatedPort => _allocatedPort;
+    internal int AllocatedPort { get; private set; }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -67,39 +65,39 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
                 AllowAutoRedirect = false
             });
 
-        _app = builder.Build();
-        _app.Urls.Add("http://127.0.0.1:0");
+        this._app = builder.Build();
+        this._app.Urls.Add("http://127.0.0.1:0");
 
-        MapRoutes(_app);
+        this.MapRoutes(this._app);
 
-        await _app.StartAsync(cancellationToken).ConfigureAwait(false);
+        await this._app.StartAsync(cancellationToken).ConfigureAwait(false);
 
-        var serverAddresses = _app.Services.GetRequiredService<IServer>()
+        var serverAddresses = this._app.Services.GetRequiredService<IServer>()
             .Features.Get<IServerAddressesFeature>();
 
         if (serverAddresses is not null)
         {
             var address = serverAddresses.Addresses.First();
             var uri = new Uri(address);
-            _allocatedPort = uri.Port;
-            _logger.LogInformation("DevUI aggregator started on port {Port}", _allocatedPort);
+            this.AllocatedPort = uri.Port;
+            this._logger.LogInformation("DevUI aggregator started on port {Port}", this.AllocatedPort);
         }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_app is not null)
+        if (this._app is not null)
         {
-            await _app.StopAsync(cancellationToken).ConfigureAwait(false);
+            await this._app.StopAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_app is not null)
+        if (this._app is not null)
         {
-            await _app.DisposeAsync().ConfigureAwait(false);
-            _app = null;
+            await this._app.DisposeAsync().ConfigureAwait(false);
+            this._app = null;
         }
     }
 
@@ -169,11 +167,11 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
 
         // Try embedded resources first
-        if (_frontendResources is not null)
+        if (this._frontendResources is not null)
         {
             var resourcePath = string.IsNullOrEmpty(path) ? "index.html" : path;
 
-            if (await TryServeResourceAsync(context, resourcePath).ConfigureAwait(false))
+            if (await this.TryServeResourceAsync(context, resourcePath).ConfigureAwait(false))
             {
                 return;
             }
@@ -181,7 +179,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             // SPA fallback: serve index.html for paths without a file extension (client-side routing)
             if (!resourcePath.Contains('.', StringComparison.Ordinal))
             {
-                if (await TryServeResourceAsync(context, "index.html").ConfigureAwait(false))
+                if (await this.TryServeResourceAsync(context, "index.html").ConfigureAwait(false))
                 {
                     return;
                 }
@@ -192,7 +190,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
 
         // Fallback: proxy from the first backend that serves /devui
-        var backends = ResolveBackends();
+        var backends = this.ResolveBackends();
         var firstBackendUrl = backends.Values.FirstOrDefault();
 
         if (firstBackendUrl is null)
@@ -211,14 +209,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     private async Task<bool> TryServeResourceAsync(HttpContext context, string resourcePath)
     {
-        if (_frontendResources is null)
+        if (this._frontendResources is null)
         {
             return false;
         }
 
         var key = resourcePath.Replace('.', '/');
 
-        if (!_frontendResources.TryGetValue(key, out var entry))
+        if (!this._frontendResources.TryGetValue(key, out var entry))
         {
             return false;
         }
@@ -269,14 +267,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 
         // Intercept API calls for multi-backend aggregation and routing
-        app.MapGet("/v1/entities", (Delegate)AggregateEntitiesAsync);
-        app.MapGet("/v1/entities/{**entityPath}", RouteEntityInfoAsync);
-        app.MapPost("/v1/responses", RouteResponsesAsync);
-        app.Map("/v1/conversations/{**path}", ProxyConversationsAsync);
+        app.MapGet("/v1/entities", (Delegate)this.AggregateEntitiesAsync);
+        app.MapGet("/v1/entities/{**entityPath}", this.RouteEntityInfoAsync);
+        app.MapPost("/v1/responses", this.RouteResponsesAsync);
+        app.Map("/v1/conversations/{**path}", this.ProxyConversationsAsync);
         app.MapGet("/meta", GetMeta);
 
         // Serve the DevUI frontend from embedded assembly resources
-        app.Map("/devui/{**path}", ServeDevUIFrontendAsync);
+        app.Map("/devui/{**path}", this.ServeDevUIFrontendAsync);
     }
 
     /// <summary>
@@ -285,14 +283,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     /// </summary>
     private Dictionary<string, string> ResolveBackends()
     {
-        if (_cachedBackends is not null)
+        if (this._cachedBackends is not null)
         {
-            return _cachedBackends;
+            return this._cachedBackends;
         }
 
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var annotation in _resource.Annotations.OfType<AgentServiceAnnotation>())
+        foreach (var annotation in this._resource.Annotations.OfType<AgentServiceAnnotation>())
         {
             if (annotation.AgentService is not IResourceWithEndpoints rwe)
             {
@@ -311,14 +309,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Backend '{Prefix}' endpoint not yet available", prefix);
+                this._logger.LogDebug(ex, "Backend '{Prefix}' endpoint not yet available", prefix);
             }
         }
 
         // Only cache if we resolved at least one backend
         if (result.Count > 0)
         {
-            _cachedBackends = result;
+            this._cachedBackends = result;
         }
 
         return result;
@@ -326,10 +324,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     private async Task<IResult> AggregateEntitiesAsync(HttpContext context)
     {
-        var backends = ResolveBackends();
+        var backends = this.ResolveBackends();
         var allEntities = new JsonArray();
 
-        foreach (var annotation in _resource.Annotations.OfType<AgentServiceAnnotation>())
+        foreach (var annotation in this._resource.Annotations.OfType<AgentServiceAnnotation>())
         {
             var prefix = annotation.EntityIdPrefix ?? annotation.AgentService.Name;
 
@@ -369,7 +367,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning(
+                    this._logger.LogWarning(
                         "Failed to fetch entities from backend '{Prefix}' at {Url}: {Status}",
                         prefix, baseUrl, response.StatusCode);
                     continue;
@@ -406,7 +404,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogWarning(ex, "Error fetching entities from backend '{Prefix}' at {Url}", prefix, baseUrl);
+                this._logger.LogWarning(ex, "Error fetching entities from backend '{Prefix}' at {Url}", prefix, baseUrl);
             }
         }
 
@@ -415,7 +413,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     private async Task RouteEntityInfoAsync(HttpContext context, string entityPath)
     {
-        var (backendUrl, actualPath) = ResolveBackend(entityPath);
+        var (backendUrl, actualPath) = this.ResolveBackend(entityPath);
 
         if (backendUrl is null)
         {
@@ -439,7 +437,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         if (entityId is null)
         {
-            var firstBackend = ResolveBackends().Values.FirstOrDefault();
+            var firstBackend = this.ResolveBackends().Values.FirstOrDefault();
             if (firstBackend is null)
             {
                 context.Response.StatusCode = StatusCodes.Status502BadGateway;
@@ -450,7 +448,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             return;
         }
 
-        var (backendUrl, actualEntityId) = ResolveBackend(entityId);
+        var (backendUrl, actualEntityId) = this.ResolveBackend(entityId);
 
         if (backendUrl is null)
         {
@@ -476,7 +474,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         var agentId = context.Request.Query["agent_id"].FirstOrDefault();
         if (agentId is not null)
         {
-            (backendUrl, _) = ResolveBackend(agentId);
+            (backendUrl, _) = this.ResolveBackend(agentId);
         }
 
         if (backendUrl is null && context.Request.ContentLength > 0)
@@ -489,7 +487,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             if (entityId is not null)
             {
                 string actualId;
-                (backendUrl, actualId) = ResolveBackend(entityId);
+                (backendUrl, actualId) = this.ResolveBackend(entityId);
 
                 if (backendUrl is not null)
                 {
@@ -513,7 +511,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
 
             // Couldn't determine backend from body; proxy raw bytes to first backend
-            backendUrl = ResolveBackends().Values.FirstOrDefault();
+            backendUrl = this.ResolveBackends().Values.FirstOrDefault();
             if (backendUrl is null)
             {
                 context.Response.StatusCode = StatusCodes.Status502BadGateway;
@@ -527,7 +525,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
 
         // No body and no query param — route to first backend
-        backendUrl ??= ResolveBackends().Values.FirstOrDefault();
+        backendUrl ??= this.ResolveBackends().Values.FirstOrDefault();
         if (backendUrl is null)
         {
             context.Response.StatusCode = StatusCodes.Status502BadGateway;
@@ -596,7 +594,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     private (string? BackendUrl, string ActualPath) ResolveBackend(string prefixedId)
     {
-        var backends = ResolveBackends();
+        var backends = this.ResolveBackends();
         var slashIndex = prefixedId.IndexOf('/');
 
         if (slashIndex > 0)

@@ -1,5 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
-// The .NET Foundation licenses this file to you under the MIT license.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net.Sockets;
 
@@ -19,8 +18,6 @@ public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints
 {
     internal const string PrimaryEndpointName = "http";
 
-    private EndpointReference? _primaryEndpoint;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="DevUIResource"/> class with endpoint annotations.
     /// </summary>
@@ -28,7 +25,7 @@ public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints
     /// <param name="port">An optional fixed port. If <c>null</c>, a dynamic port is assigned.</param>
     internal DevUIResource(string name, int? port) : this(name)
     {
-        Annotations.Add(new EndpointAnnotation(
+        this.Annotations.Add(new EndpointAnnotation(
             ProtocolType.Tcp,
             uriScheme: "http",
             name: PrimaryEndpointName,
@@ -42,5 +39,5 @@ public class DevUIResource(string name) : Resource(name), IResourceWithEndpoints
     /// <summary>
     /// Gets the primary HTTP endpoint for the DevUI web interface.
     /// </summary>
-    public EndpointReference PrimaryEndpoint => _primaryEndpoint ??= new(this, PrimaryEndpointName);
+    public EndpointReference PrimaryEndpoint => field ??= new(this, PrimaryEndpointName);
 }
