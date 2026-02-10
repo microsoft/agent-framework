@@ -134,12 +134,15 @@ class SessionContext:
         """Add context messages from a specific source.
 
         Messages are stored keyed by source_id, maintaining insertion order
-        based on provider execution order.
+        based on provider execution order. Each message gets an ``attribution``
+        marker in ``additional_properties`` for downstream filtering.
 
         Args:
             source_id: The provider source_id adding these messages.
             messages: The messages to add.
         """
+        for message in messages:
+            message.additional_properties.setdefault("attribution", source_id)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []
         self.context_messages[source_id].extend(messages)

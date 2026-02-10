@@ -53,6 +53,18 @@ class TestSessionContext:
         ctx.extend_messages("c", [ChatMessage(role="user", contents=["c"])])
         assert list(ctx.context_messages.keys()) == ["a", "b", "c"]
 
+    def test_extend_messages_sets_attribution(self) -> None:
+        ctx = SessionContext(input_messages=[])
+        msg = ChatMessage(role="system", contents=["context"])
+        ctx.extend_messages("rag", [msg])
+        assert msg.additional_properties["attribution"] == "rag"
+
+    def test_extend_messages_does_not_overwrite_existing_attribution(self) -> None:
+        ctx = SessionContext(input_messages=[])
+        msg = ChatMessage(role="system", contents=["context"], additional_properties={"attribution": "custom"})
+        ctx.extend_messages("rag", [msg])
+        assert msg.additional_properties["attribution"] == "custom"
+
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_instructions("sys", "Be helpful")
