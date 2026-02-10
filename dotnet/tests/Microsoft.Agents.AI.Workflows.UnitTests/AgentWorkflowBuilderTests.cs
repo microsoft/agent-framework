@@ -405,6 +405,10 @@ public class AgentWorkflowBuilderTests
                 output = e;
                 break;
             }
+            else if (evt is WorkflowErrorEvent errorEvent)
+            {
+                Assert.Fail($"Workflow execution failed with error: {errorEvent.Exception}");
+            }
         }
 
         return (sb.ToString(), output?.As<List<ChatMessage>>());
