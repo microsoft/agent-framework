@@ -134,7 +134,13 @@ public abstract partial class AIAgent
         options = options?.Clone() ?? new AgentRunOptions();
         options.ResponseFormat = responseFormat;
 
-        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken)
+            // ConfigureAwait(true) is intentional: the caller's synchronization context must be
+            // preserved because some agent implementations (e.g., DurableAIAgent) may run inside
+            // a durable orchestration whose dispatcher requires continuations to execute on the
+            // orchestration's main thread. Using ConfigureAwait(false) would schedule the
+            // continuation on an arbitrary thread, causing the orchestration to get stuck.
+            .ConfigureAwait(true);
 
         return new AgentResponse<T>(response, serializerOptions) { IsWrappedInObject = isWrappedInObject };
     }
