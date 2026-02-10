@@ -1164,6 +1164,24 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.reasoning_summary_text.done":
                 contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.delta":
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=event.item_id,
+                        inputs=[Content.from_text(text=event.delta, raw_representation=event)],
+                        raw_representation=event,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.done":
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=event.item_id,
+                        inputs=[Content.from_text(text=event.code, raw_representation=event)],
+                        raw_representation=event,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
