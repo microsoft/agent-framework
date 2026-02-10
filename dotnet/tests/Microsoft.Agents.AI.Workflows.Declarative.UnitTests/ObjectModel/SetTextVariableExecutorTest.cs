@@ -48,8 +48,6 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
                 variableName,
                 textValue);
 
-        this.State.Set(variableName, FormulaValue.New(textValue));
-
         // Act
         SetTextVariableExecutor action = new(model, this.State);
         await this.ExecuteAsync(action);
