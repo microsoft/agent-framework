@@ -43,9 +43,20 @@ from agent_framework import (
 )
 from agent_framework.observability import AgentTelemetryLayer
 
-__all__ = ["A2AAgent"]
+__all__ = ["A2AAgent", "A2AContinuationToken"]
 
 URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+
+
+class A2AContinuationToken(ContinuationToken):
+    """Continuation token for A2A protocol long-running tasks."""
+
+    task_id: str
+    """A2A protocol task ID."""
+    context_id: str
+    """A2A protocol context ID."""
+
+
 TERMINAL_TASK_STATES = [
     TaskState.completed,
     TaskState.failed,
@@ -202,7 +213,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
-        continuation_token: ContinuationToken | None = None,
+        continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
@@ -214,7 +225,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
-        continuation_token: ContinuationToken | None = None,
+        continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
@@ -225,7 +236,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
-        continuation_token: ContinuationToken | None = None,
+        continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
@@ -339,13 +350,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         return []
 
     @staticmethod
-    def _build_continuation_token(task: Task) -> ContinuationToken | None:
-        """Build a ContinuationToken from an A2A Task if it is still in progress."""
+    def _build_continuation_token(task: Task) -> A2AContinuationToken | None:
+        """Build an A2AContinuationToken from an A2A Task if it is still in progress."""
         if task.status.state in IN_PROGRESS_TASK_STATES:
-            return ContinuationToken(task_id=task.id, context_id=task.context_id)
+            return A2AContinuationToken(task_id=task.id, context_id=task.context_id)
         return None
 
-    async def poll_task(self, continuation_token: ContinuationToken) -> AgentResponse[Any]:
+    async def poll_task(self, continuation_token: A2AContinuationToken) -> AgentResponse[Any]:
         """Poll for the current state of a long-running A2A task.
 
         Unlike ``run(continuation_token=...)``, which resubscribes to the SSE

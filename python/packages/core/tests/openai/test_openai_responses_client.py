@@ -2440,10 +2440,10 @@ async def test_integration_streaming_file_search() -> None:
 
 
 def test_continuation_token_json_serializable() -> None:
-    """Test that ContinuationToken is a plain dict and JSON-serializable."""
-    from agent_framework import ContinuationToken
+    """Test that OpenAIContinuationToken is a plain dict and JSON-serializable."""
+    from agent_framework.openai import OpenAIContinuationToken
 
-    token = ContinuationToken(response_id="resp_abc123")
+    token = OpenAIContinuationToken(response_id="resp_abc123")
     assert token["response_id"] == "resp_abc123"
 
     # JSON round-trip
@@ -2454,9 +2454,9 @@ def test_continuation_token_json_serializable() -> None:
 
 def test_chat_response_with_continuation_token() -> None:
     """Test that ChatResponse accepts and stores continuation_token."""
-    from agent_framework import ContinuationToken
+    from agent_framework.openai import OpenAIContinuationToken
 
-    token = ContinuationToken(response_id="resp_123")
+    token = OpenAIContinuationToken(response_id="resp_123")
     response = ChatResponse(
         messages=ChatMessage(role="assistant", contents=[Content.from_text(text="Hello")]),
         response_id="resp_123",
@@ -2476,9 +2476,9 @@ def test_chat_response_without_continuation_token() -> None:
 
 def test_chat_response_update_with_continuation_token() -> None:
     """Test that ChatResponseUpdate accepts and stores continuation_token."""
-    from agent_framework import ContinuationToken
+    from agent_framework.openai import OpenAIContinuationToken
 
-    token = ContinuationToken(response_id="resp_456")
+    token = OpenAIContinuationToken(response_id="resp_456")
     update = ChatResponseUpdate(
         contents=[Content.from_text(text="chunk")],
         role="assistant",
@@ -2490,9 +2490,10 @@ def test_chat_response_update_with_continuation_token() -> None:
 
 def test_agent_response_with_continuation_token() -> None:
     """Test that AgentResponse accepts and stores continuation_token."""
-    from agent_framework import AgentResponse, ContinuationToken
+    from agent_framework import AgentResponse
+    from agent_framework.openai import OpenAIContinuationToken
 
-    token = ContinuationToken(response_id="resp_789")
+    token = OpenAIContinuationToken(response_id="resp_789")
     response = AgentResponse(
         messages=ChatMessage(role="assistant", contents=[Content.from_text(text="done")]),
         continuation_token=token,
@@ -2503,9 +2504,10 @@ def test_agent_response_with_continuation_token() -> None:
 
 def test_agent_response_update_with_continuation_token() -> None:
     """Test that AgentResponseUpdate accepts and stores continuation_token."""
-    from agent_framework import AgentResponseUpdate, ContinuationToken
+    from agent_framework import AgentResponseUpdate
+    from agent_framework.openai import OpenAIContinuationToken
 
-    token = ContinuationToken(response_id="resp_012")
+    token = OpenAIContinuationToken(response_id="resp_012")
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="streaming")],
         role="assistant",

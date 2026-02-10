@@ -25,11 +25,11 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatMessage,
     Content,
-    ContinuationToken,
 )
 from agent_framework.a2a import A2AAgent
 from pytest import fixture, raises
 
+from agent_framework_a2a import A2AContinuationToken
 from agent_framework_a2a._agent import _get_uri_data  # type: ignore
 
 
@@ -714,7 +714,7 @@ async def test_resume_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_clien
     task = Task(id="task-resume", context_id="ctx-r", status=status, artifacts=[artifact])
     mock_a2a_client.resubscribe_responses.append((task, None))
 
-    token = ContinuationToken(task_id="task-resume", context_id="ctx-r")
+    token = A2AContinuationToken(task_id="task-resume", context_id="ctx-r")
     response = await a2a_agent.run(continuation_token=token)
 
     assert isinstance(response, AgentResponse)
@@ -738,7 +738,7 @@ async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock
     task_done = Task(id="task-rs", context_id="ctx-rs", status=status_done, artifacts=[artifact])
     mock_a2a_client.resubscribe_responses.extend([(task_wip, None), (task_done, None)])
 
-    token = ContinuationToken(task_id="task-rs", context_id="ctx-rs")
+    token = A2AContinuationToken(task_id="task-rs", context_id="ctx-rs")
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run(stream=True, continuation_token=token, background=True):
         updates.append(update)
@@ -756,7 +756,7 @@ async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA
     status = TaskStatus(state=TaskState.working, message=None)
     mock_a2a_client.get_task_response = Task(id="task-poll", context_id="ctx-p", status=status)
 
-    token = ContinuationToken(task_id="task-poll", context_id="ctx-p")
+    token = A2AContinuationToken(task_id="task-poll", context_id="ctx-p")
     response = await a2a_agent.poll_task(token)
 
     assert response.continuation_token is not None
@@ -775,7 +775,7 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
         id="task-poll-done", context_id="ctx-pd", status=status, artifacts=[artifact]
     )
 
-    token = ContinuationToken(task_id="task-poll-done", context_id="ctx-pd")
+    token = A2AContinuationToken(task_id="task-poll-done", context_id="ctx-pd")
     response = await a2a_agent.poll_task(token)
 
     assert response.continuation_token is None

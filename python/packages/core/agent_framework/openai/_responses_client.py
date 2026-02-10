@@ -99,7 +99,14 @@ if TYPE_CHECKING:
 logger = get_logger("agent_framework.openai")
 
 
-__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+__all__ = ["OpenAIContinuationToken", "OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+
+
+class OpenAIContinuationToken(ContinuationToken):
+    """Continuation token for OpenAI Responses API background operations."""
+
+    response_id: str
+    """OpenAI Responses API response ID."""
 
 
 # region OpenAI Responses Options TypedDict
@@ -197,7 +204,7 @@ class OpenAIResponsesOptions(ChatOptions[ResponseFormatT], Generic[ResponseForma
     that can be used to poll for the result.
     See: https://platform.openai.com/docs/guides/background"""
 
-    continuation_token: ContinuationToken
+    continuation_token: OpenAIContinuationToken
     """Token for resuming or polling a long-running background operation.
     Pass the ``continuation_token`` from a previous response to poll for
     completion or resume a streaming response."""
@@ -278,7 +285,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        continuation_token: ContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
+        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1112,7 +1119,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             args["response_format"] = response_format
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):
-            args["continuation_token"] = ContinuationToken(response_id=response.id)
+            args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
         return ChatResponse(**args)
 
     def _parse_chunk_from_openai(
@@ -1126,7 +1133,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         contents: list[Content] = []
         conversation_id: str | None = None
         response_id: str | None = None
-        continuation_token: ContinuationToken | None = None
+        continuation_token: OpenAIContinuationToken | None = None
         model = self.model_id
         match event.type:
             # types:
@@ -1256,11 +1263,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 if event.response.status and event.response.status in ("in_progress", "queued"):
-                    continuation_token = ContinuationToken(response_id=event.response.id)
+                    continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
-                continuation_token = ContinuationToken(response_id=event.response.id)
+                continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))

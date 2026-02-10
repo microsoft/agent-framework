@@ -1801,15 +1801,15 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
 # region ContinuationToken
 
 
-class ContinuationToken(TypedDict, total=False):
+class ContinuationToken(TypedDict):
     """Opaque token for resuming long-running agent operations.
 
     A JSON-serializable dict used to poll for completion or resume a
     streaming response.  Presence on a response indicates the operation
     is still in progress; ``None`` means the operation is complete.
 
-    Each provider populates its own fields; consumers should treat the
-    token as opaque and simply pass it back to the same agent.
+    Each provider subclasses this with its own fields; consumers should
+    treat the token as opaque and simply pass it back to the same agent.
 
     Examples:
         .. code-block:: python
@@ -1826,13 +1826,6 @@ class ContinuationToken(TypedDict, total=False):
                 options={"continuation_token": token},
             )
     """
-
-    response_id: str
-    """OpenAI Responses API response ID."""
-    task_id: str
-    """A2A protocol task ID."""
-    context_id: str
-    """A2A protocol context ID."""
 
 
 # endregion
