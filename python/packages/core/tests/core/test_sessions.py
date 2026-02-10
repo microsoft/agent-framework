@@ -203,7 +203,7 @@ class TestHistoryProviderBase:
     def test_default_flags(self) -> None:
         provider = ConcreteHistoryProvider("mem")
         assert provider.load_messages is True
-        assert provider.store_responses is True
+        assert provider.store_outputs is True
         assert provider.store_inputs is True
         assert provider.store_context_messages is False
         assert provider.store_context_from is None
@@ -257,7 +257,7 @@ class TestHistoryProviderBase:
     async def test_after_run_skips_responses_when_disabled(self) -> None:
         from agent_framework import AgentResponse
 
-        provider = ConcreteHistoryProvider("mem", store_responses=False)
+        provider = ConcreteHistoryProvider("mem", store_outputs=False)
         ctx = SessionContext(session_id="s1", input_messages=[ChatMessage(role="user", contents=["hello"])])
         ctx._response = AgentResponse(messages=[ChatMessage(role="assistant", contents=["hi"])])
         await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]

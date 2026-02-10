@@ -24,6 +24,16 @@ from ._types import AgentResponse, ChatMessage
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
 
+
+__all__ = [
+    "AgentSession",
+    "BaseContextProvider",
+    "BaseHistoryProvider",
+    "InMemoryHistoryProvider",
+    "SessionContext",
+]
+
+
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
@@ -309,10 +319,10 @@ class BaseHistoryProvider(BaseContextProvider):
     Attributes:
         load_messages: Whether to load messages before invocation (default True).
             When False, the agent skips calling ``before_run`` entirely.
-        store_responses: Whether to store response messages (default True).
         store_inputs: Whether to store input messages (default True).
         store_context_messages: Whether to store context from other providers (default False).
         store_context_from: If set, only store context from these source_ids.
+        store_outputs: Whether to store response messages (default True).
     """
 
     def __init__(
@@ -320,27 +330,27 @@ class BaseHistoryProvider(BaseContextProvider):
         source_id: str,
         *,
         load_messages: bool = True,
-        store_responses: bool = True,
         store_inputs: bool = True,
         store_context_messages: bool = False,
         store_context_from: set[str] | None = None,
+        store_outputs: bool = True,
     ):
         """Initialize the history provider.
 
         Args:
             source_id: Unique identifier for this provider instance.
             load_messages: Whether to load messages before invocation.
-            store_responses: Whether to store response messages.
             store_inputs: Whether to store input messages.
             store_context_messages: Whether to store context from other providers.
             store_context_from: If set, only store context from these source_ids.
+            store_outputs: Whether to store response messages.
         """
         super().__init__(source_id)
         self.load_messages = load_messages
-        self.store_responses = store_responses
         self.store_inputs = store_inputs
         self.store_context_messages = store_context_messages
         self.store_context_from = store_context_from
+        self.store_outputs = store_outputs
 
     @abstractmethod
     async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[ChatMessage]:
@@ -399,7 +409,7 @@ class BaseHistoryProvider(BaseContextProvider):
         messages_to_store.extend(self._get_context_messages_to_store(context))
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
-        if self.store_responses and context.response and context.response.messages:
+        if self.store_outputs and context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
@@ -510,12 +520,3 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
         my_state = state.setdefault(self.source_id, {})
         existing = my_state.get("messages", [])
         my_state["messages"] = [*existing, *messages]
-
-
-__all__ = [
-    "AgentSession",
-    "BaseContextProvider",
-    "BaseHistoryProvider",
-    "InMemoryHistoryProvider",
-    "SessionContext",
-]

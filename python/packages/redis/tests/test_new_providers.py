@@ -255,7 +255,7 @@ class TestRedisHistoryProviderInit:
         assert provider.key_prefix == "chat_messages"
         assert provider.max_messages is None
         assert provider.load_messages is True
-        assert provider.store_responses is True
+        assert provider.store_outputs is True
         assert provider.store_inputs is True
 
     def test_custom_params(self, mock_redis_client: MagicMock):
@@ -267,14 +267,14 @@ class TestRedisHistoryProviderInit:
                 key_prefix="custom",
                 max_messages=50,
                 load_messages=False,
-                store_responses=False,
+                store_outputs=False,
                 store_inputs=False,
             )
 
         assert provider.key_prefix == "custom"
         assert provider.max_messages == 50
         assert provider.load_messages is False
-        assert provider.store_responses is False
+        assert provider.store_outputs is False
         assert provider.store_inputs is False
 
     def test_no_redis_url_or_credential_raises(self):
@@ -444,7 +444,7 @@ class TestRedisHistoryProviderBeforeAfterRun:
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
             provider = _RedisHistoryProvider(
-                "mem", redis_url="redis://localhost:6379", store_inputs=False, store_responses=False
+                "mem", redis_url="redis://localhost:6379", store_inputs=False, store_outputs=False
             )
 
         session = AgentSession(session_id="test")

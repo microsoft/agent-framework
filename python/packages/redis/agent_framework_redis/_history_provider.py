@@ -47,7 +47,7 @@ class _RedisHistoryProvider(BaseHistoryProvider):
         key_prefix: str = "chat_messages",
         max_messages: int | None = None,
         load_messages: bool = True,
-        store_responses: bool = True,
+        store_outputs: bool = True,
         store_inputs: bool = True,
         store_context_messages: bool = False,
         store_context_from: set[str] | None = None,
@@ -69,7 +69,7 @@ class _RedisHistoryProvider(BaseHistoryProvider):
                 When exceeded, oldest messages are automatically trimmed.
                 None means unlimited storage.
             load_messages: Whether to load messages before invocation.
-            store_responses: Whether to store response messages.
+            store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
             store_context_messages: Whether to store context from other providers.
             store_context_from: If set, only store context from these source_ids.
@@ -82,7 +82,7 @@ class _RedisHistoryProvider(BaseHistoryProvider):
         super().__init__(
             source_id,
             load_messages=load_messages,
-            store_responses=store_responses,
+            store_outputs=store_outputs,
             store_inputs=store_inputs,
             store_context_messages=store_context_messages,
             store_context_from=store_context_from,
