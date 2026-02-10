@@ -72,7 +72,6 @@ Samples should be over-documented:
 
 ## Guidelines
 
-- **Clear and concise** — demonstrate one feature per sample; split if too complex
 - **Incremental complexity** — start simple, build up (step1, step2, ...)
 - **Getting started naming**: `step<number>_<name>.py`
 - When modifying samples, update associated README files

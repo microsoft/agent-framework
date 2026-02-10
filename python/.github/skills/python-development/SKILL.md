@@ -23,6 +23,8 @@ Every `.py` file must start with:
 - Use `from __future__ import annotations` to enable postponed evaluation
 - Use suffix `T` for TypeVar names: `ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)`
 - Use `Mapping` instead of `MutableMapping` for read-only input parameters
+- Prefer `# type: ignore[...]` over unnecessary casts, or `isinstance` checks, when these are internally called and executed methods
+    But make sure the ignore is specific for both mypy and pyright so that we don't miss other mistakes
 
 ## Function Parameters
 
@@ -60,19 +62,8 @@ def equal(arg1: str, arg2: str) -> bool:
 ```
 
 - Always document Agent Framework specific exceptions
+- Explicitly use `Keyword Args` when applicable
 - Only document standard Python exceptions when the condition is non-obvious
-
-## Logging
-
-Use the centralized logging system, never direct `import logging`:
-
-```python
-from agent_framework import get_logger
-
-logger = get_logger()
-# For subpackages:
-logger = get_logger('agent_framework.azure')
-```
 
 ## Import Structure
 
@@ -108,7 +99,6 @@ from ._types import ChatMessage, ChatResponse
 ## Style
 
 - Line length: 120 characters
-- Avoid excessive comments; prefer clear code
 - Format only files you changed, not the entire codebase
 - Prefer attributes over inheritance when parameters are mostly the same
 - Async by default — assume everything is asynchronous

@@ -95,14 +95,6 @@ pip install agent-framework               # Same as core[all]
 pip install agent-framework-azure-ai      # Specific connector (pulls in core)
 ```
 
-## Building and Publishing
-
-```bash
-uv run poe build          # Build all packages
-uv run poe clean-dist     # Clean dist directories
-uv run poe publish        # Publish to PyPI
-```
-
 ## Maintaining Documentation
 
 When changing a package, check if its `AGENTS.md` needs updates:
