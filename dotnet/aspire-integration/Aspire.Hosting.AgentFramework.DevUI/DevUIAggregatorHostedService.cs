@@ -37,9 +37,6 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     // Frontend resources loaded from the Microsoft.Agents.AI.DevUI assembly (null if unavailable)
     private readonly Dictionary<string, (string ResourceName, string ContentType)>? _frontendResources;
 
-    // Lazily resolved and cached backend map: prefix → base URL
-    private Dictionary<string, string>? _cachedBackends;
-
     public DevUIAggregatorHostedService(
         DevUIResource resource,
         ILogger logger)
@@ -279,15 +276,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     /// <summary>
     /// Resolves backend URLs from the resource's <see cref="AgentServiceAnnotation"/> annotations.
-    /// Results are cached after first successful resolution of at least one backend.
+    /// This method does not cache results to ensure late-allocated backends are always discovered.
     /// </summary>
     private Dictionary<string, string> ResolveBackends()
     {
-        if (this._cachedBackends is not null)
-        {
-            return this._cachedBackends;
-        }
-
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var annotation in this._resource.Annotations.OfType<AgentServiceAnnotation>())
@@ -311,12 +303,6 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             {
                 this._logger.LogDebug(ex, "Backend '{Prefix}' endpoint not yet available", prefix);
             }
-        }
-
-        // Only cache if we resolved at least one backend
-        if (result.Count > 0)
-        {
-            this._cachedBackends = result;
         }
 
         return result;
@@ -470,12 +456,18 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     {
         // Try to determine the backend from agent_id query param or request body
         string? backendUrl = null;
+        string? actualAgentId = null;
 
         var agentId = context.Request.Query["agent_id"].FirstOrDefault();
         if (agentId is not null)
         {
-            (backendUrl, _) = this.ResolveBackend(agentId);
+            (backendUrl, actualAgentId) = this.ResolveBackend(agentId);
         }
+
+        // Build query string with rewritten agent_id if we resolved from query param
+        var queryString = (agentId is not null && actualAgentId is not null)
+            ? RewriteAgentIdInQueryString(context.Request.QueryString, actualAgentId)
+            : context.Request.QueryString.ToString();
 
         if (backendUrl is null && context.Request.ContentLength > 0)
         {
@@ -504,8 +496,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
                     var rewritten = JsonSerializer.SerializeToUtf8Bytes(json);
                     var targetPath = string.IsNullOrEmpty(path) ? "/v1/conversations" : $"/v1/conversations/{path}";
+
+                    // Also rewrite query string agent_id if present
+                    var bodyQueryString = (agentId is not null)
+                        ? RewriteAgentIdInQueryString(context.Request.QueryString, actualId)
+                        : context.Request.QueryString.ToString();
+
                     await ProxyRequestAsync(
-                        context, backendUrl, targetPath + context.Request.QueryString, rewritten).ConfigureAwait(false);
+                        context, backendUrl, targetPath + bodyQueryString, rewritten).ConfigureAwait(false);
                     return;
                 }
             }
@@ -520,7 +518,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
             var targetPathFallback = string.IsNullOrEmpty(path) ? "/v1/conversations" : $"/v1/conversations/{path}";
             await ProxyRequestAsync(
-                context, backendUrl, targetPathFallback + context.Request.QueryString, bodyBytes).ConfigureAwait(false);
+                context, backendUrl, targetPathFallback + queryString, bodyBytes).ConfigureAwait(false);
             return;
         }
 
@@ -534,7 +532,23 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         var convPath = string.IsNullOrEmpty(path) ? "/v1/conversations" : $"/v1/conversations/{path}";
         await ProxyRequestAsync(
-            context, backendUrl, convPath + context.Request.QueryString, bodyBytes: null).ConfigureAwait(false);
+            context, backendUrl, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Rewrites the agent_id query parameter to the un-prefixed value for backend routing.
+    /// </summary>
+    internal static string RewriteAgentIdInQueryString(QueryString queryString, string actualAgentId)
+    {
+        if (!queryString.HasValue)
+        {
+            return string.Empty;
+        }
+
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString.Value);
+        query["agent_id"] = actualAgentId;
+
+        return QueryString.Create(query).ToString();
     }
 
     private static async Task ProxyRequestAsync(

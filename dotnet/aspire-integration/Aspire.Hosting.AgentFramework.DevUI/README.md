@@ -1,4 +1,4 @@
-# Aspire.Hosting.AgentFramework library
+# Aspire.Hosting.AgentFramework.DevUI library
 
 Provides extension methods and resource definitions for an Aspire AppHost to configure a DevUI resource for testing and debugging AI agents built with [Microsoft Agent Framework](https://github.com/microsoft/agent-framework).
 
@@ -10,10 +10,10 @@ Agent services must expose the OpenAI Responses and Conversations API endpoints.
 
 ### Install the package
 
-In your AppHost project, install the Aspire Agent Framework Hosting library with [NuGet](https://www.nuget.org):
+In your AppHost project, install the Aspire Agent Framework DevUI Hosting library with [NuGet](https://www.nuget.org):
 
 ```dotnetcli
-dotnet add package Aspire.Hosting.AgentFramework
+dotnet add package Aspire.Hosting.AgentFramework.DevUI
 ```
 
 ## Usage example
