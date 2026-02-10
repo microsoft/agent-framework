@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -75,25 +76,23 @@ internal sealed class HandoffAgentExecutor(
         {
             await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-            foreach (var c in update.Contents)
+            foreach (var fcc in update.Contents.OfType<FunctionCallContent>()
+                                               .Where(fcc => this._handoffFunctionNames.Contains(fcc.Name)))
             {
-                if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
-                {
-                    requestedHandoff = fcc.Name;
-                    await AddUpdateAsync(
-                            new AgentResponseUpdate
-                            {
-                                AgentId = this._agent.Id,
-                                AuthorName = this._agent.Name ?? this._agent.Id,
-                                Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                CreatedAt = DateTimeOffset.UtcNow,
-                                MessageId = Guid.NewGuid().ToString("N"),
-                                Role = ChatRole.Tool,
-                            },
-                            cancellationToken
-                         )
-                        .ConfigureAwait(false);
-                }
+                requestedHandoff = fcc.Name;
+                await AddUpdateAsync(
+                        new AgentResponseUpdate
+                        {
+                            AgentId = this._agent.Id,
+                            AuthorName = this._agent.Name ?? this._agent.Id,
+                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            MessageId = Guid.NewGuid().ToString("N"),
+                            Role = ChatRole.Tool,
+                        },
+                        cancellationToken
+                     )
+                    .ConfigureAwait(false);
             }
         }
 

@@ -215,7 +215,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         Debug.Assert(this._executors.ContainsKey(sourceId));
         Executor source = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
-        TypeId? declaredType = source.Protocol.SendTypeTranslator.GetDeclaredType(message.GetType(), allowPolymorphism: true);
+        TypeId? declaredType = source.Protocol.SendTypeTranslator.GetDeclaredType(message.GetType());
         if (declaredType is null)
         {
             throw new InvalidOperationException($"Executor '{sourceId}' cannot send messages of type '{message.GetType().FullName}'.");

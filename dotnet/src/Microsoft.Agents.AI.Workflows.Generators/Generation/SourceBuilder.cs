@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Microsoft.Agents.AI.Workflows.Generators.Models;
 
@@ -55,6 +56,7 @@ internal static class SourceBuilder
             {
                 sb.AppendLine($"{indent}partial class {containingType}");
                 sb.AppendLine($"{indent}{{");
+
                 indent += IndentUnit;
             }
         }
@@ -198,24 +200,18 @@ internal static class SourceBuilder
         // but cleaner generated code is easier to read).
         var addedTypes = new HashSet<string>();
 
-        foreach (var type in info.ClassSendTypes)
+        foreach (var type in info.ClassSendTypes.Where(type => addedTypes.Add(type)))
         {
-            if (addedTypes.Add(type))
-            {
-                sb.AppendLine($".SendsMessage<{type}>()");
-                sb.Append(indent);
-            }
+            sb.AppendLine($".SendsMessage<{type}>()");
+            sb.Append(indent);
         }
 
         foreach (var handler in info.Handlers)
         {
-            foreach (var type in handler.SendTypes)
+            foreach (var type in handler.SendTypes.Where(type => addedTypes.Add(type)))
             {
-                if (addedTypes.Add(type))
-                {
-                    sb.AppendLine($".SendsMessage<{type}>()");
-                    sb.Append(indent);
-                }
+                sb.AppendLine($".SendsMessage<{type}>()");
+                sb.Append(indent);
             }
         }
     }
@@ -233,24 +229,18 @@ internal static class SourceBuilder
         // but cleaner generated code is easier to read).
         var addedTypes = new HashSet<string>();
 
-        foreach (var type in info.ClassYieldTypes)
+        foreach (var type in info.ClassYieldTypes.Where(type => addedTypes.Add(type)))
         {
-            if (addedTypes.Add(type))
-            {
-                sb.AppendLine($".YieldsOutput<{type}>()");
-                sb.Append(indent);
-            }
+            sb.AppendLine($".YieldsOutput<{type}>()");
+            sb.Append(indent);
         }
 
         foreach (var handler in info.Handlers)
         {
-            foreach (var type in handler.YieldTypes)
+            foreach (var type in handler.YieldTypes.Where(type => addedTypes.Add(type)))
             {
-                if (addedTypes.Add(type))
-                {
-                    sb.AppendLine($".YieldsOutput<{type}>()");
-                    sb.Append(indent);
-                }
+                sb.AppendLine($".YieldsOutput<{type}>()");
+                sb.Append(indent);
             }
         }
     }

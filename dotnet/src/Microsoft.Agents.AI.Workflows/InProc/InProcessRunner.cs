@@ -236,11 +236,6 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 }
             }
 
-            if (envelope.MessageType != messageType)
-            {
-                Console.Error.WriteLine($"Translated type of delivery: {envelope.MessageType} to {messageType}");
-            }
-
             return (value, messageType);
         }
     }
