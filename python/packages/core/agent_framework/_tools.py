@@ -33,7 +33,7 @@ from typing import (
 )
 
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -669,7 +669,9 @@ def _build_pydantic_model_from_json_schema(
 
     # Check if 'properties' is missing or not a dictionary
     if not properties:
-        return create_model(f"{model_name}_input")
+        # Allow extra fields so arguments are preserved even when the schema
+        # doesn't declare properties (e.g., MCP servers returning {"type": "object"}).
+        return create_model(f"{model_name}_input", __config__=ConfigDict(extra="allow"))
 
     def _resolve_literal_type(prop_details: dict[str, Any]) -> type | None:
         """Check if property should be a Literal type (const or enum).

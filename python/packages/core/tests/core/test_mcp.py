@@ -2711,3 +2711,60 @@ async def test_mcp_tool_filters_framework_kwargs():
         assert "thread" not in arguments
         assert "conversation_id" not in arguments
         assert "options" not in arguments
+
+
+async def test_mcp_streamable_http_tool_preserves_args_with_empty_input_schema():
+    """Test that MCPStreamableHTTPTool preserves arguments when inputSchema has no properties.
+
+    Regression test for #3807: MCPStreamableHTTPTool sends empty arguments when the
+    MCP server's inputSchema is {"type": "object"} without a "properties" key.
+    """
+    tool = MCPStreamableHTTPTool(name="test_server", url="http://localhost:8080")
+
+    # Mock the transport and session
+    mock_session = Mock(spec=ClientSession)
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="no_props_tool",
+                    description="Tool with no properties in schema",
+                    inputSchema={"type": "object"},
+                ),
+                types.Tool(
+                    name="empty_props_tool",
+                    description="Tool with empty properties in schema",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ]
+        )
+    )
+    mock_session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="OK")])
+    )
+
+    # Patch connect to inject our mock session
+    async def mock_connect(self_ref=tool, reset=False):
+        self_ref.session = mock_session
+        self_ref.is_connected = True
+        self_ref._tools_loaded = False
+
+    with patch.object(tool, "connect", side_effect=mock_connect):
+        await tool.connect()
+        await tool.load_tools()
+
+        for func in tool.functions:
+            # Invoke with arguments that the LLM would send
+            await func.invoke(id="test_id_123", name="test_name")
+
+            # Verify arguments reached the MCP session
+            mock_session.call_tool.assert_called_once()
+            call_args = mock_session.call_tool.call_args
+            arguments = call_args.kwargs.get("arguments", call_args[1] if len(call_args) > 1 else {})
+
+            assert arguments.get("id") == "test_id_123", f"Expected 'id' argument for {func.name} but got: {arguments}"
+            assert arguments.get("name") == "test_name", (
+                f"Expected 'name' argument for {func.name} but got: {arguments}"
+            )
+            mock_session.call_tool.reset_mock()
