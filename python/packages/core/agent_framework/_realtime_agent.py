@@ -16,9 +16,12 @@ from agent_framework._tools import FunctionTool, ToolProtocol
 from agent_framework._types import ChatMessage
 
 from ._agents import BaseAgent
+from ._logging import get_logger
 
 if TYPE_CHECKING:
     from agent_framework._realtime_client import RealtimeClientProtocol
+
+logger = get_logger("agent_framework")
 
 __all__ = ["RealtimeAgent", "execute_tool", "tool_to_schema"]
 
@@ -171,7 +174,7 @@ class RealtimeAgent(BaseAgent):
             async for chunk in audio_input:
                 await self._client.send_audio(chunk)
         except asyncio.CancelledError:
-            pass
+            logger.debug("Audio send loop cancelled — agent stopped receiving events.")
 
     async def _process_events(self) -> AsyncIterator[RealtimeEvent]:
         async for event in self._client.events():
