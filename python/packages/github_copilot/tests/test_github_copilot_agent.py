@@ -122,8 +122,8 @@ class TestGitHubCopilotAgentInit:
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
             default_options={"model": "claude-sonnet-4", "timeout": 120}
         )
-        assert agent._settings.model == "claude-sonnet-4"  # type: ignore
-        assert agent._settings.timeout == 120  # type: ignore
+        assert agent._settings["model"] == "claude-sonnet-4"  # type: ignore
+        assert agent._settings["timeout"] == 120  # type: ignore
 
     def test_init_with_tools(self) -> None:
         """Test initialization with function tools."""

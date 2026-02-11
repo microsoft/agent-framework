@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 import json
 import sys
 from collections.abc import (
@@ -13,6 +11,11 @@ from collections.abc import (
 )
 from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
+
+if sys.version_info >= (3, 11):
+    from typing import Required  # pragma: no cover
+else:
+    from typing_extensions import Required  # type: ignore # pragma: no cover
 
 from agent_framework import (
     BaseChatClient,
@@ -30,9 +33,8 @@ from agent_framework import (
     UsageDetails,
     get_logger,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import (
-    ServiceInitializationError,
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
@@ -42,7 +44,7 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -275,13 +277,11 @@ OllamaChatOptionsT = TypeVar("OllamaChatOptionsT", bound=TypedDict, default="Oll
 # endregion
 
 
-class OllamaSettings(AFBaseSettings):
+class OllamaSettings(TypedDict, total=False):
     """Ollama settings."""
 
-    env_prefix: ClassVar[str] = "OLLAMA_"
-
-    host: str | None = None
-    model_id: str | None = None
+    host: str | None
+    model_id: Required[str]
 
 
 logger = get_logger("agent_framework.ollama")
@@ -322,23 +322,17 @@ class OllamaChatClient(
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
-        try:
-            ollama_settings = OllamaSettings(
-                host=host,
-                model_id=model_id,
-                env_file_encoding=env_file_encoding,
-                env_file_path=env_file_path,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Ollama settings.", ex) from ex
+        ollama_settings = load_settings(
+            OllamaSettings,
+            env_prefix="OLLAMA_",
+            host=host,
+            model_id=model_id,
+            env_file_encoding=env_file_encoding,
+            env_file_path=env_file_path,
+        )
 
-        if ollama_settings.model_id is None:
-            raise ServiceInitializationError(
-                "Ollama chat model ID must be provided via model_id or OLLAMA_MODEL_ID environment variable."
-            )
-
-        self.model_id = ollama_settings.model_id
-        self.client = client or AsyncClient(host=ollama_settings.host)
+        self.model_id = ollama_settings["model_id"]
+        self.client = client or AsyncClient(host=ollama_settings["host"])
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 

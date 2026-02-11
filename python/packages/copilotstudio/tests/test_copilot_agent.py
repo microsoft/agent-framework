@@ -38,49 +38,57 @@ class TestCopilotStudioAgent:
         return MagicMock(spec=CopilotClient)
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_environment_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_environment_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = None
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": None,
+            "schemaname": "test-bot",
+            "tenantid": "test-tenant",
+            "agentappid": "test-client",
+        }
 
         with pytest.raises(ServiceInitializationError, match="environment ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_bot_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_bot_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = None
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": None,
+            "tenantid": "test-tenant",
+            "agentappid": "test-client",
+        }
 
         with pytest.raises(ServiceInitializationError, match="agent identifier"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_tenant_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_tenant_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = None
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": "test-bot",
+            "tenantid": None,
+            "agentappid": "test-client",
+        }
 
         with pytest.raises(ServiceInitializationError, match="tenant ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_client_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_client_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = None
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": "test-bot",
+            "tenantid": "test-tenant",
+            "agentappid": None,
+        }
 
         with pytest.raises(ServiceInitializationError, match="client ID is required"):
             CopilotStudioAgent()
@@ -93,11 +101,13 @@ class TestCopilotStudioAgent:
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
     def test_init_empty_environment_id(self, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
-            mock_settings.return_value.environmentid = ""
-            mock_settings.return_value.schemaname = "test-bot"
-            mock_settings.return_value.tenantid = "test-tenant"
-            mock_settings.return_value.agentappid = "test-client"
+        with patch("agent_framework_copilotstudio._agent.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "environmentid": "",
+                "schemaname": "test-bot",
+                "tenantid": "test-tenant",
+                "agentappid": "test-client",
+            }
 
             with pytest.raises(ServiceInitializationError, match="environment ID is required"):
                 CopilotStudioAgent()
@@ -105,11 +115,13 @@ class TestCopilotStudioAgent:
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
     def test_init_empty_schema_name(self, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
-            mock_settings.return_value.environmentid = "test-env"
-            mock_settings.return_value.schemaname = ""
-            mock_settings.return_value.tenantid = "test-tenant"
-            mock_settings.return_value.agentappid = "test-client"
+        with patch("agent_framework_copilotstudio._agent.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "environmentid": "test-env",
+                "schemaname": "",
+                "tenantid": "test-tenant",
+                "agentappid": "test-client",
+            }
 
             with pytest.raises(ServiceInitializationError, match="agent identifier"):
                 CopilotStudioAgent()

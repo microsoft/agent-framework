@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, MutableSequence
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Context, ContextProvider, Message
 from agent_framework._logging import get_logger
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -35,7 +35,6 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
-from pydantic import SecretStr, ValidationError
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
@@ -99,9 +98,9 @@ else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 """Azure AI Search Context Provider for Agent Framework.
 
@@ -120,7 +119,7 @@ logger = get_logger("agent_framework.azure")
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
 
-class AzureAISearchSettings(AFBaseSettings):
+class AzureAISearchSettings(TypedDict, total=False):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
     The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
@@ -158,12 +157,10 @@ class AzureAISearchSettings(AFBaseSettings):
             settings = AzureAISearchSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "AZURE_SEARCH_"
-
-    endpoint: str | None = None
-    index_name: str | None = None
-    knowledge_base_name: str | None = None
-    api_key: SecretStr | None = None
+    endpoint: str | None
+    index_name: str | None
+    knowledge_base_name: str | None
+    api_key: SecretString | None
 
 
 class AzureAISearchContextProvider(ContextProvider):
@@ -336,42 +333,41 @@ class AzureAISearchContextProvider(ContextProvider):
                 provider = AzureAISearchContextProvider(credential=credential, env_file_path="path/to/.env")
         """
         # Load settings from environment/file
-        try:
-            settings = AzureAISearchSettings(
-                endpoint=endpoint,
-                index_name=index_name,
-                knowledge_base_name=knowledge_base_name,
-                api_key=api_key if isinstance(api_key, str) else None,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI Search settings.", ex) from ex
+        settings = load_settings(
+            AzureAISearchSettings,
+            env_prefix="AZURE_SEARCH_",
+            endpoint=endpoint,
+            index_name=index_name,
+            knowledge_base_name=knowledge_base_name,
+            api_key=api_key if isinstance(api_key, str) else None,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # Validate required parameters
-        if not settings.endpoint:
+        if not settings.get("endpoint"):
             raise ServiceInitializationError(
                 "Azure AI Search endpoint is required. Set via 'endpoint' parameter "
                 "or 'AZURE_SEARCH_ENDPOINT' environment variable."
             )
 
         # Validate index_name and knowledge_base_name based on mode
-        # Note: settings.* contains the resolved value (explicit param OR env var)
+        # Note: settings["field"] / settings.get("field") contains the resolved value (explicit param OR env var)
         if mode == "semantic":
             # Semantic mode: always requires index_name
-            if not settings.index_name:
+            if not settings.get("index_name"):
                 raise ServiceInitializationError(
                     "Azure AI Search index name is required for semantic mode. "
                     "Set via 'index_name' parameter or 'AZURE_SEARCH_INDEX_NAME' environment variable."
                 )
         elif mode == "agentic":
             # Agentic mode: requires exactly ONE of index_name or knowledge_base_name
-            if settings.index_name and settings.knowledge_base_name:
+            if settings.get("index_name") and settings.get("knowledge_base_name"):
                 raise ServiceInitializationError(
                     "For agentic mode, provide either 'index_name' OR 'knowledge_base_name', not both. "
                     "Use 'index_name' to auto-create a Knowledge Base, or 'knowledge_base_name' to use an existing one."
                 )
-            if not settings.index_name and not settings.knowledge_base_name:
+            if not settings.get("index_name") and not settings.get("knowledge_base_name"):
                 raise ServiceInitializationError(
                     "For agentic mode, provide either 'index_name' (to auto-create Knowledge Base) "
                     "or 'knowledge_base_name' (to use existing Knowledge Base). "
@@ -379,7 +375,7 @@ class AzureAISearchContextProvider(ContextProvider):
                     "AZURE_SEARCH_INDEX_NAME / AZURE_SEARCH_KNOWLEDGE_BASE_NAME."
                 )
             # If using index_name to create KB, model config is required
-            if settings.index_name and not model_deployment_name:
+            if settings.get("index_name") and not model_deployment_name:
                 raise ServiceInitializationError(
                     "model_deployment_name is required for agentic mode when creating Knowledge Base from index. "
                     "This is the Azure OpenAI deployment used by the Knowledge Base for query planning."
@@ -392,16 +388,16 @@ class AzureAISearchContextProvider(ContextProvider):
             resolved_credential = credential
         elif isinstance(api_key, AzureKeyCredential):
             resolved_credential = api_key
-        elif settings.api_key:
-            resolved_credential = AzureKeyCredential(settings.api_key.get_secret_value())
+        elif resolved_api_key := settings.get("api_key"):
+            resolved_credential = AzureKeyCredential(resolved_api_key.get_secret_value())
         else:
             raise ServiceInitializationError(
                 "Azure credential is required. Provide 'api_key' or 'credential' parameter "
                 "or set 'AZURE_SEARCH_API_KEY' environment variable."
             )
 
-        self.endpoint = settings.endpoint
-        self.index_name = settings.index_name
+        self.endpoint = settings.get("endpoint")
+        self.index_name = settings.get("index_name")
         self.credential = resolved_credential
         self.mode = mode
         self.top_k = top_k
@@ -416,7 +412,7 @@ class AzureAISearchContextProvider(ContextProvider):
         # If model_name not provided, default to deployment name
         self.model_name = model_name or model_deployment_name
         # Use resolved KB name (from explicit param or env var)
-        self.knowledge_base_name = settings.knowledge_base_name
+        self.knowledge_base_name = settings.get("knowledge_base_name")
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
         self.knowledge_base_output_mode = knowledge_base_output_mode
@@ -429,12 +425,12 @@ class AzureAISearchContextProvider(ContextProvider):
         # - index_name provided: auto-create KB from index
         self._use_existing_knowledge_base = False
         if mode == "agentic":
-            if settings.knowledge_base_name:
+            if settings.get("knowledge_base_name"):
                 # Use existing KB directly (supports any source type: web, blob, index, etc.)
                 self._use_existing_knowledge_base = True
             else:
                 # Auto-generate KB name from index name
-                self.knowledge_base_name = f"{settings.index_name}-kb"
+                self.knowledge_base_name = f"{settings.get('index_name', '')}-kb"
 
         # Auto-discover vector field if not specified
         self._auto_discovered_vector_field = False

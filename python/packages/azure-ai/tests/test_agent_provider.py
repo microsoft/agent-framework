@@ -86,12 +86,9 @@ def test_provider_init_missing_endpoint_raises(
     mock_azure_credential: MagicMock,
 ) -> None:
     """Test AzureAIAgentsProvider raises error when endpoint is missing."""
-    # Mock AzureAISettings to return None for project_endpoint
-    with patch("agent_framework_azure_ai._agent_provider.AzureAISettings") as mock_settings_class:
-        mock_settings = MagicMock()
-        mock_settings.project_endpoint = None
-        mock_settings.model_deployment_name = "test-model"
-        mock_settings_class.return_value = mock_settings
+    # Mock load_settings to return a dict with None for project_endpoint
+    with patch("agent_framework_azure_ai._agent_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         with pytest.raises(ServiceInitializationError) as exc_info:
             AzureAIAgentsProvider(credential=mock_azure_credential)
@@ -270,11 +267,8 @@ async def test_create_agent_missing_model_raises(
 ) -> None:
     """Test that create_agent raises error when model is not specified."""
     # Create provider with mocked settings that has no model
-    with patch("agent_framework_azure_ai._agent_provider.AzureAISettings") as mock_settings_class:
-        mock_settings = MagicMock()
-        mock_settings.project_endpoint = "https://test.com"
-        mock_settings.model_deployment_name = None  # No model configured
-        mock_settings_class.return_value = mock_settings
+    with patch("agent_framework_azure_ai._agent_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
         provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 

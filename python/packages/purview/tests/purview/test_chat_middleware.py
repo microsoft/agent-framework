@@ -125,7 +125,7 @@ class TestPurviewChatPolicyMiddleware:
     ) -> None:
         """Test that exceptions in post-check are logged but don't affect result when ignore_exceptions=True."""
         # Set ignore_exceptions to True to test exception suppression
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         call_count = 0
 
