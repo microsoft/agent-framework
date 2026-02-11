@@ -25,7 +25,6 @@ from agent_framework import (
     TextSpanRegion,
     UsageDetails,
     get_logger,
-    prepare_function_call_results,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
@@ -653,7 +652,7 @@ class AnthropicClient(
                     a_content.append({
                         "type": "tool_result",
                         "tool_use_id": content.call_id,
-                        "content": prepare_function_call_results(content.result),
+                        "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
                 case "text_reasoning":

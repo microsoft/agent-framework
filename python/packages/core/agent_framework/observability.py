@@ -1448,7 +1448,7 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: FunctionTool[Any, Any], tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: FunctionTool[Any], tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:
@@ -1678,12 +1678,10 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
         case "function_result":
-            from ._types import prepare_function_call_results
-
             return {
                 "type": "tool_call_response",
                 "id": content.call_id,
-                "response": prepare_function_call_results(content),
+                "response": content.result if content.result is not None else "",
             }
         case _:
             # GenericPart in otel output messages json spec.

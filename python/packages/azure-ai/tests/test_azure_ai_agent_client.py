@@ -1024,9 +1024,10 @@ async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
 
     client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Test with BaseModel result
+    # Test with BaseModel result (pre-parsed as it would be from FunctionTool.invoke)
     mock_result = MockResult(name="test", value=42)
-    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=mock_result)
+    expected_json = mock_result.to_json()
+    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=expected_json)
 
     run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
@@ -1035,8 +1036,7 @@ async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
     assert tool_outputs is not None
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
-    # Should use model_dump_json for BaseModel
-    expected_json = mock_result.to_json()
+    # Should use pre-parsed result string directly
     assert tool_outputs[0].output == expected_json
 
 
@@ -1051,10 +1051,14 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
 
     client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Test with multiple results - mix of BaseModel and regular objects
+    # Test with multiple results - pre-parsed as FunctionTool.invoke would produce
     mock_basemodel = MockResult(data="model_data")
     results_list = [mock_basemodel, {"key": "value"}, "string_result"]
-    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=results_list)
+    # FunctionTool.parse_result would serialize this to a JSON string
+    from agent_framework import FunctionTool
+
+    pre_parsed = FunctionTool.parse_result(results_list)
+    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=pre_parsed)
 
     run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
@@ -1063,14 +1067,8 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
 
-    # Should JSON dump the entire results array since len > 1
-    expected_results = [
-        mock_basemodel.to_dict(),
-        {"key": "value"},
-        "string_result",
-    ]
-    expected_output = json.dumps(expected_results)
-    assert tool_outputs[0].output == expected_output
+    # Result is pre-parsed string (already JSON)
+    assert tool_outputs[0].output == pre_parsed
 
 
 async def test_azure_ai_chat_client_convert_required_action_approval_response(

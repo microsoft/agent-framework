@@ -33,7 +33,6 @@ from agent_framework import (
     TextSpanRegion,
     UsageDetails,
     get_logger,
-    prepare_function_call_results,
 )
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
@@ -1390,7 +1389,7 @@ class AzureAIAgentClient(
                     if tool_outputs is None:
                         tool_outputs = []
                     tool_outputs.append(
-                        ToolOutput(tool_call_id=call_id, output=prepare_function_call_results(content.result))
+                        ToolOutput(tool_call_id=call_id, output=content.result if content.result is not None else "")
                     )
                 elif content.type == "function_approval_response":
                     if tool_approvals is None:

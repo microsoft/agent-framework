@@ -57,7 +57,6 @@ from .._types import (
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
-    prepare_function_call_results,
     prepend_instructions_to_messages,
     validate_tool_mode,
 )
@@ -1029,7 +1028,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
                     "type": "function_call_output",
-                    "output": prepare_function_call_results(content.result),
+                    "output": content.result if content.result is not None else "",
                 }
                 return args
             case "function_approval_request":
