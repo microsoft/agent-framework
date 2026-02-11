@@ -157,7 +157,7 @@ class _RunContext(TypedDict):
     session: AgentSession | None
     session_context: SessionContext
     input_messages: list[Message]
-    thread_messages: list[Message]
+    session_messages: list[Message]
     agent_name: str
     chat_options: dict[str, Any]
     filtered_kwargs: dict[str, Any]
@@ -850,7 +850,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     kwargs=kwargs,
                 )
                 response = await self.client.get_response(  # type: ignore[call-overload]
-                    messages=ctx["thread_messages"],
+                    messages=ctx["session_messages"],
                     stream=False,
                     options=ctx["chat_options"],
                     **ctx["filtered_kwargs"],
@@ -918,7 +918,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             )
             ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
             return self.client.get_response(  # type: ignore[call-overload, no-any-return]
-                messages=ctx["thread_messages"],
+                messages=ctx["session_messages"],
                 stream=True,
                 options=ctx["chat_options"],
                 **ctx["filtered_kwargs"],
@@ -1034,8 +1034,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         run_opts = {k: v for k, v in run_opts.items() if v is not None}
         co = _merge_options(chat_options, run_opts)
 
-        # Build thread_messages from session context: context messages + input messages
-        thread_messages: list[Message] = session_context.get_messages(include_input=True)
+        # Build session_messages from session context: context messages + input messages
+        session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         # Ensure session is forwarded in kwargs for tool invocation
         finalize_kwargs = dict(kwargs)
@@ -1047,7 +1047,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "session": session,
             "session_context": session_context,
             "input_messages": input_messages,
-            "thread_messages": thread_messages,
+            "session_messages": session_messages,
             "agent_name": agent_name,
             "chat_options": co,
             "filtered_kwargs": filtered_kwargs,
