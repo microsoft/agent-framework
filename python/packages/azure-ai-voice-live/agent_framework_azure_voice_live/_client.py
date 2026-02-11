@@ -172,6 +172,7 @@ class AzureVoiceLiveClient(BaseRealtimeClient):
                 endpoint=self._endpoint,
                 credential=credential,
                 model=self._model,
+                api_version=self._api_version,
             )
             self._connection = await self._connection_manager.__aenter__()
 

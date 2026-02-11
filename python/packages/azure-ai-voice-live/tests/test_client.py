@@ -389,6 +389,7 @@ async def test_connect_uses_sdk():
             endpoint="https://test.services.ai.azure.com",
             credential="mock-credential",
             model="gpt-4o-realtime-preview",
+            api_version="2025-10-01",
         )
         mock_connection.session.update.assert_called_once()
         assert client.is_connected
@@ -421,8 +422,44 @@ async def test_connect_with_credential():
             endpoint="https://test.services.ai.azure.com",
             credential=mock_cred,
             model="gpt-4o-realtime-preview",
+            api_version="2025-10-01",
         )
         assert client.is_connected
+
+    await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_custom_api_version():
+    """Connect forwards a custom api_version to the Voice Live SDK."""
+    client = AzureVoiceLiveClient(
+        endpoint="https://test.services.ai.azure.com",
+        api_key="test-key",
+        model="gpt-4o-realtime-preview",
+        api_version="2026-01-15",
+    )
+
+    mock_connection = AsyncMock()
+    mock_connection.session = MagicMock()
+    mock_connection.session.update = AsyncMock()
+
+    mock_manager = AsyncMock()
+    mock_manager.__aenter__ = AsyncMock(return_value=mock_connection)
+    mock_manager.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("agent_framework_azure_voice_live._client.vl_connect", return_value=mock_manager) as mock_connect,
+        patch("agent_framework_azure_voice_live._client.AzureKeyCredential") as MockCred,
+    ):
+        MockCred.return_value = "mock-credential"
+        await client.connect(RealtimeSessionConfig(instructions="Be helpful"))
+
+        mock_connect.assert_called_once_with(
+            endpoint="https://test.services.ai.azure.com",
+            credential="mock-credential",
+            model="gpt-4o-realtime-preview",
+            api_version="2026-01-15",
+        )
 
     await client.disconnect()
 
