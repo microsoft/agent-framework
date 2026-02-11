@@ -15,7 +15,7 @@ from agent_framework import (
     WorkflowCheckpointException,
     WorkflowEvent,
 )
-from agent_framework._workflows._runner_context import Message
+from agent_framework._workflows._runner_context import WorkflowMessage
 
 
 # Module-level dataclasses for pickle serialization in roundtrip tests
@@ -508,17 +508,17 @@ async def test_memory_checkpoint_storage_roundtrip_messages_with_complex_data():
     """Test that messages dict with Message objects roundtrips correctly."""
     storage = InMemoryCheckpointStorage()
 
-    msg1 = Message(
+    msg1 = WorkflowMessage(
         data={"text": "hello", "timestamp": datetime(2025, 1, 1, tzinfo=timezone.utc)},
         source_id="source",
         target_id="target",
     )
-    msg2 = Message(
+    msg2 = WorkflowMessage(
         data=(1, 2, 3),
         source_id="s2",
         target_id=None,
     )
-    msg3 = Message(
+    msg3 = WorkflowMessage(
         data="simple string",
         source_id="s3",
         target_id="t3",
@@ -545,9 +545,9 @@ async def test_memory_checkpoint_storage_roundtrip_messages_with_complex_data():
     loaded_msg3 = loaded.messages["executor2"][0]
 
     # Verify Message type is preserved
-    assert isinstance(loaded_msg1, Message)
-    assert isinstance(loaded_msg2, Message)
-    assert isinstance(loaded_msg3, Message)
+    assert isinstance(loaded_msg1, WorkflowMessage)
+    assert isinstance(loaded_msg2, WorkflowMessage)
+    assert isinstance(loaded_msg3, WorkflowMessage)
 
     # Verify Message fields
     assert loaded_msg1.data["text"] == "hello"
@@ -630,9 +630,9 @@ async def test_memory_checkpoint_storage_roundtrip_full_checkpoint():
     """Test complete WorkflowCheckpoint roundtrip with all fields populated using proper types."""
     storage = InMemoryCheckpointStorage()
 
-    # Create proper Message objects
-    msg1 = Message(data="msg1", source_id="s", target_id="t")
-    msg2 = Message(data=datetime(2025, 1, 1, tzinfo=timezone.utc), source_id="a", target_id="b")
+    # Create proper WorkflowMessage objects
+    msg1 = WorkflowMessage(data="msg1", source_id="s", target_id="t")
+    msg2 = WorkflowMessage(data=datetime(2025, 1, 1, tzinfo=timezone.utc), source_id="a", target_id="b")
 
     # Create proper WorkflowEvent for pending request
     pending_event = WorkflowEvent.request_info(
@@ -690,8 +690,8 @@ async def test_memory_checkpoint_storage_roundtrip_full_checkpoint():
     # Verify messages are proper Message objects
     loaded_msg1 = loaded.messages["exec1"][0]
     loaded_msg2 = loaded.messages["exec2"][0]
-    assert isinstance(loaded_msg1, Message)
-    assert isinstance(loaded_msg2, Message)
+    assert isinstance(loaded_msg1, WorkflowMessage)
+    assert isinstance(loaded_msg2, WorkflowMessage)
     assert loaded_msg1.data == "msg1"
     assert loaded_msg1.source_id == "s"
     assert loaded_msg2.data == datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -1177,17 +1177,17 @@ async def test_file_checkpoint_storage_roundtrip_messages_with_complex_data():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        msg1 = Message(
+        msg1 = WorkflowMessage(
             data={"text": "hello", "timestamp": datetime(2025, 1, 1, tzinfo=timezone.utc)},
             source_id="source",
             target_id="target",
         )
-        msg2 = Message(
+        msg2 = WorkflowMessage(
             data=(1, 2, 3),
             source_id="s2",
             target_id=None,
         )
-        msg3 = Message(
+        msg3 = WorkflowMessage(
             data="simple string",
             source_id="s3",
             target_id="t3",
@@ -1213,12 +1213,12 @@ async def test_file_checkpoint_storage_roundtrip_messages_with_complex_data():
         loaded_msg2 = loaded.messages["executor1"][1]
         loaded_msg3 = loaded.messages["executor2"][0]
 
-        # Verify Message type is preserved
-        assert isinstance(loaded_msg1, Message)
-        assert isinstance(loaded_msg2, Message)
-        assert isinstance(loaded_msg3, Message)
+        # Verify WorkflowMessage type is preserved
+        assert isinstance(loaded_msg1, WorkflowMessage)
+        assert isinstance(loaded_msg2, WorkflowMessage)
+        assert isinstance(loaded_msg3, WorkflowMessage)
 
-        # Verify Message fields
+        # Verify WorkflowMessage fields
         assert loaded_msg1.data["text"] == "hello"
         assert loaded_msg1.data["timestamp"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
         assert loaded_msg1.source_id == "source"
@@ -1301,9 +1301,9 @@ async def test_file_checkpoint_storage_roundtrip_full_checkpoint():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        # Create proper Message objects
-        msg1 = Message(data="msg1", source_id="s", target_id="t")
-        msg2 = Message(data=datetime(2025, 1, 1, tzinfo=timezone.utc), source_id="a", target_id="b")
+        # Create proper WorkflowMessage objects
+        msg1 = WorkflowMessage(data="msg1", source_id="s", target_id="t")
+        msg2 = WorkflowMessage(data=datetime(2025, 1, 1, tzinfo=timezone.utc), source_id="a", target_id="b")
 
         # Create proper WorkflowEvent for pending request
         pending_event = WorkflowEvent.request_info(
@@ -1361,8 +1361,8 @@ async def test_file_checkpoint_storage_roundtrip_full_checkpoint():
         # Verify messages are proper Message objects
         loaded_msg1 = loaded.messages["exec1"][0]
         loaded_msg2 = loaded.messages["exec2"][0]
-        assert isinstance(loaded_msg1, Message)
-        assert isinstance(loaded_msg2, Message)
+        assert isinstance(loaded_msg1, WorkflowMessage)
+        assert isinstance(loaded_msg2, WorkflowMessage)
         assert loaded_msg1.data == "msg1"
         assert loaded_msg1.source_id == "s"
         assert loaded_msg2.data == datetime(2025, 1, 1, tzinfo=timezone.utc)
