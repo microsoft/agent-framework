@@ -37,7 +37,7 @@ internal static class AdditionalPropertiesDictionaryExtensions
                 continue;
             }
 
-            metadata[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
+            metadata[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value, A2AHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
         }
 
         return metadata;

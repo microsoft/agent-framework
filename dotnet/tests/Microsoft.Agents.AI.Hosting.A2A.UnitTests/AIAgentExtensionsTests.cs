@@ -177,6 +177,78 @@ public sealed class AIAgentExtensionsTests
         Assert.Null(agentMessage.Metadata);
     }
 
+    /// <summary>
+    /// Verifies that when responseMode is Message, the result is always an AgentMessage even when
+    /// the agent would otherwise support background responses.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_MessageMode_AlwaysReturnsAgentMessageAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options)
+            .Object.MapA2A(responseMode: A2AResponseMode.Message);
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.NotNull(capturedOptions);
+        Assert.False(capturedOptions.AllowBackgroundResponses);
+    }
+
+    /// <summary>
+    /// Verifies that when responseMode is Task and the agent completes immediately (no ContinuationToken),
+    /// the result is an AgentTask in Completed state.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_TaskMode_WhenNoContinuationToken_ReturnsCompletedAgentTaskAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done immediately")]);
+        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+
+        // Assert
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(TaskState.Completed, agentTask.Status.State);
+        Assert.NotNull(agentTask.Status.Message);
+        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(agentTask.Status.Message.Parts));
+        Assert.Equal("Done immediately", textPart.Text);
+    }
+
+    /// <summary>
+    /// Verifies that when responseMode is Auto and the agent completes immediately (no ContinuationToken),
+    /// the result is an AgentMessage (not a task).
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_AutoMode_WhenNoContinuationToken_ReturnsAgentMessageAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Quick reply")]);
+        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+            .Object.MapA2A(responseMode: A2AResponseMode.Auto);
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.IsType<AgentMessage>(a2aResponse);
+    }
+
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     /// <summary>
@@ -254,6 +326,58 @@ public sealed class AIAgentExtensionsTests
         AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
         Assert.NotNull(agentTask.Metadata);
         Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+    }
+
+    /// <summary>
+    /// Verifies that when a task is created (Working or Completed), the original user message
+    /// is added to the task history, matching the A2A SDK's behavior when it creates tasks internally.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_WhenTaskIsCreated_OriginalMessageIsInHistoryAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Starting work...")])
+        {
+            ContinuationToken = CreateTestContinuationToken()
+        };
+        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        AgentMessage originalMessage = new() { MessageId = "user-msg-1", Role = MessageRole.User, Parts = [new TextPart { Text = "Do something" }] };
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = originalMessage
+        });
+
+        // Assert
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.NotNull(agentTask.History);
+        Assert.Contains(agentTask.History, m => m.MessageId == "user-msg-1" && m.Role == MessageRole.User);
+    }
+
+    /// <summary>
+    /// Verifies that in Task mode when the agent completes immediately, the original user message
+    /// is added to the completed task's history.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_TaskMode_CompletedTask_OriginalMessageIsInHistoryAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
+        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+        AgentMessage originalMessage = new() { MessageId = "user-msg-2", Role = MessageRole.User, Parts = [new TextPart { Text = "Quick task" }] };
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = originalMessage
+        });
+
+        // Assert
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.NotNull(agentTask.History);
+        Assert.Contains(agentTask.History, m => m.MessageId == "user-msg-2" && m.Role == MessageRole.User);
     }
 
     /// <summary>
