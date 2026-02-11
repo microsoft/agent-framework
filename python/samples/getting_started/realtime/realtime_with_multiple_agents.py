@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import contextlib
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from agent_framework.openai import OpenAIRealtimeClient
 from audio_utils import AudioPlayer, MicrophoneCapture, check_pyaudio
 from azure.identity import DefaultAzureCredential
 from pydantic import Field
+
+logger = logging.getLogger(__name__)
 
 """
 Realtime Voice Agent with Multiple Agents Example
@@ -249,7 +252,7 @@ async def run_agent_session(
             async for chunk in microphone.audio_generator():
                 await client.send_audio(chunk)
         except asyncio.CancelledError:
-            pass
+            logger.debug("Audio send loop cancelled.")
 
     send_task = asyncio.create_task(send_audio())
 

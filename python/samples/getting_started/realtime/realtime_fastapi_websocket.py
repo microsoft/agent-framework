@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -14,6 +15,8 @@ from agent_framework.openai import OpenAIRealtimeClient
 from azure.identity import DefaultAzureCredential
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import Field
+
+logger = logging.getLogger(__name__)
 
 """
 Realtime Voice Agent with FastAPI WebSocket
@@ -170,7 +173,7 @@ class VoiceSession:
         except WebSocketDisconnect:
             self._running = False
         except asyncio.CancelledError:
-            pass
+            logger.debug("WebSocket receive loop cancelled.")
 
     async def _handle_agent_event(self, event) -> None:
         """Forward RealtimeAgent events to the WebSocket client."""

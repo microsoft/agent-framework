@@ -4,9 +4,12 @@ import argparse
 import asyncio
 import base64
 import json
+import logging
 import sys
 
 from audio_utils import AudioPlayer, MicrophoneCapture, check_pyaudio
+
+logger = logging.getLogger(__name__)
 
 """
 WebSocket Audio Client
@@ -146,7 +149,7 @@ async def _send_audio(ws, microphone: MicrophoneCapture) -> None:
             })
             await ws.send(message)
     except (asyncio.CancelledError, ConnectionClosedError, ConnectionClosedOK):
-        pass
+        logger.debug("Audio send loop stopped.")
 
 
 async def _receive_events(ws, player: AudioPlayer) -> None:
@@ -204,7 +207,7 @@ async def _receive_events(ws, player: AudioPlayer) -> None:
                     print("[Session ready]")
 
     except (asyncio.CancelledError, ConnectionClosedError, ConnectionClosedOK):
-        pass
+        logger.debug("Event receive loop stopped.")
 
 
 def parse_args() -> argparse.Namespace:
