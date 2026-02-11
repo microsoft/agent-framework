@@ -26,6 +26,17 @@ def mock_mem0_client() -> AsyncMock:
     return mock_client
 
 
+@pytest.fixture
+def mock_oss_mem0_client() -> AsyncMock:
+    """Create a mock Mem0 OSS AsyncMemory client."""
+    from mem0 import AsyncMemory
+
+    mock_client = AsyncMock(spec=AsyncMemory)
+    mock_client.add = AsyncMock()
+    mock_client.search = AsyncMock()
+    return mock_client
+
+
 # -- Initialization tests ------------------------------------------------------
 
 
@@ -156,6 +167,50 @@ class TestBeforeRun:
 
         call_kwargs = mock_mem0_client.search.call_args.kwargs
         assert call_kwargs["query"] == "Hello\nWorld"
+
+    async def test_oss_client_passes_direct_kwargs(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS AsyncMemory client should receive user_id as direct kwarg, not in filters."""
+        mock_oss_mem0_client.search.return_value = [{"memory": "User likes Python"}]
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
+        assert call_kwargs["query"] == "Hello"
+        assert call_kwargs["user_id"] == "u1"
+        assert "filters" not in call_kwargs
+
+    async def test_oss_client_all_scoping_params(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with all scoping parameters passes them as direct kwargs."""
+        mock_oss_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
+        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["agent_id"] == "a1"
+        assert "filters" not in call_kwargs
+
+    async def test_platform_client_passes_filters_dict(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform AsyncMemoryClient should receive scoping params in a filters dict."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        call_kwargs = mock_mem0_client.search.call_args.kwargs
+        assert call_kwargs["query"] == "Hello"
+        assert "filters" in call_kwargs
+        assert call_kwargs["filters"]["user_id"] == "u1"
 
 
 # -- after_run tests -----------------------------------------------------------
