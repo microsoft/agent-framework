@@ -1,13 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI;
+namespace SampleApp;
 
 /// <summary>
 /// Represents configuration options for a <see cref="StructuredOutputAgent"/>.
 /// </summary>
-public sealed class StructuredOutputAgentOptions
+#pragma warning disable CA1812 // Instantiated via AIAgentBuilderExtensions.UseStructuredOutput optionsFactory parameter
+internal sealed class StructuredOutputAgentOptions
+#pragma warning restore CA1812
 {
     /// <summary>
     /// Gets or sets the system message to use when invoking the chat client for structured output conversion.

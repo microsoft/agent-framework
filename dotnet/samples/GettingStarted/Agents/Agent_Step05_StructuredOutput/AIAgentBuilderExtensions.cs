@@ -1,16 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI;
+namespace SampleApp;
 
 /// <summary>
 /// Provides extension methods for adding structured output capabilities to <see cref="AIAgentBuilder"/> instances.
 /// </summary>
-public static class AIAgentBuilderExtensions
+internal static class AIAgentBuilderExtensions
 {
     /// <summary>
     /// Adds structured output capabilities to the agent pipeline, enabling conversion of text responses to structured JSON format.
@@ -35,12 +34,16 @@ public static class AIAgentBuilderExtensions
     public static AIAgentBuilder UseStructuredOutput(
         this AIAgentBuilder builder,
         IChatClient? chatClient = null,
-        Func<StructuredOutputAgentOptions>? optionsFactory = null) =>
-        Throw.IfNull(builder).Use((innerAgent, services) =>
+        Func<StructuredOutputAgentOptions>? optionsFactory = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.Use((innerAgent, services) =>
         {
             chatClient ??= services?.GetService<IChatClient>()
                 ?? throw new InvalidOperationException($"No {nameof(IChatClient)} was provided and none could be resolved from the service provider. Either provide an {nameof(IChatClient)} explicitly or register one in the dependency injection container.");
 
             return new StructuredOutputAgent(innerAgent, chatClient, optionsFactory?.Invoke());
         });
+    }
 }
