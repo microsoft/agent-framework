@@ -135,12 +135,12 @@ class TestAgentMiddlewarePipeline:
     """Test cases for AgentMiddlewarePipeline."""
 
     class PreNextTerminateMiddleware(AgentMiddleware):
-        async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             raise MiddlewareTermination
 
     class PostNextTerminateMiddleware(AgentMiddleware):
         async def process(self, context: AgentContext, call_next: Any) -> None:
-            await call_next(context)
+            await call_next()
             raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
@@ -157,8 +157,8 @@ class TestAgentMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test AgentMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def test_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = AgentMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
@@ -185,11 +185,9 @@ class TestAgentMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingMiddleware("test")
@@ -238,11 +236,9 @@ class TestAgentMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = StreamOrderTrackingMiddleware("test")
@@ -367,12 +363,10 @@ class TestAgentMiddlewarePipeline:
         captured_thread = None
 
         class ThreadCapturingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 nonlocal captured_thread
                 captured_thread = context.thread
-                await call_next(context)
+                await call_next()
 
         middleware = ThreadCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -394,12 +388,10 @@ class TestAgentMiddlewarePipeline:
         captured_thread = "not_none"  # Use string to distinguish from None
 
         class ThreadCapturingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 nonlocal captured_thread
                 captured_thread = context.thread
-                await call_next(context)
+                await call_next()
 
         middleware = ThreadCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -425,7 +417,7 @@ class TestFunctionMiddlewarePipeline:
 
     class PostNextTerminateFunctionMiddleware(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
-            await call_next(context)
+            await call_next()
             raise MiddlewareTermination
 
     async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
@@ -482,10 +474,8 @@ class TestFunctionMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test FunctionMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
-        ) -> None:
-            await call_next(context)
+        async def test_middleware(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = FunctionMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
@@ -515,10 +505,10 @@ class TestFunctionMiddlewarePipeline:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingFunctionMiddleware("test")
@@ -541,12 +531,12 @@ class TestChatMiddlewarePipeline:
     """Test cases for ChatMiddlewarePipeline."""
 
     class PreNextTerminateChatMiddleware(ChatMiddleware):
-        async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
             raise MiddlewareTermination
 
     class PostNextTerminateChatMiddleware(ChatMiddleware):
-        async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
             raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
@@ -563,8 +553,8 @@ class TestChatMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test ChatMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def test_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = ChatMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
@@ -592,9 +582,9 @@ class TestChatMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingChatMiddleware("test")
@@ -644,9 +634,9 @@ class TestChatMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = StreamOrderTrackingChatMiddleware("test")
@@ -774,12 +764,10 @@ class TestClassBasedMiddleware:
         metadata_updates: list[str] = []
 
         class MetadataAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 context.metadata["before"] = True
                 metadata_updates.append("before")
-                await call_next(context)
+                await call_next()
                 context.metadata["after"] = True
                 metadata_updates.append("after")
 
@@ -807,11 +795,11 @@ class TestClassBasedMiddleware:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 context.metadata["before"] = True
                 metadata_updates.append("before")
-                await call_next(context)
+                await call_next()
                 context.metadata["after"] = True
                 metadata_updates.append("after")
 
@@ -839,12 +827,10 @@ class TestFunctionBasedMiddleware:
         """Test function-based agent middleware."""
         execution_order: list[str] = []
 
-        async def test_agent_middleware(
-            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def test_agent_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
             context.metadata["function_middleware"] = True
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = AgentMiddlewarePipeline(test_agent_middleware)
@@ -866,11 +852,11 @@ class TestFunctionBasedMiddleware:
         execution_order: list[str] = []
 
         async def test_function_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
         ) -> None:
             execution_order.append("function_before")
             context.metadata["function_middleware"] = True
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = FunctionMiddlewarePipeline(test_function_middleware)
@@ -896,18 +882,14 @@ class TestMixedMiddleware:
         execution_order: list[str] = []
 
         class ClassMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
-        async def function_middleware(
-            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def function_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = AgentMiddlewarePipeline(ClassMiddleware(), function_middleware)
@@ -931,17 +913,17 @@ class TestMixedMiddleware:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
         async def function_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
         ) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = FunctionMiddlewarePipeline(ClassMiddleware(), function_middleware)
@@ -962,16 +944,14 @@ class TestMixedMiddleware:
         execution_order: list[str] = []
 
         class ClassChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
-        async def function_chat_middleware(
-            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
-        ) -> None:
+        async def function_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = ChatMiddlewarePipeline(ClassChatMiddleware(), function_chat_middleware)
@@ -997,27 +977,21 @@ class TestMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         class ThirdMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("third_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("third_after")
 
         middleware = [FirstMiddleware(), SecondMiddleware(), ThirdMiddleware()]
@@ -1051,20 +1025,20 @@ class TestMultipleMiddlewareOrdering:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondMiddleware(FunctionMiddleware):
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         middleware = [FirstMiddleware(), SecondMiddleware()]
@@ -1087,21 +1061,21 @@ class TestMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         class ThirdChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("third_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("third_after")
 
         middleware = [FirstChatMiddleware(), SecondChatMiddleware(), ThirdChatMiddleware()]
@@ -1136,9 +1110,7 @@ class TestContextContentValidation:
         """Test that agent context contains expected data."""
 
         class ContextValidationMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Verify context has all expected attributes
                 assert hasattr(context, "agent")
                 assert hasattr(context, "messages")
@@ -1156,7 +1128,7 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ContextValidationMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -1178,7 +1150,7 @@ class TestContextContentValidation:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 # Verify context has all expected attributes
                 assert hasattr(context, "function")
@@ -1194,7 +1166,7 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ContextValidationMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -1213,7 +1185,7 @@ class TestContextContentValidation:
         """Test that chat context contains expected data."""
 
         class ChatContextValidationMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Verify context has all expected attributes
                 assert hasattr(context, "client")
                 assert hasattr(context, "messages")
@@ -1235,7 +1207,7 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ChatContextValidationMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
@@ -1260,11 +1232,9 @@ class TestStreamingScenarios:
         streaming_flags: list[bool] = []
 
         class StreamingFlagMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 streaming_flags.append(context.stream)
-                await call_next(context)
+                await call_next()
 
         middleware = StreamingFlagMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
@@ -1302,11 +1272,9 @@ class TestStreamingScenarios:
         chunks_processed: list[str] = []
 
         class StreamProcessingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 chunks_processed.append("before_stream")
-                await call_next(context)
+                await call_next()
                 chunks_processed.append("after_stream")
 
         middleware = StreamProcessingMiddleware()
@@ -1345,9 +1313,9 @@ class TestStreamingScenarios:
         streaming_flags: list[bool] = []
 
         class ChatStreamingFlagMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 streaming_flags.append(context.stream)
-                await call_next(context)
+                await call_next()
 
         middleware = ChatStreamingFlagMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
@@ -1386,9 +1354,9 @@ class TestStreamingScenarios:
         chunks_processed: list[str] = []
 
         class ChatStreamProcessingMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 chunks_processed.append("before_stream")
-                await call_next(context)
+                await call_next()
                 chunks_processed.append("after_stream")
 
         middleware = ChatStreamProcessingMiddleware()
@@ -1436,24 +1404,22 @@ class FunctionTestArgs(BaseModel):
 class TestAgentMiddleware(AgentMiddleware):
     """Test implementation of AgentMiddleware."""
 
-    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
-        await call_next(context)
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class TestFunctionMiddleware(FunctionMiddleware):
     """Test implementation of FunctionMiddleware."""
 
-    async def process(
-        self, context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
-    ) -> None:
-        await call_next(context)
+    async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class TestChatMiddleware(ChatMiddleware):
     """Test implementation of ChatMiddleware."""
 
-    async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-        await call_next(context)
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class MockFunctionArgs(BaseModel):
@@ -1469,9 +1435,7 @@ class TestMiddlewareExecutionControl:
         """Test that when agent middleware doesn't call next(), no execution happens."""
 
         class NoNextMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
@@ -1498,9 +1462,7 @@ class TestMiddlewareExecutionControl:
         """Test that when agent middleware doesn't call next(), no streaming execution happens."""
 
         class NoNextStreamingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
@@ -1537,7 +1499,7 @@ class TestMiddlewareExecutionControl:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
@@ -1566,18 +1528,14 @@ class TestMiddlewareExecutionControl:
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first")
                 # Don't call next() - this should stop the pipeline
 
         class SecondMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second")
-                await call_next(context)
+                await call_next()
 
         pipeline = AgentMiddlewarePipeline(FirstMiddleware(), SecondMiddleware())
         messages = [Message(role="user", text="test")]
@@ -1601,7 +1559,7 @@ class TestMiddlewareExecutionControl:
         """Test that when chat middleware doesn't call next(), no execution happens."""
 
         class NoNextChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
@@ -1629,7 +1587,7 @@ class TestMiddlewareExecutionControl:
         """Test that when chat middleware doesn't call next(), no streaming execution happens."""
 
         class NoNextStreamingChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
@@ -1670,14 +1628,14 @@ class TestMiddlewareExecutionControl:
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first")
                 # Don't call next() - this should stop the pipeline
 
         class SecondChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second")
-                await call_next(context)
+                await call_next()
 
         pipeline = ChatMiddlewarePipeline(FirstChatMiddleware(), SecondChatMiddleware())
         messages = [Message(role="user", text="test")]
