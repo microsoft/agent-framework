@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -69,8 +69,8 @@ async def main() -> None:
             model_deployment_name=model_deployment,
             credential=AzureCliCredential(),
         ) as client,
-        ChatAgent(
-            chat_client=client,
+        Agent(
+            client=client,
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant. Use the provided context from the "
@@ -86,7 +86,7 @@ async def main() -> None:
             print("Agent: ", end="", flush=True)
 
             # Stream response
-            async for chunk in agent.run_stream(user_input):
+            async for chunk in agent.run(user_input, stream=True):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
 

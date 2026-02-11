@@ -1,33 +1,48 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
-from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Generic, TypedDict, TypeVar, cast
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    ChatAgent,
-    ChatMessage,
+    Agent,
+    ChatAndFunctionMiddlewareTypes,
     ChatMessageStoreProtocol,
+    ChatMiddlewareLayer,
     ContextProvider,
-    HostedMCPTool,
-    Middleware,
-    ToolProtocol,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
+    Message,
+    MiddlewareTypes,
     get_logger,
-    use_chat_middleware,
-    use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
+from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import MCPTool, PromptAgentDefinition, PromptAgentDefinitionText, RaiConfig, Reasoning
+from azure.ai.projects.models import (
+    ApproximateLocation,
+    CodeInterpreterTool,
+    CodeInterpreterToolAuto,
+    ImageGenTool,
+    MCPTool,
+    PromptAgentDefinition,
+    PromptAgentDefinitionText,
+    RaiConfig,
+    Reasoning,
+    WebSearchPreviewTool,
+)
+from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
-from ._shared import AzureAISettings, _extract_project_connection_id, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -38,9 +53,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
@@ -56,19 +71,29 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
 
 
-TAzureAIClientOptions = TypeVar(
-    "TAzureAIClientOptions",
+AzureAIClientOptionsT = TypeVar(
+    "AzureAIClientOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureAIProjectAgentOptions",
     covariant=True,
 )
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TAzureAIClientOptions]):
-    """Azure AI Agent client."""
+class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
+    """Raw Azure AI client without middleware, telemetry, or function invocation layers.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+
+        Use ``AzureAIClient`` instead for a fully-featured client with all layers applied.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -88,7 +113,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an Azure AI Agent client.
+        """Initialize a bare Azure AI client.
+
+        This is the core implementation without middleware, telemetry, or function invocation layers.
+        For most use cases, prefer :class:`AzureAIClient` which includes all standard layers.
 
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
@@ -280,7 +308,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         # Complete setup with core observability
         enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         return self
 
@@ -312,7 +340,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         if self.agent_name is None:
             raise ServiceInitializationError(
                 "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
-                "or 'name' when initializing ChatAgent."
+                "or 'name' when initializing Agent."
             )
 
         # If no agent_version is provided, either use latest version or create a new agent:
@@ -352,9 +380,10 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
                 args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
+            # instructions is accessed from chat_options since the base class excludes it from run_options
             combined_instructions = [
                 instructions
-                for instructions in [messages_instructions, run_options.get("instructions")]
+                for instructions in [messages_instructions, chat_options.get("instructions") if chat_options else None]
                 if instructions
             ]
             if combined_instructions:
@@ -378,8 +407,8 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
     @override
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
@@ -420,6 +449,9 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
     @override
     def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+        # Skip model check for application endpoints - model is pre-configured on server
+        if self._is_application_endpoint:
+            return
         if not run_options.get("model"):
             if not self.model_id:
                 raise ValueError("model_deployment_name must be a non-empty string")
@@ -464,21 +496,19 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         return transformed
 
     @override
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
-    def _prepare_messages_for_azure_ai(
-        self, messages: MutableSequence[ChatMessage]
-    ) -> tuple[list[ChatMessage], str | None]:
+    def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
-        result: list[ChatMessage] = []
+        result: list[Message] = []
         instructions_list: list[str] = []
         instructions: str | None = None
 
         # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
         for message in messages:
-            if message.role.value in ["system", "developer"]:
+            if message.role in ["system", "developer"]:
                 for text_content in [content for content in message.contents if content.type == "text"]:
                     instructions_list.append(text_content.text)  # type: ignore[arg-type]
             else:
@@ -507,36 +537,262 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         if description and not self.agent_description:
             self.agent_description = description
 
+    # region Hosted Tool Factory Methods (Azure-specific overrides)
+
     @staticmethod
-    def _prepare_mcp_tool(tool: HostedMCPTool) -> MCPTool:  # type: ignore[override]
-        """Get MCP tool from HostedMCPTool."""
-        mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
+    def get_code_interpreter_tool(  # type: ignore[override]
+        *,
+        file_ids: list[str] | None = None,
+        container: Literal["auto"] | dict[str, Any] = "auto",
+        **kwargs: Any,
+    ) -> CodeInterpreterTool:
+        """Create a code interpreter tool configuration for Azure AI Projects.
 
-        if tool.description:
-            mcp["server_description"] = tool.description
+        Keyword Args:
+            file_ids: Optional list of file IDs to make available to the code interpreter.
+            container: Container configuration. Use "auto" for automatic container management.
+                Note: Custom container settings from this parameter are not used by Azure AI Projects;
+                use file_ids instead.
+            **kwargs: Additional arguments passed to the SDK CodeInterpreterTool constructor.
 
-        # Check for project_connection_id in additional_properties (for Azure AI Foundry connections)
-        project_connection_id = _extract_project_connection_id(tool.additional_properties)
+        Returns:
+            A CodeInterpreterTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_code_interpreter_tool()
+                agent = ChatAgent(client, tools=[tool])
+        """
+        # Extract file_ids from container if provided as dict and file_ids not explicitly set
+        if file_ids is None and isinstance(container, dict):
+            file_ids = container.get("file_ids")
+        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        return CodeInterpreterTool(container=tool_container, **kwargs)
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        vector_store_ids: list[str],
+        max_num_results: int | None = None,
+        ranking_options: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ProjectsFileSearchTool:
+        """Create a file search tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            vector_store_ids: List of vector store IDs to search.
+            max_num_results: Maximum number of results to return (1-50).
+            ranking_options: Ranking options for search results.
+            filters: A filter to apply (ComparisonFilter or CompoundFilter).
+            **kwargs: Additional arguments passed to the SDK FileSearchTool constructor.
+
+        Returns:
+            A FileSearchTool ready to pass to ChatAgent.
+
+        Raises:
+            ValueError: If vector_store_ids is empty.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123"],
+                )
+                agent = ChatAgent(client, tools=[tool])
+        """
+        if not vector_store_ids:
+            raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
+        return ProjectsFileSearchTool(
+            vector_store_ids=vector_store_ids,
+            max_num_results=max_num_results,
+            ranking_options=ranking_options,  # type: ignore[arg-type]
+            filters=filters,  # type: ignore[arg-type]
+            **kwargs,
+        )
+
+    @staticmethod
+    def get_web_search_tool(  # type: ignore[override]
+        *,
+        user_location: dict[str, str] | None = None,
+        search_context_size: Literal["low", "medium", "high"] | None = None,
+        **kwargs: Any,
+    ) -> WebSearchPreviewTool:
+        """Create a web search preview tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            user_location: Location context for search results. Dict with keys like
+                "city", "country", "region", "timezone".
+            search_context_size: Amount of context to include from search results.
+                One of "low", "medium", or "high". Defaults to "medium".
+            **kwargs: Additional arguments passed to the SDK WebSearchPreviewTool constructor.
+
+        Returns:
+            A WebSearchPreviewTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_web_search_tool()
+                agent = ChatAgent(client, tools=[tool])
+
+                # With location and context size
+                tool = AzureAIClient.get_web_search_tool(
+                    user_location={"city": "Seattle", "country": "US"},
+                    search_context_size="high",
+                )
+        """
+        ws_tool = WebSearchPreviewTool(search_context_size=search_context_size, **kwargs)
+
+        if user_location:
+            ws_tool.user_location = ApproximateLocation(
+                city=user_location.get("city"),
+                country=user_location.get("country"),
+                region=user_location.get("region"),
+                timezone=user_location.get("timezone"),
+            )
+
+        return ws_tool
+
+    @staticmethod
+    def get_image_generation_tool(  # type: ignore[override]
+        *,
+        model: Literal["gpt-image-1"] | str | None = None,
+        size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
+        output_format: Literal["png", "webp", "jpeg"] | None = None,
+        quality: Literal["low", "medium", "high", "auto"] | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        partial_images: int | None = None,
+        moderation: Literal["auto", "low"] | None = None,
+        output_compression: int | None = None,
+        **kwargs: Any,
+    ) -> ImageGenTool:
+        """Create an image generation tool configuration for Azure AI Projects.
+
+        Keyword Args:
+            model: The model to use for image generation.
+            size: Output image size.
+            output_format: Output image format.
+            quality: Output image quality.
+            background: Background transparency setting.
+            partial_images: Number of partial images to return during generation.
+            moderation: Moderation level.
+            output_compression: Compression level.
+            **kwargs: Additional arguments passed to the SDK ImageGenTool constructor.
+
+        Returns:
+            An ImageGenTool ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                tool = AzureAIClient.get_image_generation_tool()
+                agent = ChatAgent(client, tools=[tool])
+        """
+        return ImageGenTool(  # type: ignore[misc]
+            model=model,  # type: ignore[arg-type]
+            size=size,
+            output_format=output_format,
+            quality=quality,
+            background=background,
+            partial_images=partial_images,
+            moderation=moderation,
+            output_compression=output_compression,
+            **kwargs,
+        )
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str | None = None,
+        description: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | dict[str, list[str]] | None = None,
+        allowed_tools: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        project_connection_id: str | None = None,
+        **kwargs: Any,
+    ) -> MCPTool:
+        """Create a hosted MCP tool configuration for Azure AI.
+
+        This configures an MCP (Model Context Protocol) server that will be called
+        by Azure AI's service. The tools from this MCP server are executed remotely
+        by Azure AI, not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server. Required if project_connection_id is not provided.
+            description: A description of what the MCP server provides.
+            approval_mode: Tool approval mode. Use "always_require" or "never_require" for all tools,
+                or provide a dict with "always_require_approval" and/or "never_require_approval"
+                keys mapping to lists of tool names.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            headers: HTTP headers to include in requests to the MCP server.
+            project_connection_id: Azure AI Foundry connection ID for managed MCP connections.
+                If provided, url and headers are not required.
+            **kwargs: Additional arguments passed to the SDK MCPTool constructor.
+
+        Returns:
+            An MCPTool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+
+                # With URL
+                tool = AzureAIClient.get_mcp_tool(
+                    name="my_mcp",
+                    url="https://mcp.example.com",
+                )
+
+                # With Azure AI Foundry connection
+                tool = AzureAIClient.get_mcp_tool(
+                    name="github_mcp",
+                    project_connection_id="conn_abc123",
+                    description="GitHub MCP via Azure AI Foundry",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        mcp = MCPTool(server_label=name.replace(" ", "_"), server_url=url or "", **kwargs)
+
+        if description:
+            mcp["server_description"] = description
+
         if project_connection_id:
             mcp["project_connection_id"] = project_connection_id
-        elif tool.headers:
-            # Only use headers if no project_connection_id is available
-            mcp["headers"] = tool.headers
+        elif headers:
+            mcp["headers"] = headers
 
-        if tool.allowed_tools:
-            mcp["allowed_tools"] = list(tool.allowed_tools)
+        if allowed_tools:
+            mcp["allowed_tools"] = allowed_tools
 
-        if tool.approval_mode:
-            match tool.approval_mode:
-                case str():
-                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
-                case _:
-                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
-                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
+            else:
+                if always_require := approval_mode.get("always_require_approval"):
+                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                if never_require := approval_mode.get("never_require_approval"):
+                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    # endregion
 
     @override
     def as_agent(
@@ -546,20 +802,20 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        default_options: TAzureAIClientOptions | None = None,
+        default_options: AzureAIClientOptionsT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_provider: ContextProvider | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[TAzureAIClientOptions]:
-        """Convert this chat client to a ChatAgent.
+    ) -> Agent[AzureAIClientOptionsT]:
+        """Convert this chat client to a Agent.
 
-        This method creates a ChatAgent instance with this client pre-configured.
+        This method creates a Agent instance with this client pre-configured.
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
@@ -579,7 +835,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             kwargs: Any additional keyword arguments.
 
         Returns:
-            A ChatAgent instance configured with this chat client.
+            A Agent instance configured with this chat client.
         """
         return super().as_agent(
             id=id,
@@ -591,5 +847,115 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
             chat_message_store_factory=chat_message_store_factory,
             context_provider=context_provider,
             middleware=middleware,
+            **kwargs,
+        )
+
+
+class AzureAIClient(
+    ChatMiddlewareLayer[AzureAIClientOptionsT],
+    FunctionInvocationLayer[AzureAIClientOptionsT],
+    ChatTelemetryLayer[AzureAIClientOptionsT],
+    RawAzureAIClient[AzureAIClientOptionsT],
+    Generic[AzureAIClientOptionsT],
+):
+    """Azure AI client with middleware, telemetry, and function invocation support.
+
+    This is the recommended client for most use cases. It includes:
+    - Chat middleware support for request/response interception
+    - OpenTelemetry-based telemetry for observability
+    - Automatic function/tool invocation handling
+
+    For a minimal implementation without these features, use :class:`RawAzureAIClient`.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_client: AIProjectClient | None = None,
+        agent_name: str | None = None,
+        agent_version: str | None = None,
+        agent_description: str | None = None,
+        conversation_id: str | None = None,
+        project_endpoint: str | None = None,
+        model_deployment_name: str | None = None,
+        credential: AsyncTokenCredential | None = None,
+        use_latest_version: bool | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize an Azure AI client with full layer support.
+
+        Keyword Args:
+            project_client: An existing AIProjectClient to use. If not provided, one will be created.
+            agent_name: The name to use when creating new agents or using existing agents.
+            agent_version: The version of the agent to use.
+            agent_description: The description to use when creating new agents.
+            conversation_id: Default conversation ID to use for conversations. Can be overridden by
+                conversation_id property when making a request.
+            project_endpoint: The Azure AI Project endpoint URL.
+                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+                Ignored when a project_client is passed.
+            model_deployment_name: The model deployment name to use for agent creation.
+                Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
+            credential: Azure async credential to use for authentication.
+            use_latest_version: Boolean flag that indicates whether to use latest agent version
+                if it exists in the service.
+            middleware: Optional sequence of chat middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+            kwargs: Additional keyword arguments passed to the parent class.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_azure_ai import AzureAIClient
+                from azure.identity.aio import DefaultAzureCredential
+
+                # Using environment variables
+                # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
+                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                credential = DefaultAzureCredential()
+                client = AzureAIClient(credential=credential)
+
+                # Or passing parameters directly
+                client = AzureAIClient(
+                    project_endpoint="https://your-project.cognitiveservices.azure.com",
+                    model_deployment_name="gpt-4",
+                    credential=credential,
+                )
+
+                # Or loading from a .env file
+                client = AzureAIClient(credential=credential, env_file_path="path/to/.env")
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework import ChatOptions
+
+
+                class MyOptions(ChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+        """
+        super().__init__(
+            project_client=project_client,
+            agent_name=agent_name,
+            agent_version=agent_version,
+            agent_description=agent_description,
+            conversation_id=conversation_id,
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            credential=credential,
+            use_latest_version=use_latest_version,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
             **kwargs,
         )

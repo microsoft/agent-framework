@@ -1,7 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import importlib.metadata
+import os
 
+# Disable Mem0 telemetry by default to prevent usage data from being sent to telemetry provider.
+# Users can opt-in by setting MEM0_TELEMETRY=true before importing this package.
+if os.environ.get("MEM0_TELEMETRY") is None:
+    os.environ["MEM0_TELEMETRY"] = "false"
+
+from ._context_provider import _Mem0ContextProvider
 from ._provider import Mem0Provider
 
 try:
@@ -11,5 +18,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "Mem0Provider",
+    "_Mem0ContextProvider",
     "__version__",
 ]

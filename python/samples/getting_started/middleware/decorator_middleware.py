@@ -6,12 +6,13 @@ import datetime
 from agent_framework import (
     agent_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 """
-Decorator Middleware Example
+Decorator MiddlewareTypes Example
 
 This sample demonstrates how to use @agent_middleware and @function_middleware decorators
 to explicitly mark middleware functions without requiring type annotations.
@@ -19,7 +20,7 @@ to explicitly mark middleware functions without requiring type annotations.
 The framework supports the following middleware detection scenarios:
 
 1. Both decorator and parameter type specified:
-   - Validates that they match (e.g., @agent_middleware with AgentRunContext)
+   - Validates that they match (e.g., @agent_middleware with AgentContext)
    - Throws exception if they don't match for safety
 
 2. Only decorator specified:
@@ -27,7 +28,7 @@ The framework supports the following middleware detection scenarios:
    - No type annotations needed - framework handles context types automatically
 
 3. Only parameter type specified:
-   - Uses type annotations (AgentRunContext, FunctionInvocationContext) for detection
+   - Uses type annotations (AgentContext, FunctionInvocationContext) for detection
 
 4. Neither decorator nor parameter type specified:
    - Throws exception requiring either decorator or type annotation
@@ -41,30 +42,32 @@ Key benefits of decorator approach:
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_current_time() -> str:
     """Get the current time."""
     return f"Current time is {datetime.datetime.now().strftime('%H:%M:%S')}"
 
 
 @agent_middleware  # Decorator marks this as agent middleware - no type annotations needed
-async def simple_agent_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
+async def simple_agent_middleware(context, call_next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Agent middleware that runs before and after agent execution."""
-    print("[Agent Middleware] Before agent execution")
-    await next(context)
-    print("[Agent Middleware] After agent execution")
+    print("[Agent MiddlewareTypes] Before agent execution")
+    await call_next()
+    print("[Agent MiddlewareTypes] After agent execution")
 
 
 @function_middleware  # Decorator marks this as function middleware - no type annotations needed
-async def simple_function_middleware(context, next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
+async def simple_function_middleware(context, call_next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Function middleware that runs before and after function calls."""
-    print(f"[Function Middleware] Before calling: {context.function.name}")  # type: ignore
-    await next(context)
-    print(f"[Function Middleware] After calling: {context.function.name}")  # type: ignore
+    print(f"[Function MiddlewareTypes] Before calling: {context.function.name}")  # type: ignore
+    await call_next()
+    print(f"[Function MiddlewareTypes] After calling: {context.function.name}")  # type: ignore
 
 
 async def main() -> None:
     """Example demonstrating decorator-based middleware."""
-    print("=== Decorator Middleware Example ===")
+    print("=== Decorator MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

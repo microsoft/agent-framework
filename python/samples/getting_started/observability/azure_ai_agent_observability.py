@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent
+from agent_framework import Agent, tool
 from agent_framework.azure import AzureAIClient
 from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
@@ -29,6 +29,8 @@ for this sample to work.
 dotenv.load_dotenv()
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -54,8 +56,8 @@ async def main():
         with get_tracer().start_as_current_span("Single Agent Chat", kind=SpanKind.CLIENT) as current_span:
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-            agent = ChatAgent(
-                chat_client=client,
+            agent = Agent(
+                client=client,
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",
@@ -65,10 +67,7 @@ async def main():
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

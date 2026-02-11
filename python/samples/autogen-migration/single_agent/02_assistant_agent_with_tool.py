@@ -1,5 +1,16 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-core",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/02_assistant_agent_with_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen AssistantAgent vs Agent Framework ChatAgent with function tools.
+"""AutoGen AssistantAgent vs Agent Framework Agent with function tools.
 
 Demonstrates how to create and attach tools to agents in both frameworks.
 """
@@ -46,12 +57,13 @@ async def run_autogen() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Agent Framework agent with @ai_function decorator."""
-    from agent_framework import ai_function
+    """Agent Framework agent with @tool decorator."""
+    from agent_framework import tool
     from agent_framework.openai import OpenAIChatClient
 
-    # Define tool with @ai_function decorator (automatic schema inference)
-    @ai_function
+    # Define tool with @tool decorator (automatic schema inference)
+    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+    @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get the weather for a location.
 

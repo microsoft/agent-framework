@@ -5,32 +5,35 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
-    AgentRunContext,
+    AgentContext,
     ChatMessageStore,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
-Thread Behavior Middleware Example
+Thread Behavior MiddlewareTypes Example
 
 This sample demonstrates how middleware can access and track thread state across multiple agent runs.
 The example shows:
 
-- How AgentRunContext.thread property behaves across multiple runs
+- How AgentContext.thread property behaves across multiple runs
 - How middleware can access conversation history through the thread
-- The timing of when thread messages are populated (before vs after next() call)
+- The timing of when thread messages are populated (before vs after call_next() call)
 - How to track thread state changes across runs
 
 Key behaviors demonstrated:
-1. First run: context.messages is populated, context.thread is initially empty (before next())
-2. After next(): thread contains input message + response from agent
+1. First run: context.messages is populated, context.thread is initially empty (before call_next())
+2. After call_next(): thread contains input message + response from agent
 3. Second run: context.messages contains only current input, thread contains previous history
-4. After next(): thread contains full conversation history (all previous + current messages)
+4. After call_next(): thread contains full conversation history (all previous + current messages)
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -42,31 +45,31 @@ def get_weather(
 
 
 async def thread_tracking_middleware(
-    context: AgentRunContext,
-    next: Callable[[AgentRunContext], Awaitable[None]],
+    context: AgentContext,
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
-    """Middleware that tracks and logs thread behavior across runs."""
+    """MiddlewareTypes that tracks and logs thread behavior across runs."""
     thread_messages = []
     if context.thread and context.thread.message_store:
         thread_messages = await context.thread.message_store.list_messages()
 
-    print(f"[Middleware pre-execution] Current input messages: {len(context.messages)}")
-    print(f"[Middleware pre-execution] Thread history messages: {len(thread_messages)}")
+    print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
+    print(f"[MiddlewareTypes pre-execution] Thread history messages: {len(thread_messages)}")
 
-    # Call next to execute the agent
-    await next(context)
+    # Call call_next to execute the agent
+    await call_next()
 
     # Check thread state after agent execution
     updated_thread_messages = []
     if context.thread and context.thread.message_store:
         updated_thread_messages = await context.thread.message_store.list_messages()
 
-    print(f"[Middleware post-execution] Updated thread messages: {len(updated_thread_messages)}")
+    print(f"[MiddlewareTypes post-execution] Updated thread messages: {len(updated_thread_messages)}")
 
 
 async def main() -> None:
     """Example demonstrating thread behavior in middleware across multiple runs."""
-    print("=== Thread Behavior Middleware Example ===")
+    print("=== Thread Behavior MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

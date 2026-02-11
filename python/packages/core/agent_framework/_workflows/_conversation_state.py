@@ -3,20 +3,20 @@
 from collections.abc import Iterable
 from typing import Any, cast
 
-from agent_framework import ChatMessage, Role
+from agent_framework import Message
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
 """Utilities for serializing and deserializing chat conversations for persistence.
 
-These helpers convert rich `ChatMessage` instances to checkpoint-friendly payloads
+These helpers convert rich `Message` instances to checkpoint-friendly payloads
 using the same encoding primitives as the workflow runner. This preserves
 `additional_properties` and other metadata without relying on unsafe mechanisms
 such as pickling.
 """
 
 
-def encode_chat_messages(messages: Iterable[ChatMessage]) -> list[dict[str, Any]]:
+def encode_chat_messages(messages: Iterable[Message]) -> list[dict[str, Any]]:
     """Serialize chat messages into checkpoint-safe payloads."""
     encoded: list[dict[str, Any]] = []
     for message in messages:
@@ -32,23 +32,21 @@ def encode_chat_messages(messages: Iterable[ChatMessage]) -> list[dict[str, Any]
     return encoded
 
 
-def decode_chat_messages(payload: Iterable[dict[str, Any]]) -> list[ChatMessage]:
+def decode_chat_messages(payload: Iterable[dict[str, Any]]) -> list[Message]:
     """Restore chat messages from checkpoint-safe payloads."""
-    restored: list[ChatMessage] = []
+    restored: list[Message] = []
     for item in payload:
         if not isinstance(item, dict):
             continue
 
         role_value = decode_checkpoint_value(item.get("role"))
-        if isinstance(role_value, Role):
+        if isinstance(role_value, str):
             role = role_value
-        elif isinstance(role_value, dict):
-            role_dict = cast(dict[str, Any], role_value)
-            role = Role.from_dict(role_dict)
-        elif isinstance(role_value, str):
-            role = Role(value=role_value)
+        elif isinstance(role_value, dict) and "value" in role_value:
+            # Handle legacy serialization format
+            role = role_value["value"]
         else:
-            role = Role.ASSISTANT
+            role = "assistant"
 
         contents_field = item.get("contents", [])
         contents: list[Any] = []
@@ -66,7 +64,7 @@ def decode_chat_messages(payload: Iterable[dict[str, Any]]) -> list[ChatMessage]
                 additional[key] = decode_checkpoint_value(value)
 
         restored.append(
-            ChatMessage(
+            Message(  # type: ignore[call-overload]
                 role=role,
                 contents=contents,
                 author_name=item.get("author_name"),

@@ -21,7 +21,7 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, ai_function
+from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,8 @@ def analyze_content(
     return f"Analyzing content for: {query}"
 
 
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def summarize_document(
     length: Annotated[str, "Desired summary length: 'brief', 'medium', or 'detailed'"] = "medium",
 ) -> str:
@@ -58,7 +59,7 @@ def summarize_document(
     return f"Generating {length} summary of the document..."
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def extract_key_points(
     max_points: Annotated[int, "Maximum number of key points to extract"] = 5,
 ) -> str:
@@ -67,7 +68,7 @@ def extract_key_points(
 
 
 # Agent using Azure OpenAI Responses API (supports PDF uploads!)
-agent = ChatAgent(
+agent = Agent(
     name="AzureResponsesAgent",
     description="An agent that can analyze PDFs, images, and other documents using Azure OpenAI Responses API",
     instructions="""
@@ -84,7 +85,7 @@ agent = ChatAgent(
     For PDFs, you can read and understand the text, tables, and structure.
     For images, you can describe what you see and extract any text.
     """,
-    chat_client=AzureOpenAIResponsesClient(
+    client=AzureOpenAIResponsesClient(
         deployment_name=_deployment_name,
         endpoint=_endpoint,
         api_version="2025-03-01-preview",  # Required for Responses API

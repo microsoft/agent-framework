@@ -5,8 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
@@ -23,7 +23,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
             VariablesToClear.ConversationScopedVariables => WorkflowFormulaState.DefaultScopeName,
             VariablesToClear.ConversationHistory => null,
             VariablesToClear.UserScopedVariables => null,
-            _ => null
+            _ => null,
         };
 
         if (scope is not null)

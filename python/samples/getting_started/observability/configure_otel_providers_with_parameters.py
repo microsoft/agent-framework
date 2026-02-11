@@ -6,7 +6,7 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import ai_function, setup_logging
+from agent_framework import setup_logging, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -14,7 +14,7 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from agent_framework import ChatClientProtocol
+    from agent_framework import SupportsChatGetResponse
 
 """
 This sample shows how you can configure observability with custom exporters passed directly
@@ -28,9 +28,11 @@ Use this approach when you need custom exporter configuration beyond what enviro
 """
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
-SCENARIOS = ["chat_client", "chat_client_stream", "ai_function", "all"]
+SCENARIOS = ["client", "client_stream", "tool", "all"]
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -40,7 +42,7 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) -> None:
+async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = False) -> None:
     """Run an AI service.
 
     This function runs an AI service and prints the output.
@@ -69,7 +71,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
         print(f"User: {message}")
         if stream:
             print("Assistant: ", end="")
-            async for chunk in client.get_streaming_response(message, tools=get_weather):
+            async for chunk in client.get_response(message, stream=True, tools=get_weather):
                 if str(chunk):
                     print(str(chunk), end="")
             print("")
@@ -78,7 +80,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
             print(f"Assistant: {response}")
 
 
-async def run_ai_function() -> None:
+async def run_tool() -> None:
     """Run a AI function.
 
     This function runs a AI function and prints the output.
@@ -90,12 +92,12 @@ async def run_ai_function() -> None:
     """
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        func = ai_function(get_weather)
+        func = tool(get_weather)
         weather = await func.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
 
-async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
+async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "all"):
     """Run the selected scenario(s)."""
 
     # Setup the logging with the more complete format
@@ -104,9 +106,15 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     # Create custom OTLP exporters with specific configuration
     # Note: You need to install opentelemetry-exporter-otlp-proto-grpc or -http separately
     try:
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPLogExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # pyright: ignore[reportMissingImports]
+            OTLPSpanExporter,
+        )
 
         # Create exporters with custom configuration
         # These will be added to any exporters configured via environment variables
@@ -137,13 +145,13 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
         client = OpenAIResponsesClient()
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
-        if scenario == "ai_function" or scenario == "all":
+        if scenario == "tool" or scenario == "all":
             with suppress(Exception):
-                await run_ai_function()
-        if scenario == "chat_client_stream" or scenario == "all":
+                await run_tool()
+        if scenario == "client_stream" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=True)
-        if scenario == "chat_client" or scenario == "all":
+        if scenario == "client" or scenario == "all":
             with suppress(Exception):
                 await run_chat_client(client, stream=False)
 

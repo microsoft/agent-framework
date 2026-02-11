@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_assistant/02_openai_assistant_with_code_interpreter.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Enable the code interpreter tool for OpenAI Assistants in SK and AF."""
 
@@ -28,16 +37,19 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import HostedCodeInterpreterTool
     from agent_framework.openai import OpenAIAssistantsClient
 
     assistants_client = OpenAIAssistantsClient()
+
+    # Create code interpreter tool using static method
+    code_interpreter_tool = OpenAIAssistantsClient.get_code_interpreter_tool()
+
     # AF exposes the same tool configuration via create_agent.
     async with assistants_client.as_agent(
         name="CodeRunner",
         instructions="Use the code interpreter when calculations are required.",
         model="gpt-4.1",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[code_interpreter_tool],
     ) as assistant_agent:
         response = await assistant_agent.run(
             "Use Python to calculate the mean of [41, 42, 45] and explain the steps.",

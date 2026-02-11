@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "azure-monitor-opentelemetry",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/getting_started/observability/agent_with_foundry_tracing.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
@@ -7,7 +16,7 @@ from random import randint
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent
+from agent_framework import Agent, tool
 from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -21,7 +30,7 @@ from pydantic import Field
 This sample shows you can can setup telemetry in Microsoft Foundry for a custom agent.
 First ensure you have a Foundry workspace with Application Insights enabled.
 And use the Operate tab to Register an Agent.
-Set the OpenTelemetry agent ID to the value used below in the ChatAgent creation: `weather-agent` (or change both).
+Set the OpenTelemetry agent ID to the value used below in the Agent creation: `weather-agent` (or change both).
 The sample uses the Azure Monitor OpenTelemetry exporter to send traces to Application Insights.
 So ensure you have the `azure-monitor-opentelemetry` package installed.
 """
@@ -32,6 +41,8 @@ dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -74,8 +85,8 @@ async def main():
         with get_tracer().start_as_current_span("Weather Agent Chat", kind=SpanKind.CLIENT) as current_span:
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-            agent = ChatAgent(
-                chat_client=OpenAIResponsesClient(),
+            agent = Agent(
+                client=OpenAIResponsesClient(),
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",
@@ -85,10 +96,7 @@ async def main():
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run_stream(
-                    question,
-                    thread=thread,
-                ):
+                async for update in agent.run(question, thread=thread, stream=True):
                     if update.text:
                         print(update.text, end="")
 

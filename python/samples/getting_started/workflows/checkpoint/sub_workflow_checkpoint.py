@@ -3,28 +3,32 @@
 import asyncio
 import contextlib
 import json
+import sys
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 from agent_framework import (
     Executor,
     FileCheckpointStorage,
-    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowExecutor,
-    WorkflowOutputEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
     response_handler,
 )
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_checkpoints"
 
@@ -293,15 +297,14 @@ class LaunchCoordinator(Executor):
 
 def build_sub_workflow() -> WorkflowExecutor:
     """Assemble the sub-workflow used by the parent workflow executor."""
+    writer = DraftWriter()
+    router = DraftReviewRouter()
+    finaliser = DraftFinaliser()
     sub_workflow = (
-        WorkflowBuilder()
-        .register_executor(DraftWriter, name="writer")
-        .register_executor(DraftReviewRouter, name="router")
-        .register_executor(DraftFinaliser, name="finaliser")
-        .set_start_executor("writer")
-        .add_edge("writer", "router")
-        .add_edge("router", "finaliser")
-        .add_edge("finaliser", "writer")  # permits revision loops
+        WorkflowBuilder(start_executor=writer)
+        .add_edge(writer, router)
+        .add_edge(router, finaliser)
+        .add_edge(finaliser, writer)  # permits revision loops
         .build()
     )
 
@@ -310,14 +313,12 @@ def build_sub_workflow() -> WorkflowExecutor:
 
 def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
     """Assemble the parent workflow that embeds the sub-workflow."""
+    coordinator = LaunchCoordinator()
+    sub_executor = build_sub_workflow()
     return (
-        WorkflowBuilder()
-        .register_executor(LaunchCoordinator, name="coordinator")
-        .register_executor(build_sub_workflow, name="sub_executor")
-        .set_start_executor("coordinator")
-        .add_edge("coordinator", "sub_executor")
-        .add_edge("sub_executor", "coordinator")
-        .with_checkpointing(storage)
+        WorkflowBuilder(start_executor=coordinator, checkpoint_storage=storage)
+        .add_edge(coordinator, sub_executor)
+        .add_edge(sub_executor, coordinator)
         .build()
     )
 
@@ -334,11 +335,11 @@ async def main() -> None:
     print("\n=== Stage 1: run until sub-workflow requests human review ===")
 
     request_id: str | None = None
-    async for event in workflow.run_stream("Contoso Gadget Launch"):
-        if isinstance(event, RequestInfoEvent) and request_id is None:
+    async for event in workflow.run("Contoso Gadget Launch", stream=True):
+        if event.type == "request_info" and request_id is None:
             request_id = event.request_id
             print(f"Captured review request id: {request_id}")
-        if isinstance(event, WorkflowStatusEvent) and event.state is WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+        if event.type == "status" and event.state is WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
             break
 
     if request_id is None:
@@ -364,9 +365,9 @@ async def main() -> None:
     # Rebuild fresh instances to mimic a separate process resuming
     workflow2 = build_parent_workflow(storage)
 
-    request_info_event: RequestInfoEvent | None = None
-    async for event in workflow2.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
-        if isinstance(event, RequestInfoEvent):
+    request_info_event: WorkflowEvent | None = None
+    async for event in workflow2.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
+        if event.type == "request_info":
             request_info_event = event
 
     if request_info_event is None:
@@ -375,9 +376,9 @@ async def main() -> None:
     print("\n=== Stage 3: approve draft ==")
 
     approval_response = "approve"
-    output_event: WorkflowOutputEvent | None = None
-    async for event in workflow2.send_responses_streaming({request_info_event.request_id: approval_response}):
-        if isinstance(event, WorkflowOutputEvent):
+    output_event: WorkflowEvent | None = None
+    async for event in workflow2.run(stream=True, responses={request_info_event.request_id: approval_response}):
+        if event.type == "output":
             output_event = event
 
     if output_event is None:

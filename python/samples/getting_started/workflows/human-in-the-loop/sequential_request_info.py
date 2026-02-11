@@ -13,8 +13,8 @@ using the standard request_info pattern for consistency.
 
 Demonstrate:
 - Configuring request info with `.with_request_info()`
-- Handling RequestInfoEvent with AgentInputRequest data
-- Injecting responses back into the workflow via send_responses_streaming
+- Handling request_info events with AgentInputRequest data
+- Injecting responses back into the workflow via run(responses=..., stream=True)
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
@@ -22,31 +22,81 @@ Prerequisites:
 """
 
 import asyncio
+from collections.abc import AsyncIterable
+from typing import cast
 
 from agent_framework import (
     AgentExecutorResponse,
-    AgentRequestInfoResponse,
-    ChatMessage,
-    RequestInfoEvent,
-    SequentialBuilder,
-    WorkflowOutputEvent,
-    WorkflowRunState,
-    WorkflowStatusEvent,
+    Message,
+    WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import AgentRequestInfoResponse, SequentialBuilder
 from azure.identity import AzureCliCredential
 
 
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
+
+    requests: dict[str, AgentExecutorResponse] = {}
+    async for event in stream:
+        if event.type == "request_info" and isinstance(event.data, AgentExecutorResponse):
+            requests[event.request_id] = event.data
+
+        elif event.type == "output":
+            # The output of the sequential workflow is a list of ChatMessages
+            print("\n" + "=" * 60)
+            print("WORKFLOW COMPLETE")
+            print("=" * 60)
+            print("Final output:")
+            outputs = cast(list[Message], event.data)
+            for message in outputs:
+                print(f"[{message.author_name or message.role}]: {message.text}")
+
+    responses: dict[str, AgentRequestInfoResponse] = {}
+    if requests:
+        for request_id, request in requests.items():
+            # Display agent response and conversation context for review
+            print("\n" + "-" * 40)
+            print("REQUEST INFO: INPUT REQUESTED")
+            print(
+                f"Agent {request.executor_id} just responded with: '{request.agent_response.text}'. "
+                "Please provide your feedback."
+            )
+            print("-" * 40)
+            if request.full_conversation:
+                print("Conversation context:")
+                recent = (
+                    request.full_conversation[-2:] if len(request.full_conversation) > 2 else request.full_conversation
+                )
+                for msg in recent:
+                    name = msg.author_name or msg.role
+                    text = (msg.text or "")[:150]
+                    print(f"  [{name}]: {text}...")
+                print("-" * 40)
+
+            # Get feedback on the agent's response (approve or request iteration)
+            user_input = input("Your guidance (or 'skip' to approve): ")  # noqa: ASYNC250
+            if user_input.lower() == "skip":
+                user_input = AgentRequestInfoResponse.approve()
+            else:
+                user_input = AgentRequestInfoResponse.from_strings([user_input])
+
+            responses[request_id] = user_input
+
+    return responses if responses else None
+
+
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents for a sequential document review workflow
-    drafter = chat_client.as_agent(
+    drafter = client.as_agent(
         name="drafter",
         instructions=("You are a document drafter. When given a topic, create a brief draft (2-3 sentences)."),
     )
 
-    editor = chat_client.as_agent(
+    editor = client.as_agent(
         name="editor",
         instructions=(
             "You are an editor. Review the draft and make improvements. "
@@ -54,7 +104,7 @@ async def main() -> None:
         ),
     )
 
-    finalizer = chat_client.as_agent(
+    finalizer = client.as_agent(
         name="finalizer",
         instructions=(
             "You are a finalizer. Take the edited content and create a polished final version. "
@@ -64,79 +114,22 @@ async def main() -> None:
 
     # Build workflow with request info enabled (pauses after each agent responds)
     workflow = (
-        SequentialBuilder()
-        .participants([drafter, editor, finalizer])
+        SequentialBuilder(participants=[drafter, editor, finalizer])
         # Only enable request info for the editor agent
         .with_request_info(agents=["editor"])
         .build()
     )
 
-    # Run the workflow with request info handling
-    pending_responses: dict[str, AgentRequestInfoResponse] | None = None
-    workflow_complete = False
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run.
+    stream = workflow.run("Write a brief introduction to artificial intelligence.", stream=True)
 
-    print("Starting document review workflow...")
-    print("=" * 60)
-
-    while not workflow_complete:
-        # Run or continue the workflow
-        stream = (
-            workflow.send_responses_streaming(pending_responses)
-            if pending_responses
-            else workflow.run_stream("Write a brief introduction to artificial intelligence.")
-        )
-
-        pending_responses = None
-
-        # Process events
-        async for event in stream:
-            if isinstance(event, RequestInfoEvent):
-                if isinstance(event.data, AgentExecutorResponse):
-                    # Display agent response and conversation context for review
-                    print("\n" + "-" * 40)
-                    print("REQUEST INFO: INPUT REQUESTED")
-                    print(
-                        f"Agent {event.source_executor_id} just responded with: '{event.data.agent_response.text}'. "
-                        "Please provide your feedback."
-                    )
-                    print("-" * 40)
-                    if event.data.full_conversation:
-                        print("Conversation context:")
-                        recent = (
-                            event.data.full_conversation[-2:]
-                            if len(event.data.full_conversation) > 2
-                            else event.data.full_conversation
-                        )
-                        for msg in recent:
-                            name = msg.author_name or msg.role.value
-                            text = (msg.text or "")[:150]
-                            print(f"  [{name}]: {text}...")
-                        print("-" * 40)
-
-                    # Get feedback on the agent's response (approve or request iteration)
-                    user_input = input("Your guidance (or 'skip' to approve): ")  # noqa: ASYNC250
-                    if user_input.lower() == "skip":
-                        user_input = AgentRequestInfoResponse.approve()
-                    else:
-                        user_input = AgentRequestInfoResponse.from_strings([user_input])
-
-                    pending_responses = {event.request_id: user_input}
-                    print("(Resuming workflow...)")
-
-            elif isinstance(event, WorkflowOutputEvent):
-                print("\n" + "=" * 60)
-                print("WORKFLOW COMPLETE")
-                print("=" * 60)
-                print("Final output:")
-                if event.data:
-                    messages: list[ChatMessage] = event.data[-3:]
-                    for msg in messages:
-                        role = msg.role.value if msg.role else "unknown"
-                        print(f"[{role}]: {msg.text}")
-                workflow_complete = True
-
-            elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
-                workflow_complete = True
+    pending_responses = await process_event_stream(stream)
+    while pending_responses is not None:
+        # Run the workflow until there is no more human feedback to provide,
+        # in which case this workflow completes.
+        stream = workflow.run(stream=True, responses=pending_responses)
+        pending_responses = await process_event_stream(stream)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto
@@ -175,7 +177,7 @@ def translate_activity(activity: Activity) -> ProtectionScopeActivities:
 # Simple value models
 # --------------------------------------------------------------------------------------
 
-TAliasSerializable = TypeVar("TAliasSerializable", bound="_AliasSerializable")
+AliasSerializableT = TypeVar("AliasSerializableT", bound="_AliasSerializable")
 
 
 class _AliasSerializable(SerializationMixin):
@@ -230,7 +232,7 @@ class _AliasSerializable(SerializationMixin):
         return json.dumps(self.model_dump(by_alias=by_alias, exclude_none=exclude_none, **kwargs))
 
     @classmethod
-    def model_validate(cls: type[TAliasSerializable], value: MutableMapping[str, Any]) -> TAliasSerializable:  # type: ignore[name-defined]
+    def model_validate(cls: type[AliasSerializableT], value: MutableMapping[str, Any]) -> AliasSerializableT:  # type: ignore[name-defined]
         return cls(**value)
 
     # ------------------------------------------------------------------

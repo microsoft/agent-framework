@@ -3,30 +3,28 @@
 import asyncio
 
 from agent_framework import (
-    ChatAgent,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    HostedCodeInterpreterTool,
-    TextContent,
+    Agent,
+    Content,
 )
 from agent_framework.openai import OpenAIResponsesClient
 
 """
 OpenAI Responses Client with Code Interpreter Example
 
-This sample demonstrates using HostedCodeInterpreterTool with OpenAI Responses Client
+This sample demonstrates using get_code_interpreter_tool() with OpenAI Responses Client
 for Python code execution and mathematical problem solving.
 """
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with OpenAI Responses."""
+    """Example showing how to use the code interpreter tool with OpenAI Responses."""
     print("=== OpenAI Responses Agent with Code Interpreter Example ===")
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    client = OpenAIResponsesClient()
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=HostedCodeInterpreterTool(),
+        tools=client.get_code_interpreter_tool(),
     )
 
     query = "Use code to get the factorial of 100?"
@@ -35,18 +33,19 @@ async def main() -> None:
     print(f"Result: {result}\n")
 
     for message in result.messages:
-        code_blocks = [c for c in message.contents if isinstance(c, CodeInterpreterToolCallContent)]
-        outputs = [c for c in message.contents if isinstance(c, CodeInterpreterToolResultContent)]
+        code_blocks = [c for c in message.contents if c.type == "code_interpreter_tool_call"]
+        outputs = [c for c in message.contents if c.type == "code_interpreter_tool_result"]
+
         if code_blocks:
             code_inputs = code_blocks[0].inputs or []
             for content in code_inputs:
-                if isinstance(content, TextContent):
+                if isinstance(content, Content) and content.type == "text":
                     print(f"Generated code:\n{content.text}")
                     break
         if outputs:
             print("Execution outputs:")
             for out in outputs[0].outputs or []:
-                if isinstance(out, TextContent):
+                if isinstance(out, Content) and out.type == "text":
                     print(out.text)
 
 

@@ -6,7 +6,6 @@ using System.Buffers;
 #endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 
 #if NET
 using System.Text;
@@ -124,21 +123,6 @@ public class AgentResponse
     /// </remarks>
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
-
-    /// <summary>
-    /// Gets all user input requests present in the response messages.
-    /// </summary>
-    /// <value>
-    /// An enumerable collection of <see cref="UserInputRequestContent"/> instances found
-    /// across all messages in the response.
-    /// </value>
-    /// <remarks>
-    /// User input requests indicate that the agent is asking for additional information
-    /// from the user before it can continue processing. This property aggregates all such
-    /// requests across all messages in the response.
-    /// </remarks>
-    [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>
     /// Gets or sets the identifier of the agent that generated this response.

@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
-from typing import Any, ClassVar
+from __future__ import annotations
+
+from collections.abc import AsyncIterable, Awaitable, Sequence
+from typing import Any, ClassVar, Literal, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -9,10 +11,10 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     ContextProvider,
-    Role,
+    Message,
+    ResponseStream,
     normalize_messages,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -205,35 +207,64 @@ class CopilotStudioAgent(BaseAgent):
         self.token_cache = token_cache
         self.scopes = scopes
 
-    async def run(
+    @overload
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
+        stream: Literal[False] = False,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> Awaitable[AgentResponse]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: Literal[True],
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
         This method returns the final result of the agent's execution
-        as a single AgentResponse object. The caller is blocked until
-        the final result is available.
-
-        Note: For streaming responses, use the run_stream method, which returns
-        intermediate steps and the final result as a stream of AgentResponseUpdate
-        objects. Streaming only the final result is not feasible because the timing of
-        the final result's availability is unknown, and blocking the caller until then
-        is undesirable in streaming scenarios.
+        as a single AgentResponse object. When stream=True, it returns
+        a ResponseStream that yields AgentResponseUpdate objects.
 
         Args:
             messages: The message(s) to send to the agent.
 
         Keyword Args:
+            stream: Whether to stream the response. Defaults to False.
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
         Returns:
-            An agent response item.
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
+        if stream:
+            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
+        return self._run_impl(messages=messages, thread=thread, **kwargs)
+
+    async def _run_impl(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        """Non-streaming implementation of run."""
         if not thread:
             thread = self.get_new_thread()
         thread.service_thread_id = await self._start_new_conversation()
@@ -243,7 +274,7 @@ class CopilotStudioAgent(BaseAgent):
         question = "\n".join([message.text for message in input_messages])
 
         activities = self.client.ask_question(question, thread.service_thread_id)
-        response_messages: list[ChatMessage] = []
+        response_messages: list[Message] = []
         response_id: str | None = None
 
         response_messages = [message async for message in self._process_activities(activities, streaming=False)]
@@ -251,49 +282,41 @@ class CopilotStudioAgent(BaseAgent):
 
         return AgentResponse(messages=response_messages, response_id=response_id)
 
-    async def run_stream(
+    def _run_stream_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Run the agent as a stream.
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        """Streaming implementation of run."""
 
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentResponseUpdate objects to the caller.
+        async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+            nonlocal thread
+            if not thread:
+                thread = self.get_new_thread()
+            thread.service_thread_id = await self._start_new_conversation()
 
-        Note: An AgentResponseUpdate object contains a chunk of a message.
+            input_messages = normalize_messages(messages)
 
-        Args:
-            messages: The message(s) to send to the agent.
+            question = "\n".join([message.text for message in input_messages])
 
-        Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
+            activities = self.client.ask_question(question, thread.service_thread_id)
 
-        Yields:
-            An agent response item.
-        """
-        if not thread:
-            thread = self.get_new_thread()
-        thread.service_thread_id = await self._start_new_conversation()
+            async for message in self._process_activities(activities, streaming=True):
+                yield AgentResponseUpdate(
+                    role=message.role,
+                    contents=message.contents,
+                    author_name=message.author_name,
+                    raw_representation=message.raw_representation,
+                    response_id=message.message_id,
+                    message_id=message.message_id,
+                )
 
-        input_messages = normalize_messages(messages)
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[None]:
+            return AgentResponse.from_updates(updates)
 
-        question = "\n".join([message.text for message in input_messages])
-
-        activities = self.client.ask_question(question, thread.service_thread_id)
-
-        async for message in self._process_activities(activities, streaming=True):
-            yield AgentResponseUpdate(
-                role=message.role,
-                contents=message.contents,
-                author_name=message.author_name,
-                raw_representation=message.raw_representation,
-                response_id=message.message_id,
-                message_id=message.message_id,
-            )
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     async def _start_new_conversation(self) -> str:
         """Start a new conversation with the Copilot Studio agent.
@@ -315,7 +338,7 @@ class CopilotStudioAgent(BaseAgent):
 
         return conversation_id
 
-    async def _process_activities(self, activities: AsyncIterable[Any], streaming: bool) -> AsyncIterable[ChatMessage]:
+    async def _process_activities(self, activities: AsyncIterable[Any], streaming: bool) -> AsyncIterable[Message]:
         """Process activities from the Copilot Studio agent.
 
         Args:
@@ -324,14 +347,14 @@ class CopilotStudioAgent(BaseAgent):
                 or non-streaming (message activities) responses.
 
         Yields:
-            ChatMessage objects created from the activities.
+            Message objects created from the activities.
         """
         async for activity in activities:
             if activity.text and (
                 (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
             ):
-                yield ChatMessage(
-                    role=Role.ASSISTANT,
+                yield Message(
+                    role="assistant",
                     contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,

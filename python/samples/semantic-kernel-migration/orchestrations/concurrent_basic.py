@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/concurrent_basic.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side concurrent orchestrations for Agent Framework and Semantic Kernel."""
@@ -6,10 +15,11 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, ConcurrentBuilder, WorkflowOutputEvent
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, ConcurrentOrchestration
+from semantic_kernel.agents import ChatCompletionAgent, ConcurrentOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
@@ -74,30 +84,30 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 ######################################################################
 
 
-async def run_agent_framework_example(prompt: str) -> Sequence[list[ChatMessage]]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+async def run_agent_framework_example(prompt: str) -> Sequence[list[Message]]:
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physics = chat_client.as_agent(
+    physics = client.as_agent(
         instructions=("You are an expert in physics. Answer questions from a physics perspective."),
         name="physics",
     )
 
-    chemistry = chat_client.as_agent(
+    chemistry = client.as_agent(
         instructions=("You are an expert in chemistry. Answer questions from a chemistry perspective."),
         name="chemistry",
     )
 
-    workflow = ConcurrentBuilder().participants([physics, chemistry]).build()
+    workflow = ConcurrentBuilder(participants=[physics, chemistry]).build()
 
-    outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
-            outputs.append(cast(list[ChatMessage], event.data))
+    outputs: list[list[Message]] = []
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
+            outputs.append(cast(list[Message], event.data))
 
     return outputs
 
 
-def _print_agent_framework_outputs(conversations: Sequence[Sequence[ChatMessage]]) -> None:
+def _print_agent_framework_outputs(conversations: Sequence[Sequence[Message]]) -> None:
     if not conversations:
         print("No Agent Framework output.")
         return

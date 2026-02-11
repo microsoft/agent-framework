@@ -3,7 +3,7 @@
 """
 GitHub Copilot Agent Basic Example
 
-This sample demonstrates basic usage of GithubCopilotAgent.
+This sample demonstrates basic usage of GitHubCopilotAgent.
 Shows both streaming and non-streaming responses with function tools.
 
 Environment variables (optional):
@@ -17,10 +17,13 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.github import GithubCopilotAgent, GithubCopilotOptions
+from agent_framework import tool
+from agent_framework.github import GitHubCopilotAgent
 from pydantic import Field
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -33,8 +36,8 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        default_options={"instructions": "You are a helpful weather agent."},
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
 
@@ -49,8 +52,8 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent: GithubCopilotAgent[GithubCopilotOptions] = GithubCopilotAgent(
-        default_options={"instructions": "You are a helpful weather agent."},
+    agent = GitHubCopilotAgent(
+        instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
 
@@ -58,10 +61,44 @@ async def streaming_example() -> None:
         query = "What's the weather like in Tokyo?"
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
-        async for chunk in agent.run_stream(query):
+        async for chunk in agent.run(query, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
         print("\n")
+
+
+async def runtime_options_example() -> None:
+    """Example of overriding system message at runtime."""
+    print("=== Runtime Options Example ===")
+
+    agent = GitHubCopilotAgent(
+        instructions="Always respond in exactly 3 words.",
+        tools=[get_weather],
+    )
+
+    async with agent:
+        query = "What's the weather like in Paris?"
+
+        # First call uses default instructions (3 words response)
+        print("Using default instructions (3 words):")
+        print(f"User: {query}")
+        result1 = await agent.run(query)
+        print(f"Agent: {result1}\n")
+
+        # Second call overrides with runtime system_message in replace mode
+        print("Using runtime system_message with replace mode (detailed response):")
+        print(f"User: {query}")
+        result2 = await agent.run(
+            query,
+            options={
+                "system_message": {
+                    "mode": "replace",
+                    "content": "You are a weather expert. Provide detailed weather information "
+                    "with temperature, and recommendations.",
+                }
+            },
+        )
+        print(f"Agent: {result2}\n")
 
 
 async def main() -> None:
@@ -69,6 +106,7 @@ async def main() -> None:
 
     await non_streaming_example()
     await streaming_example()
+    await runtime_options_example()
 
 
 if __name__ == "__main__":

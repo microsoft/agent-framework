@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
@@ -24,7 +26,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
+from .._tools import FunctionTool
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -138,11 +140,12 @@ class OpenAIBase(SerializationMixin):
         if model_id:
             self.model_id = model_id.strip()
 
-        # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
+        # Call super().__init__() to continue MRO chain (e.g., RawChatClient)
         # Extract known kwargs that belong to other base classes
         additional_properties = kwargs.pop("additional_properties", None)
         middleware = kwargs.pop("middleware", None)
         instruction_role = kwargs.pop("instruction_role", None)
+        function_invocation_configuration = kwargs.pop("function_invocation_configuration", None)
 
         # Build super().__init__() args
         super_kwargs = {}
@@ -150,6 +153,8 @@ class OpenAIBase(SerializationMixin):
             super_kwargs["additional_properties"] = additional_properties
         if middleware is not None:
             super_kwargs["middleware"] = middleware
+        if function_invocation_configuration is not None:
+            super_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         # Call super().__init__() with filtered kwargs
         super().__init__(**super_kwargs)
@@ -273,18 +278,20 @@ class OpenAIConfigMixin(OpenAIBase):
         if instruction_role:
             args["instruction_role"] = instruction_role
 
-        # Ensure additional_properties and middleware are passed through kwargs to BaseChatClient
-        # These are consumed by BaseChatClient.__init__ via kwargs
+        # Ensure additional_properties and middleware are passed through kwargs to RawChatClient
+        # These are consumed by RawChatClient.__init__ via kwargs
         super().__init__(**args, **kwargs)
 
 
 def to_assistant_tools(
-    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     """Convert Agent Framework tools to OpenAI Assistants API format.
 
+    Handles FunctionTool instances and dict-based tools from static factory methods.
+
     Args:
-        tools: Normalized tools (from ChatOptions.tools).
+        tools: Sequence of Agent Framework tools.
 
     Returns:
         List of tool definitions for OpenAI Assistants API.
@@ -295,17 +302,10 @@ def to_assistant_tools(
     tool_definitions: list[dict[str, Any]] = []
 
     for tool in tools:
-        if isinstance(tool, AIFunction):
+        if isinstance(tool, FunctionTool):
             tool_definitions.append(tool.to_json_schema_spec())
-        elif isinstance(tool, HostedCodeInterpreterTool):
-            tool_definitions.append({"type": "code_interpreter"})
-        elif isinstance(tool, HostedFileSearchTool):
-            params: dict[str, Any] = {"type": "file_search"}
-            if tool.max_results is not None:
-                params["file_search"] = {"max_num_results": tool.max_results}
-            tool_definitions.append(params)
         elif isinstance(tool, MutableMapping):
-            # Pass through raw dict definitions
+            # Pass through dict-based tools directly (from static factory methods)
             tool_definitions.append(dict(tool))
 
     return tool_definitions
@@ -313,11 +313,11 @@ def to_assistant_tools(
 
 def from_assistant_tools(
     assistant_tools: list[Any] | None,
-) -> list[ToolProtocol]:
-    """Convert OpenAI Assistant tools to Agent Framework format.
+) -> list[dict[str, Any]]:
+    """Convert OpenAI Assistant tools to dict-based format.
 
     This converts hosted tools (code_interpreter, file_search) from an OpenAI
-    Assistant definition back to Agent Framework tool instances.
+    Assistant definition back to dict-based tool definitions.
 
     Note: Function tools are skipped - user must provide implementations separately.
 
@@ -325,12 +325,12 @@ def from_assistant_tools(
         assistant_tools: Tools from OpenAI Assistant object (assistant.tools).
 
     Returns:
-        List of Agent Framework tool instances for hosted tools.
+        List of dict-based tool definitions for hosted tools.
     """
     if not assistant_tools:
         return []
 
-    tools: list[ToolProtocol] = []
+    tools: list[dict[str, Any]] = []
 
     for tool in assistant_tools:
         if hasattr(tool, "type"):
@@ -341,9 +341,9 @@ def from_assistant_tools(
             tool_type = None
 
         if tool_type == "code_interpreter":
-            tools.append(HostedCodeInterpreterTool())
+            tools.append({"type": "code_interpreter"})
         elif tool_type == "file_search":
-            tools.append(HostedFileSearchTool())
+            tools.append({"type": "file_search"})
         # Skip function tools - user must provide implementations
 
     return tools

@@ -4,15 +4,17 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AIFunction, ChatAgent
+from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentReference,
     AgentVersionDetails,
-    FunctionTool,
     PromptAgentDefinition,
+)
+from azure.ai.projects.models import (
+    FunctionTool as AzureFunctionTool,
 )
 from azure.identity.aio import AzureCliCredential
 
@@ -156,7 +158,7 @@ async def test_provider_create_agent(
             description="Test Agent",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "test-agent"
         mock_project_client.agents.create_version.assert_called_once()
 
@@ -190,7 +192,7 @@ async def test_provider_create_agent_with_env_model(
         # Call without model parameter - should use env var
         agent = await provider.create_agent(name="test-agent")
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         # Verify the model from env var was used
         call_args = mock_project_client.agents.create_version.call_args
         assert call_args[1]["definition"].model == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
@@ -320,7 +322,7 @@ async def test_provider_get_agent_with_name(mock_project_client: MagicMock) -> N
 
     agent = await provider.get_agent(name="test-agent")
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "test-agent"
     mock_project_client.agents.get.assert_called_with(agent_name="test-agent")
 
@@ -348,7 +350,7 @@ async def test_provider_get_agent_with_reference(mock_project_client: MagicMock)
     agent_reference = AgentReference(name="test-agent", version="1.0")
     agent = await provider.get_agent(reference=agent_reference)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "test-agent"
     mock_project_client.agents.get_version.assert_called_with(agent_name="test-agent", agent_version="1.0")
 
@@ -373,7 +375,7 @@ async def test_provider_get_agent_missing_function_tools(mock_project_client: Ma
     mock_agent_version.description = None
     mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
     mock_agent_version.definition.tools = [
-        FunctionTool(name="test_tool", parameters=[], strict=True, description="Test tool")
+        AzureFunctionTool(name="test_tool", parameters=[], strict=True, description="Test tool")
     ]
 
     mock_agent_object = MagicMock()
@@ -408,7 +410,7 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
     with patch("agent_framework_azure_ai._project_provider.AzureAIClient") as mock_azure_ai_client:
         agent = provider.as_agent(mock_agent_version)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "test-agent"
         assert agent.description == "Test Agent"
 
@@ -420,6 +422,40 @@ def test_provider_as_agent(mock_project_client: MagicMock) -> None:
         assert call_kwargs["agent_version"] == "1.0"
         assert call_kwargs["agent_description"] == "Test Agent"
         assert call_kwargs["model_deployment_name"] == "gpt-4"
+
+
+def test_provider_merge_tools_skips_function_tool_dicts(mock_project_client: MagicMock) -> None:
+    """Test that _merge_tools skips function tool dicts but keeps other hosted tools."""
+    provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
+
+    # Create a mock FunctionTool to provide as implementation
+    mock_ai_function = create_mock_ai_function("my_function", "My function description")
+
+    # Definition tools include a function tool (dict) and an MCP tool
+    definition_tools = [
+        {"type": "function", "name": "my_function", "parameters": {}},  # Should be skipped
+        {"type": "mcp", "server_label": "my_mcp", "server_url": "http://localhost:8080"},  # Should be converted
+    ]
+
+    # Call _merge_tools with user-provided function implementation
+    merged = provider._merge_tools(definition_tools, [mock_ai_function])  # type: ignore
+
+    # Should have 2 items: the converted MCP dict and the user-provided FunctionTool
+    assert len(merged) == 2
+
+    # Check that the function tool dict was NOT included (it was skipped)
+    function_dicts = [t for t in merged if isinstance(t, dict) and t.get("type") == "function"]
+    assert len(function_dicts) == 0
+
+    # Check that the MCP tool was converted to dict
+    mcp_tools = [t for t in merged if isinstance(t, dict) and t.get("type") == "mcp"]
+    assert len(mcp_tools) == 1
+    assert mcp_tools[0]["server_label"] == "my_mcp"
+
+    # Check that the user-provided FunctionTool was included
+    ai_functions = [t for t in merged if isinstance(t, FunctionTool)]
+    assert len(ai_functions) == 1
+    assert ai_functions[0].name == "my_function"
 
 
 async def test_provider_context_manager(mock_project_client: MagicMock) -> None:
@@ -494,7 +530,7 @@ class MockMCPTool(MCPTool):  # pyright: ignore[reportGeneralTypeIssues]
     unit testing. We only need isinstance(obj, MCPTool) to return True.
     """
 
-    def __init__(self, functions: list[AIFunction] | None = None) -> None:
+    def __init__(self, functions: list[FunctionTool] | None = None) -> None:
         self.name = "MockMCPTool"
         self.description = "A mock MCP tool for testing"
         self.is_connected = False
@@ -502,7 +538,7 @@ class MockMCPTool(MCPTool):  # pyright: ignore[reportGeneralTypeIssues]
         self._connect_called = False
 
     @property
-    def functions(self) -> list[AIFunction]:
+    def functions(self) -> list[FunctionTool]:
         return self._mock_functions
 
     async def connect(self, *, reset: bool = False) -> None:
@@ -520,13 +556,13 @@ def mock_mcp_tool() -> MockMCPTool:
     return MockMCPTool(functions=mock_functions)
 
 
-def create_mock_ai_function(name: str, description: str = "A mock function") -> AIFunction:
-    """Create a real AIFunction for testing."""
+def create_mock_ai_function(name: str, description: str = "A mock function") -> FunctionTool:
+    """Create a real FunctionTool for testing."""
 
     def mock_func(arg: str) -> str:
         return f"Result from {name}: {arg}"
 
-    return AIFunction(func=mock_func, name=name, description=description)
+    return FunctionTool(func=mock_func, name=name, description=description, approval_mode="never_require")
 
 
 async def test_provider_create_agent_with_mcp_tool(
@@ -593,8 +629,8 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
     azure_ai_unit_test_env: dict[str, str],
     mock_mcp_tool: "MockMCPTool",
 ) -> None:
-    """Test that create_agent handles both MCP tools and regular AIFunctions."""
-    # Create a regular AIFunction
+    """Test that create_agent handles both MCP tools and regular FunctionTools."""
+    # Create a regular FunctionTool
     regular_function = create_mock_ai_function("regular_function", "A regular function")
 
     # Patch normalize_tools to return tools as-is in a list (avoids callable check)
@@ -637,7 +673,7 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
         )
 
         # Verify to_azure_ai_tools was called with:
-        # - The regular AIFunction (1)
+        # - The regular FunctionTool (1)
         # - The 2 discovered MCP functions
         mock_to_azure_tools.assert_called_once()
         tools_passed = mock_to_azure_tools.call_args[0][0]
@@ -671,7 +707,7 @@ async def test_provider_create_and_get_agent_integration() -> None:
                 instructions="You are a helpful assistant. Always respond with 'Hello from provider!'",
             )
 
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.name == "ProviderTestAgent"
 
             # Run the agent

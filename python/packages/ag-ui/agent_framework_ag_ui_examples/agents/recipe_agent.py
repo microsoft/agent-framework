@@ -2,10 +2,12 @@
 
 """Recipe agent example demonstrating shared state management (Feature 3)."""
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -49,7 +51,7 @@ class Recipe(BaseModel):
     instructions: list[str] = Field(..., description="Step-by-step cooking instructions")
 
 
-@ai_function
+@tool
 def update_recipe(recipe: Recipe) -> str:
     """Update the recipe with new or modified content.
 
@@ -102,19 +104,19 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     """
 
 
-def recipe_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def recipe_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create a recipe agent with streaming state updates.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with recipe management
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="recipe_agent",
         instructions=_RECIPE_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[update_recipe],
     )
 

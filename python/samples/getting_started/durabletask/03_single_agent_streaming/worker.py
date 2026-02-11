@@ -5,8 +5,8 @@
 This worker registers the TravelPlanner agent with the Durable Task Scheduler
 and uses RedisStreamCallback to persist streaming responses to Redis for reliable delivery.
 
-Prerequisites: 
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+Prerequisites:
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 - Start Redis (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
@@ -18,7 +18,7 @@ import os
 from datetime import timedelta
 
 import redis.asyncio as aioredis
-from agent_framework import AgentResponseUpdate, ChatAgent
+from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
@@ -27,7 +27,6 @@ from agent_framework.azure import (
 )
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-
 from redis_stream_response_handler import RedisStreamResponseHandler
 from tools import get_local_events, get_weather_forecast
 
@@ -144,11 +143,11 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
             logger.error(f"Error writing end-of-stream marker: {ex}", exc_info=True)
 
 
-def create_travel_agent() -> "ChatAgent":
+def create_travel_agent() -> "Agent":
     """Create the TravelPlanner agent using Azure OpenAI.
-    
+
     Returns:
-        ChatAgent: The configured TravelPlanner agent with travel planning tools.
+        Agent: The configured TravelPlanner agent with travel planning tools.
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",
@@ -175,23 +174,23 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional log handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-    
+
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
-    
+
     credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
-    
+
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,
         secure_channel=endpoint_url != "http://localhost:8080",
@@ -203,43 +202,43 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with the TravelPlanner agent and Redis streaming callback.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agent and callback registered
     """
     # Create the Redis streaming callback
     redis_callback = RedisStreamCallback()
-    
+
     # Wrap it with the agent worker
     agent_worker = DurableAIAgentWorker(worker, callback=redis_callback)
-    
+
     # Create and register the TravelPlanner agent
     logger.debug("Creating and registering TravelPlanner agent...")
     travel_agent = create_travel_agent()
     agent_worker.add_agent(travel_agent)
-    
+
     logger.debug(f"✓ Registered agent: {travel_agent.name}")
-    
+
     return agent_worker
 
 
 async def main():
     """Main entry point for the worker process."""
     logger.debug("Starting Durable Task Agent Worker with Redis Streaming...")
-    
+
     # Create a worker using the helper function
     worker = get_worker()
-    
+
     # Setup worker with agent and callback
     setup_worker(worker)
-    
+
     # Start the worker
     logger.debug("Worker started and listening for requests...")
     worker.start()
-    
+
     try:
         # Keep the worker running
         while True:
