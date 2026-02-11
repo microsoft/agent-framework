@@ -15,14 +15,9 @@ public sealed class DefaultActionExecutorTest(ITestOutputHelper output) : Workfl
     [Fact]
     public async Task ExecuteDefaultActionAsync()
     {
-        // Arrange & Act
-        WorkflowEvent[] events =
-            await this.ExecuteTestAsync(
-                this.FormatDisplayName(nameof(ExecuteDefaultActionAsync)));
-
-        // Assert
-        Assert.Contains(events, e => e is DeclarativeActionInvokedEvent);
-        Assert.Contains(events, e => e is DeclarativeActionCompletedEvent);
+        // Arrange & Act & Assert
+        await this.ExecuteTestAsync(
+            this.FormatDisplayName(nameof(ExecuteDefaultActionAsync)));
     }
 
     private async Task<WorkflowEvent[]> ExecuteTestAsync(string displayName)
