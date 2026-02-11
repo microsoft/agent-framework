@@ -4,7 +4,6 @@
 
 from unittest.mock import patch
 
-from agent_framework import AgentSession
 from agent_framework._types import Content, Message
 from agent_framework_lab_tau2._sliding_window import SlidingWindowHistoryProvider
 
@@ -66,8 +65,8 @@ async def test_save_and_get_messages():
 
     # get_messages returns truncated
     truncated = await provider.get_messages(None, state=state)
-    # get_all_messages returns full history
-    all_msgs = await provider.get_all_messages(state=state)
+    # Full history is in session state
+    all_msgs = state[provider.source_id]["messages"]
 
     assert len(all_msgs) == 10
     assert len(truncated) < len(all_msgs)
@@ -197,7 +196,7 @@ async def test_real_world_scenario():
     await provider.save_messages(None, conversation, state=state)
 
     truncated = await provider.get_messages(None, state=state)
-    all_msgs = await provider.get_all_messages(state=state)
+    all_msgs = state[provider.source_id]["messages"]
 
     assert len(all_msgs) == 6
     assert len(truncated) <= 6

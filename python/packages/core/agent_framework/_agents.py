@@ -1150,7 +1150,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
             await provider.before_run(
-                agent=self,
+                agent=self,  # type: ignore[arg-type]
                 session=session,  # type: ignore[arg-type]
                 context=session_context,
                 state=state,

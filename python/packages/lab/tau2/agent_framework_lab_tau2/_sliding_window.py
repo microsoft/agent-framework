@@ -38,10 +38,6 @@ class SlidingWindowHistoryProvider(InMemoryHistoryProvider):
         all_messages = await super().get_messages(session_id, state=state, **kwargs)
         return self._truncate(list(all_messages))
 
-    async def get_all_messages(self, *, state: dict[str, Any] | None = None) -> list[Message]:
-        """Get all messages from the store including the truncated ones."""
-        return await super().get_messages(None, state=state)
-
     def _truncate(self, messages: list[Message]) -> list[Message]:
         """Truncate messages to fit within max_tokens and remove leading tool messages."""
         while len(messages) > 0 and self._get_token_count(messages) > self.max_tokens:
