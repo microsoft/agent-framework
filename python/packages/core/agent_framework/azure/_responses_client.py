@@ -218,7 +218,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         if (
             not azure_openai_settings.get("base_url")
             and azure_openai_settings.get("endpoint")
-            and (hostname := urlparse(azure_openai_settings["endpoint"]).hostname)
+            and (hostname := urlparse(str(azure_openai_settings["endpoint"])).hostname)
             and hostname.endswith(".openai.azure.com")
         ):
             azure_openai_settings["base_url"] = urljoin(
