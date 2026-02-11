@@ -605,10 +605,11 @@ class AgentFactory:
         # Parse tools
         tools = self._parse_tools(prompt_agent.tools) if prompt_agent.tools else None
 
-        # Parse response format
-        response_format = None
+        # Parse response format into default_options
+        default_options: dict[str, Any] | None = None
         if prompt_agent.outputSchema:
             response_format = _create_model_from_json_schema("agent", prompt_agent.outputSchema.to_json_schema())
+            default_options = {"response_format": response_format}
 
         # Create the agent using the provider
         # The provider's create_agent returns a Agent directly
@@ -620,7 +621,7 @@ class AgentFactory:
                 instructions=prompt_agent.instructions,
                 description=prompt_agent.description,
                 tools=tools,
-                response_format=response_format,
+                default_options=default_options,
             ),
         )
 
