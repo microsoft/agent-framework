@@ -44,4 +44,4 @@ async for event in agent.run(audio_input=microphone_stream()):
         play_audio(event.data["audio"])
 ```
 
-For more examples, see the [Azure Voice Live examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/azure_ai/).
+For more examples, see the [Azure Voice Live examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/realtime/).
