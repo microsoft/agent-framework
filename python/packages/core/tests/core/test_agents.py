@@ -146,7 +146,7 @@ async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChat
         client=chat_client_base,
         tools={"type": "code_interpreter"},
     )
-    session = agent.get_session("123")
+    session = agent.get_session(service_session_id="123")
 
     result = await agent.run("Hello", session=session)
     assert result.text == "test response"
@@ -259,7 +259,7 @@ async def test_chat_agent_context_providers_after_run(chat_client_base: Supports
 
     agent = Agent(client=chat_client_base, context_providers=[mock_provider])
 
-    session = agent.get_session("test-thread-id")
+    session = agent.get_session(service_session_id="test-thread-id")
     await agent.run("Hello", session=session)
 
     assert mock_provider.after_run_called
@@ -345,7 +345,7 @@ async def test_chat_agent_context_providers_with_service_session_id(chat_client_
     agent = Agent(client=chat_client_base, context_providers=[mock_provider])
 
     # Use existing service-managed session
-    session = agent.get_session("existing-thread-id")
+    session = agent.get_session(service_session_id="existing-thread-id")
     await agent.run("Hello", session=session)
 
     # after_run should be called
@@ -829,7 +829,7 @@ async def test_agent_get_session_with_service_session_id(
     """Test that get_session creates a session with service_session_id."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
 
-    session = agent.get_session("test-thread-123")
+    session = agent.get_session(service_session_id="test-thread-123")
 
     assert session is not None
     assert session.service_session_id == "test-thread-123"

@@ -217,7 +217,7 @@ class SupportsAgentRun(Protocol):
 
                     return AgentSession(**kwargs)
 
-                def get_session(self, service_session_id, **kwargs):
+                def get_session(self, *, service_session_id, **kwargs):
                     from agent_framework import AgentSession
 
                     return AgentSession(service_session_id=service_session_id, **kwargs)
@@ -289,7 +289,7 @@ class SupportsAgentRun(Protocol):
         """Creates a new conversation session."""
         ...
 
-    def get_session(self, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
         """Gets or creates a session for a service-managed session ID."""
         ...
 
@@ -398,7 +398,7 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
+    def get_session(self, *, service_session_id: str, session_id: str | None = None, **kwargs: Any) -> AgentSession:
         """Get or create a session for a service-managed session ID.
 
         Args:
