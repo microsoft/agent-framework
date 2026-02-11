@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pyaudio",
+#     "websockets",
+# ]
+# ///
+# Run with: uv run samples/getting_started/realtime/websocket_audio_client.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import argparse

@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "pyaudio",
+# ]
+# ///
+# Run with: uv run samples/getting_started/realtime/realtime_with_multiple_agents.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import argparse

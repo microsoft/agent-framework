@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+#     "websockets",
+# ]
+# ///
+# Run with: uv run samples/getting_started/realtime/realtime_fastapi_websocket.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
