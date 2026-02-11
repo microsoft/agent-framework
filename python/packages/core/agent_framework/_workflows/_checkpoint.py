@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -98,7 +99,21 @@ class WorkflowCheckpoint:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> WorkflowCheckpoint:
-        return cls(**data)
+        """Create a WorkflowCheckpoint from a dictionary.
+
+        Args:
+            data: Dictionary containing checkpoint fields.
+
+        Returns:
+            A new WorkflowCheckpoint instance.
+
+        Raises:
+            WorkflowCheckpointException: If required fields are missing.
+        """
+        try:
+            return cls(**data)
+        except Exception as ex:
+            raise WorkflowCheckpointException(f"Failed to create WorkflowCheckpoint from dict: {ex}") from ex
 
 
 class CheckpointStorage(Protocol):
@@ -183,7 +198,7 @@ class InMemoryCheckpointStorage:
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID."""
-        self._checkpoints[checkpoint.checkpoint_id] = checkpoint
+        self._checkpoints[checkpoint.checkpoint_id] = copy.deepcopy(checkpoint)
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
 
@@ -212,7 +227,7 @@ class InMemoryCheckpointStorage:
         checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
         if not checkpoints:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: cp.timestamp)
+        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return latest_checkpoint
 
@@ -239,6 +254,26 @@ class FileCheckpointStorage:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
 
+    def _validate_file_path(self, checkpoint_id: CheckpointID) -> Path:
+        """Validate that a checkpoint ID resolves to a path within the storage directory.
+
+        This can prevent someone from crafting a checkpoint ID that points to an arbitrary
+        file on the filesystem.
+
+        Args:
+            checkpoint_id: The checkpoint ID to validate.
+
+        Returns:
+            The validated file path.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint ID would resolve outside the storage directory.
+        """
+        file_path = (self.storage_path / f"{checkpoint_id}.json").resolve()
+        if not file_path.is_relative_to(self.storage_path.resolve()):
+            raise WorkflowCheckpointException(f"Invalid checkpoint ID: {checkpoint_id}")
+        return file_path
+
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.
 
@@ -250,7 +285,7 @@ class FileCheckpointStorage:
         """
         from ._checkpoint_encoding import encode_checkpoint_value
 
-        file_path = self.storage_path / f"{checkpoint.checkpoint_id}.json"
+        file_path = self._validate_file_path(checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
@@ -275,9 +310,10 @@ class FileCheckpointStorage:
             The WorkflowCheckpoint object corresponding to the given ID.
 
         Raises:
-            WorkflowCheckpointException: If no checkpoint with the given ID exists.
+            WorkflowCheckpointException: If no checkpoint with the given ID exists,
+                or if checkpoint decoding fails.
         """
-        file_path = self.storage_path / f"{checkpoint_id}.json"
+        file_path = self._validate_file_path(checkpoint_id)
 
         if not file_path.exists():
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
@@ -288,9 +324,12 @@ class FileCheckpointStorage:
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 
-        from ._checkpoint_encoding import decode_checkpoint_value
+        from ._checkpoint_encoding import CheckpointDecodingError, decode_checkpoint_value
 
-        decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
+        try:
+            decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
+        except CheckpointDecodingError as exc:
+            raise WorkflowCheckpointException(f"Failed to decode checkpoint {checkpoint_id}: {exc}") from exc
         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
@@ -332,7 +371,7 @@ class FileCheckpointStorage:
         Returns:
             True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
         """
-        file_path = self.storage_path / f"{checkpoint_id}.json"
+        file_path = self._validate_file_path(checkpoint_id)
 
         def _delete() -> bool:
             if file_path.exists():
@@ -355,7 +394,7 @@ class FileCheckpointStorage:
         checkpoints = await self.list_checkpoints(workflow_name)
         if not checkpoints:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: cp.timestamp)
+        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return latest_checkpoint
 

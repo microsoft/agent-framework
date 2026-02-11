@@ -58,7 +58,9 @@ def decode_checkpoint_value(value: Any) -> Any:
     Pickled values (identified by _PICKLE_MARKER) are decoded and unpickled.
 
     WARNING: Only call this with trusted data. Pickle can execute
-    arbitrary code during deserialization.
+    arbitrary code during deserialization. The post-unpickle type verification
+    detects accidental corruption or type mismatches, but cannot prevent
+    arbitrary code execution from malicious pickle payloads.
 
     Args:
         value: A JSON-deserialized value from checkpoint storage.
@@ -68,7 +70,8 @@ def decode_checkpoint_value(value: Any) -> Any:
 
     Raises:
         CheckpointDecodingError: If the unpickled object's type doesn't match
-            the recorded type, indicating corruption or tampering.
+            the recorded type, indicating corruption, or if the base64/pickle
+            data is malformed.
     """
     return _decode(value)
 
@@ -121,6 +124,11 @@ def _decode(value: Any) -> Any:
 def _verify_type(obj: Any, expected_type_key: str) -> None:
     """Verify that an unpickled object matches its recorded type.
 
+    This is a post-deserialization integrity check that detects accidental
+    corruption or type mismatches. It does not prevent arbitrary code execution
+    from malicious pickle payloads, since ``pickle.loads()`` has already
+    executed by the time this function is called.
+
     Args:
         obj: The unpickled object.
         expected_type_key: The recorded type key (module:qualname format).
@@ -144,9 +152,17 @@ def _pickle_to_base64(value: Any) -> str:
 
 
 def _base64_to_unpickle(encoded: str) -> Any:
-    """Decode base64 string and unpickle."""
-    pickled = base64.b64decode(encoded.encode("ascii"))
-    return pickle.loads(pickled)  # nosec  # noqa: S301
+    """Decode base64 string and unpickle.
+
+    Raises:
+        CheckpointDecodingError: If the base64 data is corrupted or the pickle
+            format is incompatible.
+    """
+    try:
+        pickled = base64.b64decode(encoded.encode("ascii"))
+        return pickle.loads(pickled)  # nosec  # noqa: S301
+    except Exception as exc:
+        raise CheckpointDecodingError(f"Failed to decode pickled checkpoint data: {exc}") from exc
 
 
 def _type_to_key(t: type) -> str:
