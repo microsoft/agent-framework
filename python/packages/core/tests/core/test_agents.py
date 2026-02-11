@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
-from collections.abc import AsyncIterable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -14,10 +14,10 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    BaseContextProvider,
     ChatOptions,
     ChatResponse,
     Content,
-    BaseContextProvider,
     FunctionTool,
     Message,
     SupportsAgentRun,
@@ -173,7 +173,7 @@ async def test_chat_client_agent_update_session_messages(client: SupportsChatGet
 
 async def test_chat_client_agent_update_session_conversation_id_missing(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
-    session = AgentSession(service_session_id="123")
+    session = agent.get_session(service_session_id="123")
 
     # With the session-based API, service_session_id is managed directly on the session
     assert session.service_session_id == "123"
@@ -835,11 +835,8 @@ async def test_agent_get_session_with_service_session_id(
     assert session.service_session_id == "test-thread-123"
 
 
-@pytest.mark.asyncio
-async def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
+def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
     """Test AgentSession.from_dict restores a session from serialized state."""
-    agent = Agent(client=chat_client_base, tools=[tool_tool])
-
     # Create serialized session state
     serialized_state = {
         "type": "session",
@@ -859,7 +856,6 @@ async def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse
 
 
 # region Test Agent initialization edge cases
-
 
 
 def test_chat_agent_calls_update_agent_name_on_client():
@@ -935,7 +931,6 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 
     # The context instructions should now be in the options
     assert options.get("instructions") == "Context-provided instructions"
-
 
 
 # endregion

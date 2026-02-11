@@ -401,9 +401,7 @@ class InMemoryConversationStore(ConversationStore):
 
                     if media_type and media_type.startswith("image/"):
                         # Convert to ResponseInputImage
-                        message_contents.append(
-                            ResponseInputImage(type="input_image", image_url=uri, detail="auto")
-                        )
+                        message_contents.append(ResponseInputImage(type="input_image", image_url=uri, detail="auto"))
                     else:
                         # Convert to ResponseInputFile
                         # Extract filename from URI if possible
@@ -411,9 +409,7 @@ class InMemoryConversationStore(ConversationStore):
                         if media_type == "application/pdf":
                             filename = "document.pdf"
 
-                        message_contents.append(
-                            ResponseInputFile(type="input_file", file_url=uri, filename=filename)
-                        )
+                        message_contents.append(ResponseInputFile(type="input_file", file_url=uri, filename=filename))
 
                 elif content_type == "function_call":
                     # Function call - create separate ConversationItem

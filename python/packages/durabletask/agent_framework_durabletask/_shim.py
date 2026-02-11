@@ -136,6 +136,9 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """Create a new agent session via the provider."""
         return self._executor.get_new_session(self.name, **kwargs)
 
+    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        return self._executor.get_new_session(self.name, **kwargs)
+
     def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
         """Convert supported message inputs to a single string.
 

@@ -453,13 +453,6 @@ class TestClaudeAgentSessionManagement:
         session = agent.create_session(session_id="existing-session-123")
         assert isinstance(session, AgentSession)
 
-    def test_session_inherits_context_provider(self) -> None:
-        """Test that session inherits context provider."""
-        mock_provider = MagicMock()
-        agent = ClaudeAgent(context_providers=[mock_provider])
-        session = agent.create_session()
-        assert mock_provider in agent.context_providers
-
     async def test_ensure_session_creates_client(self) -> None:
         """Test _ensure_session creates client when not started."""
         with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:

@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    BaseContextProvider,
     Message,
     ResponseStream,
     WorkflowEvent,

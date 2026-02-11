@@ -18,6 +18,7 @@ from agent_framework import (
     BaseAgent,
     Content,
     Message,
+    ResponseStream,
     UsageDetails,
 )
 
@@ -157,7 +158,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse]:
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse] | Awaitable[AgentResponse]:
         """Get a response from the workflow agent.
 
         Args:
@@ -184,65 +185,19 @@ class WorkflowAgent(BaseAgent):
             or AgentResponseUpdate objects. Request info events (type='request_info') will be
             converted to function call and approval request contents.
         """
+        input_messages = normalize_messages_input(messages)
+        response_id = str(uuid.uuid4())
         if stream:
-            return self._run_streaming(
-                messages=messages,
-                session=session,
-                checkpoint_id=checkpoint_id,
-                checkpoint_storage=checkpoint_storage,
-                **kwargs,
+            return ResponseStream(
+                self._run_stream_impl(
+                    input_messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs
+                ),
+                finalizer=AgentResponse.from_updates,
             )
-        return self._run_non_streaming(
-            messages=messages,
-            session=session,
-            checkpoint_id=checkpoint_id,
-            checkpoint_storage=checkpoint_storage,
-            **kwargs,
-        )
-
-    async def _run_non_streaming(
-        self,
-        messages: str | Message | list[str] | list[Message] | None = None,
-        *,
-        session: AgentSession | None = None,
-        checkpoint_id: str | None = None,
-        checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse:
-        """Internal non-streaming implementation."""
         input_messages = normalize_messages_input(messages)
         response_id = str(uuid.uuid4())
 
-        response = await self._run_impl(
-            input_messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs
-        )
-
-        return response
-
-    async def _run_streaming(
-        self,
-        messages: str | Message | list[str] | list[Message] | None = None,
-        *,
-        session: AgentSession | None = None,
-        checkpoint_id: str | None = None,
-        checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]:
-        """Internal streaming implementation.
-
-        Yields AgentResponseUpdate objects. Output events (type='output') from the workflow
-        are converted to updates. Request info events (type='request_info') are converted
-        to function call and approval request contents.
-        """
-        input_messages = normalize_messages_input(messages)
-        response_updates: list[AgentResponseUpdate] = []
-        response_id = str(uuid.uuid4())
-
-        async for update in self._run_stream_impl(
-            input_messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs
-        ):
-            response_updates.append(update)
-            yield update
+        return self._run_impl(input_messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs)
 
     async def _run_impl(
         self,
@@ -268,9 +223,7 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         output_events: list[WorkflowEvent[Any]] = []
-        async for event in self._run_core(
-            input_messages, checkpoint_id, checkpoint_storage, streaming=False, **kwargs
-        ):
+        async for event in self._run_core(input_messages, checkpoint_id, checkpoint_storage, streaming=False, **kwargs):
             if event.type == "output" or event.type == "request_info":
                 output_events.append(event)
 
@@ -299,9 +252,7 @@ class WorkflowAgent(BaseAgent):
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
         """
-        async for event in self._run_core(
-            input_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
-        ):
+        async for event in self._run_core(input_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
                 yield update

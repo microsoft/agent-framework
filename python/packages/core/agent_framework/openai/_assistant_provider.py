@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from agent_framework._settings import SecretString, load_settings
 
 from .._agents import Agent
-from .._sessions import BaseContextProvider
 from .._middleware import MiddlewareTypes
+from .._sessions import BaseContextProvider
 from .._tools import FunctionTool
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError

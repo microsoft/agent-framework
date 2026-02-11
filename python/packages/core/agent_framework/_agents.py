@@ -1098,7 +1098,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         state = session.state if session else {}
         for provider in reversed(self.context_providers):
             await provider.after_run(
-                agent=self,
+                agent=self,  # type: ignore[arg-type]
                 session=session,  # type: ignore[arg-type]
                 context=context,
                 state=state,
