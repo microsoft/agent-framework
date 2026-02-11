@@ -119,7 +119,7 @@ from agent_framework import Agent, AgentMiddleware, AgentContext
 class LoggingMiddleware(AgentMiddleware):
     async def process(self, context: AgentContext, call_next) -> None:
         print(f"Input: {context.messages}")
-        await call_next(context)
+        await call_next()
         print(f"Output: {context.result}")
 
 agent = Agent(..., middleware=[LoggingMiddleware()])

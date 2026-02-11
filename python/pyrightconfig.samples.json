@@ -5,7 +5,8 @@
         "**/autogen-migration/**",
         "**/semantic-kernel-migration/**",
         "**/demos/**",
-        "**/agent_with_foundry_tracing.py"
+        "**/agent_with_foundry_tracing.py",
+        "**/azure_responses_client_with_foundry.py"
     ],
     "typeCheckingMode": "off",
     "reportMissingImports": "error",

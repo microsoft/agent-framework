@@ -55,10 +55,10 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
             next_called = False
 
-            async def mock_next(ctx: AgentContext) -> None:
+            async def mock_next() -> None:
                 nonlocal next_called
                 next_called = True
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="I'm good, thanks!")])
+                context.result = AgentResponse(messages=[Message(role="assistant", text="I'm good, thanks!")])
 
             await middleware.process(context, mock_next)
 
@@ -74,7 +74,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", return_value=(True, "user-123")):
             next_called = False
 
-            async def mock_next(ctx: AgentContext) -> None:
+            async def mock_next() -> None:
                 nonlocal next_called
                 next_called = True
 
@@ -101,8 +101,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(
+            async def mock_next() -> None:
+                context.result = AgentResponse(
                     messages=[Message(role="assistant", text="Here's some sensitive information")]
                 )
 
@@ -125,8 +125,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = "Some non-standard result"
+            async def mock_next() -> None:
+                context.result = "Some non-standard result"
 
             await middleware.process(context, mock_next)
 
@@ -142,8 +142,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_process:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -160,8 +160,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="streaming")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="streaming")])
 
             await middleware.process(context, mock_next)
 
@@ -181,7 +181,7 @@ class TestPurviewPolicyMiddleware:
             side_effect=PurviewPaymentRequiredError("Payment required"),
         ):
 
-            async def mock_next(_: AgentContext) -> None:
+            async def mock_next() -> None:
                 raise AssertionError("next should not be called")
 
             with pytest.raises(PurviewPaymentRequiredError):
@@ -206,8 +206,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="OK")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="OK")])
 
             with pytest.raises(PurviewPaymentRequiredError):
                 await middleware.process(context, mock_next)
@@ -231,8 +231,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="OK")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="OK")])
 
             with pytest.raises(ValueError, match="Post-check blew up"):
                 await middleware.process(context, mock_next)
@@ -250,8 +250,8 @@ class TestPurviewPolicyMiddleware:
             middleware._processor, "process_messages", side_effect=Exception("Pre-check error")
         ) as mock_process:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -280,8 +280,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
 
             await middleware.process(context, mock_next)
 
@@ -306,8 +306,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx):
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
+            async def mock_next():
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
 
             # Should not raise, just log
             await middleware.process(context, mock_next)
@@ -330,7 +330,7 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx):
+            async def mock_next():
                 pass
 
             # Should raise the exception
@@ -346,8 +346,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
 
             await middleware.process(context, mock_next)
 
@@ -364,8 +364,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
 
             await middleware.process(context, mock_next)
 
@@ -383,8 +383,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
 
             await middleware.process(context, mock_next)
 
@@ -399,8 +399,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Hi")])
 
             await middleware.process(context, mock_next)
 
@@ -416,8 +416,8 @@ class TestPurviewPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: AgentContext) -> None:
-                ctx.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
+            async def mock_next() -> None:
+                context.result = AgentResponse(messages=[Message(role="assistant", text="Response")])
 
             await middleware.process(context, mock_next)
 
