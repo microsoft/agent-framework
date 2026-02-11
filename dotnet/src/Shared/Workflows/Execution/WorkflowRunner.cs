@@ -304,7 +304,7 @@ internal sealed class WorkflowRunner
             ChatMessage? responseMessage =
                 requestItem switch
                 {
-                    FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
+                    FunctionCallContent functionCall when !functionCall.InformationalOnly => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
                     FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
                     McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
                     _ => HandleUnknown(requestItem),
