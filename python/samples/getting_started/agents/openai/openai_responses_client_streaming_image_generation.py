@@ -2,9 +2,10 @@
 
 import asyncio
 import base64
+import tempfile
+from pathlib import Path
 
 import anyio
-from agent_framework import HostedImageGenerationTool
 from agent_framework.openai import OpenAIResponsesClient
 
 """OpenAI Responses Client Streaming Image Generation Example
@@ -42,15 +43,14 @@ async def main():
     print("=== OpenAI Streaming Image Generation Example ===\n")
 
     # Create agent with streaming image generation enabled
-    agent = OpenAIResponsesClient().as_agent(
+    client = OpenAIResponsesClient()
+    agent = client.as_agent(
         instructions="You are a helpful agent that can generate images.",
         tools=[
-            HostedImageGenerationTool(
-                options={
-                    "size": "1024x1024",
-                    "quality": "high",
-                    "partial_images": 3,
-                }
+            client.get_image_generation_tool(
+                size="1024x1024",
+                quality="high",
+                partial_images=3,
             )
         ],
     )
@@ -62,9 +62,9 @@ async def main():
     # Track partial images
     image_count = 0
 
-    # Create output directory
-    output_dir = anyio.Path("generated_images")
-    await output_dir.mkdir(exist_ok=True)
+    # Use temp directory for output
+    output_dir = Path(tempfile.gettempdir()) / "generated_images"
+    output_dir.mkdir(exist_ok=True)
 
     print(" Streaming response:")
     async for update in agent.run(query, stream=True):
@@ -72,7 +72,11 @@ async def main():
             # Handle partial images
             # The final partial image IS the complete, full-quality image. Each partial
             # represents a progressive refinement, with the last one being the finished result.
-            if content.type == "data" and content.additional_properties.get("is_partial_image"):
+            if (
+                content.type == "uri"
+                and content.additional_properties
+                and content.additional_properties.get("is_partial_image")
+            ):
                 print(f"     Image {image_count} received")
 
                 # Extract file extension from media_type (e.g., "image/png" -> "png")
@@ -89,7 +93,7 @@ async def main():
     # Summary
     print("\n Summary:")
     print(f"    Images received: {image_count}")
-    print("    Output directory: generated_images")
+    print(f"    Output directory: {output_dir}")
     print("\n Streaming image generation completed!")
 
 

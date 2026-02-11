@@ -10,7 +10,6 @@ from agent_framework import (
     BaseChatClient,
     ChatResponseUpdate,
     Content,
-    HostedWebSearchTool,
     Message,
     chat_middleware,
     tool,
@@ -384,27 +383,30 @@ async def test_cmc_streaming_with_tool_call(
     assert text_result.text == "test"
 
 
-async def test_cmc_with_hosted_tool_call(
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_with_dict_tool_passthrough(
+    mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
     chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-            }
-        }
+    """Test that dict-based tools are passed through to Ollama."""
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(Message(text="hello world", role="user"))
 
-        chat_history.append(Message(text="hello world", role="user"))
+    ollama_client = OllamaChatClient()
+    await ollama_client.get_response(
+        messages=chat_history,
+        options={
+            "tools": [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}],
+        },
+    )
 
-        ollama_client = OllamaChatClient()
-        await ollama_client.get_response(
-            messages=chat_history,
-            options={
-                "tools": HostedWebSearchTool(additional_properties=additional_properties),
-            },
-        )
+    # Verify the tool was passed through to the Ollama client
+    mock_chat.assert_called_once()
+    call_kwargs = mock_chat.call_args.kwargs
+    assert "tools" in call_kwargs
+    assert call_kwargs["tools"] == [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}]
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

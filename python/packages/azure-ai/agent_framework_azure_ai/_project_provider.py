@@ -12,7 +12,6 @@ from agent_framework import (
     ContextProvider,
     FunctionTool,
     MiddlewareTypes,
-    ToolProtocol,
     get_logger,
     normalize_tools,
 )
@@ -162,10 +161,10 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -221,7 +220,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         # Normalize tools and separate MCP tools from other tools
         normalized_tools = normalize_tools(tools)
         mcp_tools: list[MCPTool] = []
-        non_mcp_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+        non_mcp_tools: list[FunctionTool | MutableMapping[str, Any]] = []
 
         if normalized_tools:
             for tool in normalized_tools:
@@ -239,7 +238,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             mcp_discovered_functions.extend(mcp_tool.functions)
 
         # Combine non-MCP tools with discovered MCP functions for Azure AI
-        all_tools_for_azure: list[ToolProtocol | MutableMapping[str, Any]] = list(non_mcp_tools)
+        all_tools_for_azure: list[FunctionTool | MutableMapping[str, Any]] = list(non_mcp_tools)
         all_tools_for_azure.extend(mcp_discovered_functions)
 
         if all_tools_for_azure:
@@ -264,10 +263,10 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         name: str | None = None,
         reference: AgentReference | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -324,10 +323,10 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def as_agent(
         self,
         details: AgentVersionDetails,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -368,7 +367,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _to_chat_agent_from_details(
         self,
         details: AgentVersionDetails,
-        provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = None,
+        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_provider: ContextProvider | None = None,
@@ -416,8 +415,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _merge_tools(
         self,
         definition_tools: Sequence[Any] | None,
-        provided_tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
-    ) -> list[ToolProtocol | dict[str, Any]]:
+        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
+    ) -> list[FunctionTool | dict[str, Any]]:
         """Merge hosted tools from definition with user-provided function tools.
 
         Args:
@@ -427,7 +426,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         Returns:
             Combined list of tools for the Agent.
         """
-        merged: list[ToolProtocol | dict[str, Any]] = []
+        merged: list[FunctionTool | dict[str, Any]] = []
 
         # Convert hosted tools from definition (MCP, code interpreter, file search, web search)
         # Function tools from the definition are skipped - we use user-provided implementations instead
@@ -451,10 +450,10 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _validate_function_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: ToolProtocol
+        provided_tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None,
     ) -> None:
         """Validate that required function tools are provided."""
