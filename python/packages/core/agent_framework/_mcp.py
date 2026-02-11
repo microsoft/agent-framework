@@ -24,6 +24,7 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
+from opentelemetry import propagate
 from pydantic import BaseModel, create_model
 
 from ._tools import (
@@ -314,6 +315,22 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
 def _normalize_mcp_name(name: str) -> str:
     """Normalize MCP tool/prompt names to allowed identifier pattern (A-Za-z0-9_.-)."""
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+
+
+def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    if not carrier:
+        return meta
+
+    if meta is None:
+        meta = {}
+    for key, value in carrier.items():
+        if key not in meta:
+            meta[key] = value
+
+    return meta
 
 
 # region: MCP Plugin
@@ -779,10 +796,13 @@ class MCPTool:
             not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
         }
 
+        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
+        otel_meta = _inject_otel_into_mcp_meta()
+
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 if self.parse_tool_results is None:
                     return result
                 if self.parse_tool_results is True:
