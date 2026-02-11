@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
@@ -138,20 +137,20 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     [Fact]
-    public void StepsNamingConvention()
+    public void StepsNamingConvention() // %%% TODO: Needed ???
     {
         // Arrange
-        const string testId = "test_action_123";
+        const string TestId = "test_action_123";
 
         // Act
-        string startStep = ForeachExecutor.Steps.Start(testId);
-        string nextStep = ForeachExecutor.Steps.Next(testId);
-        string endStep = ForeachExecutor.Steps.End(testId);
+        string startStep = ForeachExecutor.Steps.Start(TestId);
+        string nextStep = ForeachExecutor.Steps.Next(TestId);
+        string endStep = ForeachExecutor.Steps.End(TestId);
 
         // Assert
-        Assert.Equal("test_action_123_Start", startStep);
-        Assert.Equal("test_action_123_Next", nextStep);
-        Assert.Equal("test_action_123_End", endStep);
+        Assert.Equal($"{TestId}_Start", startStep);
+        Assert.Equal($"{TestId}_Next", nextStep);
+        Assert.Equal($"{TestId}_End", endStep);
     }
 
     [Fact]
@@ -195,7 +194,9 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         ForeachExecutor executor = new(model, this.State);
 
         // Assert - IsDiscreteAction should be false for Foreach
-        Assert.Equal(false, executor.GetType()
+        Assert.Equal(
+            false,
+            executor.GetType()
             .BaseType?
             .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
             .GetValue(executor));
@@ -214,7 +215,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         // Act
         ForeachExecutor action = new(model, this.State);
-        WorkflowEvent[] events = await this.ExecuteAsync(action);
+        await this.ExecuteAsync(action);
 
         // Assert
         VerifyModel(model, action);
