@@ -3,16 +3,10 @@
 """Tests for load_settings() function."""
 
 import os
-import sys
 import tempfile
 from typing import TypedDict
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    from typing import Required  # pragma: no cover
-else:
-    from typing_extensions import Required  # type: ignore # pragma: no cover
 
 from agent_framework._settings import SecretString, load_settings
 
@@ -25,7 +19,7 @@ class SimpleSettings(TypedDict, total=False):
 
 
 class RequiredFieldSettings(TypedDict, total=False):
-    name: Required[str]
+    name: str | None
     optional_field: str | None
 
 
@@ -193,7 +187,12 @@ class TestRequiredFields:
     """Test required field validation."""
 
     def test_required_field_provided(self) -> None:
-        settings = load_settings(RequiredFieldSettings, env_prefix="TEST_", name="my-app")
+        settings = load_settings(
+            RequiredFieldSettings,
+            env_prefix="TEST_",
+            required_fields=["name"],
+            name="my-app",
+        )
 
         assert settings["name"] == "my-app"
         assert settings["optional_field"] is None
@@ -201,7 +200,7 @@ class TestRequiredFields:
     def test_required_field_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_NAME", "env-app")
 
-        settings = load_settings(RequiredFieldSettings, env_prefix="TEST_")
+        settings = load_settings(RequiredFieldSettings, env_prefix="TEST_", required_fields=["name"])
 
         assert settings["name"] == "env-app"
 
@@ -209,4 +208,31 @@ class TestRequiredFields:
         from agent_framework.exceptions import SettingNotFoundError
 
         with pytest.raises(SettingNotFoundError, match="Required setting 'name'"):
-            load_settings(RequiredFieldSettings, env_prefix="TEST_")
+            load_settings(RequiredFieldSettings, env_prefix="TEST_", required_fields=["name"])
+
+    def test_without_required_fields_param_allows_none(self) -> None:
+        settings = load_settings(RequiredFieldSettings, env_prefix="TEST_")
+
+        assert settings["name"] is None
+
+
+class TestOverrideTypeValidation:
+    """Test override type validation."""
+
+    def test_invalid_type_raises(self) -> None:
+        from agent_framework.exceptions import ServiceInitializationError
+
+        with pytest.raises(ServiceInitializationError, match="Invalid type for setting 'api_key'"):
+            load_settings(SimpleSettings, env_prefix="TEST_", api_key={"bad": "type"})
+
+    def test_valid_types_accepted(self) -> None:
+        settings = load_settings(SimpleSettings, env_prefix="TEST_", timeout=42, enabled=True)
+
+        assert settings["timeout"] == 42
+        assert settings["enabled"] is True
+
+    def test_str_accepted_for_secretstring(self) -> None:
+        settings = load_settings(SecretSettings, env_prefix="TEST_", api_key="plain-string")
+
+        assert isinstance(settings["api_key"], SecretString)
+        assert settings["api_key"] == "plain-string"

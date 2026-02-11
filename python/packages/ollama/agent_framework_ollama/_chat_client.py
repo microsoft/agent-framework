@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
 from collections.abc import (
@@ -11,11 +13,6 @@ from collections.abc import (
 )
 from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
-
-if sys.version_info >= (3, 11):
-    from typing import Required  # pragma: no cover
-else:
-    from typing_extensions import Required  # type: ignore # pragma: no cover
 
 from agent_framework import (
     BaseChatClient,
@@ -281,7 +278,7 @@ class OllamaSettings(TypedDict, total=False):
     """Ollama settings."""
 
     host: str | None
-    model_id: Required[str]
+    model_id: str | None
 
 
 logger = get_logger("agent_framework.ollama")
@@ -325,6 +322,7 @@ class OllamaChatClient(
         ollama_settings = load_settings(
             OllamaSettings,
             env_prefix="OLLAMA_",
+            required_fields=["model_id"],
             host=host,
             model_id=model_id,
             env_file_encoding=env_file_encoding,
@@ -332,7 +330,8 @@ class OllamaChatClient(
         )
 
         self.model_id = ollama_settings["model_id"]
-        self.client = client or AsyncClient(host=ollama_settings["host"])
+        # we can just pass in None for the host, the default is set by the Ollama package.
+        self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 

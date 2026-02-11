@@ -21,7 +21,6 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
-from pydantic import BaseModel  # noqa: F401 — used by submodules
 
 from .._logging import get_logger
 from .._serialization import SerializationMixin

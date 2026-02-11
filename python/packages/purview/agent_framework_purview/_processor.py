@@ -57,9 +57,11 @@ class ScopedContentProcessor:
     def __init__(self, client: PurviewClient, settings: PurviewSettings, cache_provider: CacheProvider | None = None):
         self._client = client
         self._settings = settings
+        cache_ttl = settings.get("cache_ttl_seconds")
+        max_cache = settings.get("max_cache_size_bytes")
         self._cache: CacheProvider = cache_provider or InMemoryCacheProvider(
-            default_ttl_seconds=settings.get("cache_ttl_seconds") or 14400,
-            max_size_bytes=settings.get("max_cache_size_bytes") or 200 * 1024 * 1024,
+            default_ttl_seconds=cache_ttl if cache_ttl is not None else 14400,
+            max_size_bytes=max_cache if max_cache is not None else 200 * 1024 * 1024,
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
@@ -232,13 +234,13 @@ class ScopedContentProcessor:
             ps_resp = cached_ps_resp
         else:
             try:
+                ttl = self._settings.get("cache_ttl_seconds")
+                ttl_seconds = ttl if ttl is not None else 14400
                 ps_resp = await self._client.get_protection_scopes(ps_req)
-                await self._cache.set(cache_key, ps_resp, ttl_seconds=self._settings.get("cache_ttl_seconds", 14400))
+                await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
             except PurviewPaymentRequiredError as ex:
                 # Cache the exception at tenant level so all subsequent requests for this tenant fail fast
-                await self._cache.set(
-                    tenant_payment_cache_key, ex, ttl_seconds=self._settings.get("cache_ttl_seconds", 14400)
-                )
+                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
                 raise
 
         if ps_resp.scope_identifier:

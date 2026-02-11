@@ -106,7 +106,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises((ServiceInitializationError, AttributeError, TypeError)):
+    with pytest.raises(ServiceInitializationError):
         OpenAIResponsesClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 

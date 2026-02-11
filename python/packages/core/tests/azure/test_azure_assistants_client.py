@@ -120,7 +120,7 @@ def test_azure_assistants_client_init_auto_create_client(
 
 def test_azure_assistants_client_init_validation_fail() -> None:
     """Test AzureOpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises((ServiceInitializationError, AttributeError, TypeError)):
+    with pytest.raises(ServiceInitializationError):
         # Force failure by providing invalid deployment name type - this should cause validation to fail
         AzureOpenAIAssistantsClient(deployment_name=123, api_key="valid-key")  # type: ignore
 

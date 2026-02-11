@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Sequence
 from typing import Any, Generic
@@ -25,9 +27,9 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import Required, TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import Required, TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 __all__ = [
@@ -125,7 +127,7 @@ class FoundryLocalSettings(TypedDict, total=False):
             (Env var FOUNDRY_LOCAL_MODEL_ID)
     """
 
-    model_id: Required[str]
+    model_id: str | None
 
 
 class FoundryLocalClient(
@@ -242,6 +244,7 @@ class FoundryLocalClient(
         settings = load_settings(
             FoundryLocalSettings,
             env_prefix="FOUNDRY_LOCAL_",
+            required_fields=["model_id"],
             model_id=model_id,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,

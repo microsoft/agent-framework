@@ -145,7 +145,7 @@ def test_init_auto_create_client(
 
 def test_init_validation_fail() -> None:
     """Test OpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises((ServiceInitializationError, AttributeError, TypeError)):
+    with pytest.raises(ServiceInitializationError):
         # Force failure by providing invalid model ID type
         OpenAIAssistantsClient(model_id=123, api_key="valid-key")  # type: ignore
 

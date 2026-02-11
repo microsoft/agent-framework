@@ -36,7 +36,12 @@ def test_foundry_local_settings_init_with_explicit_values() -> None:
 def test_foundry_local_settings_missing_model_id(foundry_local_unit_test_env: dict[str, str]) -> None:
     """Test FoundryLocalSettings when model_id is missing raises error."""
     with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
-        load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", env_file_path="test.env")
+        load_settings(
+            FoundryLocalSettings,
+            env_prefix="FOUNDRY_LOCAL_",
+            required_fields=["model_id"],
+            env_file_path="test.env",
+        )
 
 
 def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_env: dict[str, str]) -> None:

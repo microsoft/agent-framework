@@ -11,22 +11,31 @@ Usage::
 
     class MySettings(TypedDict, total=False):
         api_key: str | None  # optional — resolves to None if not set
-        model_id: Required[str]  # required — raises if not set
+        model_id: str | None  # optional by default
 
 
-    settings = load_settings(MySettings, env_prefix="MY_APP_", model_id="gpt-4")
+    # Make model_id required at call time:
+    settings = load_settings(
+        MySettings,
+        env_prefix="MY_APP_",
+        required_fields=["model_id"],
+        model_id="gpt-4",
+    )
     settings["api_key"]  # type-checked dict access
-    settings["model_id"]  # str (never None)
+    settings["model_id"]  # str | None per type, but guaranteed not None at runtime
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from dotenv import load_dotenv
+
+from .exceptions import SettingNotFoundError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -104,12 +113,58 @@ def _coerce_value(value: str, target_type: type) -> Any:
     return value
 
 
+def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
+    """Validate that *value* is compatible with *field_type*.
+
+    Raises ``ServiceInitializationError`` when the override is clearly
+    incompatible (e.g. a ``dict`` passed where ``str`` is expected).
+    Callable values and ``None`` are always accepted.
+    """
+    if value is None:
+        return
+
+    # Callables are always allowed (e.g. lazy token providers)
+    if callable(value) and not isinstance(value, (str, bytes)):
+        return
+
+    # Collect the concrete types that *field_type* allows
+    origin = get_origin(field_type)
+    args = get_args(field_type)
+
+    allowed: tuple[type, ...]
+    if origin is Union or origin is type(int | str):
+        allowed = tuple(a for a in args if isinstance(a, type) and a is not type(None))
+        # If any arm is a Callable, allow anything callable
+        if any(get_origin(a) is Callable or a is Callable for a in args):
+            return
+    elif isinstance(field_type, type):
+        allowed = (field_type,)
+    else:
+        return  # complex / unknown annotation — skip check
+
+    if not allowed:
+        return
+
+    if not isinstance(value, allowed):
+        # Allow str for SecretString fields (will be coerced)
+        if isinstance(value, str) and any(isinstance(a, type) and issubclass(a, str) for a in allowed):
+            return
+
+        from .exceptions import ServiceInitializationError
+
+        allowed_names = ", ".join(t.__name__ for t in allowed)
+        raise ServiceInitializationError(
+            f"Invalid type for setting '{field_name}': expected {allowed_names}, got {type(value).__name__}."
+        )
+
+
 def load_settings(
     settings_type: type[SettingsT],
     *,
     env_prefix: str = "",
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
+    required_fields: Sequence[str] | None = None,
     **overrides: Any,
 ) -> SettingsT:
     """Load settings from environment variables, a ``.env`` file, and explicit overrides.
@@ -121,26 +176,20 @@ def load_settings(
     2. Environment variables (``<env_prefix><FIELD_NAME>``).
     3. A ``.env`` file (loaded via ``python-dotenv``; existing env vars take precedence).
     4. Default values — fields with class-level defaults on the TypedDict, or
-       ``None`` for fields whose type includes ``None``.
+       ``None`` for optional fields.
 
-    Fields marked ``Required`` (e.g. ``model_id: Required[str]``) or defined in
-    a ``total=True`` base class are treated as required.  If no value can be
-    resolved for such a field, a ``SettingNotFoundError`` is raised.
-
-    Note:
-        ``Required`` relies on the TypedDict metaclass inspecting annotations at
-        class creation time.  ``from __future__ import annotations`` (PEP 563) turns
-        annotations into plain strings, which prevents ``Required`` from being
-        recognised — all fields will silently become optional.  Do **not** use
-        ``from __future__ import annotations`` in modules that define a TypedDict
-        with ``Required`` fields.  On Python 3.10+ the ``X | Y`` union syntax works
-        natively, so the future import is not needed.
+    Fields listed in *required_fields* are validated after resolution.  If any
+    required field resolves to ``None``, a ``SettingNotFoundError`` is raised.
+    This allows callers to decide which fields are required based on runtime
+    context (e.g. ``endpoint`` is only required when no pre-built client is
+    provided).
 
     Args:
         settings_type: A ``TypedDict`` class describing the settings schema.
         env_prefix: Prefix for environment variable lookup (e.g. ``"OPENAI_"``).
         env_file_path: Path to ``.env`` file.  Defaults to ``".env"`` when omitted.
         env_file_encoding: Encoding for reading the ``.env`` file.  Defaults to ``"utf-8"``.
+        required_fields: Field names that must resolve to a non-``None`` value.
         **overrides: Field values.  ``None`` values are ignored so that callers can
             forward optional parameters without masking env-var / default resolution.
 
@@ -148,8 +197,8 @@ def load_settings(
         A populated dict matching *settings_type*.
 
     Raises:
-        SettingNotFoundError: If a required field (in ``__required_keys__``)
-            could not be resolved from any source.
+        SettingNotFoundError: If a required field could not be resolved from any source.
+        ServiceInitializationError: If an override value has an incompatible type.
     """
     encoding = env_file_encoding or "utf-8"
 
@@ -163,13 +212,14 @@ def load_settings(
 
     # Get field type hints from the TypedDict
     hints = get_type_hints(settings_type)
-    required_keys: frozenset[str] = getattr(settings_type, "__required_keys__", frozenset())
+    required: set[str] = set(required_fields) if required_fields else set()
 
     result: dict[str, Any] = {}
     for field_name, field_type in hints.items():
         # 1. Explicit override wins
         if field_name in overrides:
             override_value = overrides[field_name]
+            _check_override_type(override_value, field_type, field_name)
             # Coerce plain str → SecretString if the annotation expects it
             if isinstance(override_value, str) and not isinstance(override_value, SecretString):
                 with suppress(ValueError, TypeError):
@@ -192,16 +242,18 @@ def load_settings(
         # 3. Default from TypedDict class-level defaults, or None for optional fields
         if hasattr(settings_type, field_name):
             result[field_name] = getattr(settings_type, field_name)
-        elif field_name in required_keys:
-            from .exceptions import SettingNotFoundError
-
-            env_var_name = f"{env_prefix}{field_name.upper()}"
-            raise SettingNotFoundError(
-                f"Required setting '{field_name}' was not provided. "
-                f"Set it via the '{field_name}' parameter or the "
-                f"'{env_var_name}' environment variable."
-            )
         else:
             result[field_name] = None
+
+    # Validate required fields after all resolution
+    if required:
+        for field_name in required:
+            if result.get(field_name) is None:
+                env_var_name = f"{env_prefix}{field_name.upper()}"
+                raise SettingNotFoundError(
+                    f"Required setting '{field_name}' was not provided. "
+                    f"Set it via the '{field_name}' parameter or the "
+                    f"'{env_var_name}' environment variable."
+                )
 
     return result  # type: ignore[return-value]

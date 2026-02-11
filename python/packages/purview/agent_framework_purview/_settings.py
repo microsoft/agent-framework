@@ -6,9 +6,9 @@ from enum import Enum
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
-    from typing import Required, TypedDict  # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Required, TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 class PurviewLocationType(str, Enum):
@@ -55,7 +55,7 @@ class PurviewSettings(TypedDict, total=False):
         max_cache_size_bytes: Maximum cache size in bytes (default 200MB).
     """
 
-    app_name: Required[str]
+    app_name: str | None
     app_version: str | None
     tenant_id: str | None
     purview_app_location: PurviewAppLocation | None
