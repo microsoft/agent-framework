@@ -543,3 +543,27 @@ async def test_execute_tool_non_function_tool_returns_error():
     result = await execute_tool(registry, {"name": "not_a_function", "arguments": "{}"})
     assert "not a FunctionTool" in result
     assert "not_a_function" in result
+
+
+@pytest.mark.asyncio
+async def test_tool_call_without_id_emits_error_event():
+    """Tool call events missing 'id' should emit an error event instead of crashing."""
+    client = MockRealtimeClient(
+        events_to_yield=[
+            RealtimeEvent(type="tool_call", data={"name": "get_weather", "arguments": '{"location": "NYC"}'}),
+        ]
+    )
+    agent = RealtimeAgent(realtime_client=client, tools=[get_weather])
+
+    async def empty_audio():
+        return
+        yield
+
+    events = []
+    async for event in agent.run(audio_input=empty_audio()):
+        events.append(event)
+
+    assert len(events) == 1
+    assert events[0].type == "error"
+    assert "missing 'id'" in events[0].data["message"]
+    assert len(client._tool_results) == 0

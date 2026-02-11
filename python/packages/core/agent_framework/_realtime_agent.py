@@ -179,8 +179,16 @@ class RealtimeAgent(BaseAgent):
     async def _process_events(self) -> AsyncIterator[RealtimeEvent]:
         async for event in self._client.events():
             if event.type == "tool_call":
+                call_id = event.data.get("id")
+                if not call_id:
+                    logger.error("Tool call event missing 'id', skipping: %s", event.data)
+                    yield RealtimeEvent(
+                        type="error",
+                        data={"message": "Tool call event missing 'id'"},
+                    )
+                    continue
                 result = await self._execute_tool(event.data)
-                await self._client.send_tool_result(event.data["id"], result)
+                await self._client.send_tool_result(call_id, result)
                 yield event
                 yield RealtimeEvent(
                     type="tool_result",
