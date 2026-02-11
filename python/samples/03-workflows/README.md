@@ -95,7 +95,7 @@ Builder-based tool approval samples are maintained in the orchestration sample s
 | ------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Executor I/O Observation | [observability/executor_io_observation.py](./observability/executor_io_observation.py) | Observe executor input/output data via executor_invoked events (type='executor_invoked') and executor_completed events (type='executor_completed') without modifying executor code |
 
-For additional observability samples in Agent Framework, see the [observability getting started samples](../observability/README.md). The [sample](../observability/workflow_observability.py) demonstrates integrating observability into workflows.
+For additional observability samples in Agent Framework, see the [observability concept samples](../02-agents/observability/README.md). The [workflow observability sample](../02-agents/observability/workflow_observability.py) demonstrates integrating observability into workflows.
 
 ### orchestration
 

@@ -21,7 +21,7 @@ DevUI is a sample application that provides:
 Run a single sample directly. This demonstrates how to wrap agents and workflows programmatically without needing a directory structure:
 
 ```bash
-cd python/samples/getting_started/devui
+cd python/samples/02-agents/devui
 python in_memory_mode.py
 ```
 
@@ -32,7 +32,7 @@ This opens your browser at http://localhost:8090 with pre-configured agents and 
 Launch DevUI to discover all samples in this folder:
 
 ```bash
-cd python/samples/getting_started/devui
+cd python/samples/02-agents/devui
 devui
 ```
 

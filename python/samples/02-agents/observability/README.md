@@ -212,7 +212,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 ### Running the samples
 
-1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
+1. Open a terminal and navigate to this folder: `python/samples/02-agents/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
     > **Note**: You can start with just `ENABLE_INSTRUMENTATION=true` and add `OTEL_EXPORTER_OTLP_ENDPOINT` or other configuration as needed. If no exporters are configured, you can set `ENABLE_CONSOLE_EXPORTERS=true` for console output.
 3. Activate your python virtual environment, and then run `python configure_otel_providers_with_env_var.py` or others.

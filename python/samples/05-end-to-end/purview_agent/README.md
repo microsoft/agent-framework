@@ -54,7 +54,7 @@ Certificate steps (summary): create / register entra app, generate certificate, 
 From repo root:
 
 ```powershell
-cd python/samples/getting_started/purview_agent
+cd python/samples/05-end-to-end/purview_agent
 python sample_purview_agent.py
 ```
 

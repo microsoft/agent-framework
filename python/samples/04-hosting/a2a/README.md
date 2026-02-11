@@ -2,7 +2,7 @@
 
 This folder contains examples demonstrating how to create and use agents with the A2A (Agent2Agent) protocol from the `agent_framework` package to communicate with remote A2A agents.
 
-By default the A2AAgent waits for the remote agent to finish before returning (`background=False`), so long-running A2A tasks are handled transparently. For advanced scenarios where you need to poll or resubscribe to in-progress tasks using continuation tokens, see the [background responses sample](../../../concepts/background_responses.py).
+By default the A2AAgent waits for the remote agent to finish before returning (`background=False`), so long-running A2A tasks are handled transparently. For advanced scenarios where you need to poll or resubscribe to in-progress tasks using continuation tokens, see the [background responses sample](../../02-agents/background_responses.py).
 
 For more information about the A2A protocol specification, visit: https://a2a-protocol.org/latest/
 
