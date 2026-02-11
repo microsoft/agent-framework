@@ -23,6 +23,7 @@ async def example_manual_memory_store() -> None:
 
     # Create Redis history provider
     redis_provider = RedisHistoryProvider(
+        source_id="redis_basic_chat",
         redis_url="redis://localhost:6379",
     )
 
@@ -60,6 +61,7 @@ async def example_user_session_management() -> None:
 
     # Create Redis history provider for specific user session
     redis_provider = RedisHistoryProvider(
+        source_id=f"redis_{user_id}",
         redis_url="redis://localhost:6379",
         max_messages=10,  # Keep only last 10 messages
     )
@@ -72,7 +74,7 @@ async def example_user_session_management() -> None:
     )
 
     # Start conversation
-    session = agent.create_session()
+    session = agent.create_session(session_id=session_id)
 
     print(f"Started session for user {user_id}")
 
@@ -100,6 +102,7 @@ async def example_conversation_persistence() -> None:
     # Phase 1: Start conversation
     print("--- Phase 1: Starting conversation ---")
     redis_provider = RedisHistoryProvider(
+        source_id="redis_persistent_chat",
         redis_url="redis://localhost:6379",
     )
 
@@ -148,6 +151,7 @@ async def example_session_serialization() -> None:
     print("=== Session Serialization Example ===")
 
     redis_provider = RedisHistoryProvider(
+        source_id="redis_serialization_chat",
         redis_url="redis://localhost:6379",
     )
 
@@ -189,6 +193,7 @@ async def example_message_limits() -> None:
 
     # Create provider with small message limit
     redis_provider = RedisHistoryProvider(
+        source_id="redis_limited_chat",
         redis_url="redis://localhost:6379",
         max_messages=3,  # Keep only 3 most recent messages
     )

@@ -105,9 +105,11 @@ class EchoAgent(BaseAgent):
 
             response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
 
-        # Notify the session of new messages if provided
+        # Store messages in session state if provided
         if session is not None:
-            await self._notify_thread_of_new_messages(session, normalized_messages, response_message)
+            stored = session.state.setdefault("memory", {}).setdefault("messages", [])
+            stored.extend(normalized_messages)
+            stored.append(response_message)
 
         return AgentResponse(messages=[response_message])
 
@@ -146,10 +148,12 @@ class EchoAgent(BaseAgent):
             # Small delay to simulate streaming
             await asyncio.sleep(0.1)
 
-        # Notify the session of the complete response if provided
+        # Store messages in session state if provided
         if session is not None:
             complete_response = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
-            await self._notify_thread_of_new_messages(session, normalized_messages, complete_response)
+            stored = session.state.setdefault("memory", {}).setdefault("messages", [])
+            stored.extend(normalized_messages)
+            stored.append(complete_response)
 
 
 async def main() -> None:

@@ -146,7 +146,7 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
         logger.error("Failed to create a new session with session ID!")
         return
 
-    key = session.session_id.key
+    key = session.session_id
     logger.info(f"Session ID: {key}")
 
     # Get user input

@@ -51,8 +51,7 @@ async def main() -> None:
                 tools=get_weather,
             )
 
-            session = agent.create_session(service_session_id=created_thread.id)
-            assert session.is_initialized
+            session = agent.get_session(service_session_id=created_thread.id)
             result = await agent.run("What's the weather like in Tokyo?", session=session)
             print(f"Result: {result}\n")
         finally:

@@ -104,10 +104,11 @@ async def example_with_existing_session_messages() -> None:
     result1 = await agent.run(query1, session=session)
     print(f"Agent: {result1.text}")
 
-    # The session now contains the conversation history in memory
-    if session.message_store:
-        messages = await session.message_store.list_messages()
-        print(f"Session contains {len(messages or [])} messages")
+    # The session now contains the conversation history in state
+    memory_state = session.state.get("memory", {})
+    messages = memory_state.get("messages", [])
+    if messages:
+        print(f"Session contains {len(messages)} messages")
 
     print("\n--- Continuing with the same session in a new agent instance ---")
 
@@ -126,9 +127,6 @@ async def example_with_existing_session_messages() -> None:
     print("Note: The agent continues the conversation using the local message history.\n")
 
     print("\n--- Alternative: Creating a new session from existing messages ---")
-
-    # You can also create a new session from existing messages
-    messages = await session.message_store.list_messages() if session.message_store else []
 
     new_session = AgentSession()
 
