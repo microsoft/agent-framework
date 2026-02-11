@@ -1,0 +1,9 @@
+### Start the single-agent orchestration
+POST http://localhost:7071/api/singleagent/run
+
+
+### Check the status of the orchestration
+
+@instanceId =<Replace with the instance ID from the response above>
+
+GET http://localhost:7071/api/singleagent/status/{{instanceId}}
