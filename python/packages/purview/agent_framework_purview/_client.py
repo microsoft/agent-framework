@@ -52,7 +52,7 @@ class PurviewClient:
     ):
         self._credential: TokenCredential | AsyncTokenCredential = credential
         self._settings = settings
-        self._graph_uri = settings.get("graph_base_uri", "https://graph.microsoft.com/v1.0/").rstrip("/")
+        self._graph_uri = (settings.get("graph_base_uri") or "https://graph.microsoft.com/v1.0/").rstrip("/")
         self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
 

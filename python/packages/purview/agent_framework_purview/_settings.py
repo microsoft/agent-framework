@@ -80,5 +80,5 @@ def get_purview_scopes(settings: PurviewSettings) -> list[str]:
     from urllib.parse import urlparse
 
     graph_base_uri = settings.get("graph_base_uri", "https://graph.microsoft.com/v1.0/")
-    host = urlparse(graph_base_uri).hostname or "graph.microsoft.com"
+    host = urlparse(str(graph_base_uri)).hostname or "graph.microsoft.com"
     return [f"https://{host}/.default"]

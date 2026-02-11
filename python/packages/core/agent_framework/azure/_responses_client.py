@@ -216,12 +216,10 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         # while this feature is in preview.
         # But we should only do this if we're on azure. Private deployments may not need this.
         if (
-            not azure_openai_settings["base_url"]
-            and azure_openai_settings["endpoint"]
-            and urlparse(azure_openai_settings["endpoint"]).hostname
-            and urlparse(azure_openai_settings["endpoint"]).hostname.endswith(
-                ".openai.azure.com"
-            )
+            not azure_openai_settings.get("base_url")
+            and azure_openai_settings.get("endpoint")
+            and (hostname := urlparse(azure_openai_settings["endpoint"]).hostname)
+            and hostname.endswith(".openai.azure.com")
         ):
             azure_openai_settings["base_url"] = urljoin(
                 str(azure_openai_settings["endpoint"]), "/openai/v1/"

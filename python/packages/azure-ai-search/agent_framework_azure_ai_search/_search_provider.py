@@ -396,7 +396,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 "or set 'AZURE_SEARCH_API_KEY' environment variable."
             )
 
-        self.endpoint = settings.get("endpoint")
+        self.endpoint: str = settings["endpoint"]  # type: ignore[assignment]  # validated above
         self.index_name = settings.get("index_name")
         self.credential = resolved_credential
         self.mode = mode

@@ -58,8 +58,8 @@ class ScopedContentProcessor:
         self._client = client
         self._settings = settings
         self._cache: CacheProvider = cache_provider or InMemoryCacheProvider(
-            default_ttl_seconds=settings.get("cache_ttl_seconds", 14400),
-            max_size_bytes=settings.get("max_cache_size_bytes", 200 * 1024 * 1024),
+            default_ttl_seconds=settings.get("cache_ttl_seconds") or 14400,
+            max_size_bytes=settings.get("max_cache_size_bytes") or 200 * 1024 * 1024,
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 

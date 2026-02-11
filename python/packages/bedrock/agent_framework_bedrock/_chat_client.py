@@ -313,10 +313,10 @@ class BedrockChatClient(
     def _create_session(settings: BedrockSettings) -> Boto3Session:
         session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
         if settings.get("access_key") and settings.get("secret_key"):
-            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()
-            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()
+            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()  # type: ignore[union-attr]
+            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()  # type: ignore[union-attr]
         if settings.get("session_token"):
-            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()
+            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()  # type: ignore[union-attr]
         return Boto3Session(**session_kwargs)
 
     @override
