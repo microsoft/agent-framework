@@ -43,4 +43,3 @@ For Azure authentication, run `az login` before running samples.
 - [Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)
 - [AGENTS.md](./AGENTS.md) — Structure documentation for maintainers
 - [SAMPLE_GUIDELINES.md](./SAMPLE_GUIDELINES.md) — Coding conventions for samples
-
