@@ -3,6 +3,7 @@
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
+using Xunit;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
@@ -87,7 +88,7 @@ public sealed class DefaultActionExecutorTest(ITestOutputHelper output) : Workfl
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = PropertyPath.Create(FormatVariablePath("DummyVar")),
+                Variable = PropertyPath.Create(FormatVariablePath("TestVariable")),
             };
 
         return AssignParent<ResetVariable>(actionBuilder);
