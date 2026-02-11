@@ -180,13 +180,12 @@ async def _receive_events(ws, player: AudioPlayer) -> None:
                 ai_speaking = False
 
             elif msg_type == "tool_call":
-                name = msg.get("name", "unknown")
+                tool_name = msg.get("name", "unknown")
                 args = msg.get("arguments", "{}")
-                print(f"\n>>> Tool called: {name}")
+                print(f"\n>>> Tool called: {tool_name}")
                 print(f"    Arguments: {args}")
 
             elif msg_type == "tool_result":
-                name = msg.get("name", "unknown")
                 result = msg.get("result", "")
                 print(f"    Result: {result}")
 
