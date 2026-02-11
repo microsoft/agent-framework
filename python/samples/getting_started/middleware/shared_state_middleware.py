@@ -57,7 +57,7 @@ class MiddlewareContainer:
     async def call_counter_middleware(
         self,
         context: FunctionInvocationContext,
-        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """First middleware: increments call count in shared state."""
         # Increment the shared call count
@@ -66,18 +66,18 @@ class MiddlewareContainer:
         print(f"[CallCounter] This is function call #{self.call_count}")
 
         # Call the next middleware/function
-        await call_next(context)
+        await call_next()
 
     async def result_enhancer_middleware(
         self,
         context: FunctionInvocationContext,
-        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """Second middleware: uses shared call count to enhance function results."""
         print(f"[ResultEnhancer] Current total calls so far: {self.call_count}")
 
         # Call the next middleware/function
-        await call_next(context)
+        await call_next()
 
         # After function execution, enhance the result using shared state
         if context.result:

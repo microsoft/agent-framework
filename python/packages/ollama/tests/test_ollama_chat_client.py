@@ -207,7 +207,7 @@ def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
 def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
     @chat_middleware
     async def sample_middleware(context, call_next):
-        await call_next(context)
+        await call_next()
 
     ollama_chat_client = OllamaChatClient(middleware=[sample_middleware])
     assert len(ollama_chat_client.middleware) == 1
