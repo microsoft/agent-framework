@@ -166,7 +166,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         // Act & Assert
         await this.TakeNextTestAsync(
-            displayName: nameof(ForeachTakeLastAsync),
+            displayName: nameof(ForeachTakeNextWhenDoneAsync),
             items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: null,

@@ -84,9 +84,9 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
                 AssignVariable(this.Index, "this._index", tightFormat: true);
             }
             
-            this.Write("\n\n            this._index++;\n        }\n    }\n\n    public async ValueTask ResetAsy" +
-                    "nc(IWorkflowContext context, object? _, CancellationToken cancellationToken)\n   " +
-                    " {");
+            this.Write("\n\n            this._index++;\n        }\n    }\n\n    public async ValueTask Complete" +
+                    "Async(IWorkflowContext context, object? _, CancellationToken cancellationToken)\n" +
+                    "    {");
  
         AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 

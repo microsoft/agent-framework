@@ -59,7 +59,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
         }
     }
 
-    public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    public async ValueTask CompleteAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {<# 
         AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 
