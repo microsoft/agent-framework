@@ -65,7 +65,7 @@ internal sealed class HandoffMessagesFilter
                 for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
                 {
                     AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !this._handoffFunctionNames.Contains(fcc.Name)))
+                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
                     {
                         filteredMessage.Contents.Add(content);
                     }
@@ -92,10 +92,8 @@ internal sealed class HandoffMessagesFilter
                             }
                         }
                     }
-                    else
-                    {
-                        filteredMessage.Contents.Add(content);
-                    }
+
+                    // All mode: FunctionCallContent is stripped entirely.
                 }
             }
             else
@@ -122,7 +120,6 @@ internal sealed class HandoffMessagesFilter
                         filteringCandidates[frc.CallId] = new FilterCandidateState
                         {
                             CallId = frc.CallId,
-                            IsHandoffFunction = null,
                             FunctionCallResultLocation = (filteredMessages.Count, filteredMessage.Contents.Count),
                         };
                     }
@@ -139,11 +136,14 @@ internal sealed class HandoffMessagesFilter
         return filteredMessages.Where((_, index) => !messagesToRemove.Contains(index));
     }
 
+    private static bool IsHandoffFunctionName(string name) =>
+        name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
+
     private class FilterCandidateState
     {
         public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
 
-        public string CallId { get; set; }
+        public required string CallId { get; set; }
 
         public bool? IsHandoffFunction { get; set; }
     }
