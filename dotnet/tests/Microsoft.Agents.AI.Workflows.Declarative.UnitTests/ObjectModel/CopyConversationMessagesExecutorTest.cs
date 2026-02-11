@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -33,7 +33,7 @@ public sealed class CopyConversationMessagesExecutorTest(ITestOutputHelper outpu
     public async Task CopyMessagesWithSingleRecordMessageAsync()
     {
         // Arrange
-        ChatMessage testMessage = new ChatMessage(ChatRole.User, "Test message content");
+        ChatMessage testMessage = new(ChatRole.User, "Test message content");
         DataValue messageDataValue = testMessage.ToRecord().ToDataValue();
         Assert.IsType<RecordDataValue>(messageDataValue);
         RecordDataValue messageRecord = (RecordDataValue)messageDataValue;
