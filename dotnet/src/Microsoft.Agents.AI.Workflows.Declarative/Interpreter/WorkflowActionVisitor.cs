@@ -201,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.CompleteAsync), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }

@@ -20,6 +20,23 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         Assert.Throws<DeclarativeModelException>(() => new ForeachExecutor(new Foreach(), this.State));
 
     [Fact]
+    public void NamingConvention()
+    {
+        // Arrange
+        const string TestId = "test_action_123";
+
+        // Act
+        string startStep = ForeachExecutor.Steps.Start(TestId);
+        string nextStep = ForeachExecutor.Steps.Next(TestId);
+        string endStep = ForeachExecutor.Steps.End(TestId);
+
+        // Assert
+        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.Start)}", startStep);
+        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.Next)}", nextStep);
+        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.End)}", endStep);
+    }
+
+    [Fact]
     public async Task ForeachWithSingleValueAsync()
     {
         // Arrange, Act, Assert
@@ -27,9 +44,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithSingleValueAsync),
             items: ValueExpression.Literal(new NumberDataValue(42)),
             valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [FormulaValue.New(42)],
-            expectIterations: 1);
+            indexName: null);
     }
 
     [Fact]
@@ -40,9 +55,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithStringValueAsync),
             items: ValueExpression.Literal(new StringDataValue("Test")),
             valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [FormulaValue.New("Test")],
-            expectIterations: 1);
+            indexName: null);
     }
 
     [Fact]
@@ -59,9 +72,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithTableValueAsync),
             items: ValueExpression.Literal(tableValue),
             valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [FormulaValue.New(1), FormulaValue.New(2), FormulaValue.New(3)],
-            expectIterations: 3);
+            indexName: null);
     }
 
     [Fact]
@@ -77,9 +88,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithIndexAsync),
             items: ValueExpression.Literal(tableValue),
             valueName: "CurrentValue",
-            indexName: "CurrentIndex",
-            expectedValues: [FormulaValue.New("A"), FormulaValue.New("B")],
-            expectIterations: 2);
+            indexName: "CurrentIndex");
     }
 
     [Fact]
@@ -93,9 +102,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithEmptyTableAsync),
             items: ValueExpression.Literal(emptyTable),
             valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [],
-            expectIterations: 0);
+            indexName: null);
     }
 
     [Fact]
@@ -113,93 +120,25 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             displayName: nameof(ForeachWithExpressionAsync),
             items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [FormulaValue.New(10), FormulaValue.New(20), FormulaValue.New(30)],
-            expectIterations: 3);
+            indexName: null);
     }
 
     [Fact]
-    public async Task ForeachWithoutIndexAsync()
+    public async Task ForeachCompletedAsync()
     {
         // Arrange
-        TableDataValue tableValue = DataValue.TableFromRecords(
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new BooleanDataValue(true))),
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new BooleanDataValue(false))));
+        this.State.Set("SourceArray", FormulaValue.NewTable(
+            RecordType.Empty(),
+            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
+            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
+            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
 
         // Act, Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithoutIndexAsync),
-            items: ValueExpression.Literal(tableValue),
-            valueName: "CurrentValue",
-            indexName: null,
-            expectedValues: [FormulaValue.New(true), FormulaValue.New(false)],
-            expectIterations: 2);
-    }
-
-    [Fact]
-    public void StepsNamingConvention() // %%% TODO: Needed ???
-    {
-        // Arrange
-        const string TestId = "test_action_123";
-
-        // Act
-        string startStep = ForeachExecutor.Steps.Start(TestId);
-        string nextStep = ForeachExecutor.Steps.Next(TestId);
-        string endStep = ForeachExecutor.Steps.End(TestId);
-
-        // Assert
-        Assert.Equal($"{TestId}_Start", startStep);
-        Assert.Equal($"{TestId}_Next", nextStep);
-        Assert.Equal($"{TestId}_End", endStep);
-    }
-
-    [Fact]
-    public async Task HasValuePropertyTransitionsAsync()
-    {
-        // Arrange
-        TableDataValue tableValue = DataValue.TableFromRecords(
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(1))),
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(2))));
-
-        Foreach model = this.CreateModel(
-            displayName: nameof(HasValuePropertyTransitionsAsync),
-            items: ValueExpression.Literal(tableValue),
+        await this.CompletedTestAsync(
+            displayName: nameof(ForeachCompletedAsync),
+            items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
             indexName: null);
-
-        ForeachExecutor executor = new(model, this.State);
-
-        // Act & Assert - Before execution
-        Assert.False(executor.HasValue);
-
-        // Execute to initialize
-        await this.ExecuteAsync(executor);
-
-        // After execution, HasValue should be set based on TakeNextAsync logic
-        // The executor should have processed the iterations
-        Assert.False(executor.HasValue); // After all iterations, HasValue is false
-    }
-
-    [Fact]
-    public async Task IsDiscreteActionPropertyAsync()
-    {
-        // Arrange
-        Foreach model = this.CreateModel(
-            displayName: nameof(IsDiscreteActionPropertyAsync),
-            items: ValueExpression.Literal(new NumberDataValue(1)),
-            valueName: "CurrentValue",
-            indexName: null);
-
-        // Act
-        ForeachExecutor executor = new(model, this.State);
-
-        // Assert - IsDiscreteAction should be false for Foreach
-        Assert.Equal(
-            false,
-            executor.GetType()
-            .BaseType?
-            .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-            .GetValue(executor));
     }
 
     private async Task ExecuteTestAsync(
@@ -207,29 +146,59 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         ValueExpression items,
         string valueName,
         string? indexName,
-        FormulaValue[] expectedValues,
-        int expectIterations)
+        bool expectValue = false)
     {
         // Arrange
         Foreach model = this.CreateModel(displayName, items, valueName, indexName);
 
         // Act
         ForeachExecutor action = new(model, this.State);
-        await this.ExecuteAsync(action);
+        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
 
         // Assert
         VerifyModel(model, action);
+        VerifyInvocationEvent(events);
+
+        // IsDiscreteAction should be false for Foreach
+        Assert.Equal(
+            false,
+            action.GetType()
+            .BaseType?
+            .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+            .GetValue(action));
 
         // Verify HasValue state after execution
-        if (expectIterations == 0)
+        Assert.Equal(expectValue, action.HasValue);
+
+        // Verify value was reset at the end
+        this.VerifyUndefined(valueName);
+
+        // Verify index was reset at the end if it was used
+        if (indexName is not null)
         {
-            Assert.False(action.HasValue);
+            this.VerifyUndefined(indexName);
         }
-        else
-        {
-            // After complete execution, HasValue should be false (no more items)
-            Assert.False(action.HasValue);
-        }
+    }
+
+    private async Task CompletedTestAsync(
+        string displayName,
+        ValueExpression items,
+        string valueName,
+        string? indexName)
+    {
+        // Arrange
+        Foreach model = this.CreateModel(displayName, items, valueName, indexName);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        WorkflowEvent[] events = await this.ExecuteAsync(ForeachExecutor.Steps.End(action.Id), action.CompleteAsync);
+
+        // Assert
+        VerifyModel(model, action);
+        VerifyCompletionEvent(events);
+
+        // Verify HasValue state after completion
+        Assert.False(action.HasValue);
 
         // Verify value was reset at the end
         this.VerifyUndefined(valueName);
