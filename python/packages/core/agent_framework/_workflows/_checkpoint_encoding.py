@@ -86,11 +86,11 @@ def _encode(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _encode(v) for k, v in value.items()}  # type: ignore
 
-    # Recursively encode list/tuple/set items
-    if isinstance(value, (list, tuple, set)):
+    # Recursively encode list items (lists are JSON-native collections)
+    if isinstance(value, list):
         return [_encode(item) for item in value]  # type: ignore
 
-    # Everything else: pickle and base64 encode
+    # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
     return {
         _PICKLE_MARKER: _pickle_to_base64(value),
         _TYPE_MARKER: _type_to_key(type(value)),  # type: ignore

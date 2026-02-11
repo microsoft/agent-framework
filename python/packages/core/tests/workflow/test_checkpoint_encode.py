@@ -120,19 +120,21 @@ def test_encode_simple_list() -> None:
 
 
 def test_encode_tuple() -> None:
-    """Test encoding a tuple (converted to list)."""
+    """Test encoding a tuple (pickled to preserve type)."""
     data = (1, 2, 3)
     result = encode_checkpoint_value(data)
-    assert isinstance(result, list)
-    assert result == [1, 2, 3]
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
 
 
 def test_encode_set() -> None:
-    """Test encoding a set (converted to list)."""
+    """Test encoding a set (pickled to preserve type)."""
     data = {1, 2, 3}
     result = encode_checkpoint_value(data)
-    assert isinstance(result, list)
-    assert sorted(result) == [1, 2, 3]
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
 
 
 def test_encode_nested_dict() -> None:

@@ -1074,9 +1074,8 @@ async def test_file_checkpoint_storage_roundtrip_dataclass():
 async def test_file_checkpoint_storage_roundtrip_tuple_and_set():
     """Test tuple/frozenset encoding behavior.
 
-    Note: Tuples containing only JSON-native types become lists in JSON encoding.
-    Frozensets get pickled since they're not JSON-serializable collections.
-    For type-preserving tuple storage, wrap them in a dataclass or other non-JSON-native type.
+    Tuples, sets, and frozensets are pickled to preserve their type through
+    the encode/decode roundtrip.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -1097,16 +1096,17 @@ async def test_file_checkpoint_storage_roundtrip_tuple_and_set():
         await storage.save(checkpoint)
         loaded = await storage.load(checkpoint.checkpoint_id)
 
-        # Tuples containing JSON-native values become lists (JSON doesn't have tuple type)
-        assert loaded.state["my_tuple"] == [1, "two", 3.0, None]
-        assert isinstance(loaded.state["my_tuple"], list)
+        # Tuples preserve their type through roundtrip
+        assert loaded.state["my_tuple"] == original_tuple
+        assert isinstance(loaded.state["my_tuple"], tuple)
 
         # Frozensets are pickled and preserve their type
         assert loaded.state["my_frozenset"] == original_frozenset
         assert isinstance(loaded.state["my_frozenset"], frozenset)
 
-        # Nested tuples also become lists
-        assert loaded.state["nested_tuple"]["inner"] == [10, 20, 30]
+        # Nested tuples also preserve their type
+        assert loaded.state["nested_tuple"]["inner"] == (10, 20, 30)
+        assert isinstance(loaded.state["nested_tuple"]["inner"], tuple)
 
 
 async def test_file_checkpoint_storage_roundtrip_complex_nested_structures():
@@ -1154,22 +1154,22 @@ async def test_file_checkpoint_storage_roundtrip_complex_nested_structures():
         assert loaded.state["level1"]["level2"]["level3"]["deep_string"] == "hello"
         assert loaded.state["level1"]["level2"]["level3"]["deep_int"] == 123
         assert loaded.state["level1"]["level2"]["level3"]["deep_datetime"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
-        # Tuples containing JSON-native values become lists
-        assert loaded.state["level1"]["level2"]["level3"]["deep_tuple"] == [1, 2, 3]
+        # Tuples preserve their type through roundtrip
+        assert loaded.state["level1"]["level2"]["level3"]["deep_tuple"] == (1, 2, 3)
 
         # Verify list of dicts
         assert loaded.state["level1"]["list_of_dicts"][0]["a"] == 1
         assert loaded.state["level1"]["list_of_dicts"][0]["b"] == datetime(2025, 2, 1, tzinfo=timezone.utc)
-        # Tuples containing JSON-native values become lists
-        assert loaded.state["level1"]["list_of_dicts"][1]["d"] == [4, 5, 6]
+        # Tuples preserve their type through roundtrip
+        assert loaded.state["level1"]["list_of_dicts"][1]["d"] == (4, 5, 6)
 
         # Verify mixed list with correct types
         assert loaded.state["mixed_list"][0] == "string"
         assert loaded.state["mixed_list"][1] == 42
         assert loaded.state["mixed_list"][5] == datetime(2025, 3, 1, tzinfo=timezone.utc)
-        # Tuples containing JSON-native values become lists
-        assert loaded.state["mixed_list"][6] == [7, 8, 9]
-        assert isinstance(loaded.state["mixed_list"][6], list)
+        # Tuples preserve their type through roundtrip
+        assert loaded.state["mixed_list"][6] == (7, 8, 9)
+        assert isinstance(loaded.state["mixed_list"][6], tuple)
 
 
 async def test_file_checkpoint_storage_roundtrip_messages_with_complex_data():
@@ -1408,10 +1408,7 @@ async def test_file_checkpoint_storage_roundtrip_bytes():
 
 
 async def test_file_checkpoint_storage_roundtrip_empty_collections():
-    """Test that empty collections roundtrip correctly.
-
-    Note: Empty tuples become empty lists (JSON doesn't have tuple type).
-    """
+    """Test that empty collections roundtrip correctly."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -1433,9 +1430,9 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
 
         assert loaded.state["empty_dict"] == {}
         assert loaded.state["empty_list"] == []
-        # Empty tuples become empty lists (JSON doesn't have tuple type)
-        assert loaded.state["empty_tuple"] == []
-        assert isinstance(loaded.state["empty_tuple"], list)
+        # Empty tuples preserve their type through roundtrip
+        assert loaded.state["empty_tuple"] == ()
+        assert isinstance(loaded.state["empty_tuple"], tuple)
         assert loaded.state["nested_empty"]["inner_dict"] == {}
         assert loaded.messages == {}
         assert loaded.pending_request_info_events == {}

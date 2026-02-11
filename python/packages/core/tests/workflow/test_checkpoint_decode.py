@@ -204,3 +204,48 @@ def test_roundtrip_regular_class() -> None:
 
     assert isinstance(decoded, NotADataclass)
     assert decoded.value == "test_value"
+
+
+def test_roundtrip_tuple() -> None:
+    """Test that tuples preserve their type through encode/decode roundtrip."""
+    original = (1, "two", 3.0)
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded, tuple)
+    assert decoded == original
+
+
+def test_roundtrip_set() -> None:
+    """Test that sets preserve their type through encode/decode roundtrip."""
+    original = {1, 2, 3}
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded, set)
+    assert decoded == original
+
+
+def test_roundtrip_nested_tuple_in_dict() -> None:
+    """Test that tuples nested inside dicts preserve their type."""
+    original = {"items": (1, 2, 3), "name": "test"}
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded["items"], tuple)
+    assert decoded["items"] == (1, 2, 3)
+    assert decoded["name"] == "test"
+
+
+def test_roundtrip_set_in_list() -> None:
+    """Test that sets nested inside lists preserve their type."""
+    original = [{"tags": {1, 2, 3}}]
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded[0]["tags"], set)
+    assert decoded[0]["tags"] == {1, 2, 3}
