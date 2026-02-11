@@ -44,9 +44,7 @@ public static class AIAgentExtensions
 
         taskManager ??= new TaskManager();
 
-        // Resolve the JSON serializer options for continuation token serialization.
-        // Falls back to A2AHostingJsonUtilities.DefaultOptions which chains
-        // AgentAbstractionsJsonUtilities (for M.E.AI types) and A2A SDK resolvers.
+        // Resolve the JSON serializer options for continuation token serialization. May be custom for the user's agent.
         JsonSerializerOptions continuationTokenJsonOptions = jsonSerializerOptions ?? A2AHostingJsonUtilities.DefaultOptions;
 
         // Metadata key used to store continuation tokens for long-running background operations
@@ -62,7 +60,7 @@ public static class AIAgentExtensions
         // See https://github.com/a2aproject/a2a-dotnet/issues/275
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
 
-        // task flow for subsequent updates and cancellations
+        // Task flow for subsequent updates and cancellations
         taskManager.OnTaskUpdated += OnTaskUpdatedAsync;
         taskManager.OnTaskCancelled += OnTaskCancelledAsync;
 
@@ -76,6 +74,7 @@ public static class AIAgentExtensions
             // Only enable background responses when the mode allows task-based results.
             // In Message mode, background responses are never enabled so the agent always completes synchronously.
             bool allowBackground = responseMode != A2AResponseMode.Message;
+
             var options = messageSendParams.Metadata is not { Count: > 0 }
                 ? new AgentRunOptions { AllowBackgroundResponses = allowBackground }
                 : new AgentRunOptions { AllowBackgroundResponses = allowBackground, AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
@@ -88,21 +87,12 @@ public static class AIAgentExtensions
 
             await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-            // Determine whether to return a task or a message based on the response mode
-            // and whether the agent signaled a long-running operation via ContinuationToken.
-            bool createTask = responseMode == A2AResponseMode.Task || response.ContinuationToken is not null;
-            if (responseMode == A2AResponseMode.Message)
-            {
-                createTask = false;
-            }
-
-            if (!createTask)
+            if (responseMode is A2AResponseMode.Message || (responseMode is A2AResponseMode.Auto && response.ContinuationToken is null))
             {
                 return CreateMessageFromResponse(contextId, response);
             }
 
             var agentTask = await InitializeTaskAsync(contextId, messageSendParams.Message, cancellationToken).ConfigureAwait(false);
-
             if (response.ContinuationToken is not null)
             {
                 StoreContinuationToken(agentTask, response.ContinuationToken);
@@ -128,37 +118,25 @@ public static class AIAgentExtensions
             };
         }
 
-        Artifact CreateArtifactFromResponse(AgentResponse response)
+        // Task outputs should be returned as artifacts rather than messages:
+        // https://a2a-protocol.org/latest/specification/#37-messages-and-artifacts
+        Artifact CreateArtifactFromResponse(AgentResponse response) => new()
         {
-            // Per the A2A spec (§3.7), task outputs SHOULD be returned as artifacts
-            // rather than messages. Messages are for communication; artifacts are for
-            // data output produced by the agent.
-            return new Artifact
-            {
-                ArtifactId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
-                Parts = response.Messages.ToParts(),
-                Metadata = response.AdditionalProperties?.ToA2AMetadata()
-            };
-        }
+            ArtifactId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
+            Parts = response.Messages.ToParts(),
+            Metadata = response.AdditionalProperties?.ToA2AMetadata()
+        };
 
-        async Task<AgentTask> InitializeTaskAsync(
-            string contextId,
-            AgentMessage originalMessage,
-            CancellationToken cancellationToken)
+        async Task<AgentTask> InitializeTaskAsync(string contextId, AgentMessage originalMessage, CancellationToken cancellationToken)
         {
             AgentTask agentTask = await taskManager.CreateTaskAsync(contextId, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             // Add the original user message to the task history.
-            // The A2A SDK does this internally when it creates tasks via OnTaskCreated,
-            // but since we use OnMessageReceived and create the task ourselves, we must
-            // add the message manually to maintain a consistent history.
+            // The A2A SDK does this internally when it creates tasks via OnTaskCreated.
             agentTask.History ??= [];
             agentTask.History.Add(originalMessage);
 
-            // Notify subscribers of the Submitted state per the A2A spec (§4.1.3).
-            // CreateTaskAsync persists the task with Submitted status but does not emit
-            // an event, so we call UpdateStatusAsync to ensure SSE subscribers see the
-            // full Submitted → Working state transition.
+            // Notify subscribers of the Submitted state per the A2A spec: https://a2a-protocol.org/latest/specification/#413-taskstate
             await taskManager.UpdateStatusAsync(agentTask.Id, TaskState.Submitted, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             return agentTask;
@@ -179,24 +157,15 @@ public static class AIAgentExtensions
         async Task TransitionToWorkingAsync(string taskId, string contextId, AgentResponse response, CancellationToken cancellationToken)
         {
             // Include any intermediate progress messages from the response as a status message.
-            AgentMessage? progressMessage = response.Messages.Count > 0
-                ? CreateMessageFromResponse(contextId, response)
-                : null;
-
+            AgentMessage? progressMessage = response.Messages.Count > 0 ? CreateMessageFromResponse(contextId, response) : null;
             await taskManager.UpdateStatusAsync(taskId, TaskState.Working, message: progressMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         async Task CompleteWithArtifactAsync(string taskId, AgentResponse response, CancellationToken cancellationToken)
         {
-            // Return the output as an artifact per the A2A spec (§3.7).
             var artifact = CreateArtifactFromResponse(response);
             await taskManager.ReturnArtifactAsync(taskId, artifact, cancellationToken).ConfigureAwait(false);
-
-            await taskManager.UpdateStatusAsync(
-                taskId,
-                TaskState.Completed,
-                final: true,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            await taskManager.UpdateStatusAsync(taskId, TaskState.Completed, final: true, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         async Task OnTaskUpdatedAsync(AgentTask agentTask, CancellationToken cancellationToken)
@@ -271,14 +240,14 @@ public static class AIAgentExtensions
             if (agentTask.Metadata is not null &&
                 agentTask.Metadata.TryGetValue(ContinuationTokenMetadataKey, out var tokenElement))
             {
-                continuationToken = (ResponseContinuationToken?)JsonSerializer.Deserialize(tokenElement, jsonOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+                continuationToken = (ResponseContinuationToken?)tokenElement.Deserialize(jsonOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
                 return continuationToken is not null;
             }
 
             continuationToken = null;
             return false;
         }
-#pragma warning restore MEAI001
+#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     }
 
     private static List<ChatMessage> ExtractChatMessagesFromTaskHistory(AgentTask agentTask)
