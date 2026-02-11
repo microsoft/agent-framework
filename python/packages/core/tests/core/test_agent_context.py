@@ -15,10 +15,10 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 
 from agent_framework import (
+    Agent,
     AgentContext,
-    ChatAgent,
-    ChatMessage,
     ChatResponse,
+    Message,
     agent_middleware,
     get_current_agent_run_context,
 )
@@ -121,10 +121,10 @@ class TestAgentContext:
             await next_handler(context)
 
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Response"])]),
+            ChatResponse(messages=[Message("assistant", ["Response"])]),
         ]
 
-        agent = ChatAgent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
+        agent = Agent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
         await agent.run("Test message")
 
         assert captured_context is not None
@@ -143,10 +143,10 @@ class TestAgentContext:
             await next_handler(context)
 
         chat_client.responses = [
-            ChatResponse(messages=[ChatMessage("assistant", ["Streaming response"])]),
+            ChatResponse(messages=[Message("assistant", ["Streaming response"])]),
         ]
 
-        agent = ChatAgent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
+        agent = Agent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
 
         # Run with streaming and consume the response
         async for _update in agent.run("Test message", stream=True):
