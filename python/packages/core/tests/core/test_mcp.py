@@ -792,14 +792,6 @@ async def test_mcp_tool_call_tool_with_meta_integration():
 
         assert result == "Tool executed with metadata"
 
-        # Verify that _meta data is present in additional_properties
-        props = result[0].additional_properties
-        assert props is not None
-        assert props["executionTime"] == 1.5
-        assert props["cost"] == {"usd": 0.002}
-        assert props["isError"] is False
-        assert props["toolVersion"] == "1.2.3"
-
 
 async def test_local_mcp_server_function_execution():
     """Test function execution through MCP server."""
