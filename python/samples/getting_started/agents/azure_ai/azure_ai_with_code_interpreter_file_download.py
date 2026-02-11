@@ -9,9 +9,8 @@ from agent_framework import (
     AgentResponseUpdate,
     Annotation,
     Content,
-    HostedCodeInterpreterTool,
 )
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -119,17 +118,21 @@ async def download_container_files(file_contents: list[Annotation | Content], ag
 
 
 async def non_streaming_example() -> None:
-    """Example of downloading files from non-streaming response using CitationAnnotation."""
+    """Example of downloading files from non-streaming response using Annotation."""
     print("=== Non-Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
@@ -154,8 +157,8 @@ async def non_streaming_example() -> None:
         if annotations_found:
             print(f"SUCCESS: Found {len(annotations_found)} file annotation(s)")
 
-            # Download the container files
-            downloaded_paths = await download_container_files(annotations_found, agent)
+            # Download the container files (cast to Sequence for type compatibility)
+            downloaded_paths = await download_container_files(list(annotations_found), agent)
 
             if downloaded_paths:
                 print("\nDownloaded files available at:")
@@ -166,17 +169,21 @@ async def non_streaming_example() -> None:
 
 
 async def streaming_example() -> None:
-    """Example of downloading files from streaming response using HostedFileContent."""
+    """Example of downloading files from streaming response using Content with type='hosted_file'."""
     print("\n=== Streaming Response Example ===")
 
     async with (
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")

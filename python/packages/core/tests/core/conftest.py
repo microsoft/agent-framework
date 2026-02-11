@@ -8,7 +8,6 @@ from typing import Any, Generic
 from unittest.mock import patch
 from uuid import uuid4
 
-from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework import (
@@ -21,10 +20,10 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    FunctionTool,
     Message,
     ResponseStream,
     SupportsAgentRun,
-    ToolProtocol,
     tool,
 )
 from agent_framework._clients import OptionsCoT
@@ -48,26 +47,20 @@ def chat_history() -> list[Message]:
 
 
 @fixture
-def ai_tool() -> ToolProtocol:
-    """Returns a generic ToolProtocol."""
+def ai_tool() -> FunctionTool:
+    """Returns a generic FunctionTool."""
 
-    class GenericTool(BaseModel):
-        name: str
-        description: str
-        additional_properties: dict[str, Any] | None = None
+    @tool
+    def generic_tool(name: str) -> str:
+        """A generic tool that echoes the name."""
+        return f"Hello, {name}"
 
-        def parameters(self) -> dict[str, Any]:
-            """Return the parameters of the tool as a JSON schema."""
-            return {
-                "name": {"type": "string"},
-            }
-
-    return GenericTool(name="generic_tool", description="A generic tool")
+    return generic_tool
 
 
 @fixture
-def tool_tool() -> ToolProtocol:
-    """Returns a executable ToolProtocol."""
+def tool_tool() -> FunctionTool:
+    """Returns a executable FunctionTool."""
 
     @tool(approval_mode="never_require")
     def simple_function(x: int, y: int) -> int:

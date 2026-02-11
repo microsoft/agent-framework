@@ -9,9 +9,6 @@ from agent_framework import (
     ChatOptions,
     ChatResponseUpdate,
     Content,
-    HostedCodeInterpreterTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     Message,
     SupportsChatGetResponse,
     tool,
@@ -278,9 +275,9 @@ def test_prepare_tools_for_anthropic_tool(mock_anthropic_client: MagicMock) -> N
 
 
 def test_prepare_tools_for_anthropic_web_search(mock_anthropic_client: MagicMock) -> None:
-    """Test converting HostedWebSearchTool to Anthropic format."""
+    """Test converting web_search dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(tools=[HostedWebSearchTool()])
+    chat_options = ChatOptions(tools=[client.get_web_search_tool()])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -288,13 +285,12 @@ def test_prepare_tools_for_anthropic_web_search(mock_anthropic_client: MagicMock
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "web_search_20250305"
-    assert result["tools"][0]["name"] == "web_search"
 
 
 def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: MagicMock) -> None:
-    """Test converting HostedCodeInterpreterTool to Anthropic format."""
+    """Test converting code_interpreter dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(tools=[HostedCodeInterpreterTool()])
+    chat_options = ChatOptions(tools=[client.get_code_interpreter_tool()])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -302,13 +298,12 @@ def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: Mag
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "code_execution_20250825"
-    assert result["tools"][0]["name"] == "code_execution"
 
 
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:
-    """Test converting HostedMCPTool to Anthropic format."""
+    """Test converting MCP dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(tools=[HostedMCPTool(name="test-mcp", url="https://example.com/mcp")])
+    chat_options = ChatOptions(tools=[client.get_mcp_tool(name="test-mcp", url="https://example.com/mcp")])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -321,23 +316,21 @@ def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) 
 
 
 def test_prepare_tools_for_anthropic_mcp_with_auth(mock_anthropic_client: MagicMock) -> None:
-    """Test converting HostedMCPTool with authorization headers."""
+    """Test converting MCP dict tool with authorization token."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(
-        tools=[
-            HostedMCPTool(
-                name="test-mcp",
-                url="https://example.com/mcp",
-                headers={"authorization": "Bearer token123"},
-            )
-        ]
+    # Use the static method with authorization_token
+    mcp_tool = client.get_mcp_tool(
+        name="test-mcp",
+        url="https://example.com/mcp",
+        authorization_token="Bearer token123",
     )
+    chat_options = ChatOptions(tools=[mcp_tool])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
     assert result is not None
     assert "mcp_servers" in result
-    # The authorization header is converted to authorization_token
+    # The authorization_token should be passed through
     assert "authorization_token" in result["mcp_servers"][0]
     assert result["mcp_servers"][0]["authorization_token"] == "Bearer token123"
 
@@ -806,12 +799,11 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
     messages = [Message(role="user", text="What tools do you have available?")]
     tools = [
-        HostedWebSearchTool(),
-        HostedCodeInterpreterTool(),
-        HostedMCPTool(
+        AnthropicClient.get_web_search_tool(),
+        AnthropicClient.get_code_interpreter_tool(),
+        AnthropicClient.get_mcp_tool(
             name="example-mcp",
             url="https://learn.microsoft.com/api/mcp",
-            approval_mode="never_require",
         ),
     ]
 

@@ -12,7 +12,7 @@ from collections.abc import Callable, Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import httpx
 from anyio import ClosedResourceError
@@ -28,7 +28,6 @@ from pydantic import BaseModel, create_model
 
 from ._tools import (
     FunctionTool,
-    HostedMCPSpecificApproval,
     _build_pydantic_model_from_json_schema,
 )
 from ._types import (
@@ -44,6 +43,21 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+
+
+class MCPSpecificApproval(TypedDict, total=False):
+    """Represents the specific approval mode for an MCP tool.
+
+    When using this mode, the user must specify which tools always or never require approval.
+
+    Attributes:
+        always_require_approval: A sequence of tool names that always require approval.
+        never_require_approval: A sequence of tool names that never require approval.
+    """
+
+    always_require_approval: Collection[str] | None
+    never_require_approval: Collection[str] | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +341,7 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
         parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
@@ -937,7 +951,7 @@ class MCPStdioTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
@@ -1058,7 +1072,7 @@ class MCPStreamableHTTPTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
         client: SupportsChatGetResponse | None = None,
@@ -1173,7 +1187,7 @@ class MCPWebsocketTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,

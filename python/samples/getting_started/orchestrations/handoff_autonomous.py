@@ -83,10 +83,9 @@ async def main() -> None:
         HandoffBuilder(
             name="autonomous_iteration_handoff",
             participants=[coordinator, research_agent, summary_agent],
-            termination_condition=lambda conv: sum(
-                1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant"
-            )
-            >= 5,
+            termination_condition=lambda conv: (
+                sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role == "assistant") >= 5
+            ),
         )
         .with_start_agent(coordinator)
         .add_handoff(coordinator, [research_agent, summary_agent])
