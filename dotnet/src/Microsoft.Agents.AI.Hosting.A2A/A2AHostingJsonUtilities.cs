@@ -6,10 +6,8 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
 /// Provides JSON serialization options for A2A Hosting APIs to support AOT and trimming.
-/// Chains the agent abstractions resolver (for M.E.AI types such as <c>ResponseContinuationToken</c>)
-/// with the A2A SDK resolver (for A2A protocol types such as <c>AgentTask</c> and <c>AgentMessage</c>).
 /// </summary>
-internal static class A2AHostingJsonUtilities
+public static class A2AHostingJsonUtilities
 {
     /// <summary>
     /// Gets the default <see cref="JsonSerializerOptions"/> instance used for A2A Hosting serialization.

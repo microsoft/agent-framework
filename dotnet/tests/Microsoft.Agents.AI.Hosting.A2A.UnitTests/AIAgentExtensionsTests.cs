@@ -222,8 +222,9 @@ public sealed class AIAgentExtensionsTests
         // Assert
         AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
         Assert.Equal(TaskState.Completed, agentTask.Status.State);
-        Assert.NotNull(agentTask.Status.Message);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(agentTask.Status.Message.Parts));
+        Assert.NotNull(agentTask.Artifacts);
+        Artifact artifact = Assert.Single(agentTask.Artifacts);
+        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
         Assert.Equal("Done immediately", textPart.Text);
     }
 
@@ -415,8 +416,9 @@ public sealed class AIAgentExtensionsTests
         AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
         Assert.NotNull(updatedTask);
         Assert.Equal(TaskState.Completed, updatedTask.Status.State);
-        Assert.NotNull(updatedTask.Status.Message);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(updatedTask.Status.Message.Parts));
+        Assert.NotNull(updatedTask.Artifacts);
+        Artifact artifact = Assert.Single(updatedTask.Artifacts);
+        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
         Assert.Equal("Done!", textPart.Text);
     }
 
@@ -510,9 +512,10 @@ public sealed class AIAgentExtensionsTests
         Assert.NotNull(currentTask);
         Assert.Equal(TaskState.Completed, currentTask.Status.State);
 
-        // Assert — final message
-        Assert.NotNull(currentTask.Status.Message);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(currentTask.Status.Message.Parts));
+        // Assert — final output as artifact
+        Assert.NotNull(currentTask.Artifacts);
+        Artifact artifact = Assert.Single(currentTask.Artifacts);
+        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
         Assert.Equal("All done!", textPart.Text);
     }
 
