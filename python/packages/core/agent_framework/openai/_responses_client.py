@@ -901,6 +901,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
+            "type": "message",
             "role": message.role,
         }
         for content in message.contents:
@@ -911,16 +912,22 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 case "function_result":
                     new_args: dict[str, Any] = {}
                     new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
-                    all_messages.append(new_args)
+                    if new_args:
+                        all_messages.append(new_args)
                 case "function_call":
                     function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
-                    all_messages.append(function_call)  # type: ignore
+                    if function_call:
+                        all_messages.append(function_call)  # type: ignore
                 case "function_approval_response" | "function_approval_request":
-                    all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
+                    prepared = self._prepare_content_for_openai(Role(message.role), content, call_id_to_id)
+                    if prepared:
+                        all_messages.append(prepared)  # type: ignore
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    args["content"].append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore
+                    if prepared_content:
+                        if "content" not in args:
+                            args["content"] = []
+                        args["content"].append(prepared_content)  # type: ignore
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
