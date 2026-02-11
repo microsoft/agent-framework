@@ -6,7 +6,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 
 | File | Description |
 |------|-------------|
-| [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BaseAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper thread management, and message history handling. |
+| [`custom_agent.py`](custom_agent.py) | Shows how to create custom agents by extending the `BaseAgent` class. Demonstrates the `EchoAgent` implementation with both streaming and non-streaming responses, proper session management, and message history handling. |
 | [`custom_chat_client.py`](../../chat_client/custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `Agent` using the `as_agent()` method. |
 
 ## Key Takeaways
@@ -15,7 +15,7 @@ This folder contains examples demonstrating how to implement custom agents and c
 - Custom agents give you complete control over the agent's behavior
 - You must implement both `run()` for both the `stream=True` and `stream=False` cases
 - Use `self._normalize_messages()` to handle different input message formats
-- Use `self._notify_thread_of_new_messages()` to properly manage conversation history
+- Store messages in `session.state` to properly manage conversation history
 
 ### Custom Chat Clients
 - Custom chat clients allow you to integrate any backend service or create new LLM providers

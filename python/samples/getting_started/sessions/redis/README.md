@@ -1,6 +1,6 @@
 # Redis Context Provider Examples
 
-The Redis context provider enables persistent, searchable memory for your agents using Redis (RediSearch). It supports full‑text search and optional hybrid search with vector embeddings, letting agents remember and retrieve user context across sessions and threads.
+The Redis context provider enables persistent, searchable memory for your agents using Redis (RediSearch). It supports full‑text search and optional hybrid search with vector embeddings, letting agents remember and retrieve user context across sessions.
 
 This folder contains an example demonstrating how to use the Redis context provider with the Agent Framework.
 
@@ -9,9 +9,9 @@ This folder contains an example demonstrating how to use the Redis context provi
 | File | Description |
 |------|-------------|
 | [`azure_redis_conversation.py`](azure_redis_conversation.py) | Demonstrates conversation persistence with RedisHistoryProvider and Azure Redis with Azure AD (Entra ID) authentication using credential provider. |
-| [`redis_basics.py`](redis_basics.py) | Shows standalone provider usage and agent integration. Demonstrates writing messages to Redis, retrieving context via full‑text or hybrid vector search, and persisting preferences across threads. Also includes a simple tool example whose outputs are remembered. |
+| [`redis_basics.py`](redis_basics.py) | Shows standalone provider usage and agent integration. Demonstrates writing messages to Redis, retrieving context via full‑text or hybrid vector search, and persisting preferences across sessions. Also includes a simple tool example whose outputs are remembered. |
 | [`redis_conversation.py`](redis_conversation.py) | Simple example showing conversation persistence with RedisContextProvider using traditional connection string authentication. |
-| [`redis_threads.py`](redis_threads.py) | Demonstrates thread scoping. Includes: (1) global thread scope with a fixed `thread_id` shared across operations; (2) per‑operation thread scope where `scope_to_per_operation_thread_id=True` binds memory to a single thread for the provider's lifetime; and (3) multiple agents with isolated memory via different `agent_id` values. |
+| [`redis_sessions.py`](redis_sessions.py) | Demonstrates session scoping. Includes: (1) global session scope with a fixed `thread_id` shared across operations; (2) per‑operation session scope where `scope_to_per_operation_thread_id=True` binds memory to a single session for the provider's lifetime; and (3) multiple agents with isolated memory via different `agent_id` values. |
 
 
 ## Prerequisites
@@ -59,7 +59,7 @@ The provider supports both full‑text only and hybrid vector search:
 - Set `vectorizer_choice` to `"openai"` or `"hf"` to enable embeddings and hybrid search.
 - When using a vectorizer, also set `vector_field_name` (e.g., `"vector"`).
 - Partition fields for scoping memory: `application_id`, `agent_id`, `user_id`, `thread_id`.
-- Thread scoping: `scope_to_per_operation_thread_id=True` isolates memory per operation thread.
+- Session scoping: `scope_to_per_operation_thread_id=True` isolates memory per operation session.
 - Index management: `index_name`, `overwrite_redis_index`, `drop_redis_index`.
 
 ## What the example does
@@ -95,7 +95,7 @@ You should see the agent responses and, when using embeddings, context retrieved
 ### Memory scoping
 
 - Global scope: set `application_id`, `agent_id`, `user_id`, or `thread_id` on the provider to filter memory.
-- Per‑operation thread scope: set `scope_to_per_operation_thread_id=True` to isolate memory to the current thread created by the framework.
+- Per‑operation session scope: set `scope_to_per_operation_thread_id=True` to isolate memory to the current session created by the framework.
 
 ### Hybrid vector search (optional)
 

@@ -8,7 +8,7 @@ This gallery helps AutoGen developers move to the Microsoft Agent Framework (AF)
 
 - [01_basic_assistant_agent.py](single_agent/01_basic_assistant_agent.py) — Minimal AutoGen `AssistantAgent` and AF `Agent` comparison.
 - [02_assistant_agent_with_tool.py](single_agent/02_assistant_agent_with_tool.py) — Function tool integration in both SDKs.
-- [03_assistant_agent_thread_and_stream.py](single_agent/03_assistant_agent_thread_and_stream.py) — Thread management and streaming responses.
+- [03_assistant_agent_thread_and_stream.py](single_agent/03_assistant_agent_thread_and_stream.py) — Session management and streaming responses.
 - [04_agent_as_tool.py](single_agent/04_agent_as_tool.py) — Using agents as tools (hierarchical agent pattern) and streaming with tools.
 
 ### Multi-Agent Orchestration

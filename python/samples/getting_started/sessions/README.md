@@ -15,9 +15,9 @@ Sessions and context providers are the core building blocks for agent memory in 
 
 | File | Description |
 |------|-------------|
-| [`suspend_resume_thread.py`](suspend_resume_thread.py) | Suspend and resume sessions via `to_dict()` / `from_dict()` — both service-managed (Azure AI) and in-memory (OpenAI). |
-| [`custom_chat_message_store_thread.py`](custom_chat_message_store_thread.py) | Implement a custom `BaseHistoryProvider` with dict-based storage. Shows serialization/deserialization. |
-| [`redis_chat_message_store_thread.py`](redis_chat_message_store_thread.py) | `RedisHistoryProvider` for persistent storage: basic usage, user sessions, persistence across restarts, serialization, and message trimming. |
+| [`suspend_resume_session.py`](suspend_resume_session.py) | Suspend and resume sessions via `to_dict()` / `from_dict()` — both service-managed (Azure AI) and in-memory (OpenAI). |
+| [`custom_history_provider.py`](custom_history_provider.py) | Implement a custom `BaseHistoryProvider` with dict-based storage. Shows serialization/deserialization. |
+| [`redis_history_provider.py`](redis_history_provider.py) | `RedisHistoryProvider` for persistent storage: basic usage, user sessions, persistence across restarts, serialization, and message trimming. |
 
 ### Custom Context Providers
 
@@ -37,7 +37,7 @@ Sessions and context providers are the core building blocks for agent memory in 
 | File | Description |
 |------|-------------|
 | [`mem0/mem0_basic.py`](mem0/mem0_basic.py) | Basic Mem0 integration for user preference memory. |
-| [`mem0/mem0_threads.py`](mem0/mem0_threads.py) | Thread scoping: global scope, per-operation scope, and multi-agent isolation. |
+| [`mem0/mem0_sessions.py`](mem0/mem0_sessions.py) | Session scoping: global scope, per-operation scope, and multi-agent isolation. |
 | [`mem0/mem0_oss.py`](mem0/mem0_oss.py) | Mem0 Open Source (self-hosted) integration. |
 
 ### Redis
@@ -46,7 +46,7 @@ Sessions and context providers are the core building blocks for agent memory in 
 |------|-------------|
 | [`redis/redis_basics.py`](redis/redis_basics.py) | Standalone provider usage, full-text/hybrid search, preferences, and tool output memory. |
 | [`redis/redis_conversation.py`](redis/redis_conversation.py) | Conversation persistence across sessions. |
-| [`redis/redis_threads.py`](redis/redis_threads.py) | Thread scoping: global, per-operation, and multi-agent isolation. |
+| [`redis/redis_sessions.py`](redis/redis_sessions.py) | Session scoping: global, per-operation, and multi-agent isolation. |
 | [`redis/azure_redis_conversation.py`](redis/azure_redis_conversation.py) | Azure Managed Redis with Entra ID authentication. |
 
 ## Choosing a Provider
@@ -100,4 +100,4 @@ class MyHistoryProvider(BaseHistoryProvider):
         ...  # Persist to your storage
 ```
 
-See `custom_chat_message_store_thread.py` and `simple_context_provider.py` for complete examples.
+See `custom_history_provider.py` and `simple_context_provider.py` for complete examples.
