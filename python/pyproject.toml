@@ -249,6 +249,7 @@ pytest --import-mode=importlib
 --cov=agent_framework_purview
 --cov=agent_framework_redis
 --cov=agent_framework_orchestrations
+--cov=agent_framework_declarative
 --cov-config=pyproject.toml
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
