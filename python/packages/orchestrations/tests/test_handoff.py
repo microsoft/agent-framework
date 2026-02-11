@@ -20,7 +20,7 @@ from agent_framework import (
 from agent_framework._clients import BaseChatClient
 from agent_framework._middleware import ChatMiddlewareLayer
 from agent_framework._tools import FunctionInvocationLayer
-from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder, create_handoff_tools, get_handoff_tool_name
 
 
 class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
@@ -364,3 +364,105 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
     assert "triage" in workflow.executors
     assert "specialist_a" in workflow.executors
     assert "specialist_b" in workflow.executors
+
+
+def test_create_handoff_tools_creates_correct_tools():
+    """Test that create_handoff_tools creates tools with correct names and default descriptions."""
+    target_ids = ["specialist", "escalation"]
+    tools = create_handoff_tools(target_ids)
+
+    assert len(tools) == 2
+    assert tools[0].name == "handoff_to_specialist"
+    assert tools[1].name == "handoff_to_escalation"
+    assert tools[0].description == "Handoff to the specialist agent."
+    assert tools[1].description == "Handoff to the escalation agent."
+
+
+def test_create_handoff_tools_with_custom_descriptions():
+    """Test that create_handoff_tools uses custom descriptions when provided."""
+    target_ids = ["billing", "tech"]
+    descriptions = {
+        "billing": "Transfer the customer to the billing department.",
+        "tech": "Transfer the customer to technical support.",
+    }
+    tools = create_handoff_tools(target_ids, descriptions=descriptions)
+
+    assert len(tools) == 2
+    assert tools[0].name == "handoff_to_billing"
+    assert tools[1].name == "handoff_to_tech"
+    assert tools[0].description == "Transfer the customer to the billing department."
+    assert tools[1].description == "Transfer the customer to technical support."
+
+
+def test_create_handoff_tools_empty():
+    """Test that create_handoff_tools returns empty list for empty input."""
+    tools = create_handoff_tools([])
+    assert tools == []
+
+
+async def test_pre_registered_tools_no_conflict():
+    """Test that pre-registered handoff tools do not raise ValueError when building a workflow.
+
+    This verifies the Azure AI Agent Service compatibility fix: when a user creates
+    handoff tools upfront and attaches them to the agent, _apply_auto_tools should
+    skip the duplicates instead of raising.
+    """
+    pre_registered_tools = create_handoff_tools(["specialist"])
+    mock_client = MockChatClient(name="triage")
+    agent = Agent(
+        client=mock_client,
+        name="triage",
+        id="triage",
+        default_options={"tools": pre_registered_tools},  # type: ignore
+    )
+
+    specialist = MockHandoffAgent(name="specialist")
+    # This should NOT raise ValueError for duplicate tool names
+    workflow = (
+        HandoffBuilder(participants=[agent, specialist])
+        .with_start_agent(agent)
+        .add_handoff(agent, [specialist])
+        .build()
+    )
+
+    assert "triage" in workflow.executors
+    assert "specialist" in workflow.executors
+
+
+def test_get_handoff_tool_name():
+    """Test that get_handoff_tool_name returns the expected format."""
+    assert get_handoff_tool_name("specialist") == "handoff_to_specialist"
+    assert get_handoff_tool_name("billing_agent") == "handoff_to_billing_agent"
+
+
+async def test_mesh_topology_with_pre_registered_tools():
+    """Test that pre-registered tools work in a mesh topology where each agent can route to all others."""
+    # Create agents with pre-registered handoff tools (Azure AI Agent Service pattern)
+    mock_client_a = MockChatClient(name="agent_a", handoff_to="agent_b")
+    tools_a = create_handoff_tools(["agent_b", "agent_c"])
+    agent_a = Agent(
+        client=mock_client_a,
+        name="agent_a",
+        id="agent_a",
+        default_options={"tools": tools_a},  # type: ignore
+    )
+
+    agent_b = MockHandoffAgent(name="agent_b")
+    agent_c = MockHandoffAgent(name="agent_c")
+
+    workflow = (
+        HandoffBuilder(participants=[agent_a, agent_b, agent_c])
+        .with_start_agent(agent_a)
+        .build()
+    )
+
+    assert "agent_a" in workflow.executors
+    assert "agent_b" in workflow.executors
+    assert "agent_c" in workflow.executors
+
+    # Run the workflow to verify it works end-to-end
+    events = await _drain(workflow.run("Test message", stream=True))
+    # agent_a should hand off to agent_b, which has no further handoff
+    # so it should request user input
+    requests = [ev for ev in events if ev.type == "request_info"]
+    assert requests

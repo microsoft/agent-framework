@@ -21,6 +21,8 @@ from agent_framework_orchestrations import (
     HandoffBuilder,
     HandoffConfiguration,
     HandoffSentEvent,
+    create_handoff_tools,
+    get_handoff_tool_name,
     MagenticAgentExecutor,
     MagenticBuilder,
     MagenticContext,
@@ -74,4 +76,6 @@ __all__ = [
     "SequentialBuilder",
     "StandardMagenticManager",
     "__version__",
+    "create_handoff_tools",
+    "get_handoff_tool_name",
 ]

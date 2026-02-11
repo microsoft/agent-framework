@@ -32,7 +32,7 @@ Key properties:
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -114,6 +114,46 @@ class HandoffConfiguration:
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID."""
     return f"handoff_to_{target_id}"
+
+
+def create_handoff_tools(
+    target_agent_ids: Sequence[str],
+    descriptions: Mapping[str, str] | None = None,
+) -> list[FunctionTool[Any, Any]]:
+    """Create handoff tools for pre-registration with agents at creation time.
+
+    Use this function when working with services like Azure AI Agent Service
+    that require tools to be registered at agent creation time rather than
+    at request time. The returned tools can be passed directly to the agent
+    constructor.
+
+    Example::
+
+        # Create handoff tools for Azure AI Agent Service
+        handoff_tools = create_handoff_tools(["specialist", "escalation"])
+        agent = Agent(client=client, name="triage", default_options={"tools": handoff_tools})
+
+    Args:
+        target_agent_ids: Sequence of target agent IDs to create handoff tools for.
+        descriptions: Optional mapping from agent ID to a custom description for
+            the handoff tool. If not provided or if a given agent ID is not in the
+            mapping, the default description ``"Handoff to the <id> agent."`` is used.
+
+    Returns:
+        A list of :class:`FunctionTool` instances, one per target agent ID.
+    """
+    tools: list[FunctionTool[Any, Any]] = []
+    for target_id in target_agent_ids:
+        tool_name = get_handoff_tool_name(target_id)
+        doc = (descriptions or {}).get(target_id) or f"Handoff to the {target_id} agent."
+
+        @tool(name=tool_name, description=doc, approval_mode="never_require")
+        def _handoff_tool(context: str | None = None, _tid: str = target_id) -> str:
+            """Return a deterministic acknowledgement that encodes the target alias."""
+            return f"Handoff to {_tid}"
+
+        tools.append(_handoff_tool)
+    return tools
 
 
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"
@@ -329,11 +369,12 @@ class HandoffAgentExecutor(AgentExecutor):
         for target in targets:
             handoff_tool = self._create_handoff_tool(target.target_id, target.description)
             if handoff_tool.name in existing_names:
-                raise ValueError(
-                    f"Agent '{resolve_agent_id(agent)}' already has a tool named '{handoff_tool.name}'. "
-                    f"Handoff tool name '{handoff_tool.name}' conflicts with existing tool."
-                    "Please rename the existing tool or modify the target agent ID to avoid conflicts."
+                logger.debug(
+                    "Agent '%s' already has a tool named '%s'; skipping auto-registration.",
+                    resolve_agent_id(agent),
+                    handoff_tool.name,
                 )
+                continue
             new_tools.append(handoff_tool)
 
         if new_tools:
