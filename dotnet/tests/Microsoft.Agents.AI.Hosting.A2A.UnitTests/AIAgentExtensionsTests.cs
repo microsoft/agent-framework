@@ -558,6 +558,195 @@ public sealed class AIAgentExtensionsTests
         Assert.Equal(TaskState.Failed, updatedTask.Status.State);
     }
 
+    /// <summary>
+    /// Verifies that in Task mode with a ContinuationToken, the result is an AgentTask in Working state.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_TaskMode_WhenContinuationToken_ReturnsWorkingAgentTaskAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Working on it...")])
+        {
+            ContinuationToken = CreateTestContinuationToken()
+        };
+        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+
+        // Assert
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(TaskState.Working, agentTask.Status.State);
+        Assert.NotNull(agentTask.Metadata);
+        Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+    }
+
+    /// <summary>
+    /// Verifies that when the agent returns a ContinuationToken with no progress messages,
+    /// the task transitions to Working state with a null status message.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_WhenContinuationTokenWithNoMessages_TaskStatusHasNullMessageAsync()
+    {
+        // Arrange
+        AgentResponse response = new([])
+        {
+            ContinuationToken = CreateTestContinuationToken()
+        };
+        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+
+        // Assert
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(TaskState.Working, agentTask.Status.State);
+        Assert.Null(agentTask.Status.Message);
+    }
+
+    /// <summary>
+    /// Verifies that when OnTaskUpdated is invoked on a task without a continuation token,
+    /// the task processes messages from its history and completes with an artifact.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_OnTaskUpdated_WhenNoContinuationToken_ProcessesHistoryAndCompletesAsync()
+    {
+        // Arrange
+        int callCount = 0;
+        Mock<AIAgent> agentMock = CreateAgentMockWithSequentialResponses(
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done immediately")]),
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, "Follow-up done!")]),
+            ref callCount);
+        ITaskManager taskManager = agentMock.Object.MapA2A(responseMode: A2AResponseMode.Task);
+
+        // Act — create a completed task (no continuation token)
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+
+        // Simulate a follow-up message by adding it to history and re-submitting via OnTaskUpdated
+        agentTask.History ??= [];
+        agentTask.History.Add(new AgentMessage { MessageId = "follow-up", Role = MessageRole.User, Parts = [new TextPart { Text = "Follow up" }] });
+
+        // Act — invoke OnTaskUpdated without a continuation token
+        await InvokeOnTaskUpdatedAsync(taskManager, agentTask);
+
+        // Assert
+        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        Assert.NotNull(updatedTask);
+        Assert.Equal(TaskState.Completed, updatedTask.Status.State);
+        Assert.NotNull(updatedTask.Artifacts);
+        Assert.Equal(2, updatedTask.Artifacts.Count);
+        Artifact artifact = updatedTask.Artifacts[1];
+        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
+        Assert.Equal("Follow-up done!", textPart.Text);
+    }
+
+    /// <summary>
+    /// Verifies that when a task is cancelled, the continuation token is removed from metadata.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_OnTaskCancelled_RemovesContinuationTokenFromMetadataAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Starting...")])
+        {
+            ContinuationToken = CreateTestContinuationToken()
+        };
+        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+
+        // Act — create a working task with a continuation token
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.NotNull(agentTask.Metadata);
+        Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+
+        // Act — cancel the task
+        await taskManager.CancelTaskAsync(new TaskIdParams { Id = agentTask.Id }, CancellationToken.None);
+
+        // Assert — continuation token should be removed from metadata
+        Assert.False(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+    }
+
+    /// <summary>
+    /// Verifies that when the agent throws an OperationCanceledException during a poll,
+    /// it is re-thrown without marking the task as Failed.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_OnTaskUpdated_WhenOperationCancelled_DoesNotMarkFailedAsync()
+    {
+        // Arrange
+        int callCount = 0;
+        Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, invocation =>
+        {
+            if (invocation == 1)
+            {
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "Starting...")])
+                {
+                    ContinuationToken = CreateTestContinuationToken()
+                };
+            }
+
+            throw new OperationCanceledException("Cancelled");
+        });
+        ITaskManager taskManager = agentMock.Object.MapA2A();
+
+        // Act — create the task
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
+        });
+        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+
+        // Act — poll the task; agent throws OperationCanceledException
+        await Assert.ThrowsAsync<OperationCanceledException>(() => InvokeOnTaskUpdatedAsync(taskManager, agentTask));
+
+        // Assert — task should still be Working, not Failed
+        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        Assert.NotNull(updatedTask);
+        Assert.Equal(TaskState.Working, updatedTask.Status.State);
+    }
+
+    /// <summary>
+    /// Verifies that when the incoming message has a ContextId, it is used for the task
+    /// rather than generating a new one.
+    /// </summary>
+    [Fact]
+    public async Task MapA2A_WhenMessageHasContextId_UsesProvidedContextIdAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+
+        // Act
+        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        {
+            Message = new AgentMessage
+            {
+                MessageId = "test-id",
+                ContextId = "my-context-123",
+                Role = MessageRole.User,
+                Parts = [new TextPart { Text = "Hello" }]
+            }
+        });
+
+        // Assert
+        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal("my-context-123", agentMessage.ContextId);
+    }
+
 #pragma warning restore MEAI001
 
     private static Mock<AIAgent> CreateAgentMock(Action<AgentRunOptions?> optionsCallback)
