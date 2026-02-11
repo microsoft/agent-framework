@@ -66,21 +66,6 @@ def get_time(
 
 
 @tool
-def calculate(
-    expression: Annotated[str, Field(description="A math expression like '2 + 2' or '10 * 5'")],
-) -> str:
-    """Evaluate a simple math expression."""
-    try:
-        allowed_chars = set("0123456789+-*/(). ")
-        if all(c in allowed_chars for c in expression):
-            result = eval(expression)
-            return f"The result of {expression} is {result}"
-        return "Invalid expression"
-    except Exception:
-        return "Could not evaluate expression"
-
-
-@tool
 def lookup_order(
     order_id: Annotated[str, Field(description="The order ID to look up, e.g. 'ORD-1234'")],
 ) -> str:
@@ -150,12 +135,12 @@ AGENT_DEFINITIONS = {
         name="assistant",
         display_name="Assistant",
         instructions=(
-            "You are a helpful assistant named Robin. You can check the weather, "
-            "tell the time, and do calculations. Be conversational and concise.\n\n"
+            "You are a helpful assistant named Robin. You can check the weather "
+            "and tell the time. Be conversational and concise.\n\n"
             "If the user needs help with an order or support issue, transfer to 'support'.\n"
             "If they want general conversation, transfer to 'greeter'."
         ),
-        tools=[get_weather, get_time, calculate],
+        tools=[get_weather, get_time],
         voice="echo",
     ),
 }
