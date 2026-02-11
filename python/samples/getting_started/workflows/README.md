@@ -46,6 +46,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Workflow as Agent with Thread          | [agents/workflow_as_agent_with_thread.py](./agents/workflow_as_agent_with_thread.py)                           | Use AgentThread to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
 | Handoff Workflow as Agent              | [agents/handoff_workflow_as_agent.py](./agents/handoff_workflow_as_agent.py)                                   | Use a HandoffBuilder workflow as an agent with HITL via FunctionCallContent/FunctionResultContent    |
+| Azure AI Handoff (Pre-Registered Tools) | [agents/handoff_with_azure_ai_agents.py](./agents/handoff_with_azure_ai_agents.py)                           | Use create_handoff_tools() to pre-register handoff tools at agent creation time for Azure AI Agent Service |
 
 ### checkpoint
 
