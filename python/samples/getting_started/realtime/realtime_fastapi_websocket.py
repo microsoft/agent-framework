@@ -2,11 +2,10 @@
 
 import asyncio
 import base64
-import contextlib
 import json
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
 from agent_framework import BaseRealtimeClient, RealtimeAgent, tool
@@ -159,7 +158,7 @@ class VoiceSession:
         finally:
             self._running = False
             receive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError):
                 await receive_task
 
     async def _receive_loop(self) -> None:
@@ -288,10 +287,10 @@ async def websocket_voice_endpoint(websocket: WebSocket):
         print("Client disconnected")
     except Exception as e:
         print(f"Session error: {e}")
-        with contextlib.suppress(Exception):
+        with suppress(Exception):
             await websocket.send_json({"type": "error", "message": str(e)})
     finally:
-        with contextlib.suppress(Exception):
+        with suppress(Exception):
             await websocket.close()
 
 
