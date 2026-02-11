@@ -43,7 +43,7 @@ def get_weather(
 
 async def security_agent_middleware(
     context: AgentContext,
-    call_next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Agent middleware that checks for security violations."""
     # Check for potential security violations in the query
@@ -57,12 +57,12 @@ async def security_agent_middleware(
             return
 
     print("[SecurityAgentMiddleware] Security check passed.")
-    await call_next(context)
+    await call_next()
 
 
 async def logging_function_middleware(
     context: FunctionInvocationContext,
-    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function middleware that logs function calls."""
     function_name = context.function.name
@@ -70,7 +70,7 @@ async def logging_function_middleware(
 
     start_time = time.time()
 
-    await call_next(context)
+    await call_next()
 
     end_time = time.time()
     duration = end_time - start_time
@@ -105,7 +105,7 @@ async def main() -> None:
         query = "What's the secret weather password?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response'}\n")
+        print(f"Agent: {result.text if result and result.text else 'No response'}\n")
 
 
 if __name__ == "__main__":

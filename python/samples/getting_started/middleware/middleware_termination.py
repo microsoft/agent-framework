@@ -49,7 +49,7 @@ class PreTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        call_next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         # Check if the user message contains any blocked words
         last_message = context.messages[-1] if context.messages else None
@@ -75,7 +75,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     # Terminate to prevent further processing
                     raise MiddlewareTermination(result=context.result)
 
-        await call_next(context)
+        await call_next()
 
 
 class PostTerminationMiddleware(AgentMiddleware):
@@ -88,7 +88,7 @@ class PostTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        call_next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         print(f"[PostTerminationMiddleware] Processing request (response count: {self.response_count})")
 
@@ -101,7 +101,7 @@ class PostTerminationMiddleware(AgentMiddleware):
             raise MiddlewareTermination
 
         # Allow the agent to process normally
-        await call_next(context)
+        await call_next()
 
         # Increment response count after processing
         self.response_count += 1
@@ -158,14 +158,14 @@ async def post_termination_middleware() -> None:
         query = "What about the weather in London?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response (terminated)'}")
+        print(f"Agent: {result.text if result and result.text else 'No response (terminated)'}")
 
         # Third run (should also be terminated)
         print("\n3. Third run (should also be terminated):")
         query = "And New York?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response (terminated)'}")
+        print(f"Agent: {result.text if result and result.text else 'No response (terminated)'}")
 
 
 async def main() -> None:
