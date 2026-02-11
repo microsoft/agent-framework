@@ -5,12 +5,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework import (
-    AgentProtocol,
     AgentThread,
-    HostedMCPTool,
-    HostedWebSearchTool,
+    SupportsAgentRun,
+    tool,
 )
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -34,15 +33,19 @@ To set up Bing Grounding:
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
     current_time = datetime.now(timezone.utc)
     return f"The current UTC time is {current_time.strftime('%Y-%m-%d %H:%M:%S')}."
 
 
-async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", thread: "AgentThread"):
+async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query, thread=thread, store=True)
     while len(result.user_input_requests) > 0:
@@ -54,9 +57,9 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
             )
             user_approval = input("Approve function call? (y/n): ")
             new_input.append(
-                ChatMessage(
+                Message(
                     role="user",
-                    contents=[user_input_needed.create_response(user_approval.lower() == "y")],
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
         result = await agent.run(new_input, thread=thread, store=True)
@@ -64,20 +67,27 @@ async def handle_approvals_with_thread(query: str, agent: "AgentProtocol", threa
 
 
 async def main() -> None:
-    """Example showing Hosted MCP tools for a Azure AI Agent."""
+    """Example showing multiple tools for an Azure AI Agent."""
+
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        # Create tools using instance methods
+        mcp_tool = client.get_mcp_tool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+        )
+        web_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=[
-                HostedMCPTool(
-                    name="Microsoft Learn MCP",
-                    url="https://learn.microsoft.com/api/mcp",
-                ),
-                HostedWebSearchTool(count=5),
+                mcp_tool,
+                web_search_tool,
                 get_time,
             ],
         )

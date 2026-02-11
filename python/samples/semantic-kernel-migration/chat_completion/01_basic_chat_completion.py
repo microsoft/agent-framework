@@ -1,5 +1,14 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/chat_completion/01_basic_chat_completion.py
+
 # Copyright (c) Microsoft. All rights reserved.
-"""Basic SK ChatCompletionAgent vs Agent Framework ChatAgent.
+"""Basic SK ChatCompletionAgent vs Agent Framework Agent.
 
 Both samples expect OpenAI-compatible environment variables (OPENAI_API_KEY or
 Azure OpenAI configuration). Update the prompts or client wiring to match your
@@ -25,10 +34,10 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Call Agent Framework's ChatAgent created from OpenAIChatClient."""
+    """Call Agent Framework's Agent created from OpenAIChatClient."""
     from agent_framework.openai import OpenAIChatClient
 
-    # AF constructs a lightweight ChatAgent backed by OpenAIChatClient.
+    # AF constructs a lightweight Agent backed by OpenAIChatClient.
     chat_agent = OpenAIChatClient().as_agent(
         name="Support",
         instructions="Answer in one sentence.",

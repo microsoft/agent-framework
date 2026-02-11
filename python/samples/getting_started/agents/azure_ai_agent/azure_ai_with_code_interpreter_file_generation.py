@@ -3,19 +3,14 @@
 import asyncio
 import os
 
-from agent_framework import (
-    AgentResponseUpdate,
-    HostedCodeInterpreterTool,
-    HostedFileContent,
-)
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 
 """
 Azure AI Agent Code Interpreter File Generation Example
 
-This sample demonstrates using HostedCodeInterpreterTool with AzureAIAgentsProvider
+This sample demonstrates using get_code_interpreter_tool() with AzureAIAgentsProvider
 to generate a text file and then retrieve it.
 
 The test flow:
@@ -34,6 +29,10 @@ async def main() -> None:
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
         AzureAIAgentsProvider(agents_client=agents_client) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="CodeInterpreterAgent",
             instructions=(
@@ -41,7 +40,7 @@ async def main() -> None:
                 "ALWAYS use the code interpreter tool to execute Python code when asked to create files. "
                 "Write actual Python code to create files, do not just describe what you would do."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         # Be very explicit about wanting code execution and a download link
@@ -60,14 +59,11 @@ async def main() -> None:
         # Collect file_ids from the response
         file_ids: list[str] = []
 
-        async for chunk in agent.run_stream(query):
-            if not isinstance(chunk, AgentResponseUpdate):
-                continue
-
+        async for chunk in agent.run(query, stream=True):
             for content in chunk.contents:
                 if content.type == "text":
                     print(content.text, end="", flush=True)
-                elif content.type == "hosted_file" and isinstance(content, HostedFileContent):
+                elif content.type == "hosted_file" and content.file_id:
                     file_ids.append(content.file_id)
                     print(f"\n[File generated: {content.file_id}]")
 

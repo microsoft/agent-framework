@@ -19,7 +19,7 @@ public class PurviewSettings
     /// <param name="appName">The publicly visible name of the application.</param>
     public PurviewSettings(string appName)
     {
-        this.AppName = appName;
+        this.AppName = string.IsNullOrWhiteSpace(appName) ? throw new ArgumentException("AppName cannot be null or whitespace.", nameof(appName)) : appName;
     }
 
     /// <summary>

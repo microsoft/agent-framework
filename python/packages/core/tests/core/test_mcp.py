@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore[reportPrivateUsage]
+import logging
 import os
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
@@ -12,13 +13,11 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, BaseModel, ValidationError
 
 from agent_framework import (
-    ChatMessage,
     Content,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
-    Role,
-    ToolProtocol,
+    Message,
 )
 from agent_framework._mcp import (
     MCPTool,
@@ -30,6 +29,7 @@ from agent_framework._mcp import (
     _parse_message_from_mcp,
     _prepare_content_for_mcp,
     _prepare_message_for_mcp,
+    logger,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
@@ -60,8 +60,8 @@ def test_mcp_prompt_message_to_ai_content():
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
     ai_content = _parse_message_from_mcp(mcp_message)
 
-    assert isinstance(ai_content, ChatMessage)
-    assert ai_content.role.value == "user"
+    assert isinstance(ai_content, Message)
+    assert ai_content.role == "user"
     assert len(ai_content.contents) == 1
     assert ai_content.contents[0].type == "text"
     assert ai_content.contents[0].text == "Hello, world!"
@@ -348,7 +348,7 @@ def test_ai_content_to_mcp_content_types_uri():
 
 
 def test_prepare_message_for_mcp():
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="test"),
@@ -743,7 +743,10 @@ def test_get_input_model_from_mcp_prompt():
 async def test_local_mcp_server_initialization():
     """Test MCPTool initialization."""
     server = MCPTool(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
+    assert hasattr(server, "additional_properties")
     assert server.name == "test_server"
     assert server.session is None
     assert server.functions == []
@@ -794,7 +797,9 @@ async def test_local_mcp_server_load_functions():
             return None
 
     server = TestServer(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
     async with server:
         await server.load_tools()
         assert len(server.functions) == 1
@@ -1053,8 +1058,8 @@ async def test_local_mcp_server_prompt_execution():
         result = await prompt.invoke(arg="test_value")
 
         assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
-        assert result[0].role == Role.USER
+        assert isinstance(result[0], Message)
+        assert result[0].role == "user"
         assert len(result[0].contents) == 1
         assert result[0].contents[0].text == "Test message"
 
@@ -1228,7 +1233,7 @@ async def test_streamable_http_integration():
     if not url.startswith("http"):
         pytest.skip("LOCAL_MCP_URL is not an HTTP URL")
 
-    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url, approval_mode="never_require")
 
     async with tool:
         # Test that we can connect and load tools
@@ -1260,7 +1265,7 @@ async def test_mcp_connection_reset_integration():
     """
     url = os.environ.get("LOCAL_MCP_URL")
 
-    tool = MCPStreamableHTTPTool(name="integration_test", url=url)
+    tool = MCPStreamableHTTPTool(name="integration_test", url=url, approval_mode="never_require")
 
     async with tool:
         # Verify initial connection
@@ -1390,7 +1395,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_chat_client = AsyncMock()
     mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -1412,7 +1417,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
 
 async def test_mcp_tool_sampling_callback_no_valid_content():
     """Test sampling callback when response has no valid content types."""
-    from agent_framework import ChatMessage, Role
+    from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python")
 
@@ -1420,8 +1425,8 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [
-        ChatMessage(
-            role=Role.ASSISTANT,
+        Message(
+            role="assistant",
             contents=[
                 Content.from_uri(
                     uri="data:application/json;base64,e30K",
@@ -1433,7 +1438,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_response.model_id = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -1620,7 +1625,7 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
 async def test_mcp_tool_deduplication():
     """Test that MCP tools are not duplicated in MCPTool"""
     from agent_framework._mcp import MCPTool
-    from agent_framework._tools import AIFunction
+    from agent_framework._tools import FunctionTool
 
     # Create MCPStreamableHTTPTool instance
     tool = MCPTool(name="test_mcp_tool")
@@ -1629,12 +1634,12 @@ async def test_mcp_tool_deduplication():
     tool._functions = []
 
     # Add initial functions
-    func1 = AIFunction(
+    func1 = FunctionTool(
         func=lambda x: f"Result: {x}",
         name="analyze_content",
         description="Analyzes content",
     )
-    func2 = AIFunction(
+    func2 = FunctionTool(
         func=lambda x: f"Extract: {x}",
         name="extract_info",
         description="Extracts information",
@@ -1662,7 +1667,7 @@ async def test_mcp_tool_deduplication():
         if tool_name in existing_names:
             continue  # Skip duplicates
 
-        new_func = AIFunction(func=lambda x: f"Process: {x}", name=tool_name, description=description)
+        new_func = FunctionTool(func=lambda x: f"Process: {x}", name=tool_name, description=description)
         tool._functions.append(new_func)
         existing_names.add(tool_name)
         added_count += 1
@@ -2514,3 +2519,195 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
 
     # Verify aclose was called
     mock_exit_stack.aclose.assert_called_once()
+
+
+async def test_connect_sets_logging_level_when_logger_level_is_set():
+    """Test that connect() sets the MCP server logging level when the logger level is not NOTSET."""
+
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    # Mock the transport and session
+    mock_transport = (Mock(), Mock())
+    mock_context = AsyncMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context.__aexit__ = AsyncMock()
+
+    mock_session = Mock()
+    mock_session._request_id = 1
+    mock_session.initialize = AsyncMock()
+    mock_session.set_logging_level = AsyncMock()
+
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_context.__aexit__ = AsyncMock()
+
+    with (
+        patch.object(tool, "get_mcp_client", return_value=mock_context),
+        patch("agent_framework._mcp.ClientSession", return_value=mock_session_context),
+        patch.object(logger, "level", logging.DEBUG),  # Set logger level to DEBUG
+    ):
+        await tool.connect()
+
+        # Verify set_logging_level was called with "debug"
+        mock_session.set_logging_level.assert_called_once_with("debug")
+
+
+async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
+    """Test that connect() does not set logging level when logger level is NOTSET."""
+
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    # Mock the transport and session
+    mock_transport = (Mock(), Mock())
+    mock_context = AsyncMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context.__aexit__ = AsyncMock()
+
+    mock_session = Mock()
+    mock_session._request_id = 1
+    mock_session.initialize = AsyncMock()
+    mock_session.set_logging_level = AsyncMock()
+
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_context.__aexit__ = AsyncMock()
+
+    with (
+        patch.object(tool, "get_mcp_client", return_value=mock_context),
+        patch("agent_framework._mcp.ClientSession", return_value=mock_session_context),
+        patch.object(logger, "level", logging.NOTSET),  # Set logger level to NOTSET
+    ):
+        await tool.connect()
+
+        # Verify set_logging_level was NOT called
+        mock_session.set_logging_level.assert_not_called()
+
+
+async def test_connect_handles_set_logging_level_exception():
+    """Test that connect() handles exceptions from set_logging_level gracefully."""
+
+    tool = MCPStdioTool(
+        name="test_server",
+        command="test_command",
+        args=["arg1"],
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    # Mock the transport and session
+    mock_transport = (Mock(), Mock())
+    mock_context = AsyncMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context.__aexit__ = AsyncMock()
+
+    mock_session = Mock()
+    mock_session._request_id = 1
+    mock_session.initialize = AsyncMock()
+    # Make set_logging_level raise an exception
+    mock_session.set_logging_level = AsyncMock(side_effect=RuntimeError("Server doesn't support logging level"))
+
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_context.__aexit__ = AsyncMock()
+
+    with (
+        patch.object(tool, "get_mcp_client", return_value=mock_context),
+        patch("agent_framework._mcp.ClientSession", return_value=mock_session_context),
+        patch.object(logger, "level", logging.INFO),  # Set logger level to INFO
+        patch.object(logger, "warning") as mock_warning,
+    ):
+        # Should NOT raise - the exception should be caught and logged
+        await tool.connect()
+
+        # Verify set_logging_level was called
+        mock_session.set_logging_level.assert_called_once_with("info")
+
+        # Verify warning was logged
+        mock_warning.assert_called_once()
+        call_args = mock_warning.call_args
+        assert "Failed to set log level" in call_args[0][0]
+
+
+async def test_mcp_tool_filters_framework_kwargs():
+    """Test that call_tool filters out framework-specific kwargs before calling MCP session.
+
+    This verifies that non-serializable kwargs like response_format (Pydantic model class),
+    chat_options, tools, tool_choice, thread, conversation_id, and options are filtered out
+    before being passed to the external MCP server.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            # Mock call_tool to capture the arguments it receives
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Success")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    # Create a mock Pydantic model class to use as response_format
+    class MockResponseFormat(BaseModel):
+        result: str
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        # Invoke the tool with framework kwargs that should be filtered out
+        await func.invoke(
+            param="test_value",
+            response_format=MockResponseFormat,  # Should be filtered
+            chat_options={"some": "option"},  # Should be filtered
+            tools=[Mock()],  # Should be filtered
+            tool_choice="auto",  # Should be filtered
+            thread=Mock(),  # Should be filtered
+            conversation_id="conv-123",  # Should be filtered
+            options={"metadata": "value"},  # Should be filtered
+        )
+
+        # Verify call_tool was called with only the valid argument
+        server.session.call_tool.assert_called_once()
+        call_args = server.session.call_tool.call_args
+
+        # Check that the arguments dict only contains 'param' and none of the framework kwargs
+        arguments = call_args.kwargs.get("arguments", call_args[1] if len(call_args) > 1 else {})
+        assert arguments == {"param": "test_value"}, f"Expected only 'param' but got: {arguments}"
+
+        # Explicitly verify that framework kwargs were NOT passed
+        assert "response_format" not in arguments
+        assert "chat_options" not in arguments
+        assert "tools" not in arguments
+        assert "tool_choice" not in arguments
+        assert "thread" not in arguments
+        assert "conversation_id" not in arguments
+        assert "options" not in arguments

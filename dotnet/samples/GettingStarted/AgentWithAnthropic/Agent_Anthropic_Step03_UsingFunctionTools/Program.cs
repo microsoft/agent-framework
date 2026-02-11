@@ -22,15 +22,15 @@ const string AssistantName = "WeatherAssistant";
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Get anthropic client to create agents.
-AIAgent agent = new AnthropicClient { APIKey = apiKey }
+AIAgent agent = new AnthropicClient { ApiKey = apiKey }
     .AsAIAgent(model: model, instructions: AssistantInstructions, name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Streaming agent interaction with function tools.
-session = await agent.GetNewSessionAsync();
+session = await agent.CreateSessionAsync();
 await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", session))
 {
     Console.WriteLine(update);

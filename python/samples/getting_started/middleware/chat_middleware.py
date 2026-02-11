@@ -7,18 +7,19 @@ from typing import Annotated
 
 from agent_framework import (
     ChatContext,
-    ChatMessage,
     ChatMiddleware,
     ChatResponse,
-    Role,
+    Message,
+    MiddlewareTermination,
     chat_middleware,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Chat Middleware Example
+Chat MiddlewareTypes Example
 
 This sample demonstrates how to use chat middleware to observe and override
 inputs sent to AI models. Chat middleware intercepts chat requests before they reach
@@ -31,11 +32,13 @@ the underlying AI service, allowing you to:
 The example covers:
 - Class-based chat middleware inheriting from ChatMiddleware
 - Function-based chat middleware with @chat_middleware decorator
-- Middleware registration at agent level (applies to all runs)
-- Middleware registration at run level (applies to specific run only)
+- MiddlewareTypes registration at agent level (applies to all runs)
+- MiddlewareTypes registration at run level (applies to specific run only)
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -54,23 +57,23 @@ class InputObserverMiddleware(ChatMiddleware):
     async def process(
         self,
         context: ChatContext,
-        next: Callable[[ChatContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """Observe and modify input messages before they are sent to AI."""
         print("[InputObserverMiddleware] Observing input messages:")
 
         for i, message in enumerate(context.messages):
             content = message.text if message.text else str(message.contents)
-            print(f"  Message {i + 1} ({message.role.value}): {content}")
+            print(f"  Message {i + 1} ({message.role}): {content}")
 
         print(f"[InputObserverMiddleware] Total messages: {len(context.messages)}")
 
         # Modify user messages by creating new messages with enhanced text
-        modified_messages: list[ChatMessage] = []
+        modified_messages: list[Message] = []
         modified_count = 0
 
         for message in context.messages:
-            if message.role == Role.USER and message.text:
+            if message.role == "user" and message.text:
                 original_text = message.text
                 updated_text = original_text
 
@@ -78,7 +81,7 @@ class InputObserverMiddleware(ChatMiddleware):
                     updated_text = self.replacement
                     print(f"[InputObserverMiddleware] Updated: '{original_text}' -> '{updated_text}'")
 
-                modified_message = ChatMessage(role=message.role, text=updated_text)
+                modified_message = Message(message.role, [updated_text])
                 modified_messages.append(modified_message)
                 modified_count += 1
             else:
@@ -88,7 +91,7 @@ class InputObserverMiddleware(ChatMiddleware):
         context.messages[:] = modified_messages
 
         # Continue to next middleware or AI execution
-        await next(context)
+        await call_next()
 
         # Observe that processing is complete
         print("[InputObserverMiddleware] Processing completed")
@@ -97,7 +100,7 @@ class InputObserverMiddleware(ChatMiddleware):
 @chat_middleware
 async def security_and_override_middleware(
     context: ChatContext,
-    next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function-based middleware that implements security filtering and response override."""
     print("[SecurityMiddleware] Processing input...")
@@ -115,8 +118,8 @@ async def security_and_override_middleware(
                     # Override the response instead of calling AI
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
-                                role=Role.ASSISTANT,
+                            Message(
+                                role="assistant",
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "
                                 "sensitive data.",
@@ -125,17 +128,16 @@ async def security_and_override_middleware(
                     )
 
                     # Set terminate flag to stop execution
-                    context.terminate = True
-                    return
+                    raise MiddlewareTermination
 
     # Continue to next middleware or AI execution
-    await next(context)
+    await call_next()
 
 
 async def class_based_chat_middleware() -> None:
     """Demonstrate class-based middleware at agent level."""
     print("\n" + "=" * 60)
-    print("Class-based Chat Middleware (Agent Level)")
+    print("Class-based Chat MiddlewareTypes (Agent Level)")
     print("=" * 60)
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -159,7 +161,7 @@ async def class_based_chat_middleware() -> None:
 async def function_based_chat_middleware() -> None:
     """Demonstrate function-based middleware at agent level."""
     print("\n" + "=" * 60)
-    print("Function-based Chat Middleware (Agent Level)")
+    print("Function-based Chat MiddlewareTypes (Agent Level)")
     print("=" * 60)
 
     async with (
@@ -189,7 +191,7 @@ async def function_based_chat_middleware() -> None:
 async def run_level_middleware() -> None:
     """Demonstrate middleware registration at run level."""
     print("\n" + "=" * 60)
-    print("Run-level Chat Middleware")
+    print("Run-level Chat MiddlewareTypes")
     print("=" * 60)
 
     async with (
@@ -202,14 +204,14 @@ async def run_level_middleware() -> None:
         ) as agent,
     ):
         # Scenario 1: Run without any middleware
-        print("\n--- Scenario 1: No Middleware ---")
+        print("\n--- Scenario 1: No MiddlewareTypes ---")
         query = "What's the weather in Tokyo?"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Response: {result.text if result.text else 'No response'}")
 
         # Scenario 2: Run with specific middleware for this call only (both enhancement and security)
-        print("\n--- Scenario 2: With Run-level Middleware ---")
+        print("\n--- Scenario 2: With Run-level MiddlewareTypes ---")
         print(f"User: {query}")
         result = await agent.run(
             query,
@@ -221,7 +223,7 @@ async def run_level_middleware() -> None:
         print(f"Response: {result.text if result.text else 'No response'}")
 
         # Scenario 3: Security test with run-level middleware
-        print("\n--- Scenario 3: Security Test with Run-level Middleware ---")
+        print("\n--- Scenario 3: Security Test with Run-level MiddlewareTypes ---")
         query = "Can you help me with my secret API key?"
         print(f"User: {query}")
         result = await agent.run(
@@ -233,7 +235,7 @@ async def run_level_middleware() -> None:
 
 async def main() -> None:
     """Run all chat middleware examples."""
-    print("Chat Middleware Examples")
+    print("Chat MiddlewareTypes Examples")
     print("========================")
 
     await class_based_chat_middleware()

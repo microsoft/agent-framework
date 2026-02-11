@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Route email requests through conditional orchestration with two agents.
 
 Components used in this sample:
@@ -43,14 +45,14 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    spam_agent = chat_client.as_agent(
+    spam_agent = client.as_agent(
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = chat_client.as_agent(
+    email_agent = client.as_agent(
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
@@ -102,9 +104,10 @@ def spam_detection_orchestration(context: DurableOrchestrationContext) -> Genera
         options={"response_format": SpamDetectionResult},
     )
 
-    spam_result = spam_result_raw.try_parse_value(SpamDetectionResult)
-    if spam_result is None:
-        raise ValueError("Failed to parse spam detection result")
+    try:
+        spam_result = spam_result_raw.value
+    except Exception as ex:
+        raise ValueError("Failed to parse spam detection result") from ex
 
     if spam_result.is_spam:
         result = yield context.call_activity("handle_spam_email", spam_result.reason)  # type: ignore[misc]
@@ -125,9 +128,10 @@ def spam_detection_orchestration(context: DurableOrchestrationContext) -> Genera
         options={"response_format": EmailResponse},
     )
 
-    email_result = email_result_raw.try_parse_value(EmailResponse)
-    if email_result is None:
-        raise ValueError("Failed to parse email response")
+    try:
+        email_result = email_result_raw.value
+    except Exception as ex:
+        raise ValueError("Failed to parse email response") from ex
 
     result = yield context.call_activity("send_email", email_result.response)  # type: ignore[misc]
     return result

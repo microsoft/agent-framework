@@ -10,13 +10,16 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
 from typing_extensions import Never
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 # Tool functions for the agent
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -26,6 +29,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
+@tool(approval_mode="never_require")
 def get_time(
     timezone: Annotated[str, "The timezone to get time for."] = "UTC",
 ) -> str:
@@ -64,7 +68,7 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    chat_client = AzureOpenAIChatClient(
+    client = AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
         azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
         api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
@@ -72,22 +76,22 @@ def main():
     )
 
     # Create agents
-    weather_agent = ChatAgent(
+    weather_agent = Agent(
         name="weather-assistant",
         description="Provides weather information and time",
         instructions=(
             "You are a helpful weather and time assistant. Use the available tools to "
             "provide accurate weather information and current time for any location."
         ),
-        chat_client=chat_client,
+        client=client,
         tools=[get_weather, get_time],
     )
 
-    simple_agent = ChatAgent(
+    simple_agent = Agent(
         name="general-assistant",
         description="A simple conversational agent",
         instructions="You are a helpful assistant.",
-        chat_client=chat_client,
+        client=client,
     )
 
     # Create a basic workflow: Input -> UpperCase -> AddExclamation -> Output
@@ -98,8 +102,8 @@ def main():
         WorkflowBuilder(
             name="Text Transformer",
             description="Simple 2-step workflow that converts text to uppercase and adds exclamation",
+            start_executor=upper_executor,
         )
-        .set_start_executor(upper_executor)
         .add_edge(upper_executor, exclaim_executor)
         .build()
     )

@@ -7,20 +7,20 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    AgentContext,
     AgentMiddleware,
     AgentResponse,
-    AgentRunContext,
-    ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
-    Role,
+    Message,
+    tool,
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Class-based Middleware Example
+Class-based MiddlewareTypes Example
 
 This sample demonstrates how to implement middleware using class-based approach by inheriting
 from AgentMiddleware and FunctionMiddleware base classes. The example includes:
@@ -34,6 +34,8 @@ from object-oriented design patterns.
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -47,8 +49,8 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
     async def process(
         self,
-        context: AgentRunContext,
-        next: Callable[[AgentRunContext], Awaitable[None]],
+        context: AgentContext,
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
@@ -59,15 +61,13 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
                 context.result = AgentResponse(
-                    messages=[
-                        ChatMessage(role=Role.ASSISTANT, text="Detected sensitive information, the request is blocked.")
-                    ]
+                    messages=[Message("assistant", ["Detected sensitive information, the request is blocked."])]
                 )
-                # Simply don't call next() to prevent execution
+                # Simply don't call call_next() to prevent execution
                 return
 
         print("[SecurityAgentMiddleware] Security check passed.")
-        await next(context)
+        await call_next()
 
 
 class LoggingFunctionMiddleware(FunctionMiddleware):
@@ -76,14 +76,14 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         function_name = context.function.name
         print(f"[LoggingFunctionMiddleware] About to call function: {function_name}.")
 
         start_time = time.time()
 
-        await next(context)
+        await call_next()
 
         end_time = time.time()
         duration = end_time - start_time
@@ -93,7 +93,7 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
 
 async def main() -> None:
     """Example demonstrating class-based middleware."""
-    print("=== Class-based Middleware Example ===")
+    print("=== Class-based MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

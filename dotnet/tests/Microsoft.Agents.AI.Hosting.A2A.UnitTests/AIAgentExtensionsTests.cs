@@ -753,7 +753,10 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewSessionAsync()).ReturnsAsync(new TestAgentSession());
+        agentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
         agentMock
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",
@@ -772,7 +775,10 @@ public sealed class AIAgentExtensionsTests
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock.Setup(x => x.GetNewSessionAsync()).ReturnsAsync(new TestAgentSession());
+        agentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
         agentMock
             .Protected()
             .Setup<Task<AgentResponse>>("RunCoreAsync",

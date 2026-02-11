@@ -5,23 +5,22 @@ import json
 from typing import Annotated, Any
 
 from agent_framework import (
-    ChatMessage,
-    SequentialBuilder,
+    Message,
     WorkflowExecutor,
-    WorkflowOutputEvent,
-    ai_function,
+    tool,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 """
 Sample: Sub-Workflow kwargs Propagation
 
 This sample demonstrates how custom context (kwargs) flows from a parent workflow
 through to agents in sub-workflows. When you pass kwargs to the parent workflow's
-run_stream() or run(), they automatically propagate to nested sub-workflows.
+run(), they automatically propagate to nested sub-workflows.
 
 Key Concepts:
-- kwargs passed to parent workflow.run_stream() propagate to sub-workflows
+- kwargs passed to parent workflow.run() propagate to sub-workflows
 - Sub-workflow agents receive the same kwargs as the parent workflow
 - Works with nested WorkflowExecutor compositions at any depth
 - Useful for passing authentication tokens, configuration, or request context
@@ -32,7 +31,10 @@ Prerequisites:
 
 
 # Define tools that access custom context via **kwargs
-@ai_function
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py and
+# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_authenticated_data(
     resource: Annotated[str, "The resource to fetch"],
     **kwargs: Any,
@@ -48,7 +50,7 @@ def get_authenticated_data(
     return f"Fetched '{resource}' for user {user_name} ({access_level} access)"
 
 
-@ai_function
+@tool(approval_mode="never_require")
 def call_configured_service(
     service_name: Annotated[str, "Name of the service to call"],
     **kwargs: Any,
@@ -72,10 +74,10 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     # Create an agent with tools that use kwargs
-    inner_agent = chat_client.as_agent(
+    inner_agent = client.as_agent(
         name="data_agent",
         instructions=(
             "You are a data access agent. Use the available tools to help users. "
@@ -86,7 +88,7 @@ async def main() -> None:
     )
 
     # Build the inner (sub) workflow with the agent
-    inner_workflow = SequentialBuilder().participants([inner_agent]).build()
+    inner_workflow = SequentialBuilder(participants=[inner_agent]).build()
 
     # Wrap the inner workflow in a WorkflowExecutor to use it as a sub-workflow
     subworkflow_executor = WorkflowExecutor(
@@ -95,7 +97,7 @@ async def main() -> None:
     )
 
     # Build the outer (parent) workflow containing the sub-workflow
-    outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
+    outer_workflow = SequentialBuilder(participants=[subworkflow_executor]).build()
 
     # Define custom context that will flow through to the sub-workflow's agent
     user_token = {
@@ -122,21 +124,66 @@ async def main() -> None:
 
     # Run the OUTER workflow with kwargs
     # These kwargs will automatically propagate to the inner sub-workflow
-    async for event in outer_workflow.run_stream(
+    async for event in outer_workflow.run(
         "Please fetch my profile data and then call the users service.",
+        stream=True,
         user_token=user_token,
         service_config=service_config,
     ):
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             output_data = event.data
             if isinstance(output_data, list):
                 for item in output_data:  # type: ignore
-                    if isinstance(item, ChatMessage) and item.text:
+                    if isinstance(item, Message) and item.text:
                         print(f"\n[Final Answer]: {item.text}")
 
     print("\n" + "=" * 70)
     print("Sample Complete - kwargs successfully flowed through sub-workflow!")
     print("=" * 70)
+
+    """
+    Sample Output:
+
+    ======================================================================
+    Sub-Workflow kwargs Propagation Demo
+    ======================================================================
+
+    Context being passed to parent workflow:
+    user_token: {
+        "user_name": "alice@contoso.com",
+        "access_level": "admin",
+        "session_id": "sess_12345"
+    }
+    service_config: {
+        "services": {
+            "users": "https://api.example.com/v1/users",
+            "orders": "https://api.example.com/v1/orders",
+            "inventory": "https://api.example.com/v1/inventory"
+        },
+        "timeout": 30
+    }
+
+    ----------------------------------------------------------------------
+    Workflow Execution (kwargs flow: parent -> sub-workflow -> agent -> tool):
+    ----------------------------------------------------------------------
+
+    [get_authenticated_data] kwargs keys: ['user_token', 'service_config']
+    [get_authenticated_data] User: alice@contoso.com, Access: admin
+
+    [call_configured_service] kwargs keys: ['user_token', 'service_config']
+    [call_configured_service] Available services: ['users', 'orders', 'inventory']
+
+    [Final Answer]: Please fetch my profile data and then call the users service.
+
+    [Final Answer]: - Your profile data has been fetched.
+    - The users service has been called.
+
+    Would you like details from either the profile data or the users service response?
+
+    ======================================================================
+    Sample Complete - kwargs successfully flowed through sub-workflow!
+    ======================================================================
+    """
 
 
 if __name__ == "__main__":

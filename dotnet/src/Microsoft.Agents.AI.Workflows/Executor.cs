@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -23,9 +25,6 @@ public abstract class Executor : IIdentified
     /// A unique identifier for the executor.
     /// </summary>
     public string Id { get; }
-
-    private static readonly string s_namespace = typeof(Executor).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
 
     // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
 
@@ -140,13 +139,13 @@ public abstract class Executor : IIdentified
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+        => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
+
+    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
-        activity?.SetTag(Tags.ExecutorId, this.Id)
-            .SetTag(Tags.ExecutorType, this.GetType().FullName)
-            .SetTag(Tags.MessageType, messageType.TypeName)
-            .CreateSourceLinks(context.TraceContext);
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
+        activity?.CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
 
@@ -180,6 +179,11 @@ public abstract class Executor : IIdentified
         {
             return null; // Void result.
         }
+
+        // Output is not available if executor does not return anything, in which case
+        // messages sent in the handlers of this executor will be set in the message
+        // send activities.
+        telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)

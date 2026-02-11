@@ -3,16 +3,16 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import (
     Executor,
-    RequestInfoEvent,
     SubWorkflowRequestMessage,
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowEvent,
     WorkflowExecutor,
     handler,
     response_handler,
@@ -169,18 +169,18 @@ def build_resource_request_distribution_workflow() -> Workflow:
             elif len(self._responses) > self._request_count:
                 raise ValueError("Received more responses than expected")
 
+    orchestrator = RequestDistribution("orchestrator")
+    resource_requester = ResourceRequester("resource_requester")
+    policy_checker = PolicyChecker("policy_checker")
+    result_collector = ResultCollector("result_collector")
+
     return (
-        WorkflowBuilder()
-        .register_executor(lambda: RequestDistribution("orchestrator"), name="orchestrator")
-        .register_executor(lambda: ResourceRequester("resource_requester"), name="resource_requester")
-        .register_executor(lambda: PolicyChecker("policy_checker"), name="policy_checker")
-        .register_executor(lambda: ResultCollector("result_collector"), name="result_collector")
-        .set_start_executor("orchestrator")
-        .add_edge("orchestrator", "resource_requester")
-        .add_edge("orchestrator", "policy_checker")
-        .add_edge("resource_requester", "result_collector")
-        .add_edge("policy_checker", "result_collector")
-        .add_edge("orchestrator", "result_collector")  # For request count
+        WorkflowBuilder(start_executor=orchestrator)
+        .add_edge(orchestrator, resource_requester)
+        .add_edge(orchestrator, policy_checker)
+        .add_edge(resource_requester, result_collector)
+        .add_edge(policy_checker, result_collector)
+        .add_edge(orchestrator, result_collector)  # For request count
         .build()
     )
 
@@ -192,7 +192,7 @@ class ResourceAllocator(Executor):
         super().__init__(id)
         self._cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     async def _handle_resource_request(self, request: ResourceRequest) -> ResourceResponse | None:
         """Allocates resources based on request and available cache."""
@@ -207,7 +207,7 @@ class ResourceAllocator(Executor):
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, ResourceRequest):
             return
 
@@ -246,14 +246,14 @@ class PolicyEngine(Executor):
             "disk": 1000,  # Liberal disk policy
         }
         # Record pending requests to match responses
-        self._pending_requests: dict[str, RequestInfoEvent] = {}
+        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @handler
     async def handle_subworkflow_request(
         self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
         """Handles requests from sub-workflows."""
-        source_event: RequestInfoEvent = request.source_event
+        source_event: WorkflowEvent[Any] = request.source_event
         if not isinstance(source_event.data, PolicyRequest):
             return
 
@@ -288,26 +288,22 @@ class PolicyEngine(Executor):
 
 async def main() -> None:
     # Build the main workflow
+    resource_allocator = ResourceAllocator("resource_allocator")
+    policy_engine = PolicyEngine("policy_engine")
+    sub_workflow_executor = WorkflowExecutor(
+        build_resource_request_distribution_workflow(),
+        "sub_workflow_executor",
+        # Setting allow_direct_output=True to let the sub-workflow output directly.
+        # This is because the sub-workflow is the both the entry point and the exit
+        # point of the main workflow.
+        allow_direct_output=True,
+    )
     main_workflow = (
-        WorkflowBuilder()
-        .register_executor(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
-        .register_executor(lambda: PolicyEngine("policy_engine"), name="policy_engine")
-        .register_executor(
-            lambda: WorkflowExecutor(
-                build_resource_request_distribution_workflow(),
-                "sub_workflow_executor",
-                # Setting allow_direct_output=True to let the sub-workflow output directly.
-                # This is because the sub-workflow is the both the entry point and the exit
-                # point of the main workflow.
-                allow_direct_output=True,
-            ),
-            name="sub_workflow_executor",
-        )
-        .set_start_executor("sub_workflow_executor")
-        .add_edge("sub_workflow_executor", "resource_allocator")
-        .add_edge("resource_allocator", "sub_workflow_executor")
-        .add_edge("sub_workflow_executor", "policy_engine")
-        .add_edge("policy_engine", "sub_workflow_executor")
+        WorkflowBuilder(start_executor=sub_workflow_executor)
+        .add_edge(sub_workflow_executor, resource_allocator)
+        .add_edge(resource_allocator, sub_workflow_executor)
+        .add_edge(sub_workflow_executor, policy_engine)
+        .add_edge(policy_engine, sub_workflow_executor)
         .build()
     )
 
@@ -347,7 +343,7 @@ async def main() -> None:
             else:
                 print(f"Unknown request info event data type: {type(event.data)}")
 
-        run_result = await main_workflow.send_responses(responses)
+        run_result = await main_workflow.run(responses=responses)
 
     outputs = run_result.get_outputs()
     if outputs:

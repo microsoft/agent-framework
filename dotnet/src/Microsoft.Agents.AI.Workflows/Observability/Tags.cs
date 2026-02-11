@@ -14,7 +14,10 @@ internal static class Tags
     public const string RunId = "run.id";
     public const string ExecutorId = "executor.id";
     public const string ExecutorType = "executor.type";
+    public const string ExecutorInput = "executor.input";
+    public const string ExecutorOutput = "executor.output";
     public const string MessageType = "message.type";
+    public const string MessageContent = "message.content";
     public const string EdgeGroupType = "edge_group.type";
     public const string MessageSourceId = "message.source_id";
     public const string MessageTargetId = "message.target_id";

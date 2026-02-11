@@ -21,12 +21,14 @@ internal abstract class ProcessContentMetadataBase : GraphDataTypeBase
     /// <param name="identifier">The unique identifier for the content.</param>
     /// <param name="isTruncated">Indicates if the content is truncated.</param>
     /// <param name="name">The name of the content.</param>
-    protected ProcessContentMetadataBase(ContentBase content, string identifier, bool isTruncated, string name) : base(ProcessConversationMetadataDataType)
+    /// <param name="correlationId">The correlation ID for the content.</param>
+    protected ProcessContentMetadataBase(ContentBase content, string identifier, bool isTruncated, string name, string correlationId) : base(ProcessConversationMetadataDataType)
     {
         this.Identifier = identifier;
         this.IsTruncated = isTruncated;
         this.Content = content;
         this.Name = name;
+        this.CorrelationId = correlationId;
     }
 
     /// <summary>
@@ -55,7 +57,7 @@ internal abstract class ProcessContentMetadataBase : GraphDataTypeBase
     /// Identifier to group multiple contents.
     /// </summary>
     [JsonPropertyName("correlationId")]
-    public string? CorrelationId { get; set; }
+    public string CorrelationId { get; set; }
 
     /// <summary>
     /// Gets or sets the sequenceNumber.

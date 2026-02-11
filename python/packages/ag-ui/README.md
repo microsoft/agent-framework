@@ -14,15 +14,15 @@ pip install agent-framework-ag-ui
 
 ```python
 from fastapi import FastAPI
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint="https://your-resource.openai.azure.com/",
         deployment_name="gpt-4o-mini",
         api_key="your-api-key",
@@ -40,15 +40,14 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 
 ```python
 import asyncio
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
         # Stream responses
-        async for update in client.get_streaming_response("Hello!"):
+        async for update in client.get_response("Hello!", stream=True):
             for content in update.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text" and content.text:
                     print(content.text, end="", flush=True)
         print()
 
@@ -59,7 +58,7 @@ The `AGUIChatClient` supports:
 - Streaming and non-streaming responses
 - Hybrid tool execution (client-side + server-side tools)
 - Automatic thread management for conversation continuity
-- Integration with `ChatAgent` for client-side history management
+- Integration with `Agent` for client-side history management
 
 ## Documentation
 
@@ -92,7 +91,7 @@ The AG-UI endpoint does not enforce authentication by default. **For production 
 import os
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Configure API key authentication
@@ -105,7 +104,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Create agent and app
-agent = ChatAgent(name="my_agent", instructions="...", chat_client=...)
+agent = Agent(name="my_agent", instructions="...", client=...)
 app = FastAPI()
 
 # Register endpoint WITH authentication

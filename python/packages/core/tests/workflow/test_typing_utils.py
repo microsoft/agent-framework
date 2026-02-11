@@ -1,15 +1,153 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, Union
+from typing import Any, Generic, Optional, TypeVar, Union
 
-from agent_framework import RequestInfoEvent
+import pytest
+
+from agent_framework import WorkflowEvent
 from agent_framework._workflows._typing_utils import (
     deserialize_type,
     is_instance_of,
     is_type_compatible,
+    normalize_type_to_list,
+    resolve_type_annotation,
     serialize_type,
+    try_coerce_to_type,
 )
+
+# region: normalize_type_to_list tests
+
+
+def test_normalize_type_to_list_single_type() -> None:
+    """Test normalize_type_to_list with single types."""
+    assert normalize_type_to_list(str) == [str]
+    assert normalize_type_to_list(int) == [int]
+    assert normalize_type_to_list(float) == [float]
+    assert normalize_type_to_list(bool) == [bool]
+    assert normalize_type_to_list(list) == [list]
+    assert normalize_type_to_list(dict) == [dict]
+
+
+def test_normalize_type_to_list_none() -> None:
+    """Test normalize_type_to_list with None returns empty list."""
+    assert normalize_type_to_list(None) == []
+
+
+def test_normalize_type_to_list_union_pipe_syntax() -> None:
+    """Test normalize_type_to_list with union types using | syntax."""
+    result = normalize_type_to_list(str | int)
+    assert set(result) == {str, int}
+
+    result = normalize_type_to_list(str | int | bool)
+    assert set(result) == {str, int, bool}
+
+
+def test_normalize_type_to_list_union_typing_syntax() -> None:
+    """Test normalize_type_to_list with Union[] from typing module."""
+    result = normalize_type_to_list(Union[str, int])
+    assert set(result) == {str, int}
+
+    result = normalize_type_to_list(Union[str, int, bool])
+    assert set(result) == {str, int, bool}
+
+
+def test_normalize_type_to_list_optional() -> None:
+    """Test normalize_type_to_list with Optional types (Union[T, None])."""
+    # Optional[str] is Union[str, None]
+    result = normalize_type_to_list(Optional[str])
+    assert str in result
+    assert type(None) in result
+    assert len(result) == 2
+
+    # str | None is equivalent
+    result = normalize_type_to_list(str | None)
+    assert str in result
+    assert type(None) in result
+    assert len(result) == 2
+
+
+def test_normalize_type_to_list_custom_types() -> None:
+    """Test normalize_type_to_list with custom class types."""
+
+    @dataclass
+    class CustomMessage:
+        content: str
+
+    result = normalize_type_to_list(CustomMessage)
+    assert result == [CustomMessage]
+
+    result = normalize_type_to_list(CustomMessage | str)
+    assert set(result) == {CustomMessage, str}
+
+
+# endregion: normalize_type_to_list tests
+
+
+# region: resolve_type_annotation tests
+
+
+def test_resolve_type_annotation_none() -> None:
+    """Test resolve_type_annotation with None returns None."""
+    assert resolve_type_annotation(None) is None
+
+
+def test_resolve_type_annotation_actual_types() -> None:
+    """Test resolve_type_annotation passes through actual types unchanged."""
+    assert resolve_type_annotation(str) is str
+    assert resolve_type_annotation(int) is int
+    assert resolve_type_annotation(str | int) == str | int
+
+
+def test_resolve_type_annotation_string_builtin() -> None:
+    """Test resolve_type_annotation resolves string references to builtin types."""
+    result = resolve_type_annotation("str", {"str": str})
+    assert result is str
+
+    result = resolve_type_annotation("int", {"int": int})
+    assert result is int
+
+
+def test_resolve_type_annotation_string_union() -> None:
+    """Test resolve_type_annotation resolves string union types."""
+    result = resolve_type_annotation("str | int", {"str": str, "int": int})
+    assert result == str | int
+
+
+def test_resolve_type_annotation_string_custom_type() -> None:
+    """Test resolve_type_annotation resolves string references to custom types."""
+
+    @dataclass
+    class MyCustomType:
+        value: int
+
+    result = resolve_type_annotation("MyCustomType", {"MyCustomType": MyCustomType})
+    assert result is MyCustomType
+
+    result = resolve_type_annotation("MyCustomType | str", {"MyCustomType": MyCustomType, "str": str})
+    assert set(result.__args__) == {MyCustomType, str}  # type: ignore[union-attr]
+
+
+def test_resolve_type_annotation_string_typing_union() -> None:
+    """Test resolve_type_annotation resolves Union[] syntax in strings."""
+    result = resolve_type_annotation("Union[str, int]", {"str": str, "int": int})
+    assert set(result.__args__) == {str, int}  # type: ignore[union-attr]
+
+
+def test_resolve_type_annotation_string_optional() -> None:
+    """Test resolve_type_annotation resolves Optional[] syntax in strings."""
+    result = resolve_type_annotation("Optional[str]", {"str": str})
+    assert str in result.__args__  # type: ignore[union-attr]
+    assert type(None) in result.__args__  # type: ignore[union-attr]
+
+
+def test_resolve_type_annotation_unresolvable_raises() -> None:
+    """Test resolve_type_annotation raises NameError for unresolvable types."""
+    with pytest.raises(NameError, match="Could not resolve type annotation"):
+        resolve_type_annotation("NonExistentType", {})
+
+
+# endregion: resolve_type_annotation tests
 
 
 def test_basic_types() -> None:
@@ -171,18 +309,19 @@ def test_serialize_deserialize_roundtrip() -> None:
 
     # Test agent framework type roundtrip
 
-    serialized = serialize_type(RequestInfoEvent)
+    serialized = serialize_type(WorkflowEvent)
     deserialized = deserialize_type(serialized)
-    assert deserialized is RequestInfoEvent
+    assert deserialized is WorkflowEvent
 
-    # Verify we can instantiate the deserialized type
-    instance = deserialized(
+    # Verify we can instantiate the deserialized type via factory method
+    instance = WorkflowEvent.request_info(
         request_id="request-123",
         source_executor_id="executor_1",
         request_data="test",
         response_type=str,
     )
-    assert isinstance(instance, RequestInfoEvent)
+    assert isinstance(instance, WorkflowEvent)
+    assert instance.type == "request_info"
 
 
 def test_deserialize_type_error_handling() -> None:
@@ -239,12 +378,12 @@ def test_type_compatibility_collections() -> None:
 
     # List compatibility - key use case
     @dataclass
-    class ChatMessage:
+    class Message:
         text: str
 
-    assert is_type_compatible(list[ChatMessage], list[Union[str, ChatMessage]])
-    assert is_type_compatible(list[str], list[Union[str, ChatMessage]])
-    assert not is_type_compatible(list[Union[str, ChatMessage]], list[ChatMessage])
+    assert is_type_compatible(list[Message], list[Union[str, Message]])
+    assert is_type_compatible(list[str], list[Union[str, Message]])
+    assert not is_type_compatible(list[Union[str, Message]], list[Message])
 
     # Dict compatibility
     assert is_type_compatible(dict[str, int], dict[str, Union[int, float]])
@@ -282,3 +421,72 @@ def test_type_compatibility_complex() -> None:
     # Incompatible nested structure
     incompatible_target = list[dict[Union[str, bytes], int]]
     assert not is_type_compatible(source, incompatible_target)
+
+
+# region: try_coerce_to_type tests
+
+
+def test_coerce_already_correct_type() -> None:
+    """Values already matching the target type are returned as-is."""
+    assert try_coerce_to_type(42, int) == 42
+    assert try_coerce_to_type("hello", str) == "hello"
+    assert try_coerce_to_type(True, bool) is True
+
+
+def test_coerce_int_to_float() -> None:
+    """JSON integers should be coercible to float."""
+    result = try_coerce_to_type(1, float)
+    assert result == 1.0
+    assert isinstance(result, float)
+
+
+def test_coerce_dict_to_dataclass() -> None:
+    """Dicts (from JSON) should be coercible to dataclasses."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    result = try_coerce_to_type({"x": 1, "y": 2}, Point)
+    assert isinstance(result, Point)
+    assert result.x == 1
+    assert result.y == 2
+
+
+def test_coerce_dict_to_dataclass_bad_keys_returns_original() -> None:
+    """Dicts with wrong keys should return the original dict, not raise."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    original = {"a": 1, "b": 2}
+    result = try_coerce_to_type(original, Point)
+    assert result is original
+
+
+def test_coerce_non_concrete_target_returns_original() -> None:
+    """Union and other non-concrete types should return the original value."""
+    result = try_coerce_to_type(42, int | str)
+    assert result == 42
+
+    result = try_coerce_to_type({"x": 1}, Union[str, int])
+    assert result == {"x": 1}
+
+
+def test_coerce_unrelated_types_returns_original() -> None:
+    """Coercion between unrelated types should return the original value."""
+    assert try_coerce_to_type("hello", int) == "hello"
+    assert try_coerce_to_type(3.14, str) == 3.14
+    assert try_coerce_to_type([1, 2], dict) == [1, 2]
+
+
+def test_coerce_any_returns_original() -> None:
+    """Any target type should accept any value without coercion."""
+    assert try_coerce_to_type(42, Any) == 42
+    assert try_coerce_to_type({"k": "v"}, Any) == {"k": "v"}
+
+
+# endregion: try_coerce_to_type tests

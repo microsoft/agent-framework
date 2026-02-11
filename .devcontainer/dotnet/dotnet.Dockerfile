@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/dotnet
+FROM mcr.microsoft.com/devcontainers/universal:latest
 
 # Remove Yarn repository with expired GPG key to prevent apt-get update failures
 # Tracking issue: https://github.com/devcontainers/images/issues/1752

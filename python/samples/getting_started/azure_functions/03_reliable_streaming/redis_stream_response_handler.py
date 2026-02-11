@@ -8,9 +8,9 @@ as a message broker. It enables clients to disconnect and reconnect without losi
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
-from collections.abc import AsyncIterator
 
 import redis.asyncio as aioredis
 
@@ -163,7 +163,7 @@ class RedisStreamResponseHandler:
                 has_seen_data = True
 
                 # Process entries from the stream
-                for stream_name, stream_entries in entries:
+                for _stream_name, stream_entries in entries:
                     for entry_id, entry_data in stream_entries:
                         start_id = entry_id.decode() if isinstance(entry_id, bytes) else entry_id
 

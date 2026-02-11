@@ -35,7 +35,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var typedSession = (ChatClientAgentSession)session;
 
@@ -44,7 +44,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await typedSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
@@ -52,7 +52,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var anthropicClient = new AnthropicClient() { APIKey = s_config.ApiKey };
+        var anthropicClient = new AnthropicClient() { ApiKey = s_config.ApiKey };
 
         IChatClient? chatClient = this._useBeta
             ? anthropicClient

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import tiktoken
-from agent_framework import ChatMessage, ChatMessageStore, Role
+from agent_framework import ChatMessageStore, Message
 from loguru import logger
 
 
@@ -19,7 +19,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
 
     def __init__(
         self,
-        messages: Sequence[ChatMessage] | None = None,
+        messages: Sequence[Message] | None = None,
         max_tokens: int = 3800,
         system_message: str | None = None,
         tool_definitions: Any | None = None,
@@ -32,17 +32,17 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
         # An estimation based on a commonly used vocab table
         self.encoding = tiktoken.get_encoding("o200k_base")
 
-    async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+    async def add_messages(self, messages: Sequence[Message]) -> None:
         await super().add_messages(messages)
 
         self.truncated_messages = self.messages.copy()
         self.truncate_messages()
 
-    async def list_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[Message]:
         """Get the current list of messages, which may be truncated."""
         return self.truncated_messages
 
-    async def list_all_messages(self) -> list[ChatMessage]:
+    async def list_all_messages(self) -> list[Message]:
         """Get all messages from the store including the truncated ones."""
         return self.messages
 
@@ -51,7 +51,9 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
             logger.warning("Messages exceed max tokens. Truncating oldest message.")
             self.truncated_messages.pop(0)
         # Remove leading tool messages
-        while len(self.truncated_messages) > 0 and self.truncated_messages[0].role == Role.TOOL:
+        while len(self.truncated_messages) > 0:
+            if self.truncated_messages[0].role != "tool":
+                break
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
             self.truncated_messages.pop(0)
 

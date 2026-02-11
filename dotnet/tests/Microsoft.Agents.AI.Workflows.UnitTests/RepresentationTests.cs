@@ -24,10 +24,13 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
             => throw new NotImplementedException();
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>

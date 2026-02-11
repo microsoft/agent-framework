@@ -15,7 +15,6 @@ Demonstrates sequential multi-agent pipeline:
 import asyncio
 from pathlib import Path
 
-from agent_framework import WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
@@ -50,17 +49,17 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    analyst_agent = chat_client.as_agent(
+    analyst_agent = client.as_agent(
         name="AnalystAgent",
         instructions=ANALYST_INSTRUCTIONS,
     )
-    writer_agent = chat_client.as_agent(
+    writer_agent = client.as_agent(
         name="WriterAgent",
         instructions=WRITER_INSTRUCTIONS,
     )
-    editor_agent = chat_client.as_agent(
+    editor_agent = client.as_agent(
         name="EditorAgent",
         instructions=EDITOR_INSTRUCTIONS,
     )
@@ -84,8 +83,8 @@ async def main() -> None:
     # Pass a simple string input - like .NET
     product = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours."
 
-    async for event in workflow.run_stream(product):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run(product, stream=True):
+        if event.type == "output":
             print(f"{event.data}", end="", flush=True)
 
     print("\n" + "=" * 60)

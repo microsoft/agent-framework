@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import Role, SequentialBuilder
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 
 """
@@ -27,20 +27,20 @@ Prerequisites:
 
 async def main() -> None:
     # 1) Create agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    writer = chat_client.as_agent(
+    writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = chat_client.as_agent(
+    reviewer = client.as_agent(
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )
 
     # 2) Build sequential workflow: writer -> reviewer
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Treat the workflow itself as an agent for follow-up invocations
     agent = workflow.as_agent(name="SequentialWorkflowAgent")
@@ -50,9 +50,7 @@ async def main() -> None:
     if agent_response.messages:
         print("\n===== Conversation =====")
         for i, msg in enumerate(agent_response.messages, start=1):
-            role_value = getattr(msg.role, "value", msg.role)
-            normalized_role = str(role_value).lower() if role_value is not None else "assistant"
-            name = msg.author_name or ("assistant" if normalized_role == Role.ASSISTANT.value else "user")
+            name = msg.author_name or msg.role
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """

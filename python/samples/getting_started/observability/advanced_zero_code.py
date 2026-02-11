@@ -4,6 +4,7 @@ import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
+from agent_framework import tool
 from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry.trace import SpanKind
@@ -11,7 +12,7 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from agent_framework import ChatClientProtocol
+    from agent_framework import SupportsChatGetResponse
 
 
 """
@@ -39,6 +40,8 @@ You can also set the environment variables instead of passing them as CLI argume
 """
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
@@ -48,7 +51,7 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) -> None:
+async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = False) -> None:
     """Run an AI service.
 
     This function runs an AI service and prints the output.
@@ -78,7 +81,7 @@ async def run_chat_client(client: "ChatClientProtocol", stream: bool = False) ->
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(message, tools=get_weather):
+        async for chunk in client.get_response(message, tools=get_weather, stream=True):
             if str(chunk):
                 print(str(chunk), end="")
         print("")

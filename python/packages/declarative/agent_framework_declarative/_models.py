@@ -1,4 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
+from __future__ import annotations
+
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
@@ -39,7 +41,7 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
 
     Args:
         value: The value to check.
-        log_value: Whether to log the full value on error or just a snippet.
+        log_value: Whether to log additional context on error.
     """
     if value is None:
         return value
@@ -59,9 +61,9 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value: %s", exc)
         else:
-            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value (details redacted): %s", exc)
         return value
 
 
@@ -101,7 +103,7 @@ class Property(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Property":
+    ) -> Property:
         """Create a Property instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Property class
         if cls is not Property:
@@ -211,7 +213,7 @@ class PropertySchema(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "PropertySchema":
+    ) -> PropertySchema:
         """Create a PropertySchema instance from a dictionary, filtering out 'kind' field."""
         # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
         # but aren't PropertySchema params
@@ -230,7 +232,7 @@ class PropertySchema(SerializationMixin):
         return json_schema
 
 
-TConnection = TypeVar("TConnection", bound="Connection")
+ConnectionT = TypeVar("ConnectionT", bound="Connection")
 
 
 class Connection(SerializationMixin):
@@ -248,12 +250,12 @@ class Connection(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TConnection],
+        cls: type[ConnectionT],
         value: MutableMapping[str, Any],
         /,
         *,
         dependencies: MutableMapping[str, Any] | None = None,
-    ) -> TConnection:
+    ) -> ConnectionT:
         """Create a Connection instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
@@ -491,7 +493,7 @@ class AgentDefinition(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "AgentDefinition":
+    ) -> AgentDefinition:
         """Create an AgentDefinition instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base AgentDefinition class
         if cls is not AgentDefinition:
@@ -505,7 +507,7 @@ class AgentDefinition(SerializationMixin):
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
-TTool = TypeVar("TTool", bound="Tool")
+ToolT = TypeVar("ToolT", bound="Tool")
 
 
 class Tool(SerializationMixin):
@@ -536,8 +538,8 @@ class Tool(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TTool], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "TTool":
+        cls: type[ToolT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ToolT:
         """Create a Tool instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:
@@ -867,7 +869,7 @@ class Resource(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Resource":
+    ) -> Resource:
         """Create a Resource instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Resource class
         if cls is not Resource:

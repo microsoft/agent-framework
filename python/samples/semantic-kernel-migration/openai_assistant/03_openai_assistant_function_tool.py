@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_assistant/03_openai_assistant_function_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Implement a function tool for OpenAI Assistants in SK and AF."""
 
@@ -55,10 +64,10 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework._tools import ai_function
+    from agent_framework._tools import tool
     from agent_framework.openai import OpenAIAssistantsClient
 
-    @ai_function(
+    @tool(
         name="get_forecast",
         description="Look up the forecast for a city and day.",
     )

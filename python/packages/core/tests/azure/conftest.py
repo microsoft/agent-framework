@@ -3,7 +3,7 @@ from typing import Any
 
 from pytest import fixture
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 
 
 # region: Connector Settings fixtures
@@ -58,5 +58,5 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
 
 
 @fixture(scope="function")
-def chat_history() -> list[ChatMessage]:
+def chat_history() -> list[Message]:
     return []

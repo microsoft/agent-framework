@@ -54,6 +54,6 @@ The sample will:
 
 When working with multi-turn conversations, there are two approaches:
 
-- **With Conversation ID**: By passing a `conversation.Id` to `GetNewSessionAsync()`, the conversation will be visible in the Azure Foundry Project UI. This is useful for tracking and debugging conversations.
+- **With Conversation ID**: By passing a `conversation.Id` to `CreateSessionAsync()`, the conversation will be visible in the Azure Foundry Project UI. This is useful for tracking and debugging conversations.
 - **Without Conversation ID**: Sessions created without a conversation ID still work correctly, maintaining context via `PreviousResponseId`. However, these conversations may not appear in the Foundry UI.
 

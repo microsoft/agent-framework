@@ -2,7 +2,6 @@
 
 import asyncio
 
-from agent_framework import HostedMCPTool, HostedWebSearchTool, TextReasoningContent, UsageContent
 from agent_framework.anthropic import AnthropicClient
 from anthropic import AsyncAnthropicFoundry
 
@@ -28,16 +27,21 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).as_agent(
+    client = AnthropicClient(anthropic_client=AsyncAnthropicFoundry())
+
+    # Create MCP tool configuration using instance method
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft_Learn_MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    )
+
+    # Create web search tool configuration using instance method
+    web_search_tool = client.get_web_search_tool()
+
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
-        tools=[
-            HostedMCPTool(
-                name="Microsoft Learn MCP",
-                url="https://learn.microsoft.com/api/mcp",
-            ),
-            HostedWebSearchTool(),
-        ],
+        tools=[mcp_tool, web_search_tool],
         default_options={
             # anthropic needs a value for the max_tokens parameter
             # we set it to 1024, but you can override like this:
@@ -49,11 +53,11 @@ async def main() -> None:
     query = "Can you compare Python decorators with C# attributes?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
-    async for chunk in agent.run_stream(query):
+    async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
-            if isinstance(content, TextReasoningContent):
+            if content.type == "text_reasoning":
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)
-            if isinstance(content, UsageContent):
+            if content.type == "usage":
                 print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)
         if chunk.text:
             print(chunk.text, end="", flush=True)

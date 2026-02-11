@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/copilot_studio/02_copilot_studio_streaming.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Stream responses from Copilot Studio agents in SK and AF."""
 
@@ -28,7 +37,7 @@ async def run_agent_framework() -> None:
     )
     # AF streaming provides incremental AgentResponseUpdate objects.
     print("[AF][stream]", end=" ")
-    async for update in agent.run_stream("Plan a day in Copenhagen for foodies."):
+    async for update in agent.run("Plan a day in Copenhagen for foodies.", stream=True):
         if update.text:
             print(update.text, end="", flush=True)
     print()

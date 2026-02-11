@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 from collections.abc import MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, TypedDict
+from typing import Any
 
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import Context, ContextProvider, Message
 from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
 
@@ -15,9 +17,9 @@ else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import NotRequired, Self  # pragma: no cover
+    from typing import NotRequired, Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import NotRequired, Self  # pragma: no cover
+    from typing_extensions import NotRequired, Self, TypedDict  # pragma: no cover
 
 
 # Type aliases for Mem0 search response formats (v1.1 and v2; v1 is deprecated, but matches the type definition for v2)
@@ -30,7 +32,13 @@ MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
 class Mem0Provider(ContextProvider):
-    """Mem0 Context Provider."""
+    """Mem0 Context Provider.
+
+    Note:
+        Mem0's telemetry is disabled by default when using this package.
+        To enable telemetry, set the environment variable ``MEM0_TELEMETRY=true`` before
+        importing this package.
+    """
 
     def __init__(
         self,
@@ -72,7 +80,7 @@ class Mem0Provider(ContextProvider):
         self._per_operation_thread_id: str | None = None
         self._should_close_client = should_close_client
 
-    async def __aenter__(self) -> "Self":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         if self.mem0_client and isinstance(self.mem0_client, AbstractAsyncContextManager):
             await self.mem0_client.__aenter__()
@@ -95,29 +103,31 @@ class Mem0Provider(ContextProvider):
     @override
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
         self._validate_filters()
 
-        request_messages_list = (
-            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
-        )
+        request_messages_list = [request_messages] if isinstance(request_messages, Message) else list(request_messages)
         response_messages_list = (
             [response_messages]
-            if isinstance(response_messages, ChatMessage)
+            if isinstance(response_messages, Message)
             else list(response_messages)
             if response_messages
             else []
         )
         messages_list = [*request_messages_list, *response_messages_list]
 
+        # Extract role value - it may be a Role enum or a string
+        def get_role_value(role: Any) -> str:
+            return role.value if hasattr(role, "value") else str(role)
+
         messages: list[dict[str, str]] = [
-            {"role": message.role.value, "content": message.text}
+            {"role": get_role_value(message.role), "content": message.text}
             for message in messages_list
-            if message.role.value in {"user", "assistant", "system"} and message.text and message.text.strip()
+            if get_role_value(message.role) in {"user", "assistant", "system"} and message.text and message.text.strip()
         ]
 
         if messages:
@@ -130,7 +140,7 @@ class Mem0Provider(ContextProvider):
             )
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Called before invoking the AI model to provide context.
 
         Args:
@@ -143,7 +153,7 @@ class Mem0Provider(ContextProvider):
             Context: Context object containing instructions with memories.
         """
         self._validate_filters()
-        messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
+        messages_list = [messages] if isinstance(messages, Message) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
         # Validate input text is not empty before searching (possible for function approval responses)
@@ -170,7 +180,7 @@ class Mem0Provider(ContextProvider):
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         return Context(
-            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            messages=[Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )

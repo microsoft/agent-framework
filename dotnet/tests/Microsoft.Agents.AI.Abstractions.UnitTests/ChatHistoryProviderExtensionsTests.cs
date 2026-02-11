@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -14,6 +15,9 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public sealed class ChatHistoryProviderExtensionsTests
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
+
     [Fact]
     public void WithMessageFilters_ReturnsChatHistoryProviderMessageFilter()
     {
@@ -35,10 +39,11 @@ public sealed class ChatHistoryProviderExtensionsTests
         // Arrange
         Mock<ChatHistoryProvider> providerMock = new();
         List<ChatMessage> innerMessages = [new(ChatRole.User, "Hello"), new(ChatRole.Assistant, "Hi")];
-        ChatHistoryProvider.InvokingContext context = new([new ChatMessage(ChatRole.User, "Test")]);
+        ChatHistoryProvider.InvokingContext context = new(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Test")]);
 
         providerMock
-            .Setup(p => p.InvokingAsync(context, It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(innerMessages);
 
         ChatHistoryProvider filtered = providerMock.Object.WithMessageFilters(
@@ -57,16 +62,20 @@ public sealed class ChatHistoryProviderExtensionsTests
     {
         // Arrange
         Mock<ChatHistoryProvider> providerMock = new();
-        List<ChatMessage> requestMessages = [new(ChatRole.User, "Hello")];
-        List<ChatMessage> chatHistoryProviderMessages = [new(ChatRole.System, "System")];
-        ChatHistoryProvider.InvokedContext context = new(requestMessages, chatHistoryProviderMessages)
+        List<ChatMessage> requestMessages =
+        [
+            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "TestSource") } } },
+            new(ChatRole.User, "Hello")
+        ];
+        ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages)
         {
             ResponseMessages = [new ChatMessage(ChatRole.Assistant, "Response")]
         };
 
         ChatHistoryProvider.InvokedContext? capturedContext = null;
         providerMock
-            .Setup(p => p.InvokedAsync(It.IsAny<ChatHistoryProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Callback<ChatHistoryProvider.InvokedContext, CancellationToken>((ctx, _) => capturedContext = ctx)
             .Returns(default(ValueTask));
 
@@ -103,17 +112,18 @@ public sealed class ChatHistoryProviderExtensionsTests
     {
         // Arrange
         Mock<ChatHistoryProvider> providerMock = new();
-        List<ChatMessage> requestMessages = [new(ChatRole.User, "Hello")];
-        List<ChatMessage> chatHistoryProviderMessages = [new(ChatRole.System, "System")];
-        List<ChatMessage> aiContextProviderMessages = [new(ChatRole.System, "Context")];
-        ChatHistoryProvider.InvokedContext context = new(requestMessages, chatHistoryProviderMessages)
-        {
-            AIContextProviderMessages = aiContextProviderMessages
-        };
+        List<ChatMessage> requestMessages =
+        [
+            new(ChatRole.System, "System") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "TestSource") } } },
+            new(ChatRole.User, "Hello"),
+            new(ChatRole.System, "Context") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "TestContextSource") } } }
+        ];
+        ChatHistoryProvider.InvokedContext context = new(s_mockAgent, s_mockSession, requestMessages);
 
         ChatHistoryProvider.InvokedContext? capturedContext = null;
         providerMock
-            .Setup(p => p.InvokedAsync(It.IsAny<ChatHistoryProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Callback<ChatHistoryProvider.InvokedContext, CancellationToken>((ctx, _) => capturedContext = ctx)
             .Returns(default(ValueTask));
 
@@ -124,6 +134,8 @@ public sealed class ChatHistoryProviderExtensionsTests
 
         // Assert
         Assert.NotNull(capturedContext);
-        Assert.Null(capturedContext.AIContextProviderMessages);
+        Assert.Equal(2, capturedContext.RequestMessages.Count());
+        Assert.Contains("System", capturedContext.RequestMessages.Select(x => x.Text));
+        Assert.Contains("Hello", capturedContext.RequestMessages.Select(x => x.Text));
     }
 }

@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/03_assistant_agent_thread_and_stream.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen vs Agent Framework: Thread management and streaming responses.
 
@@ -32,7 +42,7 @@ async def run_autogen() -> None:
 
     print("\n[AutoGen] Streaming response:")
     # Stream response with Console for token streaming
-    await Console(agent.run_stream(task="Count from 1 to 5"))
+    await Console(agent.run(task="Count from 1 to 5", stream=True))
 
 
 async def run_agent_framework() -> None:
@@ -60,7 +70,7 @@ async def run_agent_framework() -> None:
     print("\n[Agent Framework] Streaming response:")
     # Stream response
     print("  ", end="")
-    async for chunk in agent.run_stream("Count from 1 to 5"):
+    async for chunk in agent.run("Count from 1 to 5", thread=thread, stream=True):
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print()

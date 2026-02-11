@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 using Xunit.Sdk;
@@ -27,6 +27,8 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal async Task<WorkflowEvent[]> ExecuteAsync(DeclarativeActionExecutor executor)
     {
+        this.State.Bind();
+
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);

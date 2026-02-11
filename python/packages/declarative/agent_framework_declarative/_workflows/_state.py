@@ -9,6 +9,8 @@ This module provides state management for declarative workflows, handling:
 - Agent results and context
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -312,7 +314,7 @@ class WorkflowState:
         """Add a message to the conversation history.
 
         Args:
-            message: The message to add (typically a ChatMessage or similar)
+            message: The message to add (typically a Message or similar)
         """
         self._conversation["messages"].append(message)
         self._conversation["history"].append(message)
@@ -624,7 +626,7 @@ class WorkflowState:
         """Reset the agent result for a new agent invocation."""
         self._agent.clear()
 
-    def clone(self) -> "WorkflowState":
+    def clone(self) -> WorkflowState:
         """Create a shallow copy of the state.
 
         Returns:

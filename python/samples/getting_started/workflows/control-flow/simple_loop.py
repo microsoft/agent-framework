@@ -4,13 +4,12 @@ import asyncio
 from enum import Enum
 
 from agent_framework import (
+    Agent,
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
     Executor,
-    ExecutorCompletedEvent,
-    Role,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -96,7 +95,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._judge_agent_id,
         )
 
@@ -115,7 +114,7 @@ class ParseJudgeResponse(Executor):
             await ctx.send_message(NumberSignal.BELOW)
 
 
-def create_judge_agent() -> ChatAgent:
+def create_judge_agent() -> Agent:
     """Create a judge agent that evaluates guesses."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
@@ -127,24 +126,24 @@ async def main():
     """Main function to run the workflow."""
     # Step 1: Build the workflow with the defined edges.
     # This time we are creating a loop in the workflow.
+    guess_number = GuessNumberExecutor((1, 100), "guess_number")
+    judge_agent = AgentExecutor(create_judge_agent())
+    submit_judge = SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30)
+    parse_judge = ParseJudgeResponse(id="parse_judge")
+
     workflow = (
-        WorkflowBuilder()
-        .register_executor(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
-        .register_agent(create_judge_agent, name="judge_agent")
-        .register_executor(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
-        .register_executor(lambda: ParseJudgeResponse(id="parse_judge"), name="parse_judge")
-        .add_edge("guess_number", "submit_judge")
-        .add_edge("submit_judge", "judge_agent")
-        .add_edge("judge_agent", "parse_judge")
-        .add_edge("parse_judge", "guess_number")
-        .set_start_executor("guess_number")
+        WorkflowBuilder(start_executor=guess_number)
+        .add_edge(guess_number, submit_judge)
+        .add_edge(submit_judge, judge_agent)
+        .add_edge(judge_agent, parse_judge)
+        .add_edge(parse_judge, guess_number)
         .build()
     )
 
     # Step 2: Run the workflow and print the events.
     iterations = 0
-    async for event in workflow.run_stream(NumberSignal.INIT):
-        if isinstance(event, ExecutorCompletedEvent) and event.executor_id == "guess_number":
+    async for event in workflow.run(NumberSignal.INIT, stream=True):
+        if event.type == "executor_completed" and event.executor_id == "guess_number":
             iterations += 1
         print(f"Event: {event}")
 

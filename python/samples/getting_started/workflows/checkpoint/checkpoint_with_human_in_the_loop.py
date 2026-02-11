@@ -1,28 +1,32 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, override
+from typing import Any
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 # NOTE: the Azure client imports above are real dependencies. When running this
 # sample outside of Azure-enabled environments you may wish to swap in the
 # `agent_framework.builtin` chat client or mock the writer executor. We keep the
 # concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessage,
     Executor,
     FileCheckpointStorage,
-    RequestInfoEvent,
-    Role,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowContext,
-    WorkflowOutputEvent,
-    WorkflowStatusEvent,
     get_checkpoint_summary,
     handler,
     response_handler,
@@ -54,7 +58,7 @@ Typical pause/resume flow
 3. Later, restart the script, select that checkpoint, and provide the stored
    human decision when prompted to pre-supply responses.
    Doing so applies the answer immediately on resume, so the system does **not**
-   re-emit the same `RequestInfoEvent`.
+   re-emit the same ``.
 """
 
 # Directory used for the sample's temporary checkpoint files. We isolate the
@@ -82,9 +86,9 @@ class BriefPreparer(Executor):
         normalized = " ".join(brief.split()).strip()
         if not normalized.endswith("."):
             normalized += "."
-        # Persist the cleaned brief in shared state so downstream executors and
+        # Persist the cleaned brief in workflow state so downstream executors and
         # future checkpoints can recover the original intent.
-        await ctx.set_shared_state("brief", normalized)
+        ctx.set_state("brief", normalized)
         prompt = (
             "You are drafting product release notes. Summarise the brief below in two sentences. "
             "Keep it positive and end with a call to action.\n\n"
@@ -93,7 +97,7 @@ class BriefPreparer(Executor):
         # Hand the prompt to the writer agent. We always route through the
         # workflow context so the runtime can capture messages for checkpointing.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -155,7 +159,7 @@ class ReviewGateway(Executor):
             f"Human guidance: {reply}"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
 
@@ -175,23 +179,21 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
+    writer_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="Write concise, warm release notes that sound human and helpful.",
+        name="writer",
+    )
+    writer = AgentExecutor(writer_agent)
+    review_gateway = ReviewGateway(id="review_gateway", writer_id="writer")
+    prepare_brief = BriefPreparer(id="prepare_brief", agent_id="writer")
+
     workflow_builder = (
-        WorkflowBuilder(max_iterations=6)
-        .register_agent(
-            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-                instructions="Write concise, warm release notes that sound human and helpful.",
-                # The agent name is stable across runs which keeps checkpoints deterministic.
-                name="writer",
-            ),
-            name="writer",
+        WorkflowBuilder(
+            max_iterations=6, start_executor=prepare_brief, checkpoint_storage=checkpoint_storage
         )
-        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
-        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
-        .set_start_executor("prepare_brief")
-        .add_edge("prepare_brief", "writer")
-        .add_edge("writer", "review_gateway")
-        .add_edge("review_gateway", "writer")  # revisions loop
-        .with_checkpointing(checkpoint_storage=checkpoint_storage)
+        .add_edge(prepare_brief, writer)
+        .add_edge(writer, review_gateway)
+        .add_edge(review_gateway, writer)  # revisions loop
     )
 
     return workflow_builder.build()
@@ -246,25 +248,25 @@ async def run_interactive_session(
 
     while True:
         if responses:
-            event_stream = workflow.send_responses_streaming(responses)
+            event_stream = workflow.run(stream=True, responses=responses)
             requests.clear()
             responses = None
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")
-                event_stream = workflow.run_stream(message=initial_message)
+                event_stream = workflow.run(message=initial_message, stream=True)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)
+                event_stream = workflow.run(checkpoint_id=checkpoint_id, stream=True)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 
         async for event in event_stream:
-            if isinstance(event, WorkflowStatusEvent):
+            if event.type == "status":
                 print(event)
-            if isinstance(event, WorkflowOutputEvent):
+            if event.type == "output":
                 completed_output = event.data
-            if isinstance(event, RequestInfoEvent):
+            if event.type == "request_info":
                 if isinstance(event.data, HumanApprovalRequest):
                     requests[event.request_id] = event.data
                 else:

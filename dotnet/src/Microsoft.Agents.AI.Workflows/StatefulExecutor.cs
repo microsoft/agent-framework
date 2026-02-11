@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;

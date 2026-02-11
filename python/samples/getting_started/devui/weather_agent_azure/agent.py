@@ -7,17 +7,19 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
-    ChatAgent,
+    Agent,
     ChatContext,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
+    Message,
+    MiddlewareTermination,
+    ResponseStream,
     Role,
-    TextContent,
-    ai_function,
     chat_middleware,
     function_middleware,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
@@ -36,7 +38,7 @@ def cleanup_resources():
 @chat_middleware
 async def security_filter_middleware(
     context: ChatContext,
-    next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Chat middleware that blocks requests containing sensitive information."""
     blocked_terms = ["password", "secret", "api_key", "token"]
@@ -53,36 +55,38 @@ async def security_filter_middleware(
                     "or other sensitive data."
                 )
 
-                if context.is_streaming:
-                    # Streaming mode: return async generator
-                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                if context.stream:
+                    # Streaming mode: wrap in ResponseStream
+                    async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
-                            contents=[TextContent(text=error_message)],
+                            contents=[Content.from_text(text=msg)],
                             role=Role.ASSISTANT,
                         )
 
-                    context.result = blocked_stream()
+                    response = ChatResponse(
+                        messages=[Message(role=Role.ASSISTANT, text=error_message)]
+                    )
+                    context.result = ResponseStream(blocked_stream(), finalizer=lambda _, r=response: r)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role=Role.ASSISTANT,
                                 text=error_message,
                             )
                         ]
                     )
 
-                context.terminate = True
-                return
+                raise MiddlewareTermination(result=context.result)
 
-    await next(context)
+    await call_next()
 
 
 @function_middleware
 async def atlantis_location_filter_middleware(
     context: FunctionInvocationContext,
-    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function middleware that blocks weather requests for Atlantis."""
     # Check if location parameter is "atlantis"
@@ -92,12 +96,13 @@ async def atlantis_location_filter_middleware(
             "Blocked! Hold up right there!! Tell the user that "
             "'Atlantis is a special place, we must never ask about the weather there!!'"
         )
-        context.terminate = True
-        return
+        raise MiddlewareTermination(result=context.result)
 
-    await next(context)
+    await call_next()
 
 
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+@tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
@@ -107,6 +112,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
+@tool(approval_mode="never_require")
 def get_forecast(
     location: Annotated[str, "The location to get the forecast for."],
     days: Annotated[int, "Number of days for forecast"] = 3,
@@ -123,7 +129,7 @@ def get_forecast(
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
 
-@ai_function(approval_mode="always_require")
+@tool(approval_mode="always_require")
 def send_email(
     recipient: Annotated[str, "The email address of the recipient."],
     subject: Annotated[str, "The subject of the email."],
@@ -134,7 +140,7 @@ def send_email(
 
 
 # Agent instance following Agent Framework conventions
-agent = ChatAgent(
+agent = Agent(
     name="AzureWeatherAgent",
     description="A helpful agent that provides weather information and forecasts",
     instructions="""
@@ -142,7 +148,7 @@ agent = ChatAgent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],

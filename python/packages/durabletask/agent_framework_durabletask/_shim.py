@@ -2,7 +2,7 @@
 
 """Durable Agent Shim for Durable Task Framework.
 
-This module provides the DurableAIAgent shim that implements AgentProtocol
+This module provides the DurableAIAgent shim that implements SupportsAgentRun
 and provides a consistent interface for both Client and Orchestration contexts.
 The actual execution is delegated to the context-specific providers.
 """
@@ -10,10 +10,9 @@ The actual execution is delegated to the context-specific providers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentProtocol, AgentResponseUpdate, AgentThread, ChatMessage
+from agent_framework import AgentThread, Message, SupportsAgentRun
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentThread
@@ -48,11 +47,11 @@ class DurableAgentProvider(ABC, Generic[TaskT]):
         raise NotImplementedError("Subclasses must implement get_agent()")
 
 
-class DurableAIAgent(AgentProtocol, Generic[TaskT]):
+class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
     """A durable agent proxy that delegates execution to the provider.
 
-    This class implements AgentProtocol but with one critical difference:
-    - AgentProtocol.run() returns a Coroutine (async, must await)
+    This class implements SupportsAgentRun but with one critical difference:
+    - SupportsAgentRun.run() returns a Coroutine (async, must await)
     - DurableAIAgent.run() returns TaskT (sync Task object - must yield
         or the AgentResponse directly in the case of TaskHubGrpcClient)
 
@@ -87,8 +86,9 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
+        stream: Literal[False] = False,
         thread: AgentThread | None = None,
         options: dict[str, Any] | None = None,
     ) -> TaskT:
@@ -96,14 +96,16 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
         Args:
             messages: The message(s) to send to the agent
+            stream: Whether to use streaming for the response (must be False)
+                DurableAgents do not support streaming mode.
             thread: Optional agent thread for conversation context
             options: Optional options dictionary. Supported keys include
                 ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
                 Additional keys are forwarded to the agent execution.
 
         Note:
-            This method overrides AgentProtocol.run() with a different return type:
-            - AgentProtocol.run() returns Coroutine[Any, Any, AgentResponse] (async)
+            This method overrides SupportsAgentRun.run() with a different return type:
+            - SupportsAgentRun.run() returns Coroutine[Any, Any, AgentResponse] (async)
             - DurableAIAgent.run() returns TaskT (Task object for yielding)
 
             This is intentional to support orchestration contexts that use yield patterns
@@ -115,6 +117,8 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         Raises:
             ValueError: If wait_for_response=False is used in an unsupported context
         """
+        if stream is not False:
+            raise ValueError("DurableAIAgent does not support streaming mode (stream must be False)")
         message_str = self._normalize_messages(messages)
 
         run_request = self._executor.get_run_request(
@@ -128,30 +132,11 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             thread=thread,
         )
 
-    def run_stream(  # type: ignore[override]
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[AgentResponseUpdate]:
-        """Run the agent with streaming (not supported for durable agents).
-
-        Args:
-            messages: The message(s) to send to the agent
-            thread: Optional agent thread for conversation context
-            **kwargs: Additional arguments
-
-        Raises:
-            NotImplementedError: Streaming is not supported for durable agents
-        """
-        raise NotImplementedError("Streaming is not supported for durable agents")
-
     def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
         """Create a new agent thread via the provider."""
         return self._executor.get_new_thread(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
         """Convert supported message inputs to a single string.
 
         Args:
@@ -164,7 +149,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             return ""
         if isinstance(messages, str):
             return messages
-        if isinstance(messages, ChatMessage):
+        if isinstance(messages, Message):
             return messages.text or ""
         if isinstance(messages, list):
             if not messages:
@@ -172,6 +157,6 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             first_item = messages[0]
             if isinstance(first_item, str):
                 return "\n".join(messages)  # type: ignore[arg-type]
-            # List of ChatMessage
+            # List of Message
             return "\n".join([msg.text or "" for msg in messages])  # type: ignore[union-attr]
         return ""

@@ -5,11 +5,11 @@ Sample: Workflow as Agent with Checkpointing
 
 Purpose:
 This sample demonstrates how to use checkpointing with a workflow wrapped as an agent.
-It shows how to enable checkpoint storage when calling agent.run() or agent.run_stream(),
+It shows how to enable checkpoint storage when calling agent.run(),
 allowing workflow execution state to be persisted and potentially resumed.
 
 What you learn:
-- How to pass checkpoint_storage to WorkflowAgent.run() and run_stream()
+- How to pass checkpoint_storage to WorkflowAgent.run()
 - How checkpoints are created during workflow-as-agent execution
 - How to combine thread conversation history with workflow checkpointing
 - How to resume a workflow-as-agent from a checkpoint
@@ -27,12 +27,11 @@ import asyncio
 
 from agent_framework import (
     AgentThread,
-    ChatAgent,
     ChatMessageStore,
     InMemoryCheckpointStorage,
-    SequentialBuilder,
 )
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 
 
 async def basic_checkpointing() -> None:
@@ -41,22 +40,19 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="assistant",
-            instructions="You are a helpful assistant. Keep responses brief.",
-        )
+    assistant = client.as_agent(
+        name="assistant",
+        instructions="You are a helpful assistant. Keep responses brief.",
+    )
 
-    def create_reviewer() -> ChatAgent:
-        return chat_client.as_agent(
-            name="reviewer",
-            instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
-        )
+    reviewer = client.as_agent(
+        name="reviewer",
+        instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
+    )
 
-    # Build sequential workflow with participant factories
-    workflow = SequentialBuilder().register_participants([create_assistant, create_reviewer]).build()
+    workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
     agent = workflow.as_agent(name="CheckpointedAgent")
 
     # Create checkpoint storage
@@ -69,7 +65,7 @@ async def basic_checkpointing() -> None:
     response = await agent.run(query, checkpoint_storage=checkpoint_storage)
 
     for msg in response.messages:
-        speaker = msg.author_name or msg.role.value
+        speaker = msg.author_name or msg.role
         print(f"[{speaker}]: {msg.text}")
 
     # Show checkpoints that were created
@@ -85,15 +81,14 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="memory_assistant",
-            instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
-        )
+    assistant = client.as_agent(
+        name="memory_assistant",
+        instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
+    )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="MemoryAgent")
 
     # Create both thread (for conversation) and checkpoint storage (for workflow state)
@@ -129,15 +124,14 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="streaming_assistant",
-            instructions="You are a helpful assistant.",
-        )
+    assistant = client.as_agent(
+        name="streaming_assistant",
+        instructions="You are a helpful assistant.",
+    )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="StreamingCheckpointAgent")
 
     checkpoint_storage = InMemoryCheckpointStorage()
@@ -147,7 +141,7 @@ async def streaming_with_checkpoints() -> None:
     print("[assistant]: ", end="", flush=True)
 
     # Stream with checkpointing
-    async for update in agent.run_stream(query, checkpoint_storage=checkpoint_storage):
+    async for update in agent.run(query, checkpoint_storage=checkpoint_storage, stream=True):
         if update.text:
             print(update.text, end="", flush=True)
 
@@ -157,7 +151,12 @@ async def streaming_with_checkpoints() -> None:
     print(f"\nCheckpoints created during stream: {len(checkpoints)}")
 
 
+async def main() -> None:
+    """Run all checkpoint examples."""
+    await basic_checkpointing()
+    await checkpointing_with_thread()
+    await streaming_with_checkpoints()
+
+
 if __name__ == "__main__":
-    asyncio.run(basic_checkpointing())
-    asyncio.run(checkpointing_with_thread())
-    asyncio.run(streaming_with_checkpoints())
+    asyncio.run(main())

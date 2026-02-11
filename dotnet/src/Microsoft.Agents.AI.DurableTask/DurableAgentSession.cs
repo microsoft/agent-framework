@@ -26,7 +26,7 @@ public sealed class DurableAgentSession : AgentSession
     internal AgentSessionId SessionId { get; }
 
     /// <inheritdoc/>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         return JsonSerializer.SerializeToElement(
             this,

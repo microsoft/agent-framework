@@ -6,16 +6,18 @@ This module provides a clean abstraction layer for managing conversations
 while wrapping AgentFramework's AgentThread underneath.
 """
 
+from __future__ import annotations
+
 import time
 import uuid
 from abc import ABC, abstractmethod
 from typing import Any, Literal, cast
 
-from agent_framework import AgentThread, ChatMessage
+from agent_framework import AgentThread, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
-from openai.types.conversations.message import Message
+from openai.types.conversations.message import Message as OpenAIMessage
 from openai.types.conversations.text_content import TextContent
 from openai.types.responses import (
     ResponseFunctionToolCallItem,
@@ -303,7 +305,7 @@ class InMemoryConversationStore(ConversationStore):
             content = item.get("content", [])
             text = content[0].get("text", "") if content else ""
 
-            chat_msg = ChatMessage(role=role, contents=[{"type": "text", "text": text}])
+            chat_msg = Message(role=role, text=text)  # type: ignore[arg-type]
             chat_messages.append(chat_msg)
 
         # Add messages to AgentThread
@@ -315,10 +317,10 @@ class InMemoryConversationStore(ConversationStore):
             item_id = f"item_{uuid.uuid4().hex}"
 
             # Extract role - handle both string and enum
-            role_str = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
             role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
 
-            # Convert ChatMessage contents to OpenAI TextContent format
+            # Convert Message contents to OpenAI TextContent format
             message_content = []
             for content_item in msg.contents:
                 if content_item.type == "text":
@@ -327,7 +329,7 @@ class InMemoryConversationStore(ConversationStore):
                     message_content.append(TextContent(type="text", text=text_value))
 
             # Create Message object (concrete type from ConversationItem union)
-            message = Message(
+            message = OpenAIMessage(
                 id=item_id,
                 type="message",  # Required discriminator for union
                 role=role,
@@ -370,14 +372,14 @@ class InMemoryConversationStore(ConversationStore):
         if thread.message_store:
             af_messages = await thread.message_store.list_messages()
 
-            # Convert each AgentFramework ChatMessage to appropriate ConversationItem type(s)
+            # Convert each AgentFramework Message to appropriate ConversationItem type(s)
             for i, msg in enumerate(af_messages):
                 item_id = f"item_{i}"
-                role_str = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
                 role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
 
                 # Process each content item in the message
-                # A single ChatMessage may produce multiple ConversationItems
+                # A single Message may produce multiple ConversationItems
                 # (e.g., a message with both text and a function call)
                 message_contents: list[TextContent | ResponseInputImage | ResponseInputFile] = []
                 function_calls = []
@@ -462,7 +464,7 @@ class InMemoryConversationStore(ConversationStore):
                 # Create ConversationItems based on what we found
                 # If message has text/images/files, create a Message item
                 if message_contents:
-                    message = Message(
+                    message = OpenAIMessage(
                         id=item_id,
                         type="message",
                         role=role,  # type: ignore
@@ -588,7 +590,7 @@ class InMemoryConversationStore(ConversationStore):
         return None
 
     def get_thread(self, conversation_id: str) -> AgentThread | None:
-        """Get AgentThread for execution - CRITICAL for agent.run_stream()."""
+        """Get AgentThread for execution - CRITICAL for agent.run()."""
         conv_data = self._conversations.get(conversation_id)
         return conv_data["thread"] if conv_data else None
 

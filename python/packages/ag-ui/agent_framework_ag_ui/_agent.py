@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from ag_ui.core import BaseEvent
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 
 from ._run import run_agent_stream
 
@@ -65,13 +65,13 @@ class AgentConfig:
 class AgentFrameworkAgent:
     """Wraps Agent Framework agents for AG-UI protocol compatibility.
 
-    Translates between Agent Framework's AgentProtocol and AG-UI's event-based
+    Translates between Agent Framework's SupportsAgentRun and AG-UI's event-based
     protocol. Follows a simple linear flow: RunStarted -> content events -> RunFinished.
     """
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         name: str | None = None,
         description: str | None = None,
         state_schema: Any | None = None,
