@@ -15,15 +15,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
     [Fact]
-    public void InvalidModel() =>
+    public void ForeachThrowsWhenModelInvalid() =>
         // Arrange, Act & Assert
         Assert.Throws<DeclarativeModelException>(() => new ForeachExecutor(new Foreach(), this.State));
 
     [Fact]
-    public void NamingConvention()
+    public void ForeachNamingConvention()
     {
         // Arrange
-        const string TestId = "test_action_123";
+        string TestId = this.CreateActionId().Value;
 
         // Act
         string startStep = ForeachExecutor.Steps.Start(TestId);
@@ -37,37 +37,38 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     [Fact]
-    public async Task ForeachWithSingleValueAsync()
+    public async Task ForeachInvokedWithSingleValueAsync()
     {
         // Arrange
         this.SetVariableState("CurrentValue");
 
         // Act & Assert
         await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithSingleValueAsync),
+            displayName: nameof(ForeachInvokedWithSingleValueAsync),
             items: ValueExpression.Literal(new NumberDataValue(42)),
             valueName: "CurrentValue",
             indexName: null);
     }
 
     [Fact]
-    public async Task ForeachWithStringValueAsync()
+    public async Task ForeachInvokedWithTableValueAsync()
     {
         // Arrange
         this.SetVariableState("CurrentValue");
 
         // Act & Assert
         await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithStringValueAsync),
-            items: ValueExpression.Literal(new StringDataValue("Test")),
+            displayName: nameof(ForeachInvokedWithTableValueAsync),
+            items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: null);
     }
 
     [Fact]
-    public async Task ForeachWithTableValueAsync()
+    public async Task ForeachInvokedWithIndexAsync()
     {
         // Arrange
+        this.SetVariableState("CurrentValue", "CurrentIndex");
         TableDataValue tableValue = DataValue.TableFromRecords(
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(1))),
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(2))),
@@ -75,60 +76,101 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         // Act & Assert
         await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithTableValueAsync),
-            items: ValueExpression.Literal(tableValue),
-            valueName: "CurrentValue",
-            indexName: null);
-    }
-
-    [Fact]
-    public async Task ForeachWithIndexAsync()
-    {
-        // Arrange
-        this.SetVariableState("CurrentValue", "CurrentIndex");
-        TableDataValue tableValue = DataValue.TableFromRecords(
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new StringDataValue("A"))),
-            DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new StringDataValue("B"))));
-
-        // Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithIndexAsync),
+            displayName: nameof(ForeachInvokedWithIndexAsync),
             items: ValueExpression.Literal(tableValue),
             valueName: "CurrentValue",
             indexName: "CurrentIndex");
     }
 
     [Fact]
-    public async Task ForeachWithEmptyTableAsync()
+    public async Task ForeachInvokedWithExpressionAsync()
     {
         // Arrange
         this.SetVariableState("CurrentValue");
+        this.State.Set("SourceArray", FormulaValue.NewTable(RecordType.Empty()));
 
         // Act & Assert
         await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithEmptyTableAsync),
-            items: ValueExpression.Literal(DataValue.EmptyTable),
+            displayName: nameof(ForeachInvokedWithExpressionAsync),
+            items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
             indexName: null);
     }
 
     [Fact]
-    public async Task ForeachWithExpressionAsync()
+    public async Task ForeachTakeNextAsync()
     {
         // Arrange
         this.SetVariableState("CurrentValue");
-        this.State.Set("SourceArray", FormulaValue.NewTable(
-            RecordType.Empty(),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
+        this.State.Set(
+            "SourceArray",
+            FormulaValue.NewTable(
+                RecordType.Empty(),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
 
         // Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(ForeachWithExpressionAsync),
+        await this.TakeNextTestAsync(
+            displayName: nameof(ForeachTakeNextAsync),
             items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
             indexName: null);
+    }
+
+    [Fact]
+    public async Task ForeachTakeNextWithIndexAsync()
+    {
+        // Arrange
+        this.SetVariableState("CurrentValue", "CurrentIndex");
+        this.State.Set(
+            "SourceArray",
+            FormulaValue.NewTable(
+                RecordType.Empty(),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
+
+        // Act & Assert
+        await this.TakeNextTestAsync(
+            displayName: nameof(ForeachTakeNextAsync),
+            items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
+            valueName: "CurrentValue",
+            indexName: "CurrentIndex");
+    }
+
+    [Fact]
+    public async Task ForeachTakeLastAsync()
+    {
+        // Arrange
+        this.SetVariableState("CurrentValue");
+        this.State.Set(
+            "SourceArray",
+            FormulaValue.NewTable(
+                RecordType.Empty(),
+                FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10)))));
+
+        // Act & Assert
+        await this.TakeNextTestAsync(
+            displayName: nameof(ForeachTakeLastAsync),
+            items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
+            valueName: "CurrentValue",
+            indexName: null);
+    }
+
+    [Fact]
+    public async Task ForeachTakeNextWhenDoneAsync()
+    {
+        // Arrange
+        this.SetVariableState("CurrentValue");
+
+        // Act & Assert
+        await this.TakeNextTestAsync(
+            displayName: nameof(ForeachTakeLastAsync),
+            items: ValueExpression.Literal(DataValue.EmptyTable),
+            valueName: "CurrentValue",
+            indexName: null,
+            expectValue: false);
     }
 
     [Fact]
@@ -140,7 +182,6 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         // Act & Assert
         await this.CompletedTestAsync(
             displayName: nameof(ForeachCompletedWithoutIndexAsync),
-            items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: null);
     }
@@ -154,7 +195,6 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         // Act & Assert
         await this.CompletedTestAsync(
             displayName: nameof(ForeachCompletedWithIndexAsync),
-            items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: "CurrentIndex");
     }
@@ -177,9 +217,9 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     {
         // Arrange
         Foreach model = this.CreateModel(displayName, items, valueName, indexName);
+        ForeachExecutor action = new(model, this.State);
 
         // Act
-        ForeachExecutor action = new(model, this.State);
         WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
 
         // Assert
@@ -189,10 +229,9 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         // IsDiscreteAction should be false for Foreach
         Assert.Equal(
             false,
-            action.GetType()
-            .BaseType?
-            .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-            .GetValue(action));
+            action.GetType().BaseType?
+                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+                .GetValue(action));
 
         // Verify HasValue state after execution
         Assert.Equal(expectValue, action.HasValue);
@@ -207,14 +246,34 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         }
     }
 
-    private async Task CompletedTestAsync(
+    private async Task TakeNextTestAsync(
         string displayName,
         ValueExpression items,
+        string valueName,
+        string? indexName,
+        bool expectValue = true)
+    {
+        // Arrange
+        Foreach model = this.CreateModel(displayName, items, valueName, indexName);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        WorkflowEvent[] events = await this.ExecuteAsync(action, ForeachExecutor.Steps.End(action.Id), action.TakeNextAsync);
+
+        // Assert
+        VerifyModel(model, action);
+
+        // Verify HasValue state after execution
+        Assert.Equal(expectValue, action.HasValue);
+    }
+
+    private async Task CompletedTestAsync(
+        string displayName,
         string valueName,
         string? indexName)
     {
         // Arrange
-        Foreach model = this.CreateModel(displayName, items, valueName, indexName);
+        Foreach model = this.CreateModel(displayName, ValueExpression.Literal(DataValue.EmptyTable), valueName, indexName);
         ForeachExecutor action = new(model, this.State);
 
         // Act

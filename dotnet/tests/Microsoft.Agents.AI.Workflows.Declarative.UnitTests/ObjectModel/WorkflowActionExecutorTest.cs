@@ -26,16 +26,27 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
-    internal Task<WorkflowEvent[]> ExecuteAsync(string actionId, DelegateAction<ActionExecutorResult> executor) =>
-        this.ExecuteAsync(new DelegateActionExecutor(actionId, this.State, executor), isDiscrete: false);
+    internal Task<WorkflowEvent[]> ExecuteAsync(string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
+        this.ExecuteAsync(new DelegateActionExecutor(actionId, this.State, executorAction), isDiscrete: false);
 
-    internal async Task<WorkflowEvent[]> ExecuteAsync(Executor executor, bool isDiscrete = true)
+    internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
+        this.ExecuteAsync([executor, new DelegateActionExecutor(actionId, this.State, executorAction)], isDiscrete: false);
+
+    internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, bool isDiscrete = true) =>
+        this.ExecuteAsync([executor], isDiscrete);
+
+    internal async Task<WorkflowEvent[]> ExecuteAsync(Executor[] executors, bool isDiscrete)
     {
         this.State.Bind();
 
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
-        workflowBuilder.AddEdge(workflowExecutor, executor);
+        Executor prevExecutor = workflowExecutor;
+        foreach (Executor executor in executors)
+        {
+            workflowBuilder.AddEdge(prevExecutor, executor);
+            prevExecutor = executor;
+        }
 
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
