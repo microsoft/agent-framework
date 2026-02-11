@@ -50,7 +50,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpoint & Resume            | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py)                                             | Create checkpoints, inspect them, and resume execution                                             |
 | Checkpoint & HITL Resume       | [checkpoint/checkpoint_with_human_in_the_loop.py](./checkpoint/checkpoint_with_human_in_the_loop.py)                       | Combine checkpointing with human approvals and resume pending HITL requests                        |
 | Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
-| Handoff + Tool Approval Resume | Moved to orchestration samples                                                                                               | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
+| Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
 | Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
 
 ### composition
