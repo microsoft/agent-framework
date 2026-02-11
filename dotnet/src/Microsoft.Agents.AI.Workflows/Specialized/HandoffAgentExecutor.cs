@@ -28,12 +28,10 @@ internal sealed class HandoffAgentExecutorOptions
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
-    private readonly HashSet<string> _handoffFunctionNames;
 
     public HandoffMessagesFilter(HandoffToolCallFilteringBehavior filteringBehavior, HashSet<string> handoffFunctionNames)
     {
         this._filteringBehavior = filteringBehavior;
-        this._handoffFunctionNames = handoffFunctionNames;
     }
 
     public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
@@ -68,6 +66,16 @@ internal sealed class HandoffMessagesFilter
                     if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
                     {
                         filteredMessage.Contents.Add(content);
+
+                        // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
+                        if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
+                        {
+                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState
+                            {
+                                CallId = nonHandoffFcc.CallId,
+                                IsHandoffFunction = false,
+                            };
+                        }
                     }
                     else if (filterHandoffOnly)
                     {
@@ -143,7 +151,7 @@ internal sealed class HandoffMessagesFilter
     {
         public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
 
-        public required string CallId { get; set; }
+        public string CallId { get; set; } = null!;
 
         public bool? IsHandoffFunction { get; set; }
     }
