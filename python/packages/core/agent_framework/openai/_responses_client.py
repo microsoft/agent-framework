@@ -919,7 +919,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     if function_call:
                         all_messages.append(function_call)  # type: ignore
                 case "function_approval_response" | "function_approval_request":
-                    prepared = self._prepare_content_for_openai(message.role, content, call_id_to_id)
+                    prepared = self._prepare_content_for_openai(Role(message.role), content, call_id_to_id)
                     if prepared:
                         all_messages.append(prepared)  # type: ignore
                 case _:

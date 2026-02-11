@@ -7,8 +7,10 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin
 
+from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai import AsyncOpenAI
+from openai.lib.azure import AsyncAzureADTokenProvider
 from pydantic import ValidationError
 
 from .._middleware import ChatMiddlewareLayer
@@ -73,7 +75,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncAzureOpenAI | None = None,
+        async_client: AsyncOpenAI | None = None,
         project_client: Any | None = None,
         project_endpoint: str | None = None,
         env_file_path: str | None = None,
@@ -186,14 +188,11 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             deployment_name = str(model_id)
 
         # Project client path: create OpenAI client from an Azure AI Foundry project
-        if project_client is not None or project_endpoint is not None:
+        if async_client is None and (project_client is not None or project_endpoint is not None):
             async_client = self._create_client_from_project(
                 project_client=project_client,
                 project_endpoint=project_endpoint,
                 credential=credential,
-                deployment_name=deployment_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
             )
 
         try:
@@ -248,22 +247,16 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
     @staticmethod
     def _create_client_from_project(
         *,
-        project_client: Any | None,
+        project_client: AIProjectClient | None,
         project_endpoint: str | None,
         credential: TokenCredential | None,
-        deployment_name: str | None,
-        env_file_path: str | None,
-        env_file_encoding: str | None,
-    ) -> AsyncAzureOpenAI:
+    ) -> AsyncOpenAI:
         """Create an AsyncOpenAI client from an Azure AI Foundry project.
 
         Args:
             project_client: An existing AIProjectClient to use.
             project_endpoint: The Azure AI Foundry project endpoint URL.
             credential: Azure credential for authentication.
-            deployment_name: The deployment name (used as model_id).
-            env_file_path: Path to environment file.
-            env_file_encoding: Encoding of the environment file.
 
         Returns:
             An AsyncAzureOpenAI client obtained from the project client.
@@ -272,34 +265,27 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             ServiceInitializationError: If required parameters are missing or
                 the azure-ai-projects package is not installed.
         """
-        try:
-            from azure.ai.projects.aio import AIProjectClient
-        except ImportError as exc:
+        if project_client is not None:
+            return project_client.get_openai_client()
+
+        if not project_endpoint:
             raise ServiceInitializationError(
-                "The 'azure-ai-projects' package is required to use project_client or project_endpoint. "
-                "Please install it with: pip install azure-ai-projects"
-            ) from exc
-
-        if project_client is None:
-            if not project_endpoint:
-                raise ServiceInitializationError(
-                    "Azure AI project endpoint is required when project_client is not provided."
-                )
-            if not credential:
-                raise ServiceInitializationError(
-                    "Azure credential is required when using project_endpoint without a project_client."
-                )
-            project_client = AIProjectClient(
-                endpoint=project_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                "Azure AI project endpoint is required when project_client is not provided."
             )
-
-        return project_client.get_openai_client()  # type: ignore[return-value]
+        if not credential:
+            raise ServiceInitializationError(
+                "Azure credential is required when using project_endpoint without a project_client."
+            )
+        project_client = AIProjectClient(
+            endpoint=project_endpoint,
+            credential=credential,  # type: ignore[arg-type]
+            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+        )
+        return project_client.get_openai_client()
 
     @override
-    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
-        if not run_options.get("model"):
+    def _check_model_presence(self, options: dict[str, Any]) -> None:
+        if not options.get("model"):
             if not self.model_id:
                 raise ValueError("deployment_name must be a non-empty string")
-            run_options["model"] = self.model_id
+            options["model"] = self.model_id

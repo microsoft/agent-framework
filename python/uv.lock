@@ -209,7 +209,6 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -217,7 +216,6 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0b3" },
 ]
 
 [[package]]
@@ -324,6 +322,7 @@ name = "agent-framework-core"
 version = "1.0.0b260210"
 source = { editable = "packages/core" }
 dependencies = [
+    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -378,6 +377,7 @@ requires-dist = [
     { name = "agent-framework-orchestrations", marker = "extra == 'all'", editable = "packages/orchestrations" },
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0b3" },
     { name = "azure-identity", specifier = ">=1,<2" },
     { name = "mcp", extras = ["ws"], specifier = ">=1.24.0,<2" },
     { name = "openai", specifier = ">=1.99.0" },

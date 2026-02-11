@@ -179,9 +179,6 @@ def test_create_client_from_project_with_project_client() -> None:
         project_client=mock_project_client,
         project_endpoint=None,
         credential=None,
-        deployment_name="gpt-4o",
-        env_file_path=None,
-        env_file_encoding=None,
     )
 
     assert result is mock_openai_client
@@ -205,9 +202,6 @@ def test_create_client_from_project_with_endpoint() -> None:
             project_client=None,
             project_endpoint="https://test-project.services.ai.azure.com",
             credential=mock_credential,
-            deployment_name="gpt-4o",
-            env_file_path=None,
-            env_file_encoding=None,
         )
 
     assert result is mock_openai_client
@@ -222,9 +216,6 @@ def test_create_client_from_project_missing_endpoint() -> None:
             project_client=None,
             project_endpoint=None,
             credential=MagicMock(),
-            deployment_name="gpt-4o",
-            env_file_path=None,
-            env_file_encoding=None,
         )
 
 
@@ -235,9 +226,6 @@ def test_create_client_from_project_missing_credential() -> None:
             project_client=None,
             project_endpoint="https://test-project.services.ai.azure.com",
             credential=None,
-            deployment_name="gpt-4o",
-            env_file_path=None,
-            env_file_encoding=None,
         )
 
 

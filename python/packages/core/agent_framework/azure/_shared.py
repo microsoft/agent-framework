@@ -9,6 +9,7 @@ from copy import copy
 from typing import Any, ClassVar, Final
 
 from azure.core.credentials import TokenCredential
+from openai import AsyncOpenAI
 from openai.lib.azure import AsyncAzureOpenAI
 from pydantic import SecretStr, model_validator
 
@@ -162,7 +163,7 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        client: AsyncAzureOpenAI | None = None,
+        client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         **kwargs: Any,
     ) -> None:
