@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -74,8 +74,8 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
     public async Task CaptureResponseWithWorkflowConversationAsync()
     {
         // Arrange
-        const string conversationId = "WorkflowConversationId";
-        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
+        const string ConversationId = "WorkflowConversationId";
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New(ConversationId), VariableScopeNames.System);
 
         // Act & Assert
         await this.ExecuteTestAsync(
@@ -89,10 +89,10 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
     public void StepsInputReturnsCorrectId()
     {
         // Arrange
-        const string actionId = "test_action_123";
+        const string ActionId = "test_action_123";
 
         // Act
-        string result = RequestExternalInputExecutor.Steps.Input(actionId);
+        string result = RequestExternalInputExecutor.Steps.Input(ActionId);
 
         // Assert
         Assert.Equal("test_action_123_Input", result);
@@ -102,10 +102,10 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
     public void StepsCaptureReturnsCorrectId()
     {
         // Arrange
-        const string actionId = "test_action_456";
+        const string ActionId = "test_action_456";
 
         // Act
-        string result = RequestExternalInputExecutor.Steps.Capture(actionId);
+        string result = RequestExternalInputExecutor.Steps.Capture(ActionId);
 
         // Assert
         Assert.Equal("test_action_456_Capture", result);
