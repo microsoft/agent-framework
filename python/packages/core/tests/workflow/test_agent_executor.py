@@ -89,6 +89,11 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
         "and the second one is after the agent execution."
     )
 
+    # Get the second checkpoint which should contain the state after processing
+    # the first message by the start executor in the sequential workflow
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    restore_checkpoint = checkpoints[1]
+
     # Verify checkpoint contains executor state with both cache and session
     assert "_executor_state" in restore_checkpoint.state
     executor_states = restore_checkpoint.state["_executor_state"]

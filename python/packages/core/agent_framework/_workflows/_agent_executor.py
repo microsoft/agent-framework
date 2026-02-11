@@ -14,7 +14,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message
 from ._agent_utils import resolve_agent_id
-from ._checkpoint_encoding import encode_checkpoint_value
+from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._conversation_state import encode_chat_messages
 from ._executor import Executor, handler
@@ -245,11 +245,27 @@ class AgentExecutor(Executor):
         Args:
             state: Checkpoint data dict
         """
+        from ._conversation_state import decode_chat_messages
+
         cache_payload = state.get("cache")
-        self._cache = cache_payload or []
+        if cache_payload:
+            try:
+                self._cache = decode_chat_messages(cache_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore cache: %s", exc)
+                self._cache = []
+        else:
+            self._cache = []
 
         full_conversation_payload = state.get("full_conversation")
-        self._full_conversation = full_conversation_payload or []
+        if full_conversation_payload:
+            try:
+                self._full_conversation = decode_chat_messages(full_conversation_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore full conversation: %s", exc)
+                self._full_conversation = []
+        else:
+            self._full_conversation = []
 
         session_payload = state.get("agent_session")
         if session_payload:
@@ -263,11 +279,11 @@ class AgentExecutor(Executor):
 
         pending_requests_payload = state.get("pending_agent_requests")
         if pending_requests_payload:
-            self._pending_agent_requests = pending_requests_payload
+            self._pending_agent_requests = decode_checkpoint_value(pending_requests_payload)
 
         pending_responses_payload = state.get("pending_responses_to_agent")
         if pending_responses_payload:
-            self._pending_responses_to_agent = pending_responses_payload
+            self._pending_responses_to_agent = decode_checkpoint_value(pending_responses_payload)
 
     def reset(self) -> None:
         """Reset the internal cache of the executor."""
