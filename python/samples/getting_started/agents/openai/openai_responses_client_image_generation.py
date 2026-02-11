@@ -2,8 +2,12 @@
 
 import asyncio
 import base64
+import tempfile
+import urllib.request as urllib_request
+from pathlib import Path
 
-from agent_framework import HostedImageGenerationTool
+import aiofiles  # pyright: ignore[reportMissingModuleSource]
+from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -16,65 +20,80 @@ and automated visual asset generation.
 """
 
 
-def show_image_info(data_uri: str) -> None:
-    """Display information about the generated image."""
-    try:
-        # Extract format and size info from data URI
-        if data_uri.startswith("data:image/"):
-            format_info = data_uri.split(";")[0].split("/")[1]
-            base64_data = data_uri.split(",", 1)[1]
-            image_bytes = base64.b64decode(base64_data)
-            size_kb = len(image_bytes) / 1024
+async def save_image(output: Content) -> None:
+    """Save the generated image to a temporary directory."""
+    filename = "generated_image.webp"
+    file_path = Path(tempfile.gettempdir()) / filename
 
-            print(" Image successfully generated!")
-            print(f"   Format: {format_info.upper()}")
-            print(f"   Size: {size_kb:.1f} KB")
-            print(f"   Data URI length: {len(data_uri)} characters")
-            print("")
-            print(" To save and view the image:")
-            print('   1. Install Pillow: "pip install pillow" or "uv add pillow"')
-            print("   2. Use the data URI in your code to save/display the image")
-            print("   3. Or copy the base64 data to an online base64 image decoder")
+    data_bytes: bytes | None = None
+    uri = getattr(output, "uri", None)
+
+    if isinstance(uri, str):
+        if ";base64," in uri:
+            try:
+                b64 = uri.split(";base64,", 1)[1]
+                data_bytes = base64.b64decode(b64)
+            except Exception:
+                data_bytes = None
         else:
-            print(f" Image URL generated: {data_uri}")
-            print(" You can open this URL in a browser to view the image")
+            try:
+                data_bytes = await asyncio.to_thread(lambda: urllib_request.urlopen(uri).read())
+            except Exception:
+                data_bytes = None
 
-    except Exception as e:
-        print(f" Error processing image data: {e}")
-        print(" Image generated but couldn't parse details")
+    if data_bytes is None:
+        raise RuntimeError("Image output present but could not retrieve bytes.")
+
+    async with aiofiles.open(file_path, "wb") as f:
+        await f.write(data_bytes)
+
+    print(f"Image downloaded and saved to: {file_path}")
 
 
 async def main() -> None:
     print("=== OpenAI Responses Image Generation Agent Example ===")
 
     # Create an agent with customized image generation options
-    agent = OpenAIResponsesClient().as_agent(
+    client = OpenAIResponsesClient()
+    agent = client.as_agent(
         instructions="You are a helpful AI that can generate images.",
         tools=[
-            HostedImageGenerationTool(
-                options={
-                    "size": "1024x1024",
-                    "output_format": "webp",
-                }
+            client.get_image_generation_tool(
+                size="1024x1024",
+                output_format="webp",
             )
         ],
     )
 
-    query = "Generate a nice beach scenery with blue skies in summer time."
+    query = "Generate a black furry cat."
     print(f"User: {query}")
-    print("Generating image with parameters: 1024x1024 size, transparent background, low quality, WebP format...")
+    print("Generating image with parameters: 1024x1024 size, WebP format...")
 
     result = await agent.run(query)
     print(f"Agent: {result.text}")
 
-    # Show information about the generated image
+    # Find and save the generated image
+    image_saved = False
     for message in result.messages:
         for content in message.contents:
-            if content.type == "image_generation_tool_result" and content.outputs:
-                for output in content.outputs:
-                    if output.type in ("data", "uri") and output.uri:
-                        show_image_info(output.uri)
-                        break
+            if content.type == "image_generation_tool_result_tool_result" and content.outputs:
+                output = content.outputs
+                if isinstance(output, Content) and output.uri:
+                    await save_image(output)
+                    image_saved = True
+                elif isinstance(output, list):
+                    for out in output:
+                        if isinstance(out, Content) and out.uri:
+                            await save_image(out)
+                            image_saved = True
+                            break
+                if image_saved:
+                    break
+        if image_saved:
+            break
+
+    if not image_saved:
+        print("No image data found in the agent response.")
 
 
 if __name__ == "__main__":

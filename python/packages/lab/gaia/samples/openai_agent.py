@@ -25,7 +25,7 @@ Example:
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from agent_framework import Agent, HostedCodeInterpreterTool, HostedWebSearchTool
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 
 
@@ -54,11 +54,8 @@ async def create_gaia_agent() -> AsyncIterator[Agent]:
         instructions="Solve tasks to your best ability. Use Web Search to find "
         "information and Code Interpreter to perform calculations and data analysis.",
         tools=[
-            HostedWebSearchTool(
-                name="Web Search",
-                description="Search the web for current information",
-            ),
-            HostedCodeInterpreterTool(),
+            OpenAIResponsesClient.get_web_search_tool(),
+            OpenAIResponsesClient.get_code_interpreter_tool(),
         ],
     ) as agent:
         yield agent
