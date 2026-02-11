@@ -163,9 +163,19 @@ class Mem0Provider(ContextProvider):
         # Build filters from init parameters
         filters = self._build_filters()
 
+        # Prepare search kwargs based on client type
+        # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
+        # AsyncMemoryClient (Platform) expects them in a filters dict
+        search_kwargs: dict[str, Any] = {"query": input_text}
+        if isinstance(self.mem0_client, AsyncMemory):
+            # OSS client: pass scoping parameters as direct kwargs
+            search_kwargs.update(filters)
+        else:
+            # Platform client: pass scoping parameters in filters dict
+            search_kwargs["filters"] = filters
+
         search_response: MemorySearchResponse_v1_1 | MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
-            query=input_text,
-            filters=filters,
+            **search_kwargs
         )
 
         # Depending on the API version, the response schema varies slightly

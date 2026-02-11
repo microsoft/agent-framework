@@ -33,6 +33,18 @@ def mock_mem0_client() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_oss_mem0_client() -> AsyncMock:
+    """Create a mock Mem0 OSS AsyncMemory client."""
+    from mem0 import AsyncMemory
+
+    # AsyncMemory doesn't have context manager support, so we create a simple mock
+    mock_client = AsyncMock(spec=AsyncMemory)
+    mock_client.add = AsyncMock()
+    mock_client.search = AsyncMock()
+    return mock_client
+
+
+@pytest.fixture
 def sample_messages() -> list[Message]:
     """Create sample chat messages for testing."""
     return [
@@ -432,6 +444,50 @@ class TestMem0ProviderModelInvoking:
         expected_instructions = "## Custom Context\nRemember these details:\nTest memory"
         assert context.messages
         assert context.messages[0].text == expected_instructions
+
+    async def test_model_invoking_with_oss_client(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """Test invoking with OSS AsyncMemory client - should pass user_id as direct kwarg."""
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_oss_mem0_client)
+        message = Message(role="user", text="What's the weather?")
+
+        # Mock search results for OSS client
+        mock_oss_mem0_client.search.return_value = [
+            {"memory": "User likes outdoor activities"},
+            {"memory": "User lives in Seattle"},
+        ]
+
+        context = await provider.invoking(message)
+
+        # Verify search was called with user_id as direct kwarg, not in filters
+        mock_oss_mem0_client.search.assert_called_once()
+        call_args = mock_oss_mem0_client.search.call_args
+        assert call_args.kwargs["query"] == "What's the weather?"
+        assert call_args.kwargs["user_id"] == "user123"
+        assert "filters" not in call_args.kwargs or call_args.kwargs.get("filters") is None
+
+        assert isinstance(context, Context)
+        assert context.messages
+
+    async def test_model_invoking_with_oss_client_all_params(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """Test invoking with OSS client with all scoping parameters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id="agent456",
+            thread_id="thread789",
+            mem0_client=mock_oss_mem0_client,
+        )
+        message = Message(role="user", text="Hello")
+
+        mock_oss_mem0_client.search.return_value = []
+
+        await provider.invoking(message)
+
+        # Verify search was called with direct kwargs
+        call_args = mock_oss_mem0_client.search.call_args
+        assert call_args.kwargs["user_id"] == "user123"
+        assert call_args.kwargs["agent_id"] == "agent456"
+        assert call_args.kwargs["run_id"] == "thread789"
+        assert "filters" not in call_args.kwargs or call_args.kwargs.get("filters") is None
 
 
 class TestMem0ProviderValidation:
