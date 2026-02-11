@@ -200,6 +200,7 @@ class AzureOpenAIRealtimeClient(AzureOpenAIConfigMixin, BaseRealtimeClient):
 
         session_config = self._build_session_config(config)
         await self._connection.session.update(session=session_config)  # type: ignore[arg-type]
+        self._connected = True
 
     async def update_session(self, config: RealtimeSessionConfig) -> None:
         """Update session configuration on an existing connection.
@@ -222,6 +223,7 @@ class AzureOpenAIRealtimeClient(AzureOpenAIConfigMixin, BaseRealtimeClient):
 
     async def disconnect(self) -> None:
         """Disconnect from Azure OpenAI Realtime API."""
+        self._connected = False
         if self._connection_manager:
             with contextlib.suppress(Exception):
                 await self._connection_manager.__aexit__(None, None, None)
