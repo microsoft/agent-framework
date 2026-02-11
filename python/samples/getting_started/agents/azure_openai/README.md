@@ -36,6 +36,9 @@ Make sure to set the following environment variables before running the examples
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI Responses deployment
 
+For the Foundry project sample (`azure_responses_client_with_foundry.py`), also set:
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+
 Optionally, you can set:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-02-15-preview`)
 - `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
