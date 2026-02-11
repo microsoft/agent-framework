@@ -62,22 +62,6 @@ def get_time(
     return f"The current time in {timezone_name} is {current_time.strftime('%I:%M %p')}."
 
 
-@tool
-def calculate(
-    expression: Annotated[str, Field(description="A math expression like '2 + 2' or '10 * 5'")],
-) -> str:
-    """Evaluate a simple math expression."""
-    try:
-        # Simple eval for demo - in production use a safer parser
-        allowed_chars = set("0123456789+-*/(). ")
-        if all(c in allowed_chars for c in expression):
-            result = eval(expression)
-            return f"The result of {expression} is {result}"
-        return "Invalid expression"
-    except Exception:
-        return "Could not evaluate expression"
-
-
 def create_realtime_client(client_type: str) -> BaseRealtimeClient:
     """Create a realtime client based on the specified type."""
     if client_type == "openai":
@@ -124,11 +108,11 @@ async def main(client_type: str) -> None:
         realtime_client=client,
         name="ToolsAssistant",
         instructions="""You are a helpful voice assistant with access to tools.
-        You can check the weather, tell the time, and do calculations.
+        You can check the weather and tell the time.
         When asked about these topics, use your tools to provide accurate information.
         Keep your responses conversational and brief.""",
         voice="alloy",
-        tools=[get_weather, get_time, calculate],
+        tools=[get_weather, get_time],
     )
 
     # 3. Set up audio I/O
@@ -138,7 +122,6 @@ async def main(client_type: str) -> None:
     print("Available tools:")
     print("  - get_weather(location): Get weather for a city")
     print("  - get_time(timezone): Get current time")
-    print("  - calculate(expression): Evaluate math")
 
     print("\nStarting audio devices...")
     microphone.start()
@@ -229,7 +212,6 @@ Using client type: openai
 Available tools:
   - get_weather(location): Get weather for a city
   - get_time(timezone): Get current time
-  - calculate(expression): Evaluate math
 
 Starting audio devices...
 
