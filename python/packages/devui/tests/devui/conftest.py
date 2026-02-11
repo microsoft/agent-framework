@@ -20,7 +20,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     BaseChatClient,
     ChatResponse,
@@ -162,19 +162,19 @@ class MockAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
@@ -184,7 +184,7 @@ class MockAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
@@ -208,19 +208,19 @@ class MockToolCallingAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         return AgentResponse(messages=[Message("assistant", ["done"])])
@@ -229,7 +229,7 @@ class MockToolCallingAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         async def _iter() -> AsyncIterable[AgentResponseUpdate]:

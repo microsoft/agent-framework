@@ -222,7 +222,7 @@ class HandoffAgentExecutor(AgentExecutor):
             autonomous_mode_turn_limit: Maximum number of autonomous turns before requesting user input.
         """
         cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs)
-        super().__init__(cloned_agent, agent_thread=agent_thread)
+        super().__init__(cloned_agent, session=agent_thread)
 
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
@@ -306,8 +306,7 @@ class HandoffAgentExecutor(AgentExecutor):
             id=agent.id,
             name=agent.name,
             description=agent.description,
-            chat_message_store_factory=agent.chat_message_store_factory,
-            context_provider=agent.context_provider,
+            context_providers=agent.context_providers,
             middleware=middleware,
             default_options=cloned_options,  # type: ignore[arg-type]
         )

@@ -675,7 +675,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self.default_options: dict[str, Any] = {
             "model_id": opts.pop("model_id", None) or (getattr(self.client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
-            "conversation_id": conversation_id,
+            "conversation_id": opts.pop("conversation_id", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "instructions": instructions_,
             "logit_bias": opts.pop("logit_bias", None),

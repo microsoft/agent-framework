@@ -441,19 +441,19 @@ def mock_chat_agent():
             self.description = "Test agent description"
             self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
-        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
+        def run(self, messages=None, *, session=None, stream=False, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(
                 messages=[Message("assistant", ["Agent response"])],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
             )
 
-        async def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 
             async def _stream():
@@ -1572,12 +1572,12 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             messages=None,
             *,
             stream: bool = False,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             if stream:
                 return ResponseStream(
-                    self._run_stream(messages=messages, thread=thread),
+                    self._run_stream(messages=messages, session=session),
                     finalizer=lambda x: AgentResponse.from_updates(x),
                 )
             return AgentResponse(messages=[Message("assistant", ["Test response"])])
@@ -1586,7 +1586,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             self,
             messages=None,
             *,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             from agent_framework import AgentResponseUpdate
@@ -1635,7 +1635,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             raise RuntimeError("Agent failed")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):
@@ -1685,15 +1685,15 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[Message("assistant", ["Test"])])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant")
                 yield AgentResponseUpdate(contents=[Content.from_text("World")], role="assistant")
@@ -1822,15 +1822,15 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Starting")], role="assistant")
                 raise RuntimeError("Stream failed")
@@ -1919,7 +1919,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             if stream:
                 return ResponseStream(
                     self._run_stream(messages=messages, **kwargs),
@@ -1927,7 +1927,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
                 )
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
@@ -1974,15 +1974,15 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream(messages=messages, **kwargs)
             return self._run(messages=messages, **kwargs)
 
-        async def _run(self, messages=None, *, thread=None, **kwargs):
+        async def _run(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
     class TestAgent(AgentTelemetryLayer, _TestAgent):
