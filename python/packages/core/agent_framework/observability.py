@@ -39,7 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
-    from ._threads import AgentThread
+    from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
@@ -1280,7 +1280,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1290,7 +1290,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1299,7 +1299,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1312,7 +1312,7 @@ class AgentTelemetryLayer:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
 
@@ -1327,7 +1327,7 @@ class AgentTelemetryLayer:
             agent_id=getattr(self, "id", "unknown"),
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
-            thread_id=thread.service_thread_id if thread else None,
+            thread_id=session.service_session_id if session else None,
             all_options=merged_options,
             **kwargs,
         )
@@ -1336,7 +1336,7 @@ class AgentTelemetryLayer:
             run_result = super_run(
                 messages=messages,
                 stream=True,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1423,7 +1423,7 @@ class AgentTelemetryLayer:
                     response = await super_run(
                         messages=messages,
                         stream=False,
-                        thread=thread,
+                        session=session,
                         **kwargs,
                     )
                 except Exception as exception:

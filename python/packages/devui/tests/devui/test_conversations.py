@@ -83,29 +83,29 @@ async def test_delete_conversation():
 
 
 @pytest.mark.asyncio
-async def test_get_thread():
-    """Test getting underlying AgentThread."""
+async def test_get_session():
+    """Test getting AgentSession for execution."""
     store = InMemoryConversationStore()
 
     # Create conversation
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
 
-    # Get thread
-    thread = store.get_thread(conversation.id)
+    # Get session
+    session = store.get_session(conversation.id)
 
-    assert thread is not None
-    # AgentThread should have message_store
-    assert hasattr(thread, "message_store")
+    assert session is not None
+    # AgentSession should have session_id
+    assert hasattr(session, "session_id")
 
 
 @pytest.mark.asyncio
-async def test_get_thread_not_found():
-    """Test getting thread for non-existent conversation."""
+async def test_get_session_not_found():
+    """Test getting session for non-existent conversation."""
     store = InMemoryConversationStore()
 
-    thread = store.get_thread("conv_nonexistent")
+    session = store.get_session("conv_nonexistent")
 
-    assert thread is None
+    assert session is None
 
 
 @pytest.mark.asyncio
@@ -206,8 +206,8 @@ async def test_list_items_converts_function_calls():
     # Create conversation
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
 
-    # Get the underlying thread and set up message store
-    thread = store.get_thread(conversation.id)
+    # Get the underlying thread for internal message store setup
+    thread = store._conversations[conversation.id]["thread"]
     assert thread is not None
 
     # Initialize message store if not present
@@ -291,8 +291,8 @@ async def test_list_items_handles_images_and_files():
     # Create conversation
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
 
-    # Get the underlying thread
-    thread = store.get_thread(conversation.id)
+    # Get the underlying thread for internal message store setup
+    thread = store._conversations[conversation.id]["thread"]
     assert thread is not None
 
     if thread.message_store is None:

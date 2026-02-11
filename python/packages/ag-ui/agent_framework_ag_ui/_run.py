@@ -27,7 +27,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentThread,
+    AgentSession,
     Content,
     Message,
     SupportsAgentRun,
@@ -812,9 +812,9 @@ async def run_agent_stream(
     # Create thread (with service thread support)
     if config.use_service_thread:
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        thread = AgentThread(service_thread_id=supplied_thread_id)
+        thread = AgentSession(service_session_id=supplied_thread_id)
     else:
-        thread = AgentThread()
+        thread = AgentSession()
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
@@ -826,7 +826,7 @@ async def run_agent_stream(
     thread.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]
 
     # Build run kwargs (Feature #6: Azure store flag when metadata present)
-    run_kwargs: dict[str, Any] = {"thread": thread}
+    run_kwargs: dict[str, Any] = {"session": thread}
     if tools:
         run_kwargs["tools"] = tools
     # Filter out AG-UI internal metadata keys before passing to chat client

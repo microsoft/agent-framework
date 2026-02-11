@@ -38,7 +38,7 @@ from typing import Any, cast
 
 from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
-from agent_framework._threads import AgentThread
+from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
@@ -196,7 +196,7 @@ class HandoffAgentExecutor(AgentExecutor):
         agent: SupportsAgentRun,
         handoffs: Sequence[HandoffConfiguration],
         *,
-        agent_thread: AgentThread | None = None,
+        agent_thread: AgentSession | None = None,
         is_start_agent: bool = False,
         termination_condition: TerminationCondition | None = None,
         autonomous_mode: bool = False,
@@ -208,7 +208,7 @@ class HandoffAgentExecutor(AgentExecutor):
         Args:
             agent: The agent to execute
             handoffs: Sequence of handoff configurations defining target agents
-            agent_thread: Optional AgentThread that manages the agent's execution context
+            agent_thread: Optional AgentSession that manages the agent's execution context
             is_start_agent: Whether this agent is the starting agent in the handoff workflow.
                             There can only be one starting agent in a handoff workflow.
             termination_condition: Optional callable that determines when to terminate the workflow

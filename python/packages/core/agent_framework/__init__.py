@@ -15,6 +15,7 @@ from ._logging import *  # noqa: F403
 from ._mcp import *  # noqa: F403
 from ._memory import *  # noqa: F403
 from ._middleware import *  # noqa: F403
+from ._sessions import *  # noqa: F403
 from ._telemetry import *  # noqa: F403
 from ._threads import *  # noqa: F403
 from ._tools import *  # noqa: F403

@@ -13,7 +13,7 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import Any, Literal, cast
 
-from agent_framework import AgentThread, Message
+from agent_framework import AgentSession, AgentThread, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
@@ -152,17 +152,17 @@ class ConversationStore(ABC):
         pass
 
     @abstractmethod
-    def get_thread(self, conversation_id: str) -> AgentThread | None:
-        """Get underlying AgentThread for execution (internal use).
+    def get_session(self, conversation_id: str) -> AgentSession | None:
+        """Get AgentSession for agent execution.
 
         This is the critical method that allows the executor to get the
-        AgentThread for running agents with conversation context.
+        AgentSession for running agents with conversation context.
 
         Args:
             conversation_id: Conversation ID
 
         Returns:
-            AgentThread object or None if not found
+            AgentSession object or None if not found
         """
         pass
 
@@ -229,8 +229,9 @@ class InMemoryConversationStore(ConversationStore):
         conv_id = conversation_id or f"conv_{uuid.uuid4().hex}"
         created_at = int(time.time())
 
-        # Create AgentThread with default ChatMessageStore
+        # Create AgentThread for internal message storage and AgentSession for execution
         thread = AgentThread()
+        session = AgentSession(session_id=conv_id)
 
         # Create session-scoped checkpoint storage (one per conversation)
         checkpoint_storage = InMemoryCheckpointStorage()
@@ -238,6 +239,7 @@ class InMemoryConversationStore(ConversationStore):
         self._conversations[conv_id] = {
             "id": conv_id,
             "thread": thread,
+            "session": session,
             "checkpoint_storage": checkpoint_storage,  # Stored alongside thread
             "metadata": metadata or {},
             "created_at": created_at,
@@ -589,10 +591,10 @@ class InMemoryConversationStore(ConversationStore):
 
         return None
 
-    def get_thread(self, conversation_id: str) -> AgentThread | None:
-        """Get AgentThread for execution - CRITICAL for agent.run()."""
+    def get_session(self, conversation_id: str) -> AgentSession | None:
+        """Get AgentSession for execution - CRITICAL for agent.run()."""
         conv_data = self._conversations.get(conversation_id)
-        return conv_data["thread"] if conv_data else None
+        return conv_data["session"] if conv_data else None
 
     def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
         """Add a trace event to the conversation for context inspection.

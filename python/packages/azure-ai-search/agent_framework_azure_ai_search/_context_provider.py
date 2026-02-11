@@ -2,9 +2,8 @@
 
 """New-pattern Azure AI Search context provider using BaseContextProvider.
 
-This module provides ``_AzureAISearchContextProvider``, a side-by-side implementation of
-:class:`AzureAISearchContextProvider` built on the new :class:`BaseContextProvider` hooks
-pattern. It will replace the existing class in PR2.
+This module provides ``AzureAISearchContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -111,16 +110,11 @@ logger = get_logger(__name__)
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
 
-class _AzureAISearchContextProvider(BaseContextProvider):
+class AzureAISearchContextProvider(BaseContextProvider):
     """Azure AI Search context provider using the new BaseContextProvider hooks pattern.
 
     Retrieves relevant context from Azure AI Search using semantic or agentic search
-    modes. This is the new-pattern equivalent of :class:`AzureAISearchContextProvider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`AzureAISearchContextProvider`. It will replace the existing class
-        in PR2.
+    modes.
     """
 
     _DEFAULT_SEARCH_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
@@ -621,4 +615,4 @@ class _AzureAISearchContextProvider(BaseContextProvider):
         return text
 
 
-__all__ = ["_AzureAISearchContextProvider"]
+__all__ = ["AzureAISearchContextProvider"]

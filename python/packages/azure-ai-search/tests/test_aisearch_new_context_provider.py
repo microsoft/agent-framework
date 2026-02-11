@@ -9,7 +9,7 @@ from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 
-from agent_framework_azure_ai_search._context_provider import _AzureAISearchContextProvider
+from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
 
 # -- Helpers -------------------------------------------------------------------
 
@@ -56,7 +56,7 @@ def mock_search_client_empty() -> AsyncMock:
     return client
 
 
-def _make_provider(**overrides) -> _AzureAISearchContextProvider:
+def _make_provider(**overrides) -> AzureAISearchContextProvider:
     """Create a semantic-mode provider with mocked internals (skips auto-discovery)."""
     defaults = {
         "source_id": "aisearch",
@@ -65,7 +65,7 @@ def _make_provider(**overrides) -> _AzureAISearchContextProvider:
         "api_key": "test-key",
     }
     defaults.update(overrides)
-    provider = _AzureAISearchContextProvider(**defaults)
+    provider = AzureAISearchContextProvider(**defaults)
     provider._auto_discovered_vector_field = True  # skip auto-discovery
     return provider
 
@@ -89,7 +89,7 @@ class TestInitSemantic:
 
     def test_missing_endpoint_raises(self) -> None:
         with patch.dict(os.environ, {}, clear=True), pytest.raises(ServiceInitializationError, match="endpoint"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint=None,
                 index_name="idx",
@@ -98,7 +98,7 @@ class TestInitSemantic:
 
     def test_missing_index_name_semantic_raises(self) -> None:
         with pytest.raises(ServiceInitializationError, match="index name"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name=None,
@@ -112,7 +112,7 @@ class TestInitSemantic:
             "AZURE_SEARCH_API_KEY": "env-key",
         }
         with patch.dict(os.environ, env, clear=False):
-            provider = _AzureAISearchContextProvider(source_id="env-test")
+            provider = AzureAISearchContextProvider(source_id="env-test")
             assert provider.endpoint == "https://env.search.windows.net"
             assert provider.index_name == "env-index"
 
@@ -125,7 +125,7 @@ class TestInitAgenticValidation:
 
     def test_both_index_and_kb_raises(self) -> None:
         with pytest.raises(ServiceInitializationError, match="not both"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -138,7 +138,7 @@ class TestInitAgenticValidation:
 
     def test_neither_index_nor_kb_raises(self) -> None:
         with pytest.raises(ServiceInitializationError, match="provide either"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 api_key="key",
@@ -147,7 +147,7 @@ class TestInitAgenticValidation:
 
     def test_missing_model_deployment_name_raises(self) -> None:
         with pytest.raises(ServiceInitializationError, match="model_deployment_name"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -158,7 +158,7 @@ class TestInitAgenticValidation:
 
     def test_vector_field_without_embedding_raises(self) -> None:
         with pytest.raises(ValueError, match="embedding_function"):
-            _AzureAISearchContextProvider(
+            AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
