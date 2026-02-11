@@ -463,7 +463,7 @@ class TestMem0ProviderModelInvoking:
         call_args = mock_oss_mem0_client.search.call_args
         assert call_args.kwargs["query"] == "What's the weather?"
         assert call_args.kwargs["user_id"] == "user123"
-        assert "filters" not in call_args.kwargs or call_args.kwargs.get("filters") is None
+        assert call_args.kwargs.get("filters") is None
 
         assert isinstance(context, Context)
         assert context.messages
@@ -487,7 +487,7 @@ class TestMem0ProviderModelInvoking:
         assert call_args.kwargs["user_id"] == "user123"
         assert call_args.kwargs["agent_id"] == "agent456"
         assert call_args.kwargs["run_id"] == "thread789"
-        assert "filters" not in call_args.kwargs or call_args.kwargs.get("filters") is None
+        assert call_args.kwargs.get("filters") is None
 
 
 class TestMem0ProviderValidation:
