@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ._events import WorkflowEvent
-    from ._runner_context import Message
+    from ._runner_context import WorkflowMessage
 
 # Type alias for checkpoint IDs in case we want to change the
 # underlying type in the future (e.g., to UUID or a custom class)
@@ -75,7 +75,7 @@ class WorkflowCheckpoint:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Core workflow state
-    messages: dict[str, list[Message]] = field(default_factory=dict)  # type: ignore[misc]
+    messages: dict[str, list[WorkflowMessage]] = field(default_factory=dict)  # type: ignore[misc]
     state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
     pending_request_info_events: dict[str, WorkflowEvent[Any]] = field(default_factory=dict)  # type: ignore[misc]
 

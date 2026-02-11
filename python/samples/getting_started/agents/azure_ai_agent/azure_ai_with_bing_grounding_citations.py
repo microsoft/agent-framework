@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import Annotation, HostedWebSearchTool
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework import Annotation
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -27,18 +27,17 @@ To set up Bing Grounding:
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with Bing Grounding search."""
-    # 1. Create Bing Grounding search tool using HostedWebSearchTool
-    # The connection ID will be automatically picked up from environment variable
-    bing_search_tool = HostedWebSearchTool(
-        name="Bing Grounding Search",
-        description="Search the web for current information using Bing",
-    )
-
-    # 2. Use AzureAIAgentsProvider for agent creation and management
+    # Use AzureAIAgentsProvider for agent creation and management
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        # Create Bing Grounding search tool using instance method
+        # The connection ID will be automatically picked up from environment variable
+        bing_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="BingSearchAgent",
             instructions=(
@@ -46,7 +45,7 @@ async def main() -> None:
                 "Use the Bing search tool to find up-to-date information and provide accurate, "
                 "well-sourced answers. Always cite your sources when possible."
             ),
-            tools=bing_search_tool,
+            tools=[bing_search_tool],
         )
 
         # 3. Demonstrate agent capabilities with web search

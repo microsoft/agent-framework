@@ -2,13 +2,13 @@
 
 """Tests for WorkflowEvent[T] generic type annotations."""
 
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage
+from agent_framework import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._events import WorkflowEvent
 
 
 def test_workflow_event_with_agent_response_data_type() -> None:
     """Verify WorkflowEvent[AgentResponse].data is typed as AgentResponse."""
-    response = AgentResponse(messages=[ChatMessage(role="assistant", text="Hello")])
+    response = AgentResponse(messages=[Message(role="assistant", text="Hello")])
     event: WorkflowEvent[AgentResponse] = WorkflowEvent.emit(executor_id="test", data=response)
 
     # This assignment should pass type checking without a cast
@@ -29,7 +29,7 @@ def test_workflow_event_with_agent_response_update_data_type() -> None:
 
 def test_workflow_event_repr() -> None:
     """Verify WorkflowEvent.__repr__ uses consistent format."""
-    response = AgentResponse(messages=[ChatMessage(role="assistant", text="Hello")])
+    response = AgentResponse(messages=[Message(role="assistant", text="Hello")])
     event: WorkflowEvent[AgentResponse] = WorkflowEvent.emit(executor_id="test", data=response)
 
     repr_str = repr(event)

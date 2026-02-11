@@ -12,7 +12,7 @@ from collections.abc import Callable, Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import httpx
 from anyio import ClosedResourceError
@@ -28,12 +28,11 @@ from pydantic import BaseModel, create_model
 
 from ._tools import (
     FunctionTool,
-    HostedMCPSpecificApproval,
     _build_pydantic_model_from_json_schema,
 )
 from ._types import (
-    ChatMessage,
     Content,
+    Message,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -43,7 +42,22 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
+
+
+class MCPSpecificApproval(TypedDict, total=False):
+    """Represents the specific approval mode for an MCP tool.
+
+    When using this mode, the user must specify which tools always or never require approval.
+
+    Attributes:
+        always_require_approval: A sequence of tool names that always require approval.
+        never_require_approval: A sequence of tool names that never require approval.
+    """
+
+    always_require_approval: Collection[str] | None
+    never_require_approval: Collection[str] | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +83,9 @@ __all__ = [
 
 def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
-) -> ChatMessage:
+) -> Message:
     """Parse an MCP container type into an Agent Framework type."""
-    return ChatMessage(
+    return Message(
         role=mcp_type.role,
         contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
@@ -256,9 +270,9 @@ def _prepare_content_for_mcp(
 
 
 def _prepare_message_for_mcp(
-    content: ChatMessage,
+    content: Message,
 ) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Prepare a ChatMessage for MCP format."""
+    """Prepare a Message for MCP format."""
     messages: list[
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
     ] = []
@@ -327,7 +341,7 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
         parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
@@ -335,7 +349,7 @@ class MCPTool:
         parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
@@ -356,7 +370,7 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self.session = session
         self.request_timeout = request_timeout
-        self.chat_client = chat_client
+        self.client = client
         self._functions: list[FunctionTool[Any, Any]] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
@@ -507,17 +521,17 @@ class MCPTool:
         Returns:
             Either a CreateMessageResult with the generated message or ErrorData if generation fails.
         """
-        if not self.chat_client:
+        if not self.client:
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
                 message="No chat client available. Please set a chat client.",
             )
         logger.debug("Sampling callback called with params: %s", params)
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         for msg in params.messages:
             messages.append(_parse_message_from_mcp(msg))
         try:
-            response = await self.chat_client.get_response(
+            response = await self.client.get_response(
                 messages,
                 temperature=params.temperature,
                 max_tokens=params.maxTokens,
@@ -634,7 +648,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = FunctionTool(
+                func: FunctionTool[BaseModel, list[Message] | Any | types.GetPromptResult] = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -801,7 +815,7 @@ class MCPTool:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
-    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage] | Any | types.GetPromptResult:
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[Message] | Any | types.GetPromptResult:
         """Call a prompt with the given arguments.
 
         Args:
@@ -909,7 +923,7 @@ class MCPStdioTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStdioTool, ChatAgent
+            from agent_framework import MCPStdioTool, Agent
 
             # Create an MCP stdio tool
             mcp_tool = MCPStdioTool(
@@ -921,7 +935,7 @@ class MCPStdioTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("List files in the directory")
     """
 
@@ -937,12 +951,12 @@ class MCPStdioTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -982,7 +996,7 @@ class MCPStdioTool(MCPTool):
             args: The arguments to pass to the command.
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -992,7 +1006,7 @@ class MCPStdioTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
@@ -1031,7 +1045,7 @@ class MCPStreamableHTTPTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStreamableHTTPTool, ChatAgent
+            from agent_framework import MCPStreamableHTTPTool, Agent
 
             # Create an MCP HTTP tool
             mcp_tool = MCPStreamableHTTPTool(
@@ -1042,7 +1056,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Fetch data from the API")
     """
 
@@ -1058,10 +1072,10 @@ class MCPStreamableHTTPTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
@@ -1101,7 +1115,7 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             http_client: Optional httpx.AsyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
@@ -1115,7 +1129,7 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
@@ -1148,7 +1162,7 @@ class MCPWebsocketTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPWebsocketTool, ChatAgent
+            from agent_framework import MCPWebsocketTool, Agent
 
             # Create an MCP WebSocket tool
             mcp_tool = MCPWebsocketTool(
@@ -1157,7 +1171,7 @@ class MCPWebsocketTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Connect to the real-time service")
     """
 
@@ -1173,9 +1187,9 @@ class MCPWebsocketTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        chat_client: ChatClientProtocol | None = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1213,7 +1227,7 @@ class MCPWebsocketTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -1223,7 +1237,7 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,

@@ -105,12 +105,12 @@ class WorkerExecutor(Executor):
 async def main():
     # Build workflow with checkpointing enabled
     checkpoint_storage = InMemoryCheckpointStorage()
+    start = StartExecutor(id="start")
+    worker = WorkerExecutor(id="worker")
     workflow_builder = (
-        WorkflowBuilder(start_executor="start", checkpoint_storage=checkpoint_storage)
-        .register_executor(lambda: StartExecutor(id="start"), name="start")
-        .register_executor(lambda: WorkerExecutor(id="worker"), name="worker")
-        .add_edge("start", "worker")
-        .add_edge("worker", "worker")  # Self-loop for iterative processing
+        WorkflowBuilder(start_executor=start, checkpoint_storage=checkpoint_storage)
+        .add_edge(start, worker)
+        .add_edge(worker, worker)  # Self-loop for iterative processing
     )
 
     # Run workflow with automatic checkpoint recovery

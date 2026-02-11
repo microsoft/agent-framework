@@ -9,15 +9,14 @@ from azure.identity import AzureCliCredential
 from pydantic import Field
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    HostedCodeInterpreterTool,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework.azure import AzureOpenAIAssistantsClient
@@ -83,19 +82,19 @@ def mock_async_azure_openai() -> MagicMock:
 
 def test_azure_assistants_client_init_with_client(mock_async_azure_openai: MagicMock) -> None:
     """Test AzureOpenAIAssistantsClient initialization with existing client."""
-    chat_client = create_test_azure_assistants_client(
+    client = create_test_azure_assistants_client(
         mock_async_azure_openai,
         deployment_name="test_chat_deployment",
         assistant_id="existing-assistant-id",
         thread_id="test-thread-id",
     )
 
-    assert chat_client.client is mock_async_azure_openai
-    assert chat_client.model_id == "test_chat_deployment"
-    assert chat_client.assistant_id == "existing-assistant-id"
-    assert chat_client.thread_id == "test-thread-id"
-    assert not chat_client._should_delete_assistant  # type: ignore
-    assert isinstance(chat_client, ChatClientProtocol)
+    assert client.client is mock_async_azure_openai
+    assert client.model_id == "test_chat_deployment"
+    assert client.assistant_id == "existing-assistant-id"
+    assert client.thread_id == "test-thread-id"
+    assert not client._should_delete_assistant  # type: ignore
+    assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_azure_assistants_client_init_auto_create_client(
@@ -103,7 +102,7 @@ def test_azure_assistants_client_init_auto_create_client(
     mock_async_azure_openai: MagicMock,
 ) -> None:
     """Test AzureOpenAIAssistantsClient initialization with auto-created client."""
-    chat_client = AzureOpenAIAssistantsClient(
+    client = AzureOpenAIAssistantsClient(
         deployment_name=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         assistant_name="TestAssistant",
         api_key=azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
@@ -111,11 +110,11 @@ def test_azure_assistants_client_init_auto_create_client(
         async_client=mock_async_azure_openai,
     )
 
-    assert chat_client.client is mock_async_azure_openai
-    assert chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert chat_client.assistant_id is None
-    assert chat_client.assistant_name == "TestAssistant"
-    assert not chat_client._should_delete_assistant  # type: ignore
+    assert client.client is mock_async_azure_openai
+    assert client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert client.assistant_id is None
+    assert client.assistant_name == "TestAssistant"
+    assert not client._should_delete_assistant  # type: ignore
 
 
 def test_azure_assistants_client_init_validation_fail() -> None:
@@ -138,32 +137,32 @@ def test_azure_assistants_client_init_with_default_headers(azure_openai_unit_tes
     """Test AzureOpenAIAssistantsClient initialization with default headers."""
     default_headers = {"X-Unit-Test": "test-guid"}
 
-    chat_client = AzureOpenAIAssistantsClient(
+    client = AzureOpenAIAssistantsClient(
         deployment_name="test_chat_deployment",
         api_key=azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         endpoint=azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
         default_headers=default_headers,
     )
 
-    assert chat_client.model_id == "test_chat_deployment"
-    assert isinstance(chat_client, ChatClientProtocol)
+    assert client.model_id == "test_chat_deployment"
+    assert isinstance(client, SupportsChatGetResponse)
 
     # Assert that the default header we added is present in the client's default headers
     for key, value in default_headers.items():
-        assert key in chat_client.client.default_headers
-        assert chat_client.client.default_headers[key] == value
+        assert key in client.client.default_headers
+        assert client.client.default_headers[key] == value
 
 
 async def test_azure_assistants_client_get_assistant_id_or_create_existing_assistant(
     mock_async_azure_openai: MagicMock,
 ) -> None:
     """Test _get_assistant_id_or_create when assistant_id is already provided."""
-    chat_client = create_test_azure_assistants_client(mock_async_azure_openai, assistant_id="existing-assistant-id")
+    client = create_test_azure_assistants_client(mock_async_azure_openai, assistant_id="existing-assistant-id")
 
-    assistant_id = await chat_client._get_assistant_id_or_create()  # type: ignore
+    assistant_id = await client._get_assistant_id_or_create()  # type: ignore
 
     assert assistant_id == "existing-assistant-id"
-    assert not chat_client._should_delete_assistant  # type: ignore
+    assert not client._should_delete_assistant  # type: ignore
     mock_async_azure_openai.beta.assistants.create.assert_not_called()
 
 
@@ -171,14 +170,14 @@ async def test_azure_assistants_client_get_assistant_id_or_create_create_new(
     mock_async_azure_openai: MagicMock,
 ) -> None:
     """Test _get_assistant_id_or_create when creating a new assistant."""
-    chat_client = create_test_azure_assistants_client(
+    client = create_test_azure_assistants_client(
         mock_async_azure_openai, deployment_name="test_chat_deployment", assistant_name="TestAssistant"
     )
 
-    assistant_id = await chat_client._get_assistant_id_or_create()  # type: ignore
+    assistant_id = await client._get_assistant_id_or_create()  # type: ignore
 
     assert assistant_id == "test-assistant-id"
-    assert chat_client._should_delete_assistant  # type: ignore
+    assert client._should_delete_assistant  # type: ignore
     mock_async_azure_openai.beta.assistants.create.assert_called_once()
 
 
@@ -186,38 +185,38 @@ async def test_azure_assistants_client_aclose_should_not_delete(
     mock_async_azure_openai: MagicMock,
 ) -> None:
     """Test close when assistant should not be deleted."""
-    chat_client = create_test_azure_assistants_client(
+    client = create_test_azure_assistants_client(
         mock_async_azure_openai, assistant_id="assistant-to-keep", should_delete_assistant=False
     )
 
-    await chat_client.close()  # type: ignore
+    await client.close()  # type: ignore
 
     # Verify assistant deletion was not called
     mock_async_azure_openai.beta.assistants.delete.assert_not_called()
-    assert not chat_client._should_delete_assistant  # type: ignore
+    assert not client._should_delete_assistant  # type: ignore
 
 
 async def test_azure_assistants_client_aclose_should_delete(mock_async_azure_openai: MagicMock) -> None:
     """Test close method calls cleanup."""
-    chat_client = create_test_azure_assistants_client(
+    client = create_test_azure_assistants_client(
         mock_async_azure_openai, assistant_id="assistant-to-delete", should_delete_assistant=True
     )
 
-    await chat_client.close()
+    await client.close()
 
     # Verify assistant deletion was called
     mock_async_azure_openai.beta.assistants.delete.assert_called_once_with("assistant-to-delete")
-    assert not chat_client._should_delete_assistant  # type: ignore
+    assert not client._should_delete_assistant  # type: ignore
 
 
 async def test_azure_assistants_client_async_context_manager(mock_async_azure_openai: MagicMock) -> None:
     """Test async context manager functionality."""
-    chat_client = create_test_azure_assistants_client(
+    client = create_test_azure_assistants_client(
         mock_async_azure_openai, assistant_id="assistant-to-delete", should_delete_assistant=True
     )
 
     # Test context manager
-    async with chat_client:
+    async with client:
         pass  # Just test that we can enter and exit
 
     # Verify cleanup was called on exit
@@ -229,7 +228,7 @@ def test_azure_assistants_client_serialize(azure_openai_unit_test_env: dict[str,
     default_headers = {"X-Unit-Test": "test-guid"}
 
     # Test basic initialization and to_dict
-    chat_client = AzureOpenAIAssistantsClient(
+    client = AzureOpenAIAssistantsClient(
         deployment_name="test_chat_deployment",
         assistant_id="test-assistant-id",
         assistant_name="TestAssistant",
@@ -239,7 +238,7 @@ def test_azure_assistants_client_serialize(azure_openai_unit_test_env: dict[str,
         default_headers=default_headers,
     )
 
-    dumped_settings = chat_client.to_dict()
+    dumped_settings = client.to_dict()
 
     assert dumped_settings["model_id"] == "test_chat_deployment"
     assert dumped_settings["assistant_id"] == "test-assistant-id"
@@ -267,17 +266,17 @@ def get_weather(
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
-        assert isinstance(azure_assistants_client, ChatClientProtocol)
+        assert isinstance(azure_assistants_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
         response = await azure_assistants_client.get_response(messages=messages)
@@ -292,10 +291,10 @@ async def test_azure_assistants_client_get_response() -> None:
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
-        assert isinstance(azure_assistants_client, ChatClientProtocol)
+        assert isinstance(azure_assistants_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
         response = await azure_assistants_client.get_response(
@@ -313,17 +312,17 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
-        assert isinstance(azure_assistants_client, ChatClientProtocol)
+        assert isinstance(azure_assistants_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the client can be used to get a response
         response = azure_assistants_client.get_response(messages=messages, stream=True)
@@ -344,10 +343,10 @@ async def test_azure_assistants_client_streaming() -> None:
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as azure_assistants_client:
-        assert isinstance(azure_assistants_client, ChatClientProtocol)
+        assert isinstance(azure_assistants_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the client can be used to get a response
         response = azure_assistants_client.get_response(
@@ -373,7 +372,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
     # First create an assistant to use in the test
     async with AzureOpenAIAssistantsClient(credential=AzureCliCredential()) as temp_client:
         # Get the assistant ID by triggering assistant creation
-        messages = [ChatMessage(role="user", text="Hello")]
+        messages = [Message(role="user", text="Hello")]
         await temp_client.get_response(messages=messages)
         assistant_id = temp_client.assistant_id
 
@@ -381,10 +380,10 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
         async with AzureOpenAIAssistantsClient(
             assistant_id=assistant_id, credential=AzureCliCredential()
         ) as azure_assistants_client:
-            assert isinstance(azure_assistants_client, ChatClientProtocol)
+            assert isinstance(azure_assistants_client, SupportsChatGetResponse)
             assert azure_assistants_client.assistant_id == assistant_id
 
-            messages = [ChatMessage(role="user", text="What can you do?")]
+            messages = [Message(role="user", text="What can you do?")]
 
             # Test that the client can be used to get a response
             response = await azure_assistants_client.get_response(messages=messages)
@@ -397,9 +396,9 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run():
-    """Test ChatAgent basic run functionality with AzureOpenAIAssistantsClient."""
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    """Test Agent basic run functionality with AzureOpenAIAssistantsClient."""
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -414,9 +413,9 @@ async def test_azure_assistants_agent_basic_run():
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run_streaming():
-    """Test ChatAgent basic streaming functionality with AzureOpenAIAssistantsClient."""
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    """Test Agent basic streaming functionality with AzureOpenAIAssistantsClient."""
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -434,9 +433,9 @@ async def test_azure_assistants_agent_basic_run_streaming():
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_thread_persistence():
-    """Test ChatAgent thread persistence across runs with AzureOpenAIAssistantsClient."""
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    """Test Agent thread persistence across runs with AzureOpenAIAssistantsClient."""
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -463,12 +462,12 @@ async def test_azure_assistants_agent_thread_persistence():
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_existing_thread_id():
-    """Test ChatAgent with existing thread ID to continue conversations across agent instances."""
+    """Test Agent with existing thread ID to continue conversations across agent instances."""
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -487,8 +486,8 @@ async def test_azure_assistants_agent_existing_thread_id():
 
     # Now continue with the same thread ID in a new agent instance
 
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
@@ -508,12 +507,12 @@ async def test_azure_assistants_agent_existing_thread_id():
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_code_interpreter():
-    """Test ChatAgent with code interpreter through AzureOpenAIAssistantsClient."""
+    """Test Agent with code interpreter through AzureOpenAIAssistantsClient."""
 
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[AzureOpenAIAssistantsClient.get_code_interpreter_tool()],
     ) as agent:
         # Request code execution
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
@@ -530,8 +529,8 @@ async def test_azure_assistants_agent_code_interpreter():
 async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""
 
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:

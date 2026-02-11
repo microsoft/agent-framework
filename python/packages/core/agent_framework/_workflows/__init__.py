@@ -51,8 +51,8 @@ from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
-    Message,
     RunnerContext,
+    WorkflowMessage,
 )
 from ._validation import (
     EdgeDuplicationError,
@@ -91,7 +91,6 @@ __all__ = [
     "GraphConnectivityError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "Message",
     "Runner",
     "RunnerContext",
     "SingleEdgeGroup",
@@ -115,6 +114,7 @@ __all__ = [
     "WorkflowEventType",
     "WorkflowException",
     "WorkflowExecutor",
+    "WorkflowMessage",
     "WorkflowRunResult",
     "WorkflowRunState",
     "WorkflowRunnerException",

@@ -7,18 +7,18 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
+    Agent,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 
 
-async def test_base_client_with_function_calling(chat_client_base: ChatClientProtocol):
+async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
     @tool(name="test_function", approval_mode="never_require")
@@ -29,14 +29,14 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
     assert exec_counter == 1
@@ -55,7 +55,7 @@ async def test_base_client_with_function_calling(chat_client_base: ChatClientPro
 
 
 @pytest.mark.parametrize("max_iterations", [3])
-async def test_base_client_with_function_calling_resets(chat_client_base: ChatClientProtocol):
+async def test_base_client_with_function_calling_resets(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
     @tool(name="test_function", approval_mode="never_require")
@@ -66,7 +66,7 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
@@ -74,14 +74,14 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="2", name="test_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
     assert exec_counter == 2
@@ -97,7 +97,7 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
     assert response.messages[3].contents[0].type == "function_result"
 
 
-async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):
+async def test_base_client_with_streaming_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
     @tool(name="test_function", approval_mode="never_require")
@@ -137,7 +137,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Cha
     assert exec_counter == 1
 
 
-async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_inside_aiohttp_server(chat_client_base: SupportsChatGetResponse):
     import aiohttp
     from aiohttp import web
 
@@ -151,7 +151,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatC
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(
@@ -162,10 +162,10 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatC
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_func])
+    agent = Agent(client=chat_client_base, tools=[ai_func])
 
     async def handler(request: web.Request) -> web.Response:
         thread = agent.get_new_thread()
@@ -190,7 +190,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatC
     assert exec_counter == 1
 
 
-async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: SupportsChatGetResponse):
     import asyncio
     import threading
     from queue import Queue
@@ -208,7 +208,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Cha
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(
@@ -219,10 +219,10 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Cha
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_func])
+    agent = Agent(client=chat_client_base, tools=[ai_func])
 
     ready_event = threading.Event()
     port_queue: Queue[int] = Queue()
@@ -297,7 +297,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Cha
 )
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_function_invocation_scenarios(
-    chat_client_base: ChatClientProtocol,
+    chat_client_base: SupportsChatGetResponse,
     streaming: bool,
     thread_type: str | None,
     approval_required: bool | str,
@@ -339,11 +339,11 @@ async def test_function_invocation_scenarios(
 
         # Single function call content
         func_call = Content.from_function_call(call_id="1", name=function_name, arguments='{"arg1": "value1"}')
-        completion = ChatMessage(role="assistant", text="done")
+        completion = Message(role="assistant", text="done")
 
-        chat_client_base.run_responses = [
-            ChatResponse(messages=ChatMessage(role="assistant", contents=[func_call]))
-        ] + ([] if approval_required else [ChatResponse(messages=completion)])
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[func_call]))] + (
+            [] if approval_required else [ChatResponse(messages=completion)]
+        )
 
         chat_client_base.streaming_responses = [
             [
@@ -371,7 +371,7 @@ async def test_function_invocation_scenarios(
             Content.from_function_call(call_id="2", name="approval_func", arguments='{"arg1": "value2"}'),
         ]
 
-        chat_client_base.run_responses = [ChatResponse(messages=ChatMessage(role="assistant", contents=func_calls))]
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=func_calls))]
 
         chat_client_base.streaming_responses = [
             [
@@ -468,7 +468,7 @@ async def test_function_invocation_scenarios(
             assert exec_counter == 0  # Neither function executed yet
 
 
-async def test_rejected_approval(chat_client_base: ChatClientProtocol):
+async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
     """Test that rejecting an approval alongside an approved one is handled correctly."""
 
     exec_counter_approved = 0
@@ -489,7 +489,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     # Setup: two function calls that require approval
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="approved_func", arguments='{"arg1": "value1"}'),
@@ -497,7 +497,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Get the response with approval requests
@@ -527,7 +527,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     )
 
     # Continue conversation with one approved and one rejected
-    all_messages = response.messages + [ChatMessage(role="user", contents=[approved_response, rejected_response])]
+    all_messages = response.messages + [Message(role="user", contents=[approved_response, rejected_response])]
 
     # Call get_response which will process the approvals
     await chat_client_base.get_response(
@@ -564,7 +564,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
                 assert msg.role == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
 
 
-async def test_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):
+async def test_approval_requests_in_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Approval requests should be added to the assistant message that contains the function call."""
     exec_counter = 0
 
@@ -576,7 +576,7 @@ async def test_approval_requests_in_assistant_message(chat_client_base: ChatClie
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
@@ -598,7 +598,7 @@ async def test_approval_requests_in_assistant_message(chat_client_base: ChatClie
     assert exec_counter == 0
 
 
-async def test_persisted_approval_messages_replay_correctly(chat_client_base: ChatClientProtocol):
+async def test_persisted_approval_messages_replay_correctly(chat_client_base: SupportsChatGetResponse):
     """Approval flow should work when messages are persisted and sent back (thread scenario)."""
 
     exec_counter = 0
@@ -611,14 +611,14 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Get approval request
@@ -628,7 +628,7 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
 
     # Store messages (like a thread would)
     persisted_messages = [
-        ChatMessage(role="user", text="hello"),
+        Message(role="user", text="hello"),
         *response1.messages,
     ]
 
@@ -639,7 +639,7 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
         function_call=approval_req.function_call,
         approved=True,
     )
-    persisted_messages.append(ChatMessage(role="user", contents=[approval_response]))
+    persisted_messages.append(Message(role="user", contents=[approval_response]))
 
     # Continue with all persisted messages
     response2 = await chat_client_base.get_response(
@@ -651,7 +651,7 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Ch
     assert exec_counter == 1
 
 
-async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: ChatClientProtocol):
+async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: SupportsChatGetResponse):
     """Processing approval should not create duplicate function calls in messages."""
 
     @tool(name="test_func", approval_mode="always_require")
@@ -660,14 +660,14 @@ async def test_no_duplicate_function_calls_after_approval_processing(chat_client
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response1 = await chat_client_base.get_response(
@@ -681,7 +681,7 @@ async def test_no_duplicate_function_calls_after_approval_processing(chat_client
         approved=True,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [func_with_approval]})
 
     # Count function calls with the same call_id
@@ -695,7 +695,7 @@ async def test_no_duplicate_function_calls_after_approval_processing(chat_client
     assert function_call_count == 1
 
 
-async def test_rejection_result_uses_function_call_id(chat_client_base: ChatClientProtocol):
+async def test_rejection_result_uses_function_call_id(chat_client_base: SupportsChatGetResponse):
     """Rejection error result should use the function call's call_id, not the approval's id."""
 
     @tool(name="test_func", approval_mode="always_require")
@@ -704,14 +704,14 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: ChatClie
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="call_123", name="test_func", arguments='{"arg1": "value1"}'),
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response1 = await chat_client_base.get_response(
@@ -725,7 +725,7 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: ChatClie
         approved=False,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[rejection_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[rejection_response])]
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [func_with_approval]})
 
     # Find the rejection result
@@ -741,7 +741,7 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: ChatClie
 
 @pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
 @pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
-async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
+async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     """Test that MAX_ITERATIONS in additional_properties limits function call loops."""
     exec_counter = 0
 
@@ -754,7 +754,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     # Set up multiple function call responses to create a loop
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
@@ -762,7 +762,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="2", name="test_function", arguments='{"arg1": "value2"}')
@@ -770,7 +770,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
             )
         ),
         # Failsafe response when tool_choice is set to "none"
-        ChatResponse(messages=ChatMessage(role="assistant", text="giving up on tools")),
+        ChatResponse(messages=Message(role="assistant", text="giving up on tools")),
     ]
 
     # Set max_iterations to 1 in additional_properties
@@ -786,7 +786,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     assert response.messages[-1].text == "I broke out of the function invocation loop..."  # Failsafe response
 
 
-async def test_function_invocation_config_enabled_false(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
     """Test that setting enabled=False disables function invocation."""
     exec_counter = 0
 
@@ -797,7 +797,7 @@ async def test_function_invocation_config_enabled_false(chat_client_base: ChatCl
         return f"Processed {arg1}"
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=ChatMessage(role="assistant", text="response without function calling")),
+        ChatResponse(messages=Message(role="assistant", text="response without function calling")),
     ]
 
     # Disable function invocation
@@ -812,7 +812,7 @@ async def test_function_invocation_config_enabled_false(chat_client_base: ChatCl
 
 
 @pytest.mark.skip(reason="Error handling and failsafe behavior needs investigation in unified API")
-async def test_function_invocation_config_max_consecutive_errors(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_max_consecutive_errors(chat_client_base: SupportsChatGetResponse):
     """Test that max_consecutive_errors_per_request limits error retries."""
 
     @tool(name="error_function", approval_mode="never_require")
@@ -822,7 +822,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
     # Set up multiple function call responses that will all error
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="error_function", arguments='{"arg1": "value1"}')
@@ -830,7 +830,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="2", name="error_function", arguments='{"arg1": "value2"}')
@@ -838,7 +838,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="3", name="error_function", arguments='{"arg1": "value3"}')
@@ -846,14 +846,14 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="4", name="error_function", arguments='{"arg1": "value4"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="final response")),
+        ChatResponse(messages=Message(role="assistant", text="final response")),
     ]
 
     # Set max_consecutive_errors to 2
@@ -879,7 +879,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
     assert len(function_calls) <= 2
 
 
-async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_client_base: SupportsChatGetResponse):
     """Test that terminate_on_unknown_calls=False returns error message for unknown functions."""
     exec_counter = 0
 
@@ -891,14 +891,14 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="unknown_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set terminate_on_unknown_calls to False (default)
@@ -914,7 +914,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
     assert exec_counter == 0  # Known function not executed
 
 
-async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_client_base: SupportsChatGetResponse):
     """Test that terminate_on_unknown_calls=True stops execution on unknown functions."""
     exec_counter = 0
 
@@ -926,7 +926,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="unknown_function", arguments='{"arg1": "value1"}')
@@ -945,7 +945,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
-async def test_function_invocation_config_additional_tools(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0
     exec_counter_hidden = 0
@@ -964,14 +964,14 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Cha
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="hidden_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Add hidden_func to additional_tools
@@ -994,7 +994,7 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Cha
     assert len(function_calls) >= 1
 
 
-async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):
     """Test that include_detailed_errors=False returns generic error messages."""
 
     @tool(name="error_function", approval_mode="never_require")
@@ -1003,14 +1003,14 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="error_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to False (default)
@@ -1028,7 +1028,7 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     assert "Error:" in error_result.result  # Generic error prefix
 
 
-async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
+async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: SupportsChatGetResponse):
     """Test that include_detailed_errors=True returns detailed error information."""
 
     @tool(name="error_function", approval_mode="never_require")
@@ -1037,14 +1037,14 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="error_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to True
@@ -1098,7 +1098,7 @@ async def test_function_invocation_config_validation_max_consecutive_errors():
         normalize_function_invocation_configuration({"max_consecutive_errors_per_request": -1})
 
 
-async def test_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_argument_validation_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that argument validation errors include details when include_detailed_errors=True."""
 
     @tool(name="typed_function", approval_mode="never_require")
@@ -1107,14 +1107,14 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="typed_function", arguments='{"arg1": "not_an_int"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to True
@@ -1132,7 +1132,7 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     assert "Exception:" in error_result.result  # Detailed error included
 
 
-async def test_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that argument validation errors are generic when include_detailed_errors=False."""
 
     @tool(name="typed_function", approval_mode="never_require")
@@ -1141,14 +1141,14 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="typed_function", arguments='{"arg1": "not_an_int"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to False (default)
@@ -1166,7 +1166,7 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     assert "Exception:" not in error_result.result  # No detailed error
 
 
-async def test_hosted_tool_approval_response(chat_client_base: ChatClientProtocol):
+async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
     """Test handling of approval responses for hosted tools (tools not in tool_map)."""
 
     @tool(name="local_function")
@@ -1184,12 +1184,12 @@ async def test_hosted_tool_approval_response(chat_client_base: ChatClientProtoco
     )
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Send the approval response
     response = await chat_client_base.get_response(
-        [ChatMessage(role="user", contents=[approval_response])],
+        [Message(role="user", contents=[approval_response])],
         tool_choice="auto",
         tools=[local_func],
     )
@@ -1199,7 +1199,7 @@ async def test_hosted_tool_approval_response(chat_client_base: ChatClientProtoco
     assert response is not None
 
 
-async def test_unapproved_tool_execution_raises_exception(chat_client_base: ChatClientProtocol):
+async def test_unapproved_tool_execution_raises_exception(chat_client_base: SupportsChatGetResponse):
     """Test that attempting to execute an unapproved tool raises ToolException."""
 
     @tool(name="test_function", approval_mode="always_require")
@@ -1208,14 +1208,14 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Chat
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}'),
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Get approval request
@@ -1231,7 +1231,7 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Chat
     )
 
     # Continue conversation with rejection
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[rejection_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[rejection_response])]
 
     # This should handle the rejection gracefully (not raise ToolException to user)
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [test_func]})
@@ -1249,7 +1249,7 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Chat
     assert rejection_result is not None
 
 
-async def test_approved_function_call_with_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_approved_function_call_with_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that approved functions that raise errors return generic error messages.
 
     When include_detailed_errors=False.
@@ -1265,12 +1265,12 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="error_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to False (default)
@@ -1288,7 +1288,7 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
         approved=True,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will error)
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [error_func]})
@@ -1312,7 +1312,7 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
     assert "Specific error from approved function" not in error_result.result  # Detail not included
 
 
-async def test_approved_function_call_with_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_approved_function_call_with_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that approved functions that raise errors return detailed error messages.
 
     When include_detailed_errors=True.
@@ -1328,12 +1328,12 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="error_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to True
@@ -1351,7 +1351,7 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
         approved=True,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will error)
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [error_func]})
@@ -1376,7 +1376,7 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
     assert "Specific error from approved function" in error_result.result  # Detail included
 
 
-async def test_approved_function_call_with_validation_error(chat_client_base: ChatClientProtocol):
+async def test_approved_function_call_with_validation_error(chat_client_base: SupportsChatGetResponse):
     """Test that approved functions with validation errors are handled correctly."""
 
     exec_counter = 0
@@ -1389,14 +1389,14 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Ch
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="typed_func", arguments='{"arg1": "not_an_int"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Set include_detailed_errors to True to see validation details
@@ -1414,7 +1414,7 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Ch
         approved=True,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will fail validation)
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [typed_func]})
@@ -1437,7 +1437,7 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Ch
     assert "Argument parsing failed" in error_result.result
 
 
-async def test_approved_function_call_successful_execution(chat_client_base: ChatClientProtocol):
+async def test_approved_function_call_successful_execution(chat_client_base: SupportsChatGetResponse):
     """Test that approved functions execute successfully when no errors occur."""
 
     exec_counter = 0
@@ -1450,12 +1450,12 @@ async def test_approved_function_call_successful_execution(chat_client_base: Cha
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="success_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Get approval request
@@ -1470,7 +1470,7 @@ async def test_approved_function_call_successful_execution(chat_client_base: Cha
         approved=True,
     )
 
-    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function
     await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [success_func]})
@@ -1492,7 +1492,7 @@ async def test_approved_function_call_successful_execution(chat_client_base: Cha
     assert success_result.result == "Success value1"
 
 
-async def test_declaration_only_tool(chat_client_base: ChatClientProtocol):
+async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     """Test that declaration_only tools without implementation (func=None) are not executed."""
     from agent_framework import FunctionTool
 
@@ -1509,14 +1509,14 @@ async def test_declaration_only_tool(chat_client_base: ChatClientProtocol):
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="declaration_func", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response(
@@ -1542,7 +1542,7 @@ async def test_declaration_only_tool(chat_client_base: ChatClientProtocol):
     assert len(function_results) == 0
 
 
-async def test_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):
+async def test_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
     """Test that multiple function calls are executed in parallel."""
     import asyncio
 
@@ -1564,7 +1564,7 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Chat
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="func1", arguments='{"arg1": "value1"}'),
@@ -1572,7 +1572,7 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Chat
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [func1, func2]})
@@ -1588,7 +1588,7 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Chat
     assert len(results) == 2
 
 
-async def test_callable_function_converted_to_tool(chat_client_base: ChatClientProtocol):
+async def test_callable_function_converted_to_tool(chat_client_base: SupportsChatGetResponse):
     """Test that plain callable functions are converted to FunctionTool."""
     exec_counter = 0
 
@@ -1601,14 +1601,14 @@ async def test_callable_function_converted_to_tool(chat_client_base: ChatClientP
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="plain_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     # Pass plain function (will be auto-converted)
@@ -1620,7 +1620,7 @@ async def test_callable_function_converted_to_tool(chat_client_base: ChatClientP
     assert result.result == "Plain value1"
 
 
-async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
+async def test_conversation_id_handling(chat_client_base: SupportsChatGetResponse):
     """Test that conversation_id is properly handled and messages are cleared."""
 
     @tool(name="test_function", approval_mode="never_require")
@@ -1630,7 +1630,7 @@ async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
     # Return a response with a conversation_id
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
@@ -1639,7 +1639,7 @@ async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
             conversation_id="conv_123",  # Simulate service-side thread
         ),
         ChatResponse(
-            messages=ChatMessage(role="assistant", text="done"),
+            messages=Message(role="assistant", text="done"),
             conversation_id="conv_123",
         ),
     ]
@@ -1652,7 +1652,7 @@ async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
     assert response.conversation_id == "conv_123"
 
 
-async def test_function_result_appended_to_existing_assistant_message(chat_client_base: ChatClientProtocol):
+async def test_function_result_appended_to_existing_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Test that function results are appended to existing assistant message when appropriate."""
 
     @tool(name="test_function", approval_mode="never_require")
@@ -1661,14 +1661,14 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [test_func]})
@@ -1683,7 +1683,7 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
 
 
 @pytest.mark.parametrize("max_iterations", [3])
-async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtocol):
+async def test_error_recovery_resets_counter(chat_client_base: SupportsChatGetResponse):
     """Test that error counter resets after a successful function call."""
 
     call_count = 0
@@ -1698,7 +1698,7 @@ async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtoco
 
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="sometimes_fails", arguments='{"arg1": "value1"}')
@@ -1706,14 +1706,14 @@ async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtoco
             )
         ),
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="2", name="sometimes_fails", arguments='{"arg1": "value2"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [sometimes_fails]})
@@ -1740,7 +1740,7 @@ async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtoco
 # ==================== STREAMING SCENARIO TESTS ====================
 
 
-async def test_streaming_approval_request_generated(chat_client_base: ChatClientProtocol):
+async def test_streaming_approval_request_generated(chat_client_base: SupportsChatGetResponse):
     """Test that approval requests are generated correctly in streaming mode."""
     exec_counter = 0
 
@@ -1777,7 +1777,7 @@ async def test_streaming_approval_request_generated(chat_client_base: ChatClient
 
 
 @pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
-async def test_streaming_max_iterations_limit(chat_client_base: ChatClientProtocol):
+async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     """Test that MAX_ITERATIONS in streaming mode limits function call loops."""
     exec_counter = 0
 
@@ -1829,7 +1829,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: ChatClientProtoc
     assert "I broke out of the function invocation loop..." in last_text
 
 
-async def test_streaming_function_invocation_config_enabled_false(chat_client_base: ChatClientProtocol):
+async def test_streaming_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
     """Test that setting enabled=False disables function invocation in streaming mode."""
     exec_counter = 0
 
@@ -1858,7 +1858,7 @@ async def test_streaming_function_invocation_config_enabled_false(chat_client_ba
     assert len(updates) > 0
 
 
-async def test_streaming_function_invocation_config_max_consecutive_errors(chat_client_base: ChatClientProtocol):
+async def test_streaming_function_invocation_config_max_consecutive_errors(chat_client_base: SupportsChatGetResponse):
     """Test that max_consecutive_errors_per_request limits error retries in streaming mode."""
 
     @tool(name="error_function", approval_mode="never_require")
@@ -1919,7 +1919,7 @@ async def test_streaming_function_invocation_config_max_consecutive_errors(chat_
 
 
 async def test_streaming_function_invocation_config_terminate_on_unknown_calls_false(
-    chat_client_base: ChatClientProtocol,
+    chat_client_base: SupportsChatGetResponse,
 ):
     """Test that terminate_on_unknown_calls=False returns error message for unknown functions in streaming mode."""
     exec_counter = 0
@@ -1963,7 +1963,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
 
 @pytest.mark.skip(reason="Failsafe behavior needs investigation in unified API")
 async def test_streaming_function_invocation_config_terminate_on_unknown_calls_true(
-    chat_client_base: ChatClientProtocol,
+    chat_client_base: SupportsChatGetResponse,
 ):
     """Test that terminate_on_unknown_calls=True stops execution on unknown functions in streaming mode."""
     exec_counter = 0
@@ -1996,7 +1996,9 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
     assert exec_counter == 0
 
 
-async def test_streaming_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
+async def test_streaming_function_invocation_config_include_detailed_errors_true(
+    chat_client_base: SupportsChatGetResponse,
+):
     """Test that include_detailed_errors=True returns detailed error information in streaming mode."""
 
     @tool(name="error_function", approval_mode="never_require")
@@ -2035,7 +2037,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
 
 
 async def test_streaming_function_invocation_config_include_detailed_errors_false(
-    chat_client_base: ChatClientProtocol,
+    chat_client_base: SupportsChatGetResponse,
 ):
     """Test that include_detailed_errors=False returns generic error messages in streaming mode."""
 
@@ -2074,7 +2076,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     assert "Error:" in error_result.result  # Generic error prefix
 
 
-async def test_streaming_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_streaming_argument_validation_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that argument validation errors include details when include_detailed_errors=True in streaming mode."""
 
     @tool(name="typed_function", approval_mode="never_require")
@@ -2112,7 +2114,7 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     assert "Exception:" in error_result.result  # Detailed error included
 
 
-async def test_streaming_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
+async def test_streaming_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
     """Test that argument validation errors are generic when include_detailed_errors=False in streaming mode."""
 
     @tool(name="typed_function", approval_mode="never_require")
@@ -2150,7 +2152,7 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     assert "Exception:" not in error_result.result  # No detailed error
 
 
-async def test_streaming_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):
+async def test_streaming_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
     """Test that multiple function calls are executed in parallel in streaming mode."""
 
     exec_order = []
@@ -2200,7 +2202,7 @@ async def test_streaming_multiple_function_calls_parallel_execution(chat_client_
     assert len(results) == 2
 
 
-async def test_streaming_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):
+async def test_streaming_approval_requests_in_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Approval requests should be added to assistant updates in streaming mode."""
     exec_counter = 0
 
@@ -2235,7 +2237,7 @@ async def test_streaming_approval_requests_in_assistant_message(chat_client_base
     assert exec_counter == 0
 
 
-async def test_streaming_error_recovery_resets_counter(chat_client_base: ChatClientProtocol):
+async def test_streaming_error_recovery_resets_counter(chat_client_base: SupportsChatGetResponse):
     """Test that error counter resets after a successful function call in streaming mode."""
 
     call_count = 0
@@ -2304,7 +2306,7 @@ class TerminateLoopMiddleware(FunctionMiddleware):
         raise MiddlewareTermination
 
 
-async def test_terminate_loop_single_function_call(chat_client_base: ChatClientProtocol):
+async def test_terminate_loop_single_function_call(chat_client_base: SupportsChatGetResponse):
     """Test that terminate_loop=True exits the function calling loop after single function call."""
     exec_counter = 0
 
@@ -2318,14 +2320,14 @@ async def test_terminate_loop_single_function_call(chat_client_base: ChatClientP
     # If terminate_loop works, only the first response should be consumed
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response(
@@ -2363,7 +2365,7 @@ class SelectiveTerminateMiddleware(FunctionMiddleware):
         await next_handler(context)
 
 
-async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client_base: ChatClientProtocol):
+async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client_base: SupportsChatGetResponse):
     """Test that any(terminate_loop=True) exits loop even with multiple function calls."""
     normal_call_count = 0
     terminating_call_count = 0
@@ -2383,7 +2385,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     # Queue up two responses: parallel function calls, then final text
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[
                     Content.from_function_call(call_id="1", name="normal_function", arguments='{"arg1": "value1"}'),
@@ -2393,7 +2395,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
                 ],
             )
         ),
-        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
     response = await chat_client_base.get_response(
@@ -2420,7 +2422,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     assert len(chat_client_base.run_responses) == 1
 
 
-async def test_terminate_loop_streaming_single_function_call(chat_client_base: ChatClientProtocol):
+async def test_terminate_loop_streaming_single_function_call(chat_client_base: SupportsChatGetResponse):
     """Test that terminate_loop=True exits the streaming function calling loop."""
     exec_counter = 0
 
@@ -2482,10 +2484,10 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
 
     from agent_framework import (
         BaseChatClient,
-        ChatMessage,
         ChatResponse,
         ChatResponseUpdate,
         Content,
+        Message,
         ResponseStream,
         tool,
     )
@@ -2509,7 +2511,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
         def _inner_get_response(
             self,
             *,
-            messages: MutableSequence[ChatMessage],
+            messages: MutableSequence[Message],
             stream: bool,
             options: dict[str, Any],
             **kwargs: Any,
@@ -2523,7 +2525,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             async def _get() -> ChatResponse:
                 self.call_count += 1
                 if not self.run_responses:
-                    return ChatResponse(messages=ChatMessage(role="assistant", text="done"))
+                    return ChatResponse(messages=Message(role="assistant", text="done"))
                 return self.run_responses.pop(0)
 
             return _get()
@@ -2531,7 +2533,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
         def _get_streaming_response(
             self,
             *,
-            messages: MutableSequence[ChatMessage],
+            messages: MutableSequence[Message],
             options: dict[str, Any],
             **kwargs: Any,
         ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -2563,14 +2565,14 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
     # Second response (after tool execution) should receive the updated conversation_id
     client.run_responses = [
         ChatResponse(
-            messages=ChatMessage(
+            messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="call_1", name="test_func", arguments='{"arg1": "v1"}')],
             ),
             conversation_id="conv_after_first_call",
         ),
         ChatResponse(
-            messages=ChatMessage(role="assistant", text="done"),
+            messages=Message(role="assistant", text="done"),
             conversation_id="conv_after_second_call",
         ),
     ]

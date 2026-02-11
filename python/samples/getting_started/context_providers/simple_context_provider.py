@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import MutableSequence, Sequence
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Context, ContextProvider
+from agent_framework import Agent, Context, ContextProvider, Message, SupportsChatGetResponse
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
@@ -16,13 +16,13 @@ class UserInfo(BaseModel):
 
 
 class UserInfoMemory(ContextProvider):
-    def __init__(self, chat_client: ChatClientProtocol, user_info: UserInfo | None = None, **kwargs: Any):
+    def __init__(self, client: SupportsChatGetResponse, user_info: UserInfo | None = None, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
         """
 
-        self._chat_client = chat_client
+        self._chat_client = client
         if user_info:
             self.user_info = user_info
         elif kwargs:
@@ -32,8 +32,8 @@ class UserInfoMemory(ContextProvider):
 
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
@@ -64,7 +64,7 @@ class UserInfoMemory(ContextProvider):
             except Exception:
                 pass  # Failed to extract, continue without updating
 
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Provide user information context before each agent call."""
         instructions: list[str] = []
 
@@ -92,14 +92,14 @@ class UserInfoMemory(ContextProvider):
 
 async def main():
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIClient(credential=credential)
+        client = AzureAIClient(credential=credential)
 
         # Create the memory provider
-        memory_provider = UserInfoMemory(chat_client)
+        memory_provider = UserInfoMemory(client)
 
         # Create the agent with memory
-        async with ChatAgent(
-            chat_client=chat_client,
+        async with Agent(
+            client=client,
             instructions="You are a friendly assistant. Always address the user by their name.",
             context_provider=memory_provider,
         ) as agent:

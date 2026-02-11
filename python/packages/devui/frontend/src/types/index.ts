@@ -185,7 +185,7 @@ export interface MetaResponse {
 }
 
 // Chat message types matching Agent Framework
-export interface ChatMessage {
+export interface Message {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   contents: import("./agent-framework").Content[];
@@ -212,7 +212,7 @@ export interface AppState {
 }
 
 export interface ChatState {
-  messages: ChatMessage[];
+  messages: Message[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
 }

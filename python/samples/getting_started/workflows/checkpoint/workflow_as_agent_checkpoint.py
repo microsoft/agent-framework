@@ -27,7 +27,6 @@ import asyncio
 
 from agent_framework import (
     AgentThread,
-    ChatAgent,
     ChatMessageStore,
     InMemoryCheckpointStorage,
 )
@@ -41,22 +40,19 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="assistant",
-            instructions="You are a helpful assistant. Keep responses brief.",
-        )
+    assistant = client.as_agent(
+        name="assistant",
+        instructions="You are a helpful assistant. Keep responses brief.",
+    )
 
-    def create_reviewer() -> ChatAgent:
-        return chat_client.as_agent(
-            name="reviewer",
-            instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
-        )
+    reviewer = client.as_agent(
+        name="reviewer",
+        instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
+    )
 
-    # Build sequential workflow with participant factories
-    workflow = SequentialBuilder(participant_factories=[create_assistant, create_reviewer]).build()
+    workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
     agent = workflow.as_agent(name="CheckpointedAgent")
 
     # Create checkpoint storage
@@ -85,15 +81,14 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="memory_assistant",
-            instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
-        )
+    assistant = client.as_agent(
+        name="memory_assistant",
+        instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
+    )
 
-    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="MemoryAgent")
 
     # Create both thread (for conversation) and checkpoint storage (for workflow state)
@@ -129,15 +124,14 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="streaming_assistant",
-            instructions="You are a helpful assistant.",
-        )
+    assistant = client.as_agent(
+        name="streaming_assistant",
+        instructions="You are a helpful assistant.",
+    )
 
-    workflow = SequentialBuilder(participant_factories=[create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="StreamingCheckpointAgent")
 
     checkpoint_storage = InMemoryCheckpointStorage()

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_framework import (
-    ChatAgent,
+    Agent,
     Content,
     FileCheckpointStorage,
     Workflow,
@@ -53,7 +53,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
 
 
-def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
     triage = client.as_agent(

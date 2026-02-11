@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent, HostedMCPTool
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -42,20 +42,20 @@ async def github_mcp_example() -> None:
         "Authorization": f"Bearer {github_pat}",
     }
 
-    # 4. Create MCP tool with authentication
-    # HostedMCPTool manages the connection to the MCP server and makes its tools available
+    # 4. Create agent with the GitHub MCP tool using instance method
+    # The MCP tool manages the connection to the MCP server and makes its tools available
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
-    github_mcp_tool = HostedMCPTool(
-        name="GitHub",
-        description="Tool for interacting with GitHub.",
-        url="https://api.githubcopilot.com/mcp/",
+    client = OpenAIResponsesClient()
+    github_mcp_tool = client.get_mcp_tool(
+        server_label="GitHub",
+        server_url="https://api.githubcopilot.com/mcp/",
         headers=auth_headers,
-        approval_mode="never_require",
+        require_approval="never",
     )
 
     # 5. Create agent with the GitHub MCP tool
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    async with Agent(
+        client=client,
         name="GitHubAgent",
         instructions=(
             "You are a helpful assistant that can help users interact with GitHub. "

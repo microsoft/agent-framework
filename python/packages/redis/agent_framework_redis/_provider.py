@@ -10,7 +10,7 @@ from operator import and_
 from typing import Any, Literal, cast
 
 import numpy as np
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import Context, ContextProvider, Message
 from agent_framework.exceptions import (
     AgentException,
     ServiceInitializationError,
@@ -484,19 +484,17 @@ class RedisProvider(ContextProvider):
     @override
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
         self._validate_filters()
 
-        request_messages_list = (
-            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
-        )
+        request_messages_list = [request_messages] if isinstance(request_messages, Message) else list(request_messages)
         response_messages_list = (
             [response_messages]
-            if isinstance(response_messages, ChatMessage)
+            if isinstance(response_messages, Message)
             else list(response_messages)
             if response_messages
             else []
@@ -518,7 +516,7 @@ class RedisProvider(ContextProvider):
             await self._add(data=messages)
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Called before invoking the model to provide scoped context.
 
         Concatenates recent messages into a query, fetches matching memories from Redis.
@@ -534,7 +532,7 @@ class RedisProvider(ContextProvider):
             Context: Context object containing instructions with memories.
         """
         self._validate_filters()
-        messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
+        messages_list = [messages] if isinstance(messages, Message) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
         memories = await self._redis_search(text=input_text)
@@ -543,7 +541,7 @@ class RedisProvider(ContextProvider):
         )
 
         return Context(
-            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            messages=[Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )

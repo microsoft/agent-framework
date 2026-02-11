@@ -5,7 +5,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_framework import ChatAgent, ChatMessage, ChatResponse, Content, agent_middleware
+from agent_framework import Agent, ChatResponse, Content, Message, agent_middleware
 from agent_framework._middleware import AgentContext
 
 from .conftest import MockChatClient
@@ -14,7 +14,7 @@ from .conftest import MockChatClient
 class TestAsToolKwargsPropagation:
     """Test cases for kwargs propagation through as_tool() delegation."""
 
-    async def test_as_tool_forwards_runtime_kwargs(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_forwards_runtime_kwargs(self, client: MockChatClient) -> None:
         """Test that runtime kwargs are forwarded through as_tool() to sub-agent."""
         captured_kwargs: dict[str, Any] = {}
 
@@ -27,13 +27,13 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock response
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
         ]
 
         # Create sub-agent with middleware
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -57,7 +57,7 @@ class TestAsToolKwargsPropagation:
         assert "session_id" in captured_kwargs
         assert captured_kwargs["session_id"] == "session-789"
 
-    async def test_as_tool_excludes_arg_name_from_forwarded_kwargs(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_excludes_arg_name_from_forwarded_kwargs(self, client: MockChatClient) -> None:
         """Test that the arg_name parameter is not forwarded as a kwarg."""
         captured_kwargs: dict[str, Any] = {}
 
@@ -69,12 +69,12 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock response
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -94,7 +94,7 @@ class TestAsToolKwargsPropagation:
         assert "api_token" in captured_kwargs
         assert captured_kwargs["api_token"] == "token-123"
 
-    async def test_as_tool_nested_delegation_propagates_kwargs(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_nested_delegation_propagates_kwargs(self, client: MockChatClient) -> None:
         """Test that kwargs propagate through multiple levels of delegation (A → B → C)."""
         captured_kwargs_list: list[dict[str, Any]] = []
 
@@ -107,10 +107,10 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock responses to trigger nested tool invocation: B calls tool C, then completes.
-        chat_client.responses = [
+        client.responses = [
             ChatResponse(
                 messages=[
-                    ChatMessage(
+                    Message(
                         role="assistant",
                         contents=[
                             Content.from_function_call(
@@ -122,20 +122,20 @@ class TestAsToolKwargsPropagation:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent_c")]),
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent_b")]),
+            ChatResponse(messages=[Message(role="assistant", text="Response from agent_c")]),
+            ChatResponse(messages=[Message(role="assistant", text="Response from agent_b")]),
         ]
 
         # Create agent C (bottom level)
-        agent_c = ChatAgent(
-            chat_client=chat_client,
+        agent_c = Agent(
+            client=client,
             name="agent_c",
             middleware=[capture_middleware],
         )
 
         # Create agent B (middle level) - delegates to C
-        agent_b = ChatAgent(
-            chat_client=chat_client,
+        agent_b = Agent(
+            client=client,
             name="agent_b",
             tools=[agent_c.as_tool(name="call_c")],
             middleware=[capture_middleware],
@@ -157,7 +157,7 @@ class TestAsToolKwargsPropagation:
         assert captured_kwargs_list[0].get("trace_id") == "trace-abc-123"
         assert captured_kwargs_list[0].get("tenant_id") == "tenant-xyz"
 
-    async def test_as_tool_streaming_mode_forwards_kwargs(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_streaming_mode_forwards_kwargs(self, client: MockChatClient) -> None:
         """Test that kwargs are forwarded in streaming mode."""
         captured_kwargs: dict[str, Any] = {}
 
@@ -171,12 +171,12 @@ class TestAsToolKwargsPropagation:
         # Setup mock streaming responses
         from agent_framework import ChatResponseUpdate
 
-        chat_client.streaming_responses = [
+        client.streaming_responses = [
             [ChatResponseUpdate(contents=[Content.from_text(text="Streaming response")], role="assistant")],
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -199,15 +199,15 @@ class TestAsToolKwargsPropagation:
         assert captured_kwargs["api_key"] == "streaming-key-999"
         assert len(captured_updates) == 1
 
-    async def test_as_tool_empty_kwargs_still_works(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_empty_kwargs_still_works(self, client: MockChatClient) -> None:
         """Test that as_tool works correctly when no extra kwargs are provided."""
         # Setup mock response
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from agent")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Response from agent")]),
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
         )
 
@@ -219,7 +219,7 @@ class TestAsToolKwargsPropagation:
         # Verify tool executed successfully
         assert result is not None
 
-    async def test_as_tool_kwargs_with_chat_options(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_kwargs_with_chat_options(self, client: MockChatClient) -> None:
         """Test that kwargs including chat_options are properly forwarded."""
         captured_kwargs: dict[str, Any] = {}
 
@@ -231,12 +231,12 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock response
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response with options")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Response with options")]),
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -259,7 +259,7 @@ class TestAsToolKwargsPropagation:
         assert "custom_param" in captured_kwargs
         assert captured_kwargs["custom_param"] == "custom_value"
 
-    async def test_as_tool_kwargs_isolated_per_invocation(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_kwargs_isolated_per_invocation(self, client: MockChatClient) -> None:
         """Test that kwargs are isolated per invocation and don't leak between calls."""
         first_call_kwargs: dict[str, Any] = {}
         second_call_kwargs: dict[str, Any] = {}
@@ -278,13 +278,13 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock responses for both calls
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="First response")]),
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Second response")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="First response")]),
+            ChatResponse(messages=[Message(role="assistant", text="Second response")]),
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -313,7 +313,7 @@ class TestAsToolKwargsPropagation:
         assert second_call_kwargs.get("session_id") == "session-2"
         assert second_call_kwargs.get("api_token") == "token-2"
 
-    async def test_as_tool_excludes_conversation_id_from_forwarded_kwargs(self, chat_client: MockChatClient) -> None:
+    async def test_as_tool_excludes_conversation_id_from_forwarded_kwargs(self, client: MockChatClient) -> None:
         """Test that conversation_id is not forwarded to sub-agent."""
         captured_kwargs: dict[str, Any] = {}
 
@@ -325,12 +325,12 @@ class TestAsToolKwargsPropagation:
             await call_next(context)
 
         # Setup mock response
-        chat_client.responses = [
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Response from sub-agent")]),
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
         ]
 
-        sub_agent = ChatAgent(
-            chat_client=chat_client,
+        sub_agent = Agent(
+            client=client,
             name="sub_agent",
             middleware=[capture_middleware],
         )

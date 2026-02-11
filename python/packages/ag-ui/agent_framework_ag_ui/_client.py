@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 import httpx
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionTool,
+    Message,
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -59,20 +59,20 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
 
 
-TBaseChatClient = TypeVar("TBaseChatClient", bound=type[BaseChatClient[Any]])
+BaseChatClientT = TypeVar("BaseChatClientT", bound=type[BaseChatClient[Any]])
 
-TAGUIChatOptions = TypeVar(
-    "TAGUIChatOptions",
+AGUIChatOptionsT = TypeVar(
+    "AGUIChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AGUIChatOptions",
     covariant=True,
 )
 
 
-def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseChatClient:
+def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:
     """Class decorator that unwraps server-side function calls after tool handling."""
 
-    original_get_response = chat_client.get_response
+    original_get_response = client.get_response
 
     @wraps(original_get_response)
     def response_wrapper(
@@ -105,17 +105,17 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
         _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
         return update
 
-    chat_client.get_response = response_wrapper  # type: ignore[assignment]
-    return chat_client
+    client.get_response = response_wrapper  # type: ignore[assignment]
+    return client
 
 
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
-    ChatMiddlewareLayer[TAGUIChatOptions],
-    FunctionInvocationLayer[TAGUIChatOptions],
-    ChatTelemetryLayer[TAGUIChatOptions],
-    BaseChatClient[TAGUIChatOptions],
-    Generic[TAGUIChatOptions],
+    ChatMiddlewareLayer[AGUIChatOptionsT],
+    FunctionInvocationLayer[AGUIChatOptionsT],
+    ChatTelemetryLayer[AGUIChatOptionsT],
+    BaseChatClient[AGUIChatOptionsT],
+    Generic[AGUIChatOptionsT],
 ):
     """Chat client for communicating with AG-UI compliant servers.
 
@@ -130,8 +130,8 @@ class AGUIChatClient(
         This client sends exactly the messages it receives to the server. It does NOT
         automatically maintain conversation history. The server must handle history via thread_id.
 
-        For stateless servers: Use ChatAgent wrapper which will send full message history on each
-        request. However, even with ChatAgent, the server must echo back all context for the
+        For stateless servers: Use Agent wrapper which will send full message history on each
+        request. However, even with Agent, the server must echo back all context for the
         agent to maintain history across turns.
 
     Important: Tool Handling (Hybrid Execution - matches .NET)
@@ -140,7 +140,7 @@ class AGUIChatClient(
         3. When LLM calls a client tool, function invocation executes it locally
         4. Both client and server tools work together (hybrid pattern)
 
-        The wrapping ChatAgent's function invocation handles client tool execution
+        The wrapping Agent's function invocation handles client tool execution
         automatically when the server's LLM decides to call them.
 
     Examples:
@@ -162,18 +162,18 @@ class AGUIChatClient(
                 metadata={"thread_id": thread_id}
             )
 
-        Recommended usage with ChatAgent (client manages history):
+        Recommended usage with Agent (client manages history):
 
         .. code-block:: python
 
-            from agent_framework import ChatAgent
+            from agent_framework import Agent
             from agent_framework.ag_ui import AGUIChatClient
 
             client = AGUIChatClient(endpoint="http://localhost:8888/")
-            agent = ChatAgent(name="assistant", client=client)
+            agent = Agent(name="assistant", client=client)
             thread = await agent.get_new_thread()
 
-            # ChatAgent automatically maintains history and sends full context
+            # Agent automatically maintains history and sends full context
             response = await agent.run("Hello!", thread=thread)
             response2 = await agent.run("How are you?", thread=thread)
 
@@ -282,9 +282,7 @@ class AGUIChatClient(
         logger = get_logger()
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
-    def _extract_state_from_messages(
-        self, messages: Sequence[ChatMessage]
-    ) -> tuple[list[ChatMessage], dict[str, Any] | None]:
+    def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
         """Extract state from last message if present.
 
         Args:
@@ -319,11 +317,11 @@ class AGUIChatClient(
 
         return list(messages), None
 
-    def _convert_messages_to_agui_format(self, messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    def _convert_messages_to_agui_format(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Convert Agent Framework messages to AG-UI format.
 
         Args:
-            messages: List of ChatMessage objects
+            messages: List of Message objects
 
         Returns:
             List of AG-UI formatted message dictionaries
@@ -353,7 +351,7 @@ class AGUIChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -393,7 +391,7 @@ class AGUIChatClient(
     async def _streaming_impl(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
@@ -415,7 +413,7 @@ class AGUIChatClient(
         agui_messages = self._convert_messages_to_agui_format(messages_to_send)
 
         # Send client tools to server so LLM knows about them
-        # Client tools execute via ChatAgent's function invocation wrapper
+        # Client tools execute via Agent's function invocation wrapper
         agui_tools = convert_tools_to_agui_format(options.get("tools"))
 
         # Build set of client tool names (matches .NET clientToolSet)

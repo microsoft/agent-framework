@@ -118,7 +118,7 @@ public sealed class TextSearchProvider : AIContextProvider
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
         var requestMessagesText = context.RequestMessages
-            .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+            .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
             .Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
         foreach (var messageText in this._recentMessagesText.Concat(requestMessagesText))
         {
@@ -182,7 +182,7 @@ public sealed class TextSearchProvider : AIContextProvider
         }
 
         var messagesText = context.RequestMessages
-            .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+            .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
             .Concat(context.ResponseMessages ?? [])
             .Where(m =>
                 this._recentMessageRolesIncluded.Contains(m.Role) &&

@@ -2,9 +2,8 @@
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatResponseUpdate, HostedCodeInterpreterTool
+from agent_framework import Agent, AgentResponseUpdate, ChatResponseUpdate
 from agent_framework.azure import AzureOpenAIAssistantsClient
-from azure.identity import AzureCliCredential
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
     RunStepDelta,
@@ -16,7 +15,7 @@ from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import Code
 """
 Azure OpenAI Assistants with Code Interpreter Example
 
-This sample demonstrates using HostedCodeInterpreterTool with Azure OpenAI Assistants
+This sample demonstrates using get_code_interpreter_tool() with Azure OpenAI Assistants
 for Python code execution and mathematical problem solving.
 """
 
@@ -41,15 +40,19 @@ def get_code_interpreter_chunk(chunk: AgentResponseUpdate) -> str | None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants."""
+    """Example showing how to use the code interpreter tool with Azure OpenAI Assistants."""
     print("=== Azure OpenAI Assistants Agent with Code Interpreter Example ===")
+
+    # Create code interpreter tool using static method
+    client = AzureOpenAIAssistantsClient()
+    code_interpreter_tool = client.get_code_interpreter_tool()
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with ChatAgent(
-        chat_client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=client,
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=HostedCodeInterpreterTool(),
+        tools=[code_interpreter_tool],
     ) as agent:
         query = "What is current datetime?"
         print(f"User: {query}")

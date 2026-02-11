@@ -122,41 +122,41 @@ class ManagerResponse(BaseModel):
 async def main() -> None:
     """Run the deep research workflow."""
     # Create Azure OpenAI client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents
-    research_agent = chat_client.as_agent(
+    research_agent = client.as_agent(
         name="ResearchAgent",
         instructions=RESEARCH_INSTRUCTIONS,
     )
 
-    planner_agent = chat_client.as_agent(
+    planner_agent = client.as_agent(
         name="PlannerAgent",
         instructions=PLANNER_INSTRUCTIONS,
     )
 
-    manager_agent = chat_client.as_agent(
+    manager_agent = client.as_agent(
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
         default_options={"response_format": ManagerResponse},
     )
 
-    summary_agent = chat_client.as_agent(
+    summary_agent = client.as_agent(
         name="SummaryAgent",
         instructions=SUMMARY_INSTRUCTIONS,
     )
 
-    knowledge_agent = chat_client.as_agent(
+    knowledge_agent = client.as_agent(
         name="KnowledgeAgent",
         instructions=KNOWLEDGE_INSTRUCTIONS,
     )
 
-    coder_agent = chat_client.as_agent(
+    coder_agent = client.as_agent(
         name="CoderAgent",
         instructions=CODER_INSTRUCTIONS,
     )
 
-    weather_agent = chat_client.as_agent(
+    weather_agent = client.as_agent(
         name="WeatherAgent",
         instructions=WEATHER_INSTRUCTIONS,
     )

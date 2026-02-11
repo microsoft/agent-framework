@@ -2,7 +2,6 @@
 
 import asyncio
 
-from agent_framework import HostedMCPTool, HostedWebSearchTool
 from agent_framework.anthropic import AnthropicClient
 from anthropic import AsyncAnthropicFoundry
 
@@ -28,16 +27,21 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    agent = AnthropicClient(anthropic_client=AsyncAnthropicFoundry()).as_agent(
+    client = AnthropicClient(anthropic_client=AsyncAnthropicFoundry())
+
+    # Create MCP tool configuration using instance method
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft_Learn_MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    )
+
+    # Create web search tool configuration using instance method
+    web_search_tool = client.get_web_search_tool()
+
+    agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
-        tools=[
-            HostedMCPTool(
-                name="Microsoft Learn MCP",
-                url="https://learn.microsoft.com/api/mcp",
-            ),
-            HostedWebSearchTool(),
-        ],
+        tools=[mcp_tool, web_search_tool],
         default_options={
             # anthropic needs a value for the max_tokens parameter
             # we set it to 1024, but you can override like this:

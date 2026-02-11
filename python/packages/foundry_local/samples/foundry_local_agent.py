@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Annotated
 from agent_framework_foundry_local import FoundryLocalClient
 
 if TYPE_CHECKING:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
 """
 This sample demonstrates basic usage of the FoundryLocalClient.
@@ -33,7 +33,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def non_streaming_example(agent: ChatAgent) -> None:
+async def non_streaming_example(agent: Agent) -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
@@ -43,7 +43,7 @@ async def non_streaming_example(agent: ChatAgent) -> None:
     print(f"Agent: {result}\n")
 
 
-async def streaming_example(agent: ChatAgent) -> None:
+async def streaming_example(agent: Agent) -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 

@@ -7,12 +7,12 @@ from typing import Any
 
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    Message,
     ResponseStream,
     tool,
 )
@@ -31,7 +31,7 @@ class _MockBaseChatClient(BaseChatClient[Any]):
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         stream: bool,
         options: dict[str, Any],
         **kwargs: Any,
@@ -47,19 +47,19 @@ class _MockBaseChatClient(BaseChatClient[Any]):
     async def _get_non_streaming_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         self.call_count += 1
         if self.run_responses:
             return self.run_responses.pop(0)
-        return ChatResponse(messages=ChatMessage(role="assistant", text="default response"))
+        return ChatResponse(messages=Message(role="assistant", text="default response"))
 
     def _get_streaming_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -110,7 +110,7 @@ class TestKwargsPropagationToFunctionTool:
             # First response: function call
             ChatResponse(
                 messages=[
-                    ChatMessage(
+                    Message(
                         role="assistant",
                         contents=[
                             Content.from_function_call(
@@ -121,11 +121,11 @@ class TestKwargsPropagationToFunctionTool:
                 ]
             ),
             # Second response: final answer
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Done!")]),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
         ]
 
         result = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test")],
+            messages=[Message(role="user", text="Test")],
             stream=False,
             options={
                 "tools": [capture_kwargs_tool],
@@ -159,7 +159,7 @@ class TestKwargsPropagationToFunctionTool:
         client.run_responses = [
             ChatResponse(
                 messages=[
-                    ChatMessage(
+                    Message(
                         role="assistant",
                         contents=[
                             Content.from_function_call(call_id="call_1", name="simple_tool", arguments='{"x": 99}')
@@ -167,12 +167,12 @@ class TestKwargsPropagationToFunctionTool:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage(role="assistant", text="Completed!")]),
+            ChatResponse(messages=[Message(role="assistant", text="Completed!")]),
         ]
 
         # Call with additional_function_arguments - the tool should work but not receive them
         result = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test")],
+            messages=[Message(role="user", text="Test")],
             stream=False,
             options={
                 "tools": [simple_tool],
@@ -198,7 +198,7 @@ class TestKwargsPropagationToFunctionTool:
             # Two function calls in one response
             ChatResponse(
                 messages=[
-                    ChatMessage(
+                    Message(
                         role="assistant",
                         contents=[
                             Content.from_function_call(
@@ -211,11 +211,11 @@ class TestKwargsPropagationToFunctionTool:
                     )
                 ]
             ),
-            ChatResponse(messages=[ChatMessage(role="assistant", text="All done!")]),
+            ChatResponse(messages=[Message(role="assistant", text="All done!")]),
         ]
 
         result = await client.get_response(
-            messages=[ChatMessage(role="user", text="Test")],
+            messages=[Message(role="user", text="Test")],
             stream=False,
             options={
                 "tools": [tracking_tool],
@@ -270,7 +270,7 @@ class TestKwargsPropagationToFunctionTool:
         # Collect streaming updates
         updates: list[ChatResponseUpdate] = []
         stream = client.get_response(
-            messages=[ChatMessage(role="user", text="Test")],
+            messages=[Message(role="user", text="Test")],
             stream=True,
             options={
                 "tools": [streaming_capture_tool],

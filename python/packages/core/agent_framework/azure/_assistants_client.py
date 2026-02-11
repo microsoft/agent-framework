@@ -32,8 +32,8 @@ __all__ = ["AzureOpenAIAssistantsClient"]
 # region Azure OpenAI Assistants Options TypedDict
 
 
-TAzureOpenAIAssistantsOptions = TypeVar(
-    "TAzureOpenAIAssistantsOptions",
+AzureOpenAIAssistantsOptionsT = TypeVar(
+    "AzureOpenAIAssistantsOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
     covariant=True,
@@ -44,7 +44,7 @@ TAzureOpenAIAssistantsOptions = TypeVar(
 
 
 class AzureOpenAIAssistantsClient(
-    OpenAIAssistantsClient[TAzureOpenAIAssistantsOptions], Generic[TAzureOpenAIAssistantsOptions]
+    OpenAIAssistantsClient[AzureOpenAIAssistantsOptionsT], Generic[AzureOpenAIAssistantsOptionsT]
 ):
     """Azure OpenAI Assistants client."""
 

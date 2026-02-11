@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
@@ -70,25 +70,25 @@ async def sk_agent_response_callback(
 ######################################################################
 
 
-async def run_agent_framework_example(prompt: str) -> list[ChatMessage]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+async def run_agent_framework_example(prompt: str) -> list[Message]:
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    writer = chat_client.as_agent(
+    writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = chat_client.as_agent(
+    reviewer = client.as_agent(
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )
 
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
-    conversation_outputs: list[list[ChatMessage]] = []
+    conversation_outputs: list[list[Message]] = []
     async for event in workflow.run(prompt, stream=True):
         if event.type == "output":
-            conversation_outputs.append(cast(list[ChatMessage], event.data))
+            conversation_outputs.append(cast(list[Message], event.data))
 
     return conversation_outputs[-1] if conversation_outputs else []
 
@@ -112,7 +112,7 @@ async def run_semantic_kernel_example(prompt: str) -> str:
         await runtime.stop_when_idle()
 
 
-def _format_conversation(conversation: list[ChatMessage]) -> None:
+def _format_conversation(conversation: list[Message]) -> None:
     if not conversation:
         print("No Agent Framework output.")
         return

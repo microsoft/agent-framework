@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agent_framework._types import ChatMessage, Content
+from agent_framework._types import Content, Message
 from loguru import logger
 
 
@@ -11,7 +11,7 @@ def _get_role_value(role: Any) -> str:
     return role.value if hasattr(role, "value") else str(role)
 
 
-def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+def flip_messages(messages: list[Message]) -> list[Message]:
     """Flip message roles between assistant and user for role-playing scenarios.
 
     Used in agent simulations where the assistant's messages become user inputs
@@ -30,7 +30,7 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
             # Flip assistant to user
             contents = filter_out_function_calls(msg.contents)
             if contents:
-                flipped_msg = ChatMessage(
+                flipped_msg = Message(
                     role="user",
                     # The function calls will cause 400 when role is user
                     contents=contents,
@@ -40,7 +40,7 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
                 flipped_messages.append(flipped_msg)
         elif role_value == "user":
             # Flip user to assistant
-            flipped_msg = ChatMessage(
+            flipped_msg = Message(
                 role="assistant", contents=msg.contents, author_name=msg.author_name, message_id=msg.message_id
             )
             flipped_messages.append(flipped_msg)
@@ -53,7 +53,7 @@ def flip_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
     return flipped_messages
 
 
-def log_messages(messages: list[ChatMessage]) -> None:
+def log_messages(messages: list[Message]) -> None:
     """Log messages with colored output based on role and content type.
 
     Provides visual debugging by color-coding different message roles and

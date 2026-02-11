@@ -11,17 +11,13 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -31,6 +27,7 @@ from azure.ai.projects.models import (
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     FileSearchTool,
+    ImageGenTool,
     MCPTool,
     ResponseTextFormatConfigurationJsonSchema,
     WebSearchPreviewTool,
@@ -88,19 +85,19 @@ async def temporary_chat_client(agent_name: str) -> AsyncIterator[AzureAIClient]
     """Async context manager that creates an Azure AI agent and yields an `AzureAIClient`.
 
     The underlying agent version is cleaned up automatically after use.
-    Tests can construct their own `ChatAgent` instances from the yielded client.
+    Tests can construct their own `Agent` instances from the yielded client.
     """
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
     ):
-        chat_client = AzureAIClient(
+        client = AzureAIClient(
             project_client=project_client,
             agent_name=agent_name,
         )
         try:
-            yield chat_client
+            yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
 
@@ -179,7 +176,7 @@ def test_init_with_project_client(mock_project_client: MagicMock) -> None:
         assert client.agent_name == "test-agent"
         assert client.agent_version == "1.0"
         assert not client._should_close_client  # type: ignore
-        assert isinstance(client, ChatClientProtocol)
+        assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_init_auto_create_client(
@@ -298,9 +295,9 @@ async def test_prepare_messages_for_azure_ai_with_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role="system", contents=[Content.from_text(text="You are a helpful assistant.")]),
-        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role="assistant", contents=[Content.from_text(text="System response")]),
+        Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")]),
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="System response")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -318,8 +315,8 @@ async def test_prepare_messages_for_azure_ai_no_system_messages(
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
-        ChatMessage(role="user", contents=[Content.from_text(text="Hello")]),
-        ChatMessage(role="assistant", contents=[Content.from_text(text="Hi there!")]),
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="Hi there!")]),
     ]
 
     result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
@@ -419,7 +416,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -456,7 +453,7 @@ async def test_prepare_options_with_application_endpoint(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -498,7 +495,7 @@ async def test_prepare_options_with_application_project_client(
         agent_version="1",
     )
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with (
         patch(
@@ -977,7 +974,7 @@ async def test_prepare_options_excludes_response_format(
     """Test that prepare_options excludes response_format, text, and text_format from final run options."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text(text="Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
     chat_options: ChatOptions = {}
 
     with (
@@ -1100,178 +1097,50 @@ def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     assert result == "resp_parsed_12345"
 
 
-def test_prepare_mcp_tool_basic() -> None:
-    """Test _prepare_mcp_tool with basic HostedMCPTool."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP Server",
-        url="https://example.com/mcp",
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["server_label"] == "Test_MCP_Server"
-    assert result["server_url"] == "https://example.com/mcp"
+# region MCP Tool Dict Tests
+# These tests verify that dict-based MCP tools are processed correctly by from_azure_ai_tools
 
 
-def test_prepare_mcp_tool_with_description() -> None:
-    """Test _prepare_mcp_tool with description."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        description="A test MCP server",
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["server_description"] == "A test MCP server"
-
-
-def test_prepare_mcp_tool_with_project_connection_id() -> None:
-    """Test _prepare_mcp_tool with project_connection_id in additional_properties."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        additional_properties={"project_connection_id": "conn-123"},
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["project_connection_id"] == "conn-123"
-    assert "headers" not in result  # headers should not be set when project_connection_id is present
-
-
-def test_prepare_mcp_tool_with_headers() -> None:
-    """Test _prepare_mcp_tool with headers (no project_connection_id)."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        headers={"Authorization": "Bearer token123"},
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["headers"] == {"Authorization": "Bearer token123"}
-
-
-def test_prepare_mcp_tool_with_allowed_tools() -> None:
-    """Test _prepare_mcp_tool with allowed_tools."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        allowed_tools=["tool1", "tool2"],
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert set(result["allowed_tools"]) == {"tool1", "tool2"}
-
-
-def test_prepare_mcp_tool_with_approval_mode_always_require() -> None:
-    """Test _prepare_mcp_tool with string approval_mode 'always_require'."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        approval_mode="always_require",
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["require_approval"] == "always"
-
-
-def test_prepare_mcp_tool_with_approval_mode_never_require() -> None:
-    """Test _prepare_mcp_tool with string approval_mode 'never_require'."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        approval_mode="never_require",
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert result["require_approval"] == "never"
-
-
-def test_prepare_mcp_tool_with_dict_approval_mode_always() -> None:
-    """Test _prepare_mcp_tool with dict approval_mode containing always_require_approval."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        approval_mode={"always_require_approval": {"dangerous_tool", "risky_tool"}},
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert "require_approval" in result
-    assert "always" in result["require_approval"]
-    assert set(result["require_approval"]["always"]["tool_names"]) == {"dangerous_tool", "risky_tool"}
-
-
-def test_prepare_mcp_tool_with_dict_approval_mode_never() -> None:
-    """Test _prepare_mcp_tool with dict approval_mode containing never_require_approval."""
-    mcp_tool = HostedMCPTool(
-        name="Test MCP",
-        url="https://example.com/mcp",
-        approval_mode={"never_require_approval": {"safe_tool"}},
-    )
-
-    result = AzureAIClient._prepare_mcp_tool(mcp_tool)  # type: ignore
-
-    assert "require_approval" in result
-    assert "never" in result["require_approval"]
-    assert set(result["require_approval"]["never"]["tool_names"]) == {"safe_tool"}
-
-
-def test_from_azure_ai_tools() -> None:
-    """Test from_azure_ai_tools."""
-    # Test MCP tool
+def test_from_azure_ai_tools_mcp() -> None:
+    """Test from_azure_ai_tools with MCP tool."""
     mcp_tool = MCPTool(server_label="test_server", server_url="http://localhost:8080")
     parsed_tools = from_azure_ai_tools([mcp_tool])
     assert len(parsed_tools) == 1
-    assert isinstance(parsed_tools[0], HostedMCPTool)
-    assert parsed_tools[0].name == "test server"
-    assert str(parsed_tools[0].url).rstrip("/") == "http://localhost:8080"
+    assert parsed_tools[0]["type"] == "mcp"
+    assert parsed_tools[0]["server_label"] == "test_server"
+    assert parsed_tools[0]["server_url"] == "http://localhost:8080"
 
-    # Test Code Interpreter tool
+
+def test_from_azure_ai_tools_code_interpreter() -> None:
+    """Test from_azure_ai_tools with Code Interpreter tool."""
     ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
     parsed_tools = from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
-    assert isinstance(parsed_tools[0], HostedCodeInterpreterTool)
-    assert parsed_tools[0].inputs is not None
-    assert len(parsed_tools[0].inputs) == 1
+    assert parsed_tools[0]["type"] == "code_interpreter"
 
-    tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and tool_input.type == "hosted_file" and tool_input.file_id == "file-1"
-
-    # Test File Search tool
+def test_from_azure_ai_tools_file_search() -> None:
+    """Test from_azure_ai_tools with File Search tool."""
     fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
     parsed_tools = from_azure_ai_tools([fs_tool])
     assert len(parsed_tools) == 1
-    assert isinstance(parsed_tools[0], HostedFileSearchTool)
-    assert parsed_tools[0].inputs is not None
-    assert len(parsed_tools[0].inputs) == 1
+    assert parsed_tools[0]["type"] == "file_search"
+    assert parsed_tools[0]["vector_store_ids"] == ["vs-1"]
+    assert parsed_tools[0]["max_num_results"] == 5
 
-    tool_input = parsed_tools[0].inputs[0]
 
-    assert tool_input and tool_input.type == "hosted_vector_store" and tool_input.vector_store_id == "vs-1"
-    assert parsed_tools[0].max_results == 5
-
-    # Test Web Search tool
+def test_from_azure_ai_tools_web_search() -> None:
+    """Test from_azure_ai_tools with Web Search tool."""
     ws_tool = WebSearchPreviewTool(
         user_location=ApproximateLocation(city="Seattle", country="US", region="WA", timezone="PST")
     )
     parsed_tools = from_azure_ai_tools([ws_tool])
     assert len(parsed_tools) == 1
-    assert isinstance(parsed_tools[0], HostedWebSearchTool)
-    assert parsed_tools[0].additional_properties
+    assert parsed_tools[0]["type"] == "web_search_preview"
+    assert parsed_tools[0]["user_location"]["city"] == "Seattle"
 
-    user_location = parsed_tools[0].additional_properties["user_location"]
 
-    assert user_location["city"] == "Seattle"
-    assert user_location["country"] == "US"
-    assert user_location["region"] == "WA"
-    assert user_location["timezone"] == "PST"
+# endregion
 
 
 # region Integration Tests
@@ -1363,10 +1232,10 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", text="What is the weather in Seattle?")]
     else:
         # Generic prompt for simple options
-        messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value, "tools": [get_weather]}
@@ -1480,11 +1349,11 @@ async def test_integration_agent_options(
             # Prepare test message
             if option_name.startswith("response_format"):
                 # Use prompt that works well with structured output
-                messages = [ChatMessage(role="user", text="The weather in Seattle is sunny")]
-                messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+                messages = [Message(role="user", text="The weather in Seattle is sunny")]
+                messages.append(Message(role="user", text="What is the weather in Seattle?"))
             else:
                 # Generic prompt for simple options
-                messages = [ChatMessage(role="user", text="Say 'Hello World' briefly.")]
+                messages = [Message(role="user", text="Say 'Hello World' briefly.")]
 
             # Build options dict
             options = {option_name: option_value}
@@ -1535,7 +1404,7 @@ async def test_integration_web_search() -> None:
                 "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
                 "options": {
                     "tool_choice": "auto",
-                    "tools": [HostedWebSearchTool()],
+                    "tools": [client.get_web_search_tool()],
                 },
             }
             if streaming:
@@ -1550,17 +1419,11 @@ async def test_integration_web_search() -> None:
             assert "Zoey" in response.text
 
             # Test that the client will use the web search tool with location
-            additional_properties = {
-                "user_location": {
-                    "country": "US",
-                    "city": "Seattle",
-                }
-            }
             content = {
                 "messages": "What is the current weather? Do not ask for my current location.",
                 "options": {
                     "tool_choice": "auto",
-                    "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+                    "tools": [client.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})],
                 },
             }
             if streaming:
@@ -1573,14 +1436,14 @@ async def test_integration_web_search() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_agent_hosted_mcp_tool() -> None:
-    """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
+    """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     async with temporary_chat_client(agent_name="af-int-test-mcp") as client:
         response = await client.get_response(
             "How to create an Azure storage account using az cli?",
             options={
                 # this needs to be high enough to handle the full MCP tool response.
                 "max_tokens": 5000,
-                "tools": HostedMCPTool(
+                "tools": client.get_mcp_tool(
                     name="Microsoft Learn MCP",
                     url="https://learn.microsoft.com/api/mcp",
                     description="A Microsoft Learn MCP server for documentation questions",
@@ -1597,12 +1460,12 @@ async def test_integration_agent_hosted_mcp_tool() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_agent_hosted_code_interpreter_tool():
-    """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureAIClient."""
+    """Test Azure Responses Client agent with code interpreter tool through AzureAIClient."""
     async with temporary_chat_client(agent_name="af-int-test-code-interpreter") as client:
         response = await client.get_response(
             "Calculate the sum of numbers from 1 to 10 using Python code.",
             options={
-                "tools": [HostedCodeInterpreterTool()],
+                "tools": [client.get_code_interpreter_tool()],
             },
         )
         # Should contain calculation result (sum of 1-10 = 55) or code execution content
@@ -1621,8 +1484,8 @@ async def test_integration_agent_existing_thread():
 
     async with (
         temporary_chat_client(agent_name="af-int-test-existing-thread") as client,
-        ChatAgent(
-            chat_client=client,
+        Agent(
+            client=client,
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent,
     ):
@@ -1640,8 +1503,8 @@ async def test_integration_agent_existing_thread():
     if preserved_thread:
         async with (
             temporary_chat_client(agent_name="af-int-test-existing-thread-2") as client,
-            ChatAgent(
-                chat_client=client,
+            Agent(
+                client=client,
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent,
         ):
@@ -1651,3 +1514,115 @@ async def test_integration_agent_existing_thread():
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
+
+
+# region Factory Method Tests
+
+
+def test_get_code_interpreter_tool_basic() -> None:
+    """Test get_code_interpreter_tool returns CodeInterpreterTool."""
+    tool = AzureAIClient.get_code_interpreter_tool()
+    assert isinstance(tool, CodeInterpreterTool)
+
+
+def test_get_code_interpreter_tool_with_file_ids() -> None:
+    """Test get_code_interpreter_tool with file_ids."""
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert tool["container"]["file_ids"] == ["file-123", "file-456"]
+
+
+def test_get_file_search_tool_basic() -> None:
+    """Test get_file_search_tool returns FileSearchTool."""
+    tool = AzureAIClient.get_file_search_tool(vector_store_ids=["vs-123"])
+    assert isinstance(tool, FileSearchTool)
+    assert tool["vector_store_ids"] == ["vs-123"]
+
+
+def test_get_file_search_tool_with_options() -> None:
+    """Test get_file_search_tool with max_num_results."""
+    tool = AzureAIClient.get_file_search_tool(
+        vector_store_ids=["vs-123"],
+        max_num_results=10,
+    )
+    assert isinstance(tool, FileSearchTool)
+    assert tool["max_num_results"] == 10
+
+
+def test_get_file_search_tool_requires_vector_store_ids() -> None:
+    """Test get_file_search_tool raises ValueError when vector_store_ids is empty."""
+    with pytest.raises(ValueError, match="vector_store_ids"):
+        AzureAIClient.get_file_search_tool(vector_store_ids=[])
+
+
+def test_get_web_search_tool_basic() -> None:
+    """Test get_web_search_tool returns WebSearchPreviewTool."""
+    tool = AzureAIClient.get_web_search_tool()
+    assert isinstance(tool, WebSearchPreviewTool)
+
+
+def test_get_web_search_tool_with_location() -> None:
+    """Test get_web_search_tool with user_location."""
+    tool = AzureAIClient.get_web_search_tool(
+        user_location={"city": "Seattle", "country": "US"},
+    )
+    assert isinstance(tool, WebSearchPreviewTool)
+    assert tool.user_location is not None
+    assert tool.user_location.city == "Seattle"
+    assert tool.user_location.country == "US"
+
+
+def test_get_web_search_tool_with_search_context_size() -> None:
+    """Test get_web_search_tool with search_context_size."""
+    tool = AzureAIClient.get_web_search_tool(search_context_size="high")
+    assert isinstance(tool, WebSearchPreviewTool)
+    assert tool.search_context_size == "high"
+
+
+def test_get_mcp_tool_basic() -> None:
+    """Test get_mcp_tool returns MCPTool."""
+    tool = AzureAIClient.get_mcp_tool(name="test_mcp", url="https://example.com")
+    assert isinstance(tool, MCPTool)
+    assert tool["server_label"] == "test_mcp"
+    assert tool["server_url"] == "https://example.com"
+
+
+def test_get_mcp_tool_with_description() -> None:
+    """Test get_mcp_tool with description."""
+    tool = AzureAIClient.get_mcp_tool(
+        name="test_mcp",
+        url="https://example.com",
+        description="Test MCP server",
+    )
+    assert tool["server_description"] == "Test MCP server"
+
+
+def test_get_mcp_tool_with_project_connection_id() -> None:
+    """Test get_mcp_tool with project_connection_id."""
+    tool = AzureAIClient.get_mcp_tool(
+        name="test_mcp",
+        project_connection_id="conn-123",
+    )
+    assert tool["project_connection_id"] == "conn-123"
+
+
+def test_get_image_generation_tool_basic() -> None:
+    """Test get_image_generation_tool returns ImageGenTool."""
+    tool = AzureAIClient.get_image_generation_tool()
+    assert isinstance(tool, ImageGenTool)
+
+
+def test_get_image_generation_tool_with_options() -> None:
+    """Test get_image_generation_tool with various options."""
+    tool = AzureAIClient.get_image_generation_tool(
+        size="1024x1024",
+        quality="high",
+        output_format="png",
+    )
+    assert isinstance(tool, ImageGenTool)
+    assert tool["size"] == "1024x1024"
+    assert tool["quality"] == "high"
+    assert tool["output_format"] == "png"
+
+
+# endregion

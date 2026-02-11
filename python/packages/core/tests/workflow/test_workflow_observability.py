@@ -8,7 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
+from agent_framework._workflows._runner_context import InProcRunnerContext, MessageType, WorkflowMessage
 from agent_framework._workflows._state import State
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -440,7 +440,7 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     ctx = InProcRunnerContext(InMemoryCheckpointStorage())
 
     # Create message with trace context
-    message = Message(
+    message = WorkflowMessage(
         data="test",
         source_id="source",
         target_id="target",
@@ -474,8 +474,9 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
-    # Test validation error by referencing a non-existent start executor
-    builder = WorkflowBuilder(start_executor="NonExistent")
+    # Create a valid builder, then clear the start executor to trigger a build-time ValueError
+    builder = WorkflowBuilder(start_executor=MockExecutor(id="mock"))
+    builder._start_executor = None  # type: ignore[assignment]
 
     with pytest.raises(ValueError):
         builder.build()

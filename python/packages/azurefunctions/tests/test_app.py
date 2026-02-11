@@ -12,7 +12,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentResponse, ChatMessage
+from agent_framework import AgentResponse, Message
 from agent_framework_durabletask import (
     MIMETYPE_APPLICATION_JSON,
     MIMETYPE_TEXT_PLAIN,
@@ -27,10 +27,10 @@ from agent_framework_durabletask import (
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._entities import create_agent_entity
 
-TFunc = TypeVar("TFunc", bound=Callable[..., Any])
+FuncT = TypeVar("FuncT", bound=Callable[..., Any])
 
 
-def _identity_decorator(func: TFunc) -> TFunc:
+def _identity_decorator(func: FuncT) -> FuncT:
     return func
 
 
@@ -165,8 +165,8 @@ class TestAgentFunctionAppSetup:
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -190,15 +190,15 @@ class TestAgentFunctionAppSetup:
 
         def capture_function_name(
             self: AgentFunctionApp, name: str, *args: Any, **kwargs: Any
-        ) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        ) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 captured_names.append(name)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -220,16 +220,16 @@ class TestAgentFunctionAppSetup:
 
         captured_routes: list[str | None] = []
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_routes.append(route_key)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -356,7 +356,7 @@ class TestAgentEntityOperations:
         """Test that entity can run agent operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", text="Test response")])
         )
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="test-conv-123"))
@@ -373,9 +373,7 @@ class TestAgentEntityOperations:
     async def test_entity_stores_conversation_history(self) -> None:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response 1")])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response 1")]))
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
@@ -407,9 +405,7 @@ class TestAgentEntityOperations:
     async def test_entity_increments_message_count(self) -> None:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
@@ -448,9 +444,7 @@ class TestAgentEntityFactory:
     def test_entity_function_handles_run_operation(self) -> None:
         """Test that the entity function handles the run operation."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
 
         entity_function = create_agent_entity(mock_agent)
 
@@ -475,9 +469,7 @@ class TestAgentEntityFactory:
     def test_entity_function_handles_run_agent_operation(self) -> None:
         """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[ChatMessage(role="assistant", text="Response")])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
 
         entity_function = create_agent_entity(mock_agent)
 
@@ -738,14 +730,14 @@ class TestHttpRunRoute:
     def _get_run_handler(agent: Mock) -> Callable[[func.HttpRequest, Any], Awaitable[func.HttpResponse]]:
         captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
 
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_handlers[route_key] = func
                 return func
@@ -1144,8 +1136,8 @@ class TestMCPToolEndpoint:
         # Capture the health check handler function
         captured_handler: Callable[[func.HttpRequest], func.HttpResponse] | None = None
 
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 nonlocal captured_handler
                 captured_handler = func
                 return func

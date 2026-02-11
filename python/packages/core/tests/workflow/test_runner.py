@@ -25,8 +25,8 @@ from agent_framework._workflows._edge import SingleEdgeGroup
 from agent_framework._workflows._runner import Runner
 from agent_framework._workflows._runner_context import (
     InProcRunnerContext,
-    Message,
     RunnerContext,
+    WorkflowMessage,
 )
 from agent_framework._workflows._state import State
 
@@ -191,7 +191,7 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
     runner = Runner([], {}, State(), ctx, "test_name", graph_signature_hash="test_hash")
 
     await ctx.send_message(
-        Message(
+        WorkflowMessage(
             data=AgentExecutorResponse("agent", AgentResponse()),
             source_id="agent",
         )

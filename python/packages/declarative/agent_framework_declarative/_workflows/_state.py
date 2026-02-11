@@ -314,7 +314,7 @@ class WorkflowState:
         """Add a message to the conversation history.
 
         Args:
-            message: The message to add (typically a ChatMessage or similar)
+            message: The message to add (typically a Message or similar)
         """
         self._conversation["messages"].append(message)
         self._conversation["history"].append(message)

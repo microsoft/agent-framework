@@ -9,7 +9,7 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    ChatMessage,
+    Message,
     MiddlewareTermination,
     tool,
 )
@@ -62,7 +62,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     # Set a custom response
                     context.result = AgentResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 text=(
                                     f"Sorry, I cannot process requests containing '{blocked_word}'. "
@@ -72,8 +72,8 @@ class PreTerminationMiddleware(AgentMiddleware):
                         ]
                     )
 
-                    # Set terminate flag to prevent further processing
-                    raise MiddlewareTermination
+                    # Terminate to prevent further processing
+                    raise MiddlewareTermination(result=context.result)
 
         await call_next(context)
 

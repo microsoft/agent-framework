@@ -4,9 +4,8 @@ import asyncio
 
 from agent_framework import (
     AgentResponseUpdate,
-    HostedCodeInterpreterTool,
 )
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -31,10 +30,14 @@ async def non_streaming_example() -> None:
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
-            name="V2CodeInterpreterFileAgent",
+            name="CodeInterpreterFileAgent",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")
@@ -44,7 +47,7 @@ async def non_streaming_example() -> None:
 
         # Check for annotations in the response
         annotations_found: list[str] = []
-        # AgentResponse has messages property, which contains ChatMessage objects
+        # AgentResponse has messages property, which contains Message objects
         for message in result.messages:
             for content in message.contents:
                 if content.type == "text" and content.annotations:
@@ -67,10 +70,14 @@ async def streaming_example() -> None:
         AzureCliCredential() as credential,
         AzureAIProjectAgentProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="V2CodeInterpreterFileAgentStreaming",
             instructions="You are a helpful assistant that can write and execute Python code to create files.",
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
 
         print(f"User: {QUERY}\n")

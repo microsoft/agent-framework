@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import redis.asyncio as redis
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._serialization import SerializationMixin
 from redis.credentials import CredentialProvider
 
@@ -64,7 +64,7 @@ class RedisChatMessageStore:
         thread_id: str | None = None,
         key_prefix: str = "chat_messages",
         max_messages: int | None = None,
-        messages: Sequence[ChatMessage] | None = None,
+        messages: Sequence[Message] | None = None,
     ) -> None:
         """Initialize the Redis chat message store.
 
@@ -186,14 +186,14 @@ class RedisChatMessageStore:
         self._initial_messages_added = True
         self._initial_messages.clear()
 
-    async def _add_redis_messages(self, messages: Sequence[ChatMessage]) -> None:
+    async def _add_redis_messages(self, messages: Sequence[Message]) -> None:
         """Add multiple messages to Redis using atomic pipeline operation.
 
         This internal method efficiently adds multiple messages to the Redis list
         using a single atomic transaction to ensure consistency.
 
         Args:
-            messages: Sequence of ChatMessage objects to add to Redis.
+            messages: Sequence of Message objects to add to Redis.
         """
         if not messages:
             return
@@ -207,7 +207,7 @@ class RedisChatMessageStore:
                 await pipe.rpush(self.redis_key, serialized_message)  # type: ignore[misc]
             await pipe.execute()
 
-    async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+    async def add_messages(self, messages: Sequence[Message]) -> None:
         """Add messages to the Redis store (ChatMessageStoreProtocol protocol method).
 
         This method implements the required ChatMessageStoreProtocol protocol for adding messages.
@@ -215,7 +215,7 @@ class RedisChatMessageStore:
         trimming if message limits are configured.
 
         Args:
-            messages: Sequence of ChatMessage objects to add to the store.
+            messages: Sequence of Message objects to add to the store.
                      Can be empty (no-op) or contain multiple messages.
 
         Thread Safety:
@@ -225,7 +225,7 @@ class RedisChatMessageStore:
         Example:
             .. code-block:: python
 
-                messages = [ChatMessage(role="user", text="Hello"), ChatMessage(role="assistant", text="Hi there!")]
+                messages = [Message(role="user", text="Hello"), Message(role="assistant", text="Hi there!")]
                 await store.add_messages(messages)
         """
         if not messages:
@@ -244,14 +244,14 @@ class RedisChatMessageStore:
                 # Keep only the most recent max_messages using LTRIM
                 await self._redis_client.ltrim(self.redis_key, -self.max_messages, -1)  # type: ignore[misc]
 
-    async def list_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[Message]:
         """Get all messages from the store in chronological order (ChatMessageStoreProtocol protocol method).
 
         This method implements the required ChatMessageStoreProtocol protocol for retrieving messages.
         Returns all messages stored in Redis, ordered from oldest (index 0) to newest (index -1).
 
         Returns:
-            List of ChatMessage objects in chronological order (oldest first).
+            List of Message objects in chronological order (oldest first).
             Returns empty list if no messages exist or if Redis connection fails.
 
         Example:
@@ -269,7 +269,7 @@ class RedisChatMessageStore:
 
         if redis_messages:
             for serialized_message in redis_messages:
-                # Deserialize each JSON message back to ChatMessage
+                # Deserialize each JSON message back to Message
                 message = self._deserialize_message(serialized_message)
                 messages.append(message)
 
@@ -390,11 +390,11 @@ class RedisChatMessageStore:
         """
         await self._redis_client.delete(self.redis_key)
 
-    def _serialize_message(self, message: ChatMessage) -> str:
-        """Serialize a ChatMessage to JSON string.
+    def _serialize_message(self, message: Message) -> str:
+        """Serialize a Message to JSON string.
 
         Args:
-            message: ChatMessage to serialize.
+            message: Message to serialize.
 
         Returns:
             JSON string representation of the message.
@@ -402,17 +402,17 @@ class RedisChatMessageStore:
         # Serialize to compact JSON (no extra whitespace for Redis efficiency)
         return message.to_json(separators=(",", ":"))
 
-    def _deserialize_message(self, serialized_message: str) -> ChatMessage:
-        """Deserialize a JSON string to ChatMessage.
+    def _deserialize_message(self, serialized_message: str) -> Message:
+        """Deserialize a JSON string to Message.
 
         Args:
             serialized_message: JSON string representation of a message.
 
         Returns:
-            ChatMessage object.
+            Message object.
         """
-        # Reconstruct ChatMessage using custom deserialization
-        return ChatMessage.from_json(serialized_message)
+        # Reconstruct Message using custom deserialization
+        return Message.from_json(serialized_message)
 
     # ============================================================================
     # List-like Convenience Methods (Redis-optimized async versions)
@@ -446,14 +446,14 @@ class RedisChatMessageStore:
         await self._ensure_initial_messages_added()
         return await self._redis_client.llen(self.redis_key)  # type: ignore[misc,no-any-return]
 
-    async def getitem(self, index: int) -> ChatMessage:
+    async def getitem(self, index: int) -> Message:
         """Get a message by index using Redis LINDEX.
 
         Args:
             index: The index of the message to retrieve.
 
         Returns:
-            The ChatMessage at the specified index.
+            The Message at the specified index.
 
         Raises:
             IndexError: If the index is out of range.
@@ -467,12 +467,12 @@ class RedisChatMessageStore:
 
         return self._deserialize_message(serialized_message)
 
-    async def setitem(self, index: int, item: ChatMessage) -> None:
+    async def setitem(self, index: int, item: Message) -> None:
         """Set a message at the specified index using Redis LSET.
 
         Args:
             index: The index at which to set the message.
-            item: The ChatMessage to set at the specified index.
+            item: The Message to set at the specified index.
 
         Raises:
             IndexError: If the index is out of range.
@@ -490,11 +490,11 @@ class RedisChatMessageStore:
         serialized_message = self._serialize_message(item)
         await self._redis_client.lset(self.redis_key, index, serialized_message)  # type: ignore[misc]
 
-    async def append(self, item: ChatMessage) -> None:
+    async def append(self, item: Message) -> None:
         """Append a message to the end of the store.
 
         Args:
-            item: The ChatMessage to append.
+            item: The Message to append.
         """
         await self.add_messages([item])
 
@@ -507,14 +507,14 @@ class RedisChatMessageStore:
         await self._ensure_initial_messages_added()
         return await self._redis_client.llen(self.redis_key)  # type: ignore[misc,no-any-return]
 
-    async def index(self, item: ChatMessage) -> int:
+    async def index(self, item: Message) -> int:
         """Return the index of the first occurrence of the specified message.
 
         Uses Redis LINDEX to iterate through the list without loading all messages.
         Still O(N) but more memory efficient for large lists.
 
         Args:
-            item: The ChatMessage to find.
+            item: The Message to find.
 
         Returns:
             The index of the first occurrence of the message.
@@ -533,16 +533,16 @@ class RedisChatMessageStore:
             if redis_message == target_serialized:
                 return i
 
-        raise ValueError("ChatMessage not found in store")
+        raise ValueError("Message not found in store")
 
-    async def remove(self, item: ChatMessage) -> None:
+    async def remove(self, item: Message) -> None:
         """Remove the first occurrence of the specified message from the store.
 
         Uses Redis LREM command for efficient removal by value.
         O(N) but performed natively in Redis without data transfer.
 
         Args:
-            item: The ChatMessage to remove.
+            item: The Message to remove.
 
         Raises:
             ValueError: If the message is not found in the store.
@@ -556,13 +556,13 @@ class RedisChatMessageStore:
         removed_count = await self._redis_client.lrem(self.redis_key, 1, target_serialized)  # type: ignore[misc]
 
         if removed_count == 0:
-            raise ValueError("ChatMessage not found in store")
+            raise ValueError("Message not found in store")
 
-    async def extend(self, items: Sequence[ChatMessage]) -> None:
+    async def extend(self, items: Sequence[Message]) -> None:
         """Extend the store by appending all messages from the iterable.
 
         Args:
-            items: Sequence of ChatMessage objects to append.
+            items: Sequence of Message objects to append.
         """
         await self.add_messages(items)
 

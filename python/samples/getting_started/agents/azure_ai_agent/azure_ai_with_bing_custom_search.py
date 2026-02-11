@@ -2,8 +2,7 @@
 
 import asyncio
 
-from agent_framework import HostedWebSearchTool
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -30,25 +29,25 @@ To set up Bing Custom Search:
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with Bing Custom Search."""
-    # 1. Create Bing Custom Search tool using HostedWebSearchTool
-    # The connection ID and instance name will be automatically picked up from environment variables
-    bing_search_tool = HostedWebSearchTool(
-        name="Bing Custom Search",
-        description="Search the web for current information using Bing Custom Search",
-    )
-
-    # 2. Use AzureAIAgentsProvider for agent creation and management
+    # Use AzureAIAgentsProvider for agent creation and management
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        # Create Bing Custom Search tool using instance method
+        # The connection ID and instance name will be automatically picked up from environment variables
+        # (BING_CUSTOM_CONNECTION_ID and BING_CUSTOM_INSTANCE_NAME)
+        bing_search_tool = client.get_web_search_tool()
+
         agent = await provider.create_agent(
             name="BingSearchAgent",
             instructions=(
                 "You are a helpful agent that can use Bing Custom Search tools to assist users. "
                 "Use the available Bing Custom Search tools to answer questions and perform tasks."
             ),
-            tools=bing_search_tool,
+            tools=[bing_search_tool],
         )
 
         # 3. Demonstrate agent capabilities with bing custom search
