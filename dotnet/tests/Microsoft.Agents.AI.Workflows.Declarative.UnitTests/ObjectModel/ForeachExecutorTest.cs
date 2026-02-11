@@ -16,7 +16,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 {
     [Fact]
     public void InvalidModel() =>
-        // Arrange, Act, Assert
+        // Arrange, Act & Assert
         Assert.Throws<DeclarativeModelException>(() => new ForeachExecutor(new Foreach(), this.State));
 
     [Fact]
@@ -39,7 +39,10 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     [Fact]
     public async Task ForeachWithSingleValueAsync()
     {
-        // Arrange, Act, Assert
+        // Arrange
+        this.SetVariableState("CurrentValue");
+
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithSingleValueAsync),
             items: ValueExpression.Literal(new NumberDataValue(42)),
@@ -50,7 +53,10 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     [Fact]
     public async Task ForeachWithStringValueAsync()
     {
-        // Arrange, Act, Assert
+        // Arrange
+        this.SetVariableState("CurrentValue");
+
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithStringValueAsync),
             items: ValueExpression.Literal(new StringDataValue("Test")),
@@ -67,7 +73,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(2))),
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new NumberDataValue(3))));
 
-        // Act, Assert
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithTableValueAsync),
             items: ValueExpression.Literal(tableValue),
@@ -79,11 +85,12 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     public async Task ForeachWithIndexAsync()
     {
         // Arrange
+        this.SetVariableState("CurrentValue", "CurrentIndex");
         TableDataValue tableValue = DataValue.TableFromRecords(
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new StringDataValue("A"))),
             DataValue.RecordFromFields(new KeyValuePair<string, DataValue>("item", new StringDataValue("B"))));
 
-        // Act, Assert
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithIndexAsync),
             items: ValueExpression.Literal(tableValue),
@@ -95,12 +102,12 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     public async Task ForeachWithEmptyTableAsync()
     {
         // Arrange
-        TableDataValue emptyTable = DataValue.TableFromRecords();
+        this.SetVariableState("CurrentValue");
 
-        // Act, Assert
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithEmptyTableAsync),
-            items: ValueExpression.Literal(emptyTable),
+            items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: null);
     }
@@ -109,13 +116,14 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     public async Task ForeachWithExpressionAsync()
     {
         // Arrange
+        this.SetVariableState("CurrentValue");
         this.State.Set("SourceArray", FormulaValue.NewTable(
             RecordType.Empty(),
             FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
             FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
             FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
 
-        // Act, Assert
+        // Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ForeachWithExpressionAsync),
             items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
@@ -124,21 +132,40 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     [Fact]
-    public async Task ForeachCompletedAsync()
+    public async Task ForeachCompletedWithoutIndexAsync()
     {
         // Arrange
-        this.State.Set("SourceArray", FormulaValue.NewTable(
-            RecordType.Empty(),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(10))),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(20))),
-            FormulaValue.NewRecordFromFields(new NamedValue("value", FormulaValue.New(30)))));
+        this.SetVariableState("CurrentValue");
 
-        // Act, Assert
+        // Act & Assert
         await this.CompletedTestAsync(
-            displayName: nameof(ForeachCompletedAsync),
-            items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
+            displayName: nameof(ForeachCompletedWithoutIndexAsync),
+            items: ValueExpression.Literal(DataValue.EmptyTable),
             valueName: "CurrentValue",
             indexName: null);
+    }
+
+    [Fact]
+    public async Task ForeachCompletedWithIndexAsync()
+    {
+        // Arrange
+        this.SetVariableState("CurrentValue", "CurrentIndex");
+
+        // Act & Assert
+        await this.CompletedTestAsync(
+            displayName: nameof(ForeachCompletedWithIndexAsync),
+            items: ValueExpression.Literal(DataValue.EmptyTable),
+            valueName: "CurrentValue",
+            indexName: "CurrentIndex");
+    }
+
+    private void SetVariableState(string valueName, string? indexName = null, FormulaValue? valueState = null)
+    {
+        this.State.Set(valueName, valueState ?? FormulaValue.New("something"));
+        if (indexName is not null)
+        {
+            this.State.Set(indexName, FormulaValue.New(33));
+        }
     }
 
     private async Task ExecuteTestAsync(
