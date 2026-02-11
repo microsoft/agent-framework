@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from agent_framework._realtime_types import RealtimeEvent, RealtimeSessionConfig
-from agent_framework._tools import ToolProtocol
+from agent_framework._tools import FunctionTool
 
 from ._serialization import SerializationMixin
 
@@ -165,7 +165,7 @@ class BaseRealtimeClient(SerializationMixin, ABC):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: list[ToolProtocol] | None = None,
+        tools: list[FunctionTool] | None = None,
         voice: str | None = None,
         **kwargs: Any,
     ) -> RealtimeAgent:

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework._realtime_types import RealtimeEvent, RealtimeSessionConfig
 from agent_framework._threads import AgentThread
-from agent_framework._tools import FunctionTool, ToolProtocol
-from agent_framework._types import ChatMessage
+from agent_framework._tools import FunctionTool
+from agent_framework._types import Message
 
 from ._agents import BaseAgent
 from ._logging import get_logger
@@ -26,7 +26,7 @@ logger = get_logger("agent_framework")
 __all__ = ["RealtimeAgent", "execute_tool", "tool_to_schema"]
 
 
-def tool_to_schema(tool: ToolProtocol) -> dict[str, Any]:
+def tool_to_schema(tool: FunctionTool) -> dict[str, Any]:
     """Convert a tool to a schema dict for realtime providers.
 
     Args:
@@ -51,7 +51,7 @@ def tool_to_schema(tool: ToolProtocol) -> dict[str, Any]:
 
 
 async def execute_tool(
-    tool_registry: dict[str, ToolProtocol],
+    tool_registry: dict[str, FunctionTool],
     tool_call: dict[str, Any],
 ) -> str:
     """Execute a realtime tool call and return the string result.
@@ -97,7 +97,7 @@ class RealtimeAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: list[ToolProtocol] | None = None,
+        tools: list[FunctionTool] | None = None,
         voice: str | None = None,
         **kwargs: Any,
     ) -> None:
@@ -120,7 +120,7 @@ class RealtimeAgent(BaseAgent):
         self.instructions = instructions
         self._tools = tools or []
         self.voice = voice
-        self._tool_registry: dict[str, ToolProtocol] = {t.name: t for t in self._tools}
+        self._tool_registry: dict[str, FunctionTool] = {t.name: t for t in self._tools}
 
     async def run(
         self,
@@ -140,7 +140,7 @@ class RealtimeAgent(BaseAgent):
 
         await self._client.connect(config)
 
-        all_messages: list[ChatMessage] = []
+        all_messages: list[Message] = []
 
         try:
             send_task = asyncio.create_task(self._send_audio_loop(audio_input))
@@ -150,11 +150,11 @@ class RealtimeAgent(BaseAgent):
                     if event.type == "input_transcript":
                         text = event.data.get("text", "")
                         if text:
-                            all_messages.append(ChatMessage(role="user", text=text))
+                            all_messages.append(Message(role="user", text=text))
                     elif event.type == "response_transcript":
                         text = event.data.get("text", "")
                         if text:
-                            all_messages.append(ChatMessage(role="assistant", text=text))
+                            all_messages.append(Message(role="assistant", text=text))
                     yield event
             finally:
                 send_task.cancel()
@@ -215,6 +215,6 @@ class RealtimeAgent(BaseAgent):
             "Use ChatAgent for text-based multi-agent workflows."
         )
 
-    def _tool_to_schema(self, tool: ToolProtocol) -> dict[str, Any]:
+    def _tool_to_schema(self, tool: FunctionTool) -> dict[str, Any]:
         """Convert a tool to a schema dict for the provider."""
         return tool_to_schema(tool)
