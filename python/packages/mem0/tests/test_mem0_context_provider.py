@@ -1,22 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
 
-import importlib
-import os
-import sys
-from typing import Any
-from unittest.mock import AsyncMock
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.mem0 import Mem0ContextProvider
 
-
-def test_mem0_context_provider_import() -> None:
-    """Test that Mem0ContextProvider can be imported."""
-    assert Mem0ContextProvider is not None
+from agent_framework_mem0._context_provider import Mem0ContextProvider
 
 
 @pytest.fixture
@@ -29,534 +23,330 @@ def mock_mem0_client() -> AsyncMock:
     mock_client.search = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock()
-    mock_client.async_client = AsyncMock()
-    mock_client.async_client.aclose = AsyncMock()
     return mock_client
 
 
-@pytest.fixture
-def mock_agent() -> AsyncMock:
-    """Create a mock agent."""
-    return AsyncMock()
+# -- Initialization tests ------------------------------------------------------
 
 
-@pytest.fixture
-def session() -> AgentSession:
-    """Create a test AgentSession."""
-    return AgentSession(session_id="test-session")
+class TestInit:
+    """Test Mem0ContextProvider initialization."""
 
-
-@pytest.fixture
-def sample_messages() -> list[Message]:
-    """Create sample chat messages for testing."""
-    return [
-        Message(role="user", text="Hello, how are you?"),
-        Message(role="assistant", text="I'm doing well, thank you!"),
-        Message(role="system", text="You are a helpful assistant"),
-    ]
-
-
-def _make_context(input_messages: list[Message], session_id: str = "test-session") -> SessionContext:
-    """Helper to create a SessionContext with the given input messages."""
-    return SessionContext(session_id=session_id, input_messages=input_messages)
-
-
-def _empty_state() -> dict[str, Any]:
-    """Helper to create an empty state dict."""
-    return {}
-
-
-def test_init_with_all_ids(mock_mem0_client: AsyncMock) -> None:
-    """Test initialization with all IDs provided."""
-    provider = Mem0ContextProvider(
-        source_id="mem0",
-        user_id="user123",
-        agent_id="agent123",
-        application_id="app123",
-        mem0_client=mock_mem0_client,
-    )
-    assert provider.user_id == "user123"
-    assert provider.agent_id == "agent123"
-    assert provider.application_id == "app123"
-
-
-def test_init_without_filters_succeeds(mock_mem0_client: AsyncMock) -> None:
-    """Test that initialization succeeds even without filters (validation happens during invocation)."""
-    provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-    assert provider.user_id is None
-    assert provider.agent_id is None
-    assert provider.application_id is None
-
-
-def test_init_with_custom_context_prompt(mock_mem0_client: AsyncMock) -> None:
-    """Test initialization with custom context prompt."""
-    custom_prompt = "## Custom Memories\nConsider these memories:"
-    provider = Mem0ContextProvider(
-        source_id="mem0", user_id="user123", context_prompt=custom_prompt, mem0_client=mock_mem0_client
-    )
-    assert provider.context_prompt == custom_prompt
-
-
-def test_init_with_provided_client_should_not_close(mock_mem0_client: AsyncMock) -> None:
-    """Test that provided client should not be closed by provider."""
-    provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-    assert provider._should_close_client is False
-
-
-async def test_async_context_manager_entry(mock_mem0_client: AsyncMock) -> None:
-    """Test async context manager entry returns self."""
-    provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-    async with provider as ctx:
-        assert ctx is provider
-
-
-async def test_async_context_manager_exit_does_not_close_provided_client(mock_mem0_client: AsyncMock) -> None:
-    """Test that async context manager does not close provided client."""
-    provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-    assert provider._should_close_client is False
-
-    async with provider:
-        pass
-
-    mock_mem0_client.__aexit__.assert_not_called()
-
-
-class TestMem0ContextProviderAfterRun:
-    """Test after_run method (storing messages to Mem0)."""
-
-    async def test_after_run_fails_without_filters(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that after_run fails when no filters are provided."""
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello!")])
-
-        with pytest.raises(ServiceInitializationError) as exc_info:
-            await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        assert "At least one of the filters" in str(exc_info.value)
-
-    async def test_after_run_single_input_message(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test storing a single input message."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello!")])
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.add.assert_called_once()
-        call_args = mock_mem0_client.add.call_args
-        assert call_args.kwargs["messages"] == [{"role": "user", "content": "Hello!"}]
-        assert call_args.kwargs["user_id"] == "user123"
-
-    async def test_after_run_multiple_messages(
-        self,
-        mock_mem0_client: AsyncMock,
-        mock_agent: AsyncMock,
-        session: AgentSession,
-        sample_messages: list[Message],
-    ) -> None:
-        """Test storing multiple input messages."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context(sample_messages)
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.add.assert_called_once()
-        call_args = mock_mem0_client.add.call_args
-        expected_messages = [
-            {"role": "user", "content": "Hello, how are you?"},
-            {"role": "assistant", "content": "I'm doing well, thank you!"},
-            {"role": "system", "content": "You are a helpful assistant"},
-        ]
-        assert call_args.kwargs["messages"] == expected_messages
-
-    async def test_after_run_includes_response_messages(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that after_run includes response messages."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello!")])
-        ctx._response = AgentResponse(messages=[Message(role="assistant", text="Hi there!")])
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.add.assert_called_once()
-        call_args = mock_mem0_client.add.call_args
-        expected_messages = [
-            {"role": "user", "content": "Hello!"},
-            {"role": "assistant", "content": "Hi there!"},
-        ]
-        assert call_args.kwargs["messages"] == expected_messages
-
-    async def test_after_run_with_agent_id(
-        self,
-        mock_mem0_client: AsyncMock,
-        mock_agent: AsyncMock,
-        session: AgentSession,
-        sample_messages: list[Message],
-    ) -> None:
-        """Test storing messages with agent_id."""
-        provider = Mem0ContextProvider(source_id="mem0", agent_id="agent123", mem0_client=mock_mem0_client)
-        ctx = _make_context(sample_messages)
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.add.call_args
-        assert call_args.kwargs["agent_id"] == "agent123"
-        assert call_args.kwargs["user_id"] is None
-
-    async def test_after_run_with_application_id(
-        self,
-        mock_mem0_client: AsyncMock,
-        mock_agent: AsyncMock,
-        session: AgentSession,
-        sample_messages: list[Message],
-    ) -> None:
-        """Test storing messages with application_id in metadata."""
-        provider = Mem0ContextProvider(
-            source_id="mem0", user_id="user123", application_id="app123", mem0_client=mock_mem0_client
-        )
-        ctx = _make_context(sample_messages)
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.add.call_args
-        assert call_args.kwargs["metadata"] == {"application_id": "app123"}
-
-    async def test_after_run_uses_session_id_as_run_id(
-        self,
-        mock_mem0_client: AsyncMock,
-        mock_agent: AsyncMock,
-        session: AgentSession,
-        sample_messages: list[Message],
-    ) -> None:
-        """Test that after_run uses the context session_id as run_id."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context(sample_messages, session_id="my-session")
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.add.call_args
-        assert call_args.kwargs["run_id"] == "my-session"
-
-    async def test_after_run_filters_empty_messages(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that empty or invalid messages are filtered out."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        messages = [
-            Message(role="user", text=""),
-            Message(role="user", text="   "),
-            Message(role="user", text="Valid message"),
-        ]
-        ctx = _make_context(messages)
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.add.call_args
-        assert call_args.kwargs["messages"] == [{"role": "user", "content": "Valid message"}]
-
-    async def test_after_run_skips_when_no_valid_messages(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that mem0 client is not called when no valid messages exist."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        messages = [
-            Message(role="user", text=""),
-            Message(role="user", text="   "),
-        ]
-        ctx = _make_context(messages)
-
-        await provider.after_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.add.assert_not_called()
-
-
-class TestMem0ContextProviderBeforeRun:
-    """Test before_run method (searching memories and adding to context)."""
-
-    async def test_before_run_fails_without_filters(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that before_run fails when no filters are provided."""
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="What's the weather?")])
-
-        with pytest.raises(ServiceInitializationError) as exc_info:
-            await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        assert "At least one of the filters" in str(exc_info.value)
-
-    async def test_before_run_single_message(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test before_run with a single input message."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="What's the weather?")])
-
-        mock_mem0_client.search.return_value = [
-            {"memory": "User likes outdoor activities"},
-            {"memory": "User lives in Seattle"},
-        ]
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.search.assert_called_once()
-        call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["query"] == "What's the weather?"
-        assert call_args.kwargs["filters"] == {"user_id": "user123", "run_id": "test-session"}
-
-        context_messages = ctx.get_messages()
-        assert len(context_messages) > 0
-        expected_text = (
-            "## Memories\nConsider the following memories when answering user questions:\n"
-            "User likes outdoor activities\nUser lives in Seattle"
-        )
-        assert context_messages[0].text == expected_text
-
-    async def test_before_run_multiple_messages(
-        self,
-        mock_mem0_client: AsyncMock,
-        mock_agent: AsyncMock,
-        session: AgentSession,
-        sample_messages: list[Message],
-    ) -> None:
-        """Test before_run with multiple input messages."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context(sample_messages)
-
-        mock_mem0_client.search.return_value = [{"memory": "Previous conversation context"}]
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.search.call_args
-        expected_query = "Hello, how are you?\nI'm doing well, thank you!\nYou are a helpful assistant"
-        assert call_args.kwargs["query"] == expected_query
-
-    async def test_before_run_with_agent_id(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test before_run with agent_id."""
-        provider = Mem0ContextProvider(source_id="mem0", agent_id="agent123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello")])
-
-        mock_mem0_client.search.return_value = []
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["filters"] == {"agent_id": "agent123", "run_id": "test-session"}
-
-    async def test_before_run_with_session_id_in_filters(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test before_run includes session_id as run_id in search filters."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello")], session_id="my-session")
-
-        mock_mem0_client.search.return_value = []
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["filters"] == {"user_id": "user123", "run_id": "my-session"}
-
-    async def test_before_run_no_memories_does_not_add_messages(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that no memories does not add context messages."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text="Hello")])
-
-        mock_mem0_client.search.return_value = []
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        context_messages = ctx.get_messages()
-        assert len(context_messages) == 0
-
-    async def test_before_run_empty_input_text_skips_search(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that empty input text skips the search entirely."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        ctx = _make_context([Message(role="user", text=""), Message(role="user", text="   ")])
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        mock_mem0_client.search.assert_not_called()
-
-    async def test_before_run_filters_empty_message_text(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test that empty message text is filtered out from query."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        messages = [
-            Message(role="user", text=""),
-            Message(role="user", text="Valid message"),
-            Message(role="user", text="   "),
-        ]
-        ctx = _make_context(messages)
-
-        mock_mem0_client.search.return_value = []
-
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
-
-        call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["query"] == "Valid message"
-
-    async def test_before_run_custom_context_prompt(
-        self, mock_mem0_client: AsyncMock, mock_agent: AsyncMock, session: AgentSession
-    ) -> None:
-        """Test before_run with custom context prompt."""
-        custom_prompt = "## Custom Context\nRemember these details:"
+    def test_init_with_all_params(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(
             source_id="mem0",
-            user_id="user123",
-            context_prompt=custom_prompt,
             mem0_client=mock_mem0_client,
+            api_key="key-123",
+            application_id="app1",
+            agent_id="agent1",
+            user_id="user1",
+            context_prompt="Custom prompt",
         )
-        ctx = _make_context([Message(role="user", text="Hello")])
+        assert provider.source_id == "mem0"
+        assert provider.api_key == "key-123"
+        assert provider.application_id == "app1"
+        assert provider.agent_id == "agent1"
+        assert provider.user_id == "user1"
+        assert provider.context_prompt == "Custom prompt"
+        assert provider.mem0_client is mock_mem0_client
+        assert provider._should_close_client is False
 
-        mock_mem0_client.search.return_value = [{"memory": "Test memory"}]
+    def test_init_default_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        assert provider.context_prompt == Mem0ContextProvider.DEFAULT_CONTEXT_PROMPT
 
-        await provider.before_run(agent=mock_agent, session=session, context=ctx, state=_empty_state())
+    def test_init_auto_creates_client_when_none(self) -> None:
+        """When no client is provided, a default AsyncMemoryClient is created and flagged for closing."""
+        with (
+            patch("mem0.client.main.AsyncMemoryClient.__init__", return_value=None) as mock_init,
+            patch("mem0.client.main.AsyncMemoryClient._validate_api_key", return_value=None),
+        ):
+            provider = Mem0ContextProvider(source_id="mem0", api_key="test-key", user_id="u1")
+            mock_init.assert_called_once_with(api_key="test-key")
+            assert provider._should_close_client is True
 
-        context_messages = ctx.get_messages()
-        expected_text = "## Custom Context\nRemember these details:\nTest memory"
-        assert len(context_messages) > 0
-        assert context_messages[0].text == expected_text
+    def test_provided_client_not_flagged_for_close(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        assert provider._should_close_client is False
 
 
-class TestMem0ContextProviderValidation:
-    """Test validation methods."""
+# -- before_run tests ----------------------------------------------------------
 
-    def test_validate_filters_fails_without_any_filter(self, mock_mem0_client: AsyncMock) -> None:
-        """Test validation failure when no filters are set."""
+
+class TestBeforeRun:
+    """Test before_run hook."""
+
+    async def test_memories_added_to_context(self, mock_mem0_client: AsyncMock) -> None:
+        """Mocked mem0 search returns memories → messages added to context with prompt."""
+        mock_mem0_client.search.return_value = [
+            {"memory": "User likes Python"},
+            {"memory": "User prefers dark mode"},
+        ]
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_awaited_once()
+        assert "mem0" in ctx.context_messages
+        added = ctx.context_messages["mem0"]
+        assert len(added) == 1
+        assert "User likes Python" in added[0].text  # type: ignore[operator]
+        assert "User prefers dark mode" in added[0].text  # type: ignore[operator]
+        assert provider.context_prompt in added[0].text  # type: ignore[operator]
+
+    async def test_empty_input_skips_search(self, mock_mem0_client: AsyncMock) -> None:
+        """Empty input messages → no search performed."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_not_awaited()
+        assert "mem0" not in ctx.context_messages
+
+    async def test_empty_search_results_no_messages(self, mock_mem0_client: AsyncMock) -> None:
+        """Empty search results → no messages added."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        assert "mem0" not in ctx.context_messages
+
+    async def test_validates_filters_before_search(self, mock_mem0_client: AsyncMock) -> None:
+        """Raises ServiceInitializationError when no filters."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
 
-        with pytest.raises(ServiceInitializationError) as exc_info:
+        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
+            await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+    async def test_v1_1_response_format(self, mock_mem0_client: AsyncMock) -> None:
+        """Search response in v1.1 dict format with 'results' key."""
+        mock_mem0_client.search.return_value = {"results": [{"memory": "remembered fact"}]}
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        added = ctx.context_messages["mem0"]
+        assert "remembered fact" in added[0].text  # type: ignore[operator]
+
+    async def test_search_query_combines_input_messages(self, mock_mem0_client: AsyncMock) -> None:
+        """Multiple input messages are joined for the search query."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(
+            input_messages=[
+                Message(role="user", text="Hello"),
+                Message(role="user", text="World"),
+            ],
+            session_id="s1",
+        )
+
+        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        call_kwargs = mock_mem0_client.search.call_args.kwargs
+        assert call_kwargs["query"] == "Hello\nWorld"
+
+
+# -- after_run tests -----------------------------------------------------------
+
+
+class TestAfterRun:
+    """Test after_run hook."""
+
+    async def test_stores_input_and_response(self, mock_mem0_client: AsyncMock) -> None:
+        """Stores input+response messages to mem0 via client.add."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="question")], session_id="s1")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="answer")])
+
+        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        mock_mem0_client.add.assert_awaited_once()
+        call_kwargs = mock_mem0_client.add.call_args.kwargs
+        assert call_kwargs["messages"] == [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["run_id"] == "s1"
+
+    async def test_only_stores_user_assistant_system(self, mock_mem0_client: AsyncMock) -> None:
+        """Only stores user/assistant/system messages with text."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(
+            input_messages=[
+                Message(role="user", text="hello"),
+                Message(role="tool", text="tool output"),
+            ],
+            session_id="s1",
+        )
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="reply")])
+
+        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        call_kwargs = mock_mem0_client.add.call_args.kwargs
+        roles = [m["role"] for m in call_kwargs["messages"]]
+        assert "tool" not in roles
+        assert roles == ["user", "assistant"]
+
+    async def test_skips_empty_messages(self, mock_mem0_client: AsyncMock) -> None:
+        """Skips messages with empty text."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(
+            input_messages=[
+                Message(role="user", text=""),
+                Message(role="user", text="   "),
+            ],
+            session_id="s1",
+        )
+        ctx._response = AgentResponse(messages=[])
+
+        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        mock_mem0_client.add.assert_not_awaited()
+
+    async def test_uses_session_id_as_run_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Uses session_id as run_id."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="my-session")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
+
+        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        assert mock_mem0_client.add.call_args.kwargs["run_id"] == "my-session"
+
+    async def test_validates_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """Raises ServiceInitializationError when no filters."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
+        ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
+
+        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
+            await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+    async def test_stores_with_application_id_metadata(self, mock_mem0_client: AsyncMock) -> None:
+        """application_id is passed in metadata."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
+        ctx._response = AgentResponse(messages=[])
+
+        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+
+        assert mock_mem0_client.add.call_args.kwargs["metadata"] == {"application_id": "app1"}
+
+
+# -- _validate_filters tests --------------------------------------------------
+
+
+class TestValidateFilters:
+    """Test _validate_filters method."""
+
+    def test_raises_when_no_filters(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
+        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
             provider._validate_filters()
 
-        assert "At least one of the filters" in str(exc_info.value)
+    def test_passes_with_user_id(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider._validate_filters()  # should not raise
 
-    def test_validate_filters_succeeds_with_user_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test validation succeeds with user_id set."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
-        provider._validate_filters()  # Should not raise
+    def test_passes_with_agent_id(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, agent_id="a1")
+        provider._validate_filters()
 
-    def test_validate_filters_succeeds_with_agent_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test validation succeeds with agent_id set."""
-        provider = Mem0ContextProvider(source_id="mem0", agent_id="agent123", mem0_client=mock_mem0_client)
-        provider._validate_filters()  # Should not raise
-
-    def test_validate_filters_succeeds_with_application_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test validation succeeds with application_id set."""
-        provider = Mem0ContextProvider(source_id="mem0", application_id="app123", mem0_client=mock_mem0_client)
-        provider._validate_filters()  # Should not raise
+    def test_passes_with_application_id(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, application_id="app1")
+        provider._validate_filters()
 
 
-class TestMem0ContextProviderBuildFilters:
-    """Test the _build_filters method."""
+# -- _build_filters tests -----------------------------------------------------
 
-    def test_build_filters_with_user_id_only(self, mock_mem0_client: AsyncMock) -> None:
-        """Test building filters with only user_id."""
-        provider = Mem0ContextProvider(source_id="mem0", user_id="user123", mem0_client=mock_mem0_client)
 
-        filters = provider._build_filters()
-        assert filters == {"user_id": "user123"}
+class TestBuildFilters:
+    """Test _build_filters method."""
 
-    def test_build_filters_with_all_parameters(self, mock_mem0_client: AsyncMock) -> None:
-        """Test building filters with all initialization parameters."""
+    def test_user_id_only(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        assert provider._build_filters() == {"user_id": "u1"}
+
+    def test_all_params(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(
             source_id="mem0",
-            user_id="user123",
-            agent_id="agent456",
-            application_id="app999",
             mem0_client=mock_mem0_client,
+            user_id="u1",
+            agent_id="a1",
+            application_id="app1",
         )
-
-        filters = provider._build_filters()
-        assert filters == {
-            "user_id": "user123",
-            "agent_id": "agent456",
-            "app_id": "app999",
+        assert provider._build_filters(session_id="sess1") == {
+            "user_id": "u1",
+            "agent_id": "a1",
+            "run_id": "sess1",
+            "app_id": "app1",
         }
 
-    def test_build_filters_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that None values are excluded from filters."""
-        provider = Mem0ContextProvider(
-            source_id="mem0",
-            user_id="user123",
-            agent_id=None,
-            application_id=None,
-            mem0_client=mock_mem0_client,
-        )
-
+    def test_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         filters = provider._build_filters()
-        assert filters == {"user_id": "user123"}
         assert "agent_id" not in filters
+        assert "run_id" not in filters
         assert "app_id" not in filters
 
-    def test_build_filters_with_session_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that session_id is included as run_id in filters."""
-        provider = Mem0ContextProvider(
-            source_id="mem0",
-            user_id="user123",
-            mem0_client=mock_mem0_client,
-        )
+    def test_session_id_mapped_to_run_id(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        filters = provider._build_filters(session_id="s99")
+        assert filters["run_id"] == "s99"
 
-        filters = provider._build_filters(session_id="session-123")
-        assert filters == {
-            "user_id": "user123",
-            "run_id": "session-123",
-        }
-
-    def test_build_filters_returns_empty_dict_when_no_parameters(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that _build_filters returns an empty dict when no parameters are set."""
+    def test_empty_when_no_params(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-
-        filters = provider._build_filters()
-        assert filters == {}
+        assert provider._build_filters() == {}
 
 
-class TestMem0Telemetry:
-    """Test telemetry configuration for Mem0."""
+# -- Context manager tests -----------------------------------------------------
 
-    def test_mem0_telemetry_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that MEM0_TELEMETRY is set to 'false' by default when importing the package."""
-        # Ensure MEM0_TELEMETRY is not set before importing the module under test
-        monkeypatch.delenv("MEM0_TELEMETRY", raising=False)
 
-        # Remove cached modules to force re-import and trigger module-level initialization
-        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
-        for mod in modules_to_remove:
-            del sys.modules[mod]
+class TestContextManager:
+    """Test __aenter__/__aexit__ delegation."""
 
-        # Import (and reload) the module so that it can set MEM0_TELEMETRY when unset
-        import agent_framework_mem0
+    async def test_aenter_delegates_to_client(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        result = await provider.__aenter__()
+        assert result is provider
+        mock_mem0_client.__aenter__.assert_awaited_once()
 
-        importlib.reload(agent_framework_mem0)
+    async def test_aexit_closes_auto_created_client(self, mock_mem0_client: AsyncMock) -> None:
+        """Auto-created clients (_should_close_client=True) are closed on exit."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider._should_close_client = True
+        await provider.__aexit__(None, None, None)
+        mock_mem0_client.__aexit__.assert_awaited_once()
 
-        # The environment variable should be set to "false" after importing
-        assert os.environ.get("MEM0_TELEMETRY") == "false"
+    async def test_aexit_does_not_close_provided_client(self, mock_mem0_client: AsyncMock) -> None:
+        """Provided clients (_should_close_client=False) are NOT closed on exit."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        assert provider._should_close_client is False
+        await provider.__aexit__(None, None, None)
+        mock_mem0_client.__aexit__.assert_not_awaited()
 
-    def test_mem0_telemetry_respects_user_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that user-set MEM0_TELEMETRY value is not overwritten."""
-        # Remove cached modules to force re-import
-        modules_to_remove = [key for key in sys.modules if key.startswith("agent_framework_mem0")]
-        for mod in modules_to_remove:
-            del sys.modules[mod]
-
-        # Set user preference before import
-        monkeypatch.setenv("MEM0_TELEMETRY", "true")
-
-        # Re-import the module
-        import agent_framework_mem0
-
-        importlib.reload(agent_framework_mem0)
-
-        # User setting should be preserved
-        assert os.environ.get("MEM0_TELEMETRY") == "true"
+    async def test_async_with_syntax(self, mock_mem0_client: AsyncMock) -> None:
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        async with provider as p:
+            assert p is provider
