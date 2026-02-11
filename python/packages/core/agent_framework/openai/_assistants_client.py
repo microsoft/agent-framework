@@ -804,10 +804,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                 if tool_outputs is None:
                     tool_outputs = []
-                if function_result_content.result:
-                    output = function_result_content.result
-                else:
-                    output = "No output received."
+                output = function_result_content.result or "No output received."
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
