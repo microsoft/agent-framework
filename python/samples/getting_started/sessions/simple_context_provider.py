@@ -3,9 +3,15 @@
 import asyncio
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
-from agent_framework.azure import AzureAIClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework import (
+    Agent,
+    AgentSession,
+    BaseContextProvider,
+    SessionContext,
+    SupportsChatGetResponse,
+)
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 
@@ -25,54 +31,6 @@ class UserInfoMemory(BaseContextProvider):
         super().__init__("user-info-memory")
         self._chat_client = client
 
-    def _get_user_info(self, state: dict[str, Any]) -> UserInfo:
-        """Load UserInfo from session state, creating it if absent."""
-        my_state = state.setdefault(self.source_id, {})
-        info = my_state.get("user_info")
-        if isinstance(info, UserInfo):
-            return info
-        user_info = UserInfo()
-        my_state["user_info"] = user_info
-        return user_info
-
-    def _save_user_info(self, state: dict[str, Any], user_info: UserInfo) -> None:
-        """Persist UserInfo back to session state (stored as-is; serialized automatically)."""
-        state.setdefault(self.source_id, {})["user_info"] = user_info
-
-    async def after_run(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession | None,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Extract user information from messages after each agent call."""
-        user_info = self._get_user_info(state)
-        if user_info.name is not None and user_info.age is not None:
-            return  # Already have everything
-
-        request_messages = context.get_messages()
-        user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
-        if not user_messages:
-            return
-
-        try:
-            result = await self._chat_client.get_response(
-                messages=request_messages,  # type: ignore
-                instructions="Extract the user's name and age from the message if present. "
-                "If not present return nulls.",
-                options={"response_format": UserInfo},
-            )
-            extracted = result.value
-            if user_info.name is None and extracted.name:
-                user_info.name = extracted.name
-            if user_info.age is None and extracted.age:
-                user_info.age = extracted.age
-            self._save_user_info(state, user_info)
-        except Exception:
-            pass  # Failed to extract, continue without updating
-
     async def before_run(
         self,
         *,
@@ -82,7 +40,9 @@ class UserInfoMemory(BaseContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Provide user information context before each agent call."""
-        user_info = self._get_user_info(state)
+        my_state = state.setdefault(self.source_id, {})
+        user_info = my_state.setdefault("user_info", UserInfo())
+
         instructions: list[str] = []
 
         if user_info.name is None:
@@ -101,29 +61,62 @@ class UserInfoMemory(BaseContextProvider):
 
         context.extend_instructions(self.source_id, " ".join(instructions))
 
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Extract user information from messages after each agent call."""
+        my_state = state.setdefault(self.source_id, {})
+        user_info = my_state.setdefault("user_info", UserInfo())
+        if user_info.name is not None and user_info.age is not None:
+            return  # Already have everything
+
+        request_messages = context.get_messages(include_input=True, include_response=True)
+        user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
+        if not user_messages:
+            return
+
+        try:
+            result = await self._chat_client.get_response(
+                messages=request_messages,  # type: ignore
+                instructions="Extract the user's name and age from the message if present. "
+                "If not present return nulls.",
+                options={"response_format": UserInfo},
+            )
+            extracted = result.value
+            if extracted and user_info.name is None and extracted.name:
+                user_info.name = extracted.name
+            if extracted and user_info.age is None and extracted.age:
+                user_info.age = extracted.age
+            state.setdefault(self.source_id, {})["user_info"] = user_info
+        except Exception:
+            pass  # Failed to extract, continue without updating
+
 
 async def main():
-    async with AzureCliCredential() as credential:
-        client = AzureAIClient(credential=credential)
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
-        memory_provider = UserInfoMemory(client)
+    async with Agent(
+        client=client,
+        instructions="You are a friendly assistant. Always address the user by their name.",
+        default_options={"store": True},
+        context_providers=[UserInfoMemory(client)],
+    ) as agent:
+        session = agent.create_session()
 
-        async with Agent(
-            client=client,
-            instructions="You are a friendly assistant. Always address the user by their name.",
-            context_providers=[memory_provider],
-        ) as agent:
-            session = agent.create_session()
+        print(await agent.run("Hello, what is the square root of 9?", session=session))
+        print(await agent.run("My name is Ruaidhrí", session=session))
+        print(await agent.run("I am 20 years old", session=session))
 
-            print(await agent.run("Hello, what is the square root of 9?", session=session))
-            print(await agent.run("My name is Ruaidhrí", session=session))
-            print(await agent.run("I am 20 years old", session=session))
-
-            # Inspect extracted user info from session state
-            user_info = memory_provider._get_user_info(session.state)
-            print()
-            print(f"MEMORY - User Name: {user_info.name}")
-            print(f"MEMORY - User Age: {user_info.age}")
+        # Inspect extracted user info from session state
+        user_info = session.state.get("user-info-memory", {}).get("user_info", UserInfo())
+        print()
+        print(f"MEMORY - User Name: {user_info.name}")
+        print(f"MEMORY - User Age: {user_info.age}")
 
 
 if __name__ == "__main__":
