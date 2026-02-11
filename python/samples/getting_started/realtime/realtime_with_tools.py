@@ -153,11 +153,11 @@ async def main(client_type: str) -> None:
                 tool_name = event.data.get("name", "unknown")
                 tool_args = event.data.get("arguments", "{}")
                 print(f"\n>>> Tool called: {tool_name}")
-                print(f"Arguments:\n{tool_args}")
+                print(f"    Arguments: {tool_args}")
 
             elif event.type == "tool_result":
                 result = event.data.get("result", "")
-                print(f"Result:\n{result}")
+                print(f"    Result: {result}")
 
             elif event.type == "listening":
                 print("\n[You are speaking...]")
