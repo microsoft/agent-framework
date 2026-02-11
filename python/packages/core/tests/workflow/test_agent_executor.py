@@ -84,7 +84,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert initial_agent.call_count == 1
 
     # Verify checkpoint was created
-    checkpoints = await storage.list_checkpoints(wf.name)
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) >= 2, (
         "Expected at least 2 checkpoints. The first one is after the start executor, "
         "and the second one is after the agent execution."

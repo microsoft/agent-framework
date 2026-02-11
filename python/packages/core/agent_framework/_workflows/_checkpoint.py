@@ -144,7 +144,7 @@ class CheckpointStorage(Protocol):
         """
         ...
 
-    async def list_checkpoints(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name.
 
         Args:
@@ -166,7 +166,7 @@ class CheckpointStorage(Protocol):
         """
         ...
 
-    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name.
 
         Args:
@@ -177,7 +177,7 @@ class CheckpointStorage(Protocol):
         """
         ...
 
-    async def list_checkpoint_ids(self, workflow_name: str) -> list[CheckpointID]:
+    async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
 
         Args:
@@ -210,7 +210,7 @@ class InMemoryCheckpointStorage:
             return checkpoint
         raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
-    async def list_checkpoints(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name."""
         return [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
@@ -222,7 +222,7 @@ class InMemoryCheckpointStorage:
             return True
         return False
 
-    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name."""
         checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
         if not checkpoints:
@@ -231,7 +231,7 @@ class InMemoryCheckpointStorage:
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return latest_checkpoint
 
-    async def list_checkpoint_ids(self, workflow_name: str) -> list[CheckpointID]:
+    async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
@@ -334,7 +334,7 @@ class FileCheckpointStorage:
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
 
-    async def list_checkpoints(self, workflow_name: str) -> list[WorkflowCheckpoint]:
+    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name.
 
         Args:
@@ -382,7 +382,7 @@ class FileCheckpointStorage:
 
         return await asyncio.to_thread(_delete)
 
-    async def get_latest(self, workflow_name: str) -> WorkflowCheckpoint | None:
+    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name.
 
         Args:
@@ -391,14 +391,14 @@ class FileCheckpointStorage:
         Returns:
             The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
         """
-        checkpoints = await self.list_checkpoints(workflow_name)
+        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
         if not checkpoints:
             return None
         latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return latest_checkpoint
 
-    async def list_checkpoint_ids(self, workflow_name: str) -> list[CheckpointID]:
+    async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
 
         Args:

@@ -362,7 +362,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert req_event is not None
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
-    checkpoints = await storage.list_checkpoints(wf.name)
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[-1]
@@ -607,7 +607,7 @@ async def _collect_checkpoints(
     storage: InMemoryCheckpointStorage,
     workflow_name: str,
 ) -> list[WorkflowCheckpoint]:
-    checkpoints = await storage.list_checkpoints(workflow_name)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow_name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     return checkpoints
@@ -774,7 +774,7 @@ async def test_magentic_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints(wf.name)
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
 
 
@@ -808,8 +808,8 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints(wf.name)
-        runtime_checkpoints = await runtime_storage.list_checkpoints(wf.name)
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -858,7 +858,7 @@ async def test_magentic_checkpoint_restore_no_duplicate_history():
             break
 
     # Get checkpoint
-    checkpoints = await storage.list_checkpoints(wf.name)
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Should have created checkpoints"
 
     latest_checkpoint = checkpoints[-1]

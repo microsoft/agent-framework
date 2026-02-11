@@ -139,15 +139,6 @@ def print_function_approval_request(request: Content, request_id: str) -> None:
     print(f"{'=' * 60}\n")
 
 
-async def get_latest_checkpoint_id(storage: FileCheckpointStorage, workflow_name: str) -> str:
-    """Helper to get the latest checkpoint ID for a workflow."""
-    checkpoints = await storage.list_checkpoints(workflow_name)
-    if not checkpoints:
-        raise RuntimeError("No checkpoints found.")
-    checkpoints.sort(key=lambda cp: cp.timestamp, reverse=True)
-    return checkpoints[0].checkpoint_id
-
-
 async def main() -> None:
     """
     Demonstrate the checkpoint-based pause/resume pattern for handoff workflows.
@@ -222,7 +213,10 @@ async def main() -> None:
                 # This sample only expects HandoffAgentUserRequest and function approval requests
                 raise ValueError(f"Unsupported request type: {type(request_event.data)}")
 
-        checkpoint_id = await get_latest_checkpoint_id(storage, workflow.name)
+        checkpoint = await storage.get_latest(workflow_name=workflow.name)
+        if not checkpoint:
+            raise RuntimeError("No checkpoints found.")
+        checkpoint_id = checkpoint.checkpoint_id
 
         results = await workflow.run(responses=responses, checkpoint_id=checkpoint_id)
         request_events = results.get_request_info_events()

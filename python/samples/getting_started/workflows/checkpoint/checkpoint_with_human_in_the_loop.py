@@ -3,6 +3,7 @@
 import asyncio
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -282,12 +283,12 @@ async def main() -> None:
     result = await run_interactive_session(workflow, initial_message=brief)
     print(f"Workflow completed with: {result}")
 
-    checkpoints = await storage.list_checkpoints(workflow.name)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
     if not checkpoints:
         print("No checkpoints recorded.")
         return
 
-    sorted_cps = sorted(checkpoints, key=lambda c: c.timestamp)
+    sorted_cps = sorted(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
     print("\nAvailable checkpoints:")
     for idx, cp in enumerate(sorted_cps):
         print(f"  [{idx}] id={cp.checkpoint_id} iter={cp.iteration_count}")

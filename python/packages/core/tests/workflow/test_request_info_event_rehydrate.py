@@ -149,7 +149,7 @@ async def test_checkpoint_with_pending_request_info_events():
         assert request_info_event.source_executor_id == "approval_executor"
 
         # Step 2: List checkpoints to find the one with our pending request
-        checkpoints = await storage.list_checkpoints(workflow.name)
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         assert len(checkpoints) > 0, "No checkpoints were created during workflow execution"
 
         # Find the checkpoint with our pending request
@@ -241,7 +241,7 @@ async def test_checkpoint_restore_with_responses_does_not_reemit_handled_request
         request_id = request_info_event.request_id
 
         # Step 2: Find the checkpoint with the pending request
-        checkpoints = await storage.list_checkpoints(workflow.name)
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         checkpoint_with_request = None
         for checkpoint in checkpoints:
             if request_id in checkpoint.pending_request_info_events:
@@ -309,7 +309,7 @@ async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_reque
         assert calc_event is not None
 
         # Step 2: Find the checkpoint with pending requests
-        checkpoints = await storage.list_checkpoints(workflow.name)
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         checkpoint_with_requests = None
         for checkpoint in checkpoints:
             has_approval = approval_event.request_id in checkpoint.pending_request_info_events
