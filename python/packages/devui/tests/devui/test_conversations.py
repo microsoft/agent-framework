@@ -199,20 +199,12 @@ async def test_list_items_pagination():
 @pytest.mark.asyncio
 async def test_list_items_converts_function_calls():
     """Test that list_items properly converts function calls to ResponseFunctionToolCallItem."""
-    from agent_framework import ChatMessageStore, Message
+    from agent_framework import Message
 
     store = InMemoryConversationStore()
 
     # Create conversation
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
-
-    # Get the underlying thread for internal message store setup
-    thread = store._conversations[conversation.id]["thread"]
-    assert thread is not None
-
-    # Initialize message store if not present
-    if thread.message_store is None:
-        thread.message_store = ChatMessageStore()
 
     # Simulate messages from agent execution with function calls
     messages = [
@@ -241,8 +233,8 @@ async def test_list_items_converts_function_calls():
         Message(role="assistant", contents=[{"type": "text", "text": "The weather is sunny, 65°F"}]),
     ]
 
-    # Add messages to thread
-    await thread.on_new_messages(messages)
+    # Add messages to internal storage
+    store._conversations[conversation.id]["messages"].extend(messages)
 
     # List conversation items
     items, has_more = await store.list_items(conversation.id)
@@ -284,19 +276,12 @@ async def test_list_items_converts_function_calls():
 @pytest.mark.asyncio
 async def test_list_items_handles_images_and_files():
     """Test that list_items properly converts data content (images/files) to OpenAI types."""
-    from agent_framework import ChatMessageStore, Message
+    from agent_framework import Message
 
     store = InMemoryConversationStore()
 
     # Create conversation
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
-
-    # Get the underlying thread for internal message store setup
-    thread = store._conversations[conversation.id]["thread"]
-    assert thread is not None
-
-    if thread.message_store is None:
-        thread.message_store = ChatMessageStore()
 
     # Simulate message with image and file
     messages = [
@@ -310,7 +295,8 @@ async def test_list_items_handles_images_and_files():
         ),
     ]
 
-    await thread.on_new_messages(messages)
+    # Add messages to internal storage
+    store._conversations[conversation.id]["messages"].extend(messages)
 
     # List items
     items, has_more = await store.list_items(conversation.id)

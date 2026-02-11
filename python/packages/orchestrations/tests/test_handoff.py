@@ -10,7 +10,6 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Context,
     BaseContextProvider,
     Message,
     ResponseStream,

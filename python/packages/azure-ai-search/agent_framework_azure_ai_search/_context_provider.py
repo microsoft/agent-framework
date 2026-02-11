@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._logging import get_logger
+from agent_framework._pydantic import AFBaseSettings
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
@@ -41,8 +42,54 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
+from pydantic import SecretStr
 
-from ._search_provider import AzureAISearchSettings
+
+class AzureAISearchSettings(AFBaseSettings):
+    """Settings for Azure AI Search Context Provider with auto-loading from environment.
+
+    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
+    If the environment variables are not found, the settings can be loaded from a .env file.
+
+    Keyword Args:
+        endpoint: Azure AI Search endpoint URL.
+            Can be set via environment variable AZURE_SEARCH_ENDPOINT.
+        index_name: Name of the search index.
+            Can be set via environment variable AZURE_SEARCH_INDEX_NAME.
+        knowledge_base_name: Name of an existing Knowledge Base (for agentic mode).
+            Can be set via environment variable AZURE_SEARCH_KNOWLEDGE_BASE_NAME.
+        api_key: API key for authentication (optional, use managed identity if not provided).
+            Can be set via environment variable AZURE_SEARCH_API_KEY.
+        env_file_path: If provided, the .env settings are read from this file path location.
+        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_aisearch import AzureAISearchSettings
+
+            # Using environment variables
+            # Set AZURE_SEARCH_ENDPOINT=https://mysearch.search.windows.net
+            # Set AZURE_SEARCH_INDEX_NAME=my-index
+            settings = AzureAISearchSettings()
+
+            # Or passing parameters directly
+            settings = AzureAISearchSettings(
+                endpoint="https://mysearch.search.windows.net",
+                index_name="my-index",
+            )
+
+            # Or loading from a .env file
+            settings = AzureAISearchSettings(env_file_path="path/to/.env")
+    """
+
+    env_prefix: ClassVar[str] = "AZURE_SEARCH_"
+
+    endpoint: str | None = None
+    index_name: str | None = None
+    knowledge_base_name: str | None = None
+    api_key: SecretStr | None = None
+
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
