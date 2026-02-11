@@ -104,7 +104,7 @@ class VoiceSession:
     def __init__(self, websocket: WebSocket, agent: RealtimeAgent):
         self.websocket = websocket
         self.agent = agent
-        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self._running = False
 
     async def audio_input_generator(self) -> AsyncIterator[bytes]:
