@@ -15,12 +15,55 @@ public sealed class DefaultActionExecutorTest(ITestOutputHelper output) : Workfl
     [Fact]
     public async Task ExecuteDefaultActionAsync()
     {
-        // Arrange & Act & Assert
+        // Arrange, Act & Assert
         await this.ExecuteTestAsync(
-            this.FormatDisplayName(nameof(ExecuteDefaultActionAsync)));
+                this.FormatDisplayName(nameof(ExecuteDefaultActionAsync)));
     }
 
-    private async Task<WorkflowEvent[]> ExecuteTestAsync(string displayName)
+    [Fact]
+    public async Task ExecuteMultipleTimesAsync()
+    {
+        // Arrange, Act & Assert
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(ExecuteMultipleTimesAsync)));
+
+        // Execute again to ensure idempotency
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(ExecuteMultipleTimesAsync)));
+    }
+
+    [Fact]
+    public async Task ExecuteReturnsExpectedEventsAsync()
+    {
+        // Arrange
+        ResetVariable model = this.CreateModel(
+            this.FormatDisplayName(nameof(ExecuteReturnsExpectedEventsAsync)));
+
+        // Act
+        DefaultActionExecutor action = new(model, this.State);
+        WorkflowEvent[] events = await this.ExecuteAsync(action);
+
+        // Assert
+        VerifyModel(model, action);
+        Assert.NotEmpty(events);
+    }
+
+    [Fact]
+    public void ConstructorSetsPropertiesCorrectly()
+    {
+        // Arrange
+        ResetVariable model = this.CreateModel(
+            this.FormatDisplayName(nameof(ConstructorSetsPropertiesCorrectly)));
+
+        // Act
+        DefaultActionExecutor action = new(model, this.State);
+
+        // Assert
+        Assert.Equal(model.Id.Value, action.Id);
+        Assert.Equal(model, action.Model);
+    }
+
+    private async Task ExecuteTestAsync(string displayName)
     {
         // Arrange
         ResetVariable model = this.CreateModel(displayName);
@@ -32,8 +75,6 @@ public sealed class DefaultActionExecutorTest(ITestOutputHelper output) : Workfl
         // Assert
         VerifyModel(model, action);
         Assert.NotEmpty(events);
-
-        return events;
     }
 
     private ResetVariable CreateModel(string displayName)
