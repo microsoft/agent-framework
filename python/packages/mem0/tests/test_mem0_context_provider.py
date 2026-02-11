@@ -34,10 +34,13 @@ def mock_mem0_client() -> AsyncMock:
 
 @pytest.fixture
 def mock_oss_mem0_client() -> AsyncMock:
-    """Create a mock Mem0 OSS AsyncMemory client."""
+    """Create a mock Mem0 OSS AsyncMemory client.
+
+    Note: AsyncMemory doesn't implement the async context manager protocol,
+    so we don't add __aenter__ and __aexit__ methods to the mock.
+    """
     from mem0 import AsyncMemory
 
-    # AsyncMemory doesn't have context manager support, so we create a simple mock
     mock_client = AsyncMock(spec=AsyncMemory)
     mock_client.add = AsyncMock()
     mock_client.search = AsyncMock()
