@@ -527,3 +527,19 @@ async def test_realtime_agent_stores_multiple_turns():
     assert messages[2].text == "Thanks!"
     assert messages[3].role == "assistant"
     assert messages[3].text == "You're welcome."
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_non_function_tool_returns_error():
+    """Non-FunctionTool entries return a clear error instead of str(tool)."""
+    from unittest.mock import MagicMock
+
+    from agent_framework._realtime_agent import execute_tool
+
+    mock_tool = MagicMock()
+    mock_tool.name = "not_a_function"
+    registry = {"not_a_function": mock_tool}
+
+    result = await execute_tool(registry, {"name": "not_a_function", "arguments": "{}"})
+    assert "not a FunctionTool" in result
+    assert "not_a_function" in result

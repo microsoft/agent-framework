@@ -75,7 +75,7 @@ async def execute_tool(
         if isinstance(tool, FunctionTool):
             result = await tool.invoke(**arguments)
         else:
-            result = str(tool)
+            return f"Tool '{tool_name}' is not a FunctionTool and cannot be executed in realtime sessions."
         return str(result)
     except Exception as e:
         return f"Error executing {tool_name}: {e}"
