@@ -140,7 +140,7 @@ def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) ->
 
     assert azure_responses_client.model_id == "gpt-4o"
     assert azure_responses_client.client is mock_openai_client
-    assert isinstance(azure_responses_client, ChatClientProtocol)
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
 def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -164,7 +164,7 @@ def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) 
 
     assert azure_responses_client.model_id == "gpt-4o"
     assert azure_responses_client.client is mock_openai_client
-    assert isinstance(azure_responses_client, ChatClientProtocol)
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
 def test_create_client_from_project_with_project_client() -> None:
@@ -194,7 +194,7 @@ def test_create_client_from_project_with_endpoint() -> None:
     mock_openai_client = MagicMock(spec=AsyncOpenAI)
     mock_credential = MagicMock()
 
-    with patch("azure.ai.projects.aio.AIProjectClient") as MockAIProjectClient:
+    with patch("agent_framework.azure._responses_client.AIProjectClient") as MockAIProjectClient:
         mock_instance = MockAIProjectClient.return_value
         mock_instance.get_openai_client.return_value = mock_openai_client
 
