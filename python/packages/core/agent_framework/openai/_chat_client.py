@@ -16,6 +16,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
@@ -25,8 +26,6 @@ from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedWebSearchTool,
-    ToolProtocol,
 )
 from .._types import (
     ChatOptions,
@@ -154,6 +153,58 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         Use ``OpenAIChatClient`` instead for a fully-featured client with all layers applied.
     """
 
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        web_search_options: WebSearchOptions | None = None,
+    ) -> dict[str, Any]:
+        """Create a web search tool configuration for the Chat Completions API.
+
+        Note: For the Chat Completions API, web search is passed via the `web_search_options`
+        parameter rather than in the `tools` array. This method returns a dict that can be
+        passed as a tool to ChatAgent, which will handle it appropriately.
+
+        Keyword Args:
+            web_search_options: The full WebSearchOptions configuration. This TypedDict includes:
+                - user_location: Location context with "type" and "approximate" containing
+                  "city", "country", "region", "timezone".
+                - search_context_size: One of "low", "medium", "high".
+
+        Returns:
+            A dict configuration that enables web search when passed to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIChatClient
+
+                # Basic web search
+                tool = OpenAIChatClient.get_web_search_tool()
+
+                # With location context
+                tool = OpenAIChatClient.get_web_search_tool(
+                    web_search_options={
+                        "user_location": {
+                            "type": "approximate",
+                            "approximate": {"city": "Seattle", "country": "US"},
+                        },
+                        "search_context_size": "medium",
+                    }
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: dict[str, Any] = {"type": "web_search"}
+
+        if web_search_options:
+            tool.update(web_search_options)
+
+        return tool
+
+    # endregion
+
     @override
     def _inner_get_response(
         self,
@@ -222,35 +273,35 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any]:
-        chat_tools: list[dict[str, Any]] = []
+    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+        """Prepare tools for the OpenAI Chat Completions API.
+
+        Converts FunctionTool to JSON schema format. Web search tools are routed
+        to web_search_options parameter. All other tools pass through unchanged.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            Dict containing tools and optionally web_search_options.
+        """
+        chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case HostedWebSearchTool():
-                        web_search_options = (
-                            {
-                                "user_location": {
-                                    "approximate": tool.additional_properties.get("user_location", None),
-                                    "type": "approximate",
-                                }
-                            }
-                            if tool.additional_properties and "user_location" in tool.additional_properties
-                            else {}
-                        )
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+            if isinstance(tool, FunctionTool):
+                chat_tools.append(tool.to_json_schema_spec())
+            elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
+                # Web search is handled via web_search_options, not tools array
+                web_search_options = {k: v for k, v in tool.items() if k != "type"}
             else:
-                chat_tools.append(tool)  # type: ignore[arg-type]
-        ret_dict: dict[str, Any] = {}
+                # Pass through all other tools (dicts, SDK types) unchanged
+                chat_tools.append(tool)
+        result: dict[str, Any] = {}
         if chat_tools:
-            ret_dict["tools"] = chat_tools
+            result["tools"] = chat_tools
         if web_search_options is not None:
-            ret_dict["web_search_options"] = web_search_options
-        return ret_dict
+            result["web_search_options"] = web_search_options
+        return result
 
     def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist

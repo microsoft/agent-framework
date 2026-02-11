@@ -8,9 +8,9 @@ import pytest
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
-from agent_framework import Agent, HostedCodeInterpreterTool, HostedFileSearchTool, normalize_tools, tool
+from agent_framework import Agent, normalize_tools, tool
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai import OpenAIAssistantProvider
+from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
 
 # region Test Helpers
@@ -269,7 +269,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="CodeAgent",
             model="gpt-4",
-            tools=[HostedCodeInterpreterTool()],
+            tools=[OpenAIAssistantsClient.get_code_interpreter_tool()],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -282,7 +282,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="SearchAgent",
             model="gpt-4",
-            tools=[HostedFileSearchTool()],
+            tools=[OpenAIAssistantsClient.get_file_search_tool()],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -295,7 +295,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="SearchAgent",
             model="gpt-4",
-            tools=[HostedFileSearchTool(max_results=10)],
+            tools=[OpenAIAssistantsClient.get_file_search_tool(max_num_results=10)],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -309,7 +309,11 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="MultiToolAgent",
             model="gpt-4",
-            tools=[get_weather, HostedCodeInterpreterTool(), HostedFileSearchTool()],
+            tools=[
+                get_weather,
+                OpenAIAssistantsClient.get_code_interpreter_tool(),
+                OpenAIAssistantsClient.get_file_search_tool(),
+            ],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -564,22 +568,22 @@ class TestToolConversion:
         assert api_tools[0]["function"]["name"] == "get_weather"
 
     def test_to_assistant_tools_code_interpreter(self) -> None:
-        """Test HostedCodeInterpreterTool conversion."""
-        api_tools = to_assistant_tools([HostedCodeInterpreterTool()])
+        """Test code_interpreter tool dict conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_code_interpreter_tool()])
 
         assert len(api_tools) == 1
         assert api_tools[0] == {"type": "code_interpreter"}
 
     def test_to_assistant_tools_file_search(self) -> None:
-        """Test HostedFileSearchTool conversion."""
-        api_tools = to_assistant_tools([HostedFileSearchTool()])
+        """Test file_search tool dict conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_file_search_tool()])
 
         assert len(api_tools) == 1
         assert api_tools[0]["type"] == "file_search"
 
     def test_to_assistant_tools_file_search_with_max_results(self) -> None:
-        """Test HostedFileSearchTool with max_results conversion."""
-        api_tools = to_assistant_tools([HostedFileSearchTool(max_results=5)])
+        """Test file_search tool with max_results conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_file_search_tool(max_num_results=5)])
 
         assert api_tools[0]["file_search"]["max_num_results"] == 5
 
@@ -605,7 +609,7 @@ class TestToolConversion:
         tools = from_assistant_tools(assistant_tools)
 
         assert len(tools) == 1
-        assert isinstance(tools[0], HostedCodeInterpreterTool)
+        assert tools[0] == {"type": "code_interpreter"}
 
     def test_from_assistant_tools_file_search(self) -> None:
         """Test converting file_search tool from OpenAI format."""
@@ -614,7 +618,7 @@ class TestToolConversion:
         tools = from_assistant_tools(assistant_tools)
 
         assert len(tools) == 1
-        assert isinstance(tools[0], HostedFileSearchTool)
+        assert tools[0] == {"type": "file_search"}
 
     def test_from_assistant_tools_function_skipped(self) -> None:
         """Test that function tools are skipped (no implementations)."""
@@ -707,7 +711,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, None)  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 1
-        assert isinstance(merged[0], HostedCodeInterpreterTool)
+        assert merged[0] == {"type": "code_interpreter"}
 
     def test_merge_file_search(self, mock_async_openai: MagicMock) -> None:
         """Test merging file search tool."""
@@ -717,7 +721,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, None)  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 1
-        assert isinstance(merged[0], HostedFileSearchTool)
+        assert merged[0] == {"type": "file_search"}
 
     def test_merge_with_user_tools(self, mock_async_openai: MagicMock) -> None:
         """Test merging hosted and user tools."""
@@ -727,7 +731,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, [get_weather])  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 2
-        assert isinstance(merged[0], HostedCodeInterpreterTool)
+        assert merged[0] == {"type": "code_interpreter"}
 
     def test_merge_multiple_hosted_tools(self, mock_async_openai: MagicMock) -> None:
         """Test merging multiple hosted tools."""

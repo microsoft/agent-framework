@@ -7,11 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     Agent,
-    Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
@@ -25,6 +20,7 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 
 from agent_framework_azure_ai import (
+    AzureAIAgentClient,
     AzureAIAgentsProvider,
     AzureAISettings,
 )
@@ -466,8 +462,9 @@ def test_as_agent_with_hosted_tools(
     agent = provider.as_agent(mock_agent)
 
     assert isinstance(agent, Agent)
-    # Should have HostedCodeInterpreterTool in the default_options tools
-    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.default_options.get("tools") or []))  # type: ignore
+    # Should have code_interpreter dict tool in the default_options tools
+    tools = agent.default_options.get("tools") or []
+    assert any(isinstance(t, dict) and t.get("type") == "code_interpreter" for t in tools)
 
 
 def test_as_agent_with_dict_function_tools_validates(
@@ -571,8 +568,8 @@ def test_to_azure_ai_agent_tools_function() -> None:
 
 
 def test_to_azure_ai_agent_tools_code_interpreter() -> None:
-    """Test converting HostedCodeInterpreterTool."""
-    tool = HostedCodeInterpreterTool()
+    """Test converting code_interpreter dict tool."""
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -581,8 +578,8 @@ def test_to_azure_ai_agent_tools_code_interpreter() -> None:
 
 
 def test_to_azure_ai_agent_tools_file_search() -> None:
-    """Test converting HostedFileSearchTool with vector stores."""
-    tool = HostedFileSearchTool(inputs=[Content.from_hosted_vector_store(vector_store_id="vs-123")])
+    """Test converting file_search dict tool with vector stores."""
+    tool = AzureAIAgentClient.get_file_search_tool(vector_store_ids=["vs-123"])
     run_options: dict[str, Any] = {}
 
     result = to_azure_ai_agent_tools([tool], run_options)
@@ -592,15 +589,14 @@ def test_to_azure_ai_agent_tools_file_search() -> None:
 
 
 def test_to_azure_ai_agent_tools_web_search_bing_grounding(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool for Bing Grounding."""
+    """Test converting web_search dict tool for Bing Grounding."""
     # Use a properly formatted connection ID as required by Azure SDK
     valid_conn_id = (
         "/subscriptions/test-sub/resourceGroups/test-rg/"
         "providers/Microsoft.CognitiveServices/accounts/test-account/"
         "projects/test-project/connections/test-connection"
     )
-    monkeypatch.setenv("BING_CONNECTION_ID", valid_conn_id)
-    tool = HostedWebSearchTool()
+    tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id=valid_conn_id)
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -608,10 +604,11 @@ def test_to_azure_ai_agent_tools_web_search_bing_grounding(monkeypatch: Any) -> 
 
 
 def test_to_azure_ai_agent_tools_web_search_custom(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool for Custom Bing Search."""
-    monkeypatch.setenv("BING_CUSTOM_CONNECTION_ID", "custom-conn-id")
-    monkeypatch.setenv("BING_CUSTOM_INSTANCE_NAME", "my-instance")
-    tool = HostedWebSearchTool()
+    """Test converting web_search dict tool for Custom Bing Search."""
+    tool = AzureAIAgentClient.get_web_search_tool(
+        bing_custom_connection_id="custom-conn-id",
+        bing_custom_instance_id="my-instance",
+    )
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -619,22 +616,23 @@ def test_to_azure_ai_agent_tools_web_search_custom(monkeypatch: Any) -> None:
 
 
 def test_to_azure_ai_agent_tools_web_search_missing_config(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool raises error when config is missing."""
+    """Test converting web_search dict tool without bing config returns empty."""
     monkeypatch.delenv("BING_CONNECTION_ID", raising=False)
     monkeypatch.delenv("BING_CUSTOM_CONNECTION_ID", raising=False)
     monkeypatch.delenv("BING_CUSTOM_INSTANCE_NAME", raising=False)
-    tool = HostedWebSearchTool()
+    tool = {"type": "web_search"}
 
-    with pytest.raises(ServiceInitializationError):
-        to_azure_ai_agent_tools([tool])
+    result = to_azure_ai_agent_tools([tool])
+
+    # web_search without bing connection is passed through as dict
+    assert len(result) == 1
 
 
 def test_to_azure_ai_agent_tools_mcp() -> None:
-    """Test converting HostedMCPTool."""
-    tool = HostedMCPTool(
+    """Test converting MCP dict tool."""
+    tool = AzureAIAgentClient.get_mcp_tool(
         name="my mcp server",
         url="https://mcp.example.com",
-        allowed_tools=["tool1", "tool2"],
     )
 
     result = to_azure_ai_agent_tools([tool])
@@ -653,13 +651,15 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
-    """Test that unsupported tool types raise error."""
+    """Test that unsupported tool types pass through unchanged."""
 
     class UnsupportedTool:
         pass
 
-    with pytest.raises(ServiceInitializationError):
-        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
+    unsupported = UnsupportedTool()
+    result = to_azure_ai_agent_tools([unsupported])  # type: ignore
+    assert len(result) == 1
+    assert result[0] is unsupported  # Passed through unchanged
 
 
 # endregion
@@ -684,7 +684,7 @@ def test_from_azure_ai_agent_tools_code_interpreter() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedCodeInterpreterTool)
+    assert result[0] == {"type": "code_interpreter"}
 
 
 def test_from_azure_ai_agent_tools_code_interpreter_dict() -> None:
@@ -694,7 +694,7 @@ def test_from_azure_ai_agent_tools_code_interpreter_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedCodeInterpreterTool)
+    assert result[0] == {"type": "code_interpreter"}
 
 
 def test_from_azure_ai_agent_tools_file_search_dict() -> None:
@@ -707,8 +707,8 @@ def test_from_azure_ai_agent_tools_file_search_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedFileSearchTool)
-    assert len(result[0].inputs or []) == 2
+    assert result[0]["type"] == "file_search"
+    assert result[0]["vector_store_ids"] == ["vs-123", "vs-456"]
 
 
 def test_from_azure_ai_agent_tools_bing_grounding_dict() -> None:
@@ -721,12 +721,8 @@ def test_from_azure_ai_agent_tools_bing_grounding_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedWebSearchTool)
-
-    additional_properties = result[0].additional_properties
-
-    assert additional_properties
-    assert additional_properties.get("connection_id") == "conn-123"
+    assert result[0]["type"] == "bing_grounding"
+    assert result[0]["connection_id"] == "conn-123"
 
 
 def test_from_azure_ai_agent_tools_bing_custom_search_dict() -> None:
@@ -742,11 +738,9 @@ def test_from_azure_ai_agent_tools_bing_custom_search_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedWebSearchTool)
-    additional_properties = result[0].additional_properties
-
-    assert additional_properties
-    assert additional_properties.get("custom_connection_id") == "custom-conn"
+    assert result[0]["type"] == "bing_custom_search"
+    assert result[0]["connection_id"] == "custom-conn"
+    assert result[0]["instance_name"] == "my-instance"
 
 
 def test_from_azure_ai_agent_tools_mcp_dict() -> None:

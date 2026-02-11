@@ -22,7 +22,7 @@ from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
 if TYPE_CHECKING:
-    from agent_framework import ToolProtocol
+    from agent_framework import FunctionTool
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -94,7 +94,7 @@ class AggregateContextProvider(ContextProvider):
         contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
         instructions: str = ""
         return_messages: list[Message] = []
-        tools: list["ToolProtocol"] = []
+        tools: list["FunctionTool"] = []
         for ctx in contexts:
             if ctx.instructions:
                 instructions += ctx.instructions

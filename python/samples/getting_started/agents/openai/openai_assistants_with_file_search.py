@@ -3,14 +3,14 @@
 import asyncio
 import os
 
-from agent_framework import Content, HostedFileSearchTool
-from agent_framework.openai import OpenAIAssistantProvider
+from agent_framework import Content
+from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from openai import AsyncOpenAI
 
 """
 OpenAI Assistants with File Search Example
 
-This sample demonstrates using HostedFileSearchTool with OpenAI Assistants
+This sample demonstrates using get_file_search_tool() with OpenAI Assistants
 for document-based question answering and information retrieval.
 """
 
@@ -42,29 +42,30 @@ async def main() -> None:
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
+    chat_client = OpenAIAssistantsClient(client=client)
 
     agent = await provider.create_agent(
         name="SearchAssistant",
         model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that searches files in a knowledge base.",
-        tools=[HostedFileSearchTool()],
+        tools=[chat_client.get_file_search_tool()],
     )
 
     try:
         query = "What is the weather today? Do a file search to find the answer."
-        file_id, vector_store = await create_vector_store(client)
+        file_id, vector_store_content = await create_vector_store(client)
 
         print(f"User: {query}")
         print("Agent: ", end="", flush=True)
         async for chunk in agent.run(
             query,
             stream=True,
-            options={"tool_resources": {"file_search": {"vector_store_ids": [vector_store.vector_store_id]}}},
+            options={"tool_resources": {"file_search": {"vector_store_ids": [vector_store_content.vector_store_id]}}},
         ):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
 
-        await delete_vector_store(client, file_id, vector_store.vector_store_id)
+        await delete_vector_store(client, file_id, vector_store_content.vector_store_id)
     finally:
         await client.beta.assistants.delete(agent.id)
 

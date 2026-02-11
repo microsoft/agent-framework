@@ -28,7 +28,7 @@ async def main():
         contents=[
             Content.from_text(text="What do you see in this image?"),
             Content.from_uri(
-                uri="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+                uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
                 media_type="image/jpeg",
             ),
         ],
