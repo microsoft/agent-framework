@@ -70,9 +70,8 @@ internal sealed class HandoffMessagesFilter
                         // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
                         if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
                         {
-                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState
+                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState(nonHandoffFcc.CallId)
                             {
-                                CallId = nonHandoffFcc.CallId,
                                 IsHandoffFunction = false,
                             };
                         }
@@ -81,9 +80,8 @@ internal sealed class HandoffMessagesFilter
                     {
                         if (!filteringCandidates.TryGetValue(fcc.CallId, out FilterCandidateState? candidateState))
                         {
-                            filteringCandidates[fcc.CallId] = new FilterCandidateState
+                            filteringCandidates[fcc.CallId] = new FilterCandidateState(fcc.CallId)
                             {
-                                CallId = fcc.CallId,
                                 IsHandoffFunction = true,
                             };
                         }
@@ -125,9 +123,8 @@ internal sealed class HandoffMessagesFilter
                     else if (candidateState is null)
                     {
                         // We haven't seen the corresponding function call yet, so add it as a candidate to be filtered later
-                        filteringCandidates[frc.CallId] = new FilterCandidateState
+                        filteringCandidates[frc.CallId] = new FilterCandidateState(frc.CallId)
                         {
-                            CallId = frc.CallId,
                             FunctionCallResultLocation = (filteredMessages.Count, filteredMessage.Contents.Count),
                         };
                     }
@@ -147,11 +144,11 @@ internal sealed class HandoffMessagesFilter
     private static bool IsHandoffFunctionName(string name) =>
         name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
 
-    private class FilterCandidateState
+    private class FilterCandidateState(string callId)
     {
         public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
 
-        public string CallId { get; set; } = null!;
+        public string CallId { get; } = callId;
 
         public bool? IsHandoffFunction { get; set; }
     }
