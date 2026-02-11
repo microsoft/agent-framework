@@ -34,9 +34,12 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
 };
 
 // Create an agent with an AI context provider attached that aggregates two other providers:
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
