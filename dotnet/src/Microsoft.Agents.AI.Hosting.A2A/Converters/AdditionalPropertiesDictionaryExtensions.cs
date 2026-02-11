@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Text.Json;
-using A2A;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
