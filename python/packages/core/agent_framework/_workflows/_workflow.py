@@ -210,7 +210,8 @@ class Workflow(DictConvertible):
         self.id = str(uuid.uuid4())
         # Capture a canonical fingerprint of the workflow graph so checkpoints can assert they are resumed with
         # an equivalent topology.
-        self.graph_signature_hash = self._hash_graph_signature(self._compute_graph_signature())
+        self.graph_signature = self._compute_graph_signature()
+        self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
         # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
         # If None or empty, all executor outputs are considered workflow outputs.
@@ -764,7 +765,7 @@ class Workflow(DictConvertible):
             if isinstance(executor, WorkflowExecutor):
                 executor_sig = {
                     "type": executor_sig,
-                    "sub_workflow": executor.workflow._graph_signature,
+                    "sub_workflow": executor.workflow.graph_signature,
                 }
 
             executors_signature[executor_id] = executor_sig

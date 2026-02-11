@@ -374,7 +374,7 @@ class CheckpointingContext(InProcRunnerContext):
         # Restore messages from checkpoint
         for source_id, messages in checkpoint.messages.items():
             for msg_data in messages:
-                await self.send_message(Message(data=msg_data, source_id=source_id))
+                await self.send_message(WorkflowMessage(data=msg_data, source_id=source_id))
 
 
 class FailingCheckpointContext(InProcRunnerContext):
@@ -708,7 +708,7 @@ async def test_runner_checkpoint_with_resumed_flag():
     runner._mark_resumed(5)
 
     # Add a message to trigger the checkpoint creation path
-    await ctx.send_message(Message(data=MockMessage(data=8), source_id="START"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
 
     await executor_a.execute(
         MockMessage(data=8),
