@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -129,81 +128,13 @@ public abstract partial class AIAgent
 
         var responseFormat = ChatResponseFormat.ForJsonSchema<T>(serializerOptions);
 
-        (responseFormat, bool isWrappedInObject) = EnsureObjectSchema(responseFormat);
+        (responseFormat, bool isWrappedInObject) = StructuredOutputSchemaUtilities.WrapNonObjectSchema(responseFormat);
 
         options = options?.Clone() ?? new AgentRunOptions();
         options.ResponseFormat = responseFormat;
 
-        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken)
-            // ConfigureAwait(true) is intentional: the caller's synchronization context must be
-            // preserved because some agent implementations (e.g., DurableAIAgent) may run inside
-            // a durable orchestration whose dispatcher requires continuations to execute on the
-            // orchestration's main thread. Using ConfigureAwait(false) would schedule the
-            // continuation on an arbitrary thread, causing the orchestration to get stuck.
-            .ConfigureAwait(true);
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
 
         return new AgentResponse<T>(response, serializerOptions) { IsWrappedInObject = isWrappedInObject };
     }
-
-    private static bool SchemaRepresentsObject(JsonElement? schema)
-    {
-        if (schema is not { } schemaElement)
-        {
-            return false;
-        }
-
-        if (schemaElement.ValueKind is JsonValueKind.Object)
-        {
-            foreach (var property in schemaElement.EnumerateObject())
-            {
-                if (property.NameEquals("type"u8))
-                {
-                    return property.Value.ValueKind == JsonValueKind.String
-                        && property.Value.ValueEquals("object"u8);
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static (ChatResponseFormatJson ResponseFormat, bool IsWrappedInObject) EnsureObjectSchema(ChatResponseFormatJson responseFormat)
-    {
-        if (responseFormat.Schema is null)
-        {
-            throw new InvalidOperationException("The response format must have a valid JSON schema.");
-        }
-
-        var schema = responseFormat.Schema.Value;
-        bool isWrappedInObject = false;
-
-        if (!SchemaRepresentsObject(responseFormat.Schema))
-        {
-            // For non-object-representing schemas, we wrap them in an object schema, because all
-            // the real LLM providers today require an object schema as the root. This is currently
-            // true even for providers that support native structured output.
-            isWrappedInObject = true;
-            schema = JsonSerializer.SerializeToElement(new JsonObject
-            {
-                { "$schema", "https://json-schema.org/draft/2020-12/schema" },
-                { "type", "object" },
-                { "properties", new JsonObject { { "data", JsonElementToJsonNode(schema) } } },
-                { "additionalProperties", false },
-                { "required", new JsonArray("data") },
-            }, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(JsonObject)));
-
-            responseFormat = ChatResponseFormat.ForJsonSchema(schema, responseFormat.SchemaName, responseFormat.SchemaDescription);
-        }
-
-        return (responseFormat, isWrappedInObject);
-    }
-
-    private static JsonNode? JsonElementToJsonNode(JsonElement element) =>
-        element.ValueKind switch
-        {
-            JsonValueKind.Null => null,
-            JsonValueKind.Array => JsonArray.Create(element),
-            JsonValueKind.Object => JsonObject.Create(element),
-            _ => JsonValue.Create(element)
-        };
 }

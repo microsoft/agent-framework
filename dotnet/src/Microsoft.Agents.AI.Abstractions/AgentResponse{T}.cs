@@ -56,7 +56,7 @@ public class AgentResponse<T> : AgentResponse
     /// <remarks>
     /// The wrapper is required for any non-JSON-object-typed values such as numbers, enum values, and arrays.
     /// </remarks>
-    internal bool IsWrappedInObject { get; init; }
+    public bool IsWrappedInObject { get; init; }
 
     /// <summary>
     /// Gets the result value of the agent response as an instance of <typeparamref name="T"/>.
@@ -74,7 +74,7 @@ public class AgentResponse<T> : AgentResponse
 
             if (this.IsWrappedInObject)
             {
-                json = UnwrapDataProperty(json!);
+                json = StructuredOutputSchemaUtilities.UnwrapResponseData(json!);
             }
 
             T? deserialized = DeserializeFirstTopLevelObject(json!, (JsonTypeInfo<T>)this._serializerOptions.GetTypeInfo(typeof(T)));
@@ -85,19 +85,6 @@ public class AgentResponse<T> : AgentResponse
 
             return deserialized;
         }
-    }
-
-    private static string UnwrapDataProperty(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind == JsonValueKind.Object &&
-            document.RootElement.TryGetProperty("data", out JsonElement dataElement))
-        {
-            return dataElement.GetRawText();
-        }
-
-        // If root is not an object or "data" property is not found, return the original JSON as a fallback
-        return json;
     }
 
     private static T? DeserializeFirstTopLevelObject(string json, JsonTypeInfo<T> typeInfo)
