@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from agent_framework import SupportsChatGetResponse
 
 """
-This sample, show how you can configure observability of an application via the
+This sample shows how you can configure observability of an application via the
 `configure_otel_providers` function with environment variables.
 
 When you run this sample with an OTLP endpoint or an Application Insights connection string,
@@ -104,7 +104,7 @@ async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "al
     # based on environment variables. See the .env.example file for the available configuration options.
     configure_otel_providers()
 
-    with get_tracer().start_as_current_span("Sample Scenario's", kind=trace.SpanKind.CLIENT) as current_span:
+    with get_tracer().start_as_current_span("Sample Scenarios", kind=trace.SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         client = OpenAIResponsesClient()

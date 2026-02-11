@@ -16,7 +16,7 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 """
-This sample shows you can can setup telemetry for an Azure AI agent.
+This sample shows you can setup telemetry for an Azure AI agent.
 It uses the Azure AI client to setup the telemetry, this calls out to
 Azure AI for the connection string of the attached Application Insights
 instance.

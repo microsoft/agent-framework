@@ -139,7 +139,7 @@ async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "al
         exporters=custom_exporters,
     )
 
-    with get_tracer().start_as_current_span("Sample Scenario's", kind=trace.SpanKind.CLIENT) as current_span:
+    with get_tracer().start_as_current_span("Sample Scenarios", kind=trace.SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         client = OpenAIResponsesClient()

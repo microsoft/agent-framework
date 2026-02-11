@@ -31,9 +31,9 @@ opentelemetry-enable_instrumentation \
     --metrics_exporter otlp \
     --service_name agent_framework \
     --exporter_otlp_endpoint http://localhost:4317 \
-    python samples/getting_started/observability/advanced_zero_code.py
+    python python/samples/02-agents/observability/advanced_zero_code.py
 ```
-(or use uv run in front when you have did the install within your uv virtual environment)
+(or use uv run in front when you've done the install within your uv virtual environment)
 
 You can also set the environment variables instead of passing them as CLI arguments.
 
@@ -65,7 +65,7 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
 
     Remarks:
         When function calling is outside the open telemetry loop
-        each of the call to the model is handled as a seperate span,
+        each of the call to the model is handled as a separate span,
         while when the open telemetry is put last, a single span
         is shown, which might include one or more rounds of function calling.
 

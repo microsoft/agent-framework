@@ -7,7 +7,7 @@ from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 
 
 def load_sample_pdf() -> bytes:

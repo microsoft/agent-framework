@@ -5,7 +5,7 @@
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/getting_started/observability/agent_with_foundry_tracing.py
+#   uv run python/samples/02-agents/observability/agent_with_foundry_tracing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 

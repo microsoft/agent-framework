@@ -37,7 +37,7 @@ class UserNameProvider(ContextProvider):
 
     async def invoked(
         self,
-        request_messages: Message | "list[Message] | Message | None" = None,
+        request_messages: Message | list[Message] | None = None,
         response_messages: "Message | list[Message] | None" = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,

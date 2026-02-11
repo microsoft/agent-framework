@@ -8,7 +8,7 @@ from pathlib import Path
 from agent_framework import Content, Message
 from agent_framework.openai import OpenAIChatClient
 
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 
 
 def load_sample_pdf() -> bytes:
