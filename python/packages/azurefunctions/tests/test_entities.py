@@ -198,7 +198,6 @@ class TestCreateAgentEntity:
         persisted_state = mock_context.set_state.call_args[0][0]
         assert persisted_state["data"]["conversationHistory"] == []
 
-
     def test_entity_function_handles_string_input(self) -> None:
         """Test that the entity function handles plain string input that falls back to empty string (line 83)."""
         mock_agent = Mock()
@@ -242,7 +241,6 @@ class TestCreateAgentEntity:
 
     def test_entity_function_handles_event_loop_runtime_error(self) -> None:
         """Test that the entity function handles RuntimeError from get_event_loop (lines 107-109)."""
-        import asyncio
         from unittest.mock import patch
 
         mock_agent = Mock()
@@ -257,24 +255,25 @@ class TestCreateAgentEntity:
         mock_context.get_state.return_value = None
 
         # Simulate RuntimeError when getting event loop
-        with patch("asyncio.get_event_loop", side_effect=RuntimeError("No event loop")):
-            with patch("asyncio.new_event_loop") as mock_new_loop:
-                with patch("asyncio.set_event_loop") as mock_set_loop:
-                    mock_loop = Mock()
-                    mock_loop.is_running.return_value = False
-                    mock_loop.run_until_complete = Mock()
-                    mock_new_loop.return_value = mock_loop
+        with (
+            patch("asyncio.get_event_loop", side_effect=RuntimeError("No event loop")),
+            patch("asyncio.new_event_loop") as mock_new_loop,
+            patch("asyncio.set_event_loop") as mock_set_loop,
+        ):
+            mock_loop = Mock()
+            mock_loop.is_running.return_value = False
+            mock_loop.run_until_complete = Mock()
+            mock_new_loop.return_value = mock_loop
 
-                    # Execute
-                    entity_function(mock_context)
+            # Execute
+            entity_function(mock_context)
 
-                    # Verify new event loop was created
-                    mock_new_loop.assert_called_once()
-                    mock_set_loop.assert_called_once_with(mock_loop)
+            # Verify new event loop was created
+            mock_new_loop.assert_called_once()
+            mock_set_loop.assert_called_once_with(mock_loop)
 
     def test_entity_function_handles_running_event_loop(self) -> None:
         """Test that the entity function handles a running event loop (lines 111-116)."""
-        import asyncio
         from unittest.mock import patch
 
         mock_agent = Mock()
@@ -296,14 +295,16 @@ class TestCreateAgentEntity:
         mock_temp_loop.run_until_complete = Mock()
         mock_temp_loop.close = Mock()
 
-        with patch("asyncio.get_event_loop", return_value=mock_existing_loop):
-            with patch("asyncio.new_event_loop", return_value=mock_temp_loop):
-                # Execute
-                entity_function(mock_context)
+        with (
+            patch("asyncio.get_event_loop", return_value=mock_existing_loop),
+            patch("asyncio.new_event_loop", return_value=mock_temp_loop),
+        ):
+            # Execute
+            entity_function(mock_context)
 
-                # Verify temporary loop was created and closed
-                mock_temp_loop.run_until_complete.assert_called_once()
-                mock_temp_loop.close.assert_called_once()
+            # Verify temporary loop was created and closed
+            mock_temp_loop.run_until_complete.assert_called_once()
+            mock_temp_loop.close.assert_called_once()
 
 
 if __name__ == "__main__":
