@@ -169,18 +169,17 @@ public sealed class CopyConversationMessagesExecutorTest(ITestOutputHelper outpu
         Assert.Equal(expectedMessageCount, mockAgentProvider.TestMessages.Count);
         VerifyModel(model, action);
 
+        AgentResponseEvent[] responseEvents = events.OfType<AgentResponseEvent>().ToArray();
         if (expectWorkflowEvent && expectedMessageCount > 0)
         {
-            AgentResponseEvent[] responseEvents = events.OfType<AgentResponseEvent>().ToArray();
             Assert.NotEmpty(responseEvents);
             AgentResponseEvent responseEvent = responseEvents.First();
             Assert.Equal(action.Id, responseEvent.ExecutorId);
             Assert.NotNull(responseEvent.Response);
             Assert.Equal(expectedMessageCount, responseEvent.Response.Messages.Count);
         }
-        else if (!expectWorkflowEvent)
+        else
         {
-            AgentResponseEvent[] responseEvents = events.OfType<AgentResponseEvent>().ToArray();
             Assert.Empty(responseEvents);
         }
     }
