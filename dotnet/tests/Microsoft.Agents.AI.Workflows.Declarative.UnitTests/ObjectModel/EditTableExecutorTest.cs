@@ -336,7 +336,6 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         FormulaValue tableValue = this.State.Engine.Eval("[{id: 5}]");
         this.State.Set("MyTable", tableValue);
         this.State.Set("NewId", FormulaValue.New(10));
-        this.State.Bind(); // Bind is needed here to make NewId available to the expression
 
         EditTable model = this.CreateModel(
             nameof(AddWithExpressionAsync),
