@@ -29,7 +29,7 @@ response generation, showing both streaming and non-streaming responses.
 @chat_middleware
 async def security_and_override_middleware(
     context: ChatContext,
-    call_next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function-based middleware that implements security filtering and response override."""
     print("[SecurityMiddleware] Processing input...")
@@ -60,7 +60,7 @@ async def security_and_override_middleware(
                     raise MiddlewareTermination(result=context.result)
 
     # Continue to next middleware or AI execution
-    await call_next(context)
+    await call_next()
 
     print("[SecurityMiddleware] Response generated.")
     print(type(context.result))

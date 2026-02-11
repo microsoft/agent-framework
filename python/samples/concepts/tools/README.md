@@ -267,7 +267,7 @@ class TerminatingMiddleware(FunctionMiddleware):
         if self.should_terminate(context):
             context.result = "terminated by middleware"
             raise MiddlewareTermination  # Exit function invocation loop
-        await call_next(context)
+        await call_next()
 ```
 
 ## Arguments Added/Altered at Each Layer
@@ -347,7 +347,7 @@ class CachingMiddleware(FunctionMiddleware):
             return  # Upstream post-processing still runs
 
         # Option B: Call call_next, then return normally
-        await call_next(context)
+        await call_next()
         self.cache[context.function.name] = context.result
         return  # Normal completion
 ```
@@ -362,7 +362,7 @@ class BlockedFunctionMiddleware(FunctionMiddleware):
         if context.function.name in self.blocked_functions:
             context.result = "Function blocked by policy"
             raise MiddlewareTermination("Blocked")  # Skips ALL post-processing
-        await call_next(context)
+        await call_next()
 ```
 
 ### 3. Raise Any Other Exception
@@ -374,7 +374,7 @@ class ValidationMiddleware(FunctionMiddleware):
     async def process(self, context: FunctionInvocationContext, call_next):
         if not self.is_valid(context.arguments):
             raise ValueError("Invalid arguments")  # Bubbles up to user
-        await call_next(context)
+        await call_next()
 ```
 
 ## `return` vs `raise MiddlewareTermination`
@@ -385,7 +385,7 @@ The key difference is what happens to **upstream middleware's post-processing**:
 class MiddlewareA(AgentMiddleware):
     async def process(self, context, call_next):
         print("A: before")
-        await call_next(context)
+        await call_next()
         print("A: after")  # Does this run?
 
 class MiddlewareB(AgentMiddleware):
@@ -410,7 +410,7 @@ With middleware registered as `[MiddlewareA, MiddlewareB]`:
 
 ## Calling `call_next()` or Not
 
-The decision to call `call_next(context)` determines whether downstream middleware and the actual operation execute:
+The decision to call `call_next()` determines whether downstream middleware and the actual operation execute:
 
 ### Without calling `call_next()` - Skip downstream
 
@@ -430,7 +430,7 @@ async def process(self, context, call_next):
 ```python
 async def process(self, context, call_next):
     # Pre-processing
-    await call_next(context)  # Execute downstream + actual operation
+    await call_next()  # Execute downstream + actual operation
     # Post-processing (context.result now contains real result)
     return
 ```
@@ -450,7 +450,7 @@ async def process(self, context, call_next):
 | `raise MiddlewareTermination` | Yes | ✅ | ✅ | ❌ No |
 | `raise OtherException` | Either | Depends | Depends | ❌ No (exception propagates) |
 
-> **Note:** The first row (`return` after calling `call_next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await call_next(context)` without an explicit `return` statement achieves this pattern.
+> **Note:** The first row (`return` after calling `call_next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await call_next()` without an explicit `return` statement achieves this pattern.
 
 ## Streaming vs Non-Streaming
 

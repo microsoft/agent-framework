@@ -2298,9 +2298,7 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: Support
 class TerminateLoopMiddleware(FunctionMiddleware):
     """Middleware that raises MiddlewareTermination to exit the function calling loop."""
 
-    async def process(
-        self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
-    ) -> None:
+    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:
         # Set result to a simple value - the framework will wrap it in FunctionResultContent
         context.result = "terminated by middleware"
         raise MiddlewareTermination
@@ -2355,14 +2353,12 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
 class SelectiveTerminateMiddleware(FunctionMiddleware):
     """Only terminates for terminating_function."""
 
-    async def process(
-        self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
-    ) -> None:
+    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:
         if context.function.name == "terminating_function":
             # Set result to a simple value - the framework will wrap it in FunctionResultContent
             context.result = "terminated by middleware"
             raise MiddlewareTermination
-        await next_handler(context)
+        await next_handler()
 
 
 async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client_base: SupportsChatGetResponse):
