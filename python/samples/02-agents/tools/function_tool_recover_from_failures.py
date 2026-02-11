@@ -44,29 +44,28 @@ async def main():
         instructions="Use the provided tools.",
         tools=[greet, safe_divide],
     )
-    thread = agent.get_new_thread()
+    session = agent.create_session()
     print("=" * 60)
     print("Step 1: Call divide(10, 0) - tool raises exception")
-    response = await agent.run("Divide 10 by 0", thread=thread)
+    response = await agent.run("Divide 10 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print("Step 2: Call greet('Bob') - conversation can keep going.")
-    response = await agent.run("Greet Bob", thread=thread)
+    response = await agent.run("Greet Bob", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
-    print("Replay the conversation:")
-    assert thread.message_store
-    assert thread.message_store.list_messages
-    for idx, msg in enumerate(await thread.message_store.list_messages()):
-        if msg.text:
-            print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
-        for content in msg.contents:
-            if content.type == "function_call":
-                print(
-                    f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
-                )
-            if content.type == "function_result":
-                print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
+    # TODO: Use history providers to replay the conversation
+    # print("Replay the conversation:")
+    # for idx, msg in enumerate(messages):
+    #     if msg.text:
+    #         print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
+    #     for content in msg.contents:
+    #         if content.type == "function_call":
+    #             print(
+    #                 f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
+    #             )
+    #         if content.type == "function_result":
+    #             print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
 
 
 """

@@ -80,15 +80,15 @@ def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: 
     physicist = agent_context.get_agent(PHYSICIST_AGENT_NAME)
     chemist = agent_context.get_agent(CHEMIST_AGENT_NAME)
 
-    # Create separate threads for each agent
-    physicist_thread = physicist.get_new_thread()
-    chemist_thread = chemist.get_new_thread()
+    # Create separate sessions for each agent
+    physicist_session = physicist.create_session()
+    chemist_session = chemist.create_session()
 
-    logger.debug(f"[Orchestration] Created threads - Physicist: {physicist_thread.session_id}, Chemist: {chemist_thread.session_id}")
+    logger.debug(f"[Orchestration] Created sessions - Physicist: {physicist_session.session_id}, Chemist: {chemist_session.session_id}")
 
     # Create tasks from agent.run() calls - these return DurableAgentTask instances
-    physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
-    chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
+    physicist_task = physicist.run(messages=str(prompt), session=physicist_session)
+    chemist_task = chemist.run(messages=str(prompt), session=chemist_session)
 
     logger.debug("[Orchestration] Created agent tasks, executing concurrently...")
 

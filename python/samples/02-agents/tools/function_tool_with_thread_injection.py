@@ -3,15 +3,15 @@
 import asyncio
 from typing import Annotated, Any
 
-from agent_framework import AgentThread, tool
+from agent_framework import AgentSession, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
 """
-AI Function with Thread Injection Example
+AI Function with Session Injection Example
 
-This example demonstrates the behavior when passing 'thread' to agent.run()
-and accessing that thread in AI function.
+This example demonstrates the behavior when passing 'session' to agent.run()
+and accessing that session in AI function.
 """
 
 
@@ -23,14 +23,11 @@ async def get_weather(
     **kwargs: Any,
 ) -> str:
     """Get the weather for a given location."""
-    # Get thread object from kwargs
-    thread = kwargs.get("thread")
-    if thread and isinstance(thread, AgentThread):
-        if thread.message_store:
-            messages = await thread.message_store.list_messages()
-            print(f"Thread contains {len(messages)} messages.")
-        elif thread.service_thread_id:
-            print(f"Thread ID: {thread.service_thread_id}.")
+    # Get session object from kwargs
+    session = kwargs.get("session")
+    if session and isinstance(session, AgentSession):
+        if session.service_session_id:
+            print(f"Session ID: {session.service_session_id}.")
 
     return f"The weather in {location} is cloudy."
 
@@ -40,13 +37,13 @@ async def main() -> None:
         name="WeatherAgent", instructions="You are a helpful weather assistant.", tools=[get_weather]
     )
 
-    # Create a thread
-    thread = agent.get_new_thread()
+    # Create a session
+    session = agent.create_session()
 
-    # Run the agent with the thread
-    print(f"Agent: {await agent.run('What is the weather in London?', thread=thread)}")
-    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', thread=thread)}")
-    print(f"Agent: {await agent.run('What cities did I ask about?', thread=thread)}")
+    # Run the agent with the session
+    print(f"Agent: {await agent.run('What is the weather in London?', session=session)}")
+    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}")
+    print(f"Agent: {await agent.run('What cities did I ask about?', session=session)}")
 
 
 if __name__ == "__main__":

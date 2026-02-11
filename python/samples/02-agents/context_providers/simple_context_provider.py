@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import MutableSequence, Sequence
 from typing import Any
 
-from agent_framework import Agent, Context, ContextProvider, Message, SupportsChatGetResponse
+from agent_framework import Agent, AgentSession, BaseContextProvider, Message, SessionContext, SupportsChatGetResponse
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
@@ -15,13 +14,13 @@ class UserInfo(BaseModel):
     age: int | None = None
 
 
-class UserInfoMemory(ContextProvider):
+class UserInfoMemory(BaseContextProvider):
     def __init__(self, client: SupportsChatGetResponse, user_info: UserInfo | None = None, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
         """
-
+        super().__init__("user-info-memory")
         self._chat_client = client
         if user_info:
             self.user_info = user_info
@@ -30,14 +29,16 @@ class UserInfoMemory(ContextProvider):
         else:
             self.user_info = UserInfo()
 
-    async def invoked(
+    async def after_run(
         self,
-        request_messages: Message | Sequence[Message],
-        response_messages: Message | Sequence[Message] | None = None,
-        invoke_exception: Exception | None = None,
-        **kwargs: Any,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
     ) -> None:
         """Extract user information from messages after each agent call."""
+        request_messages = context.get_messages()
         # Check if we need to extract user info from user messages
         user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
 
@@ -64,7 +65,14 @@ class UserInfoMemory(ContextProvider):
             except Exception:
                 pass  # Failed to extract, continue without updating
 
-    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
         """Provide user information context before each agent call."""
         instructions: list[str] = []
 
@@ -82,11 +90,11 @@ class UserInfoMemory(ContextProvider):
         else:
             instructions.append(f"The user's age is {self.user_info.age}.")
 
-        # Return context with additional instructions
-        return Context(instructions=" ".join(instructions))
+        # Add context with additional instructions
+        context.extend_instructions(self.source_id, " ".join(instructions))
 
     def serialize(self) -> str:
-        """Serialize the user info for thread persistence."""
+        """Serialize the user info for session persistence."""
         return self.user_info.model_dump_json()
 
 
@@ -101,21 +109,20 @@ async def main():
         async with Agent(
             client=client,
             instructions="You are a friendly assistant. Always address the user by their name.",
-            context_provider=memory_provider,
+            context_providers=[memory_provider],
         ) as agent:
-            # Create a new thread for the conversation
-            thread = agent.get_new_thread()
+            # Create a new session for the conversation
+            session = agent.create_session()
 
-            print(await agent.run("Hello, what is the square root of 9?", thread=thread))
-            print(await agent.run("My name is Ruaidhrí", thread=thread))
-            print(await agent.run("I am 20 years old", thread=thread))
+            print(await agent.run("Hello, what is the square root of 9?", session=session))
+            print(await agent.run("My name is Ruaidhrí", session=session))
+            print(await agent.run("I am 20 years old", session=session))
 
-            # Access the memory component via the thread's get_service method and inspect the memories
-            user_info_memory = thread.context_provider.providers[0]  # type: ignore
-            if user_info_memory:
+            # Access the memory component and inspect the memories
+            if memory_provider:
                 print()
-                print(f"MEMORY - User Name: {user_info_memory.user_info.name}")  # type: ignore
-                print(f"MEMORY - User Age: {user_info_memory.user_info.age}")  # type: ignore
+                print(f"MEMORY - User Name: {memory_provider.user_info.name}")
+                print(f"MEMORY - User Age: {memory_provider.user_info.age}")
 
 
 if __name__ == "__main__":

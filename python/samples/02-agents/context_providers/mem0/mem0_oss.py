@@ -5,7 +5,7 @@ import uuid
 
 from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
-from agent_framework.mem0 import Mem0Provider
+from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
 from mem0 import AsyncMemory
 
@@ -42,7 +42,7 @@ async def main() -> None:
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_provider=Mem0Provider(user_id=user_id, mem0_client=local_mem0_client),
+            context_providers=[Mem0ContextProvider(user_id=user_id, mem0_client=local_mem0_client)],
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.
@@ -60,18 +60,18 @@ async def main() -> None:
         result = await agent.run(query)
         print(f"Agent: {result}\n")
 
-        print("\nRequest within a new thread:")
+        print("\nRequest within a new session:")
 
-        # Create a new thread for the agent.
-        # The new thread has no context of the previous conversation.
-        thread = agent.get_new_thread()
+        # Create a new session for the agent.
+        # The new session has no context of the previous conversation.
+        session = agent.create_session()
 
-        # Since we have the mem0 component in the thread, the agent should be able to
+        # Since we have the mem0 component in the session, the agent should be able to
         # retrieve the company report without asking for clarification, as it will
         # be able to remember the user preferences from Mem0 component.
         query = "Please retrieve my company report"
         print(f"User: {query}")
-        result = await agent.run(query, thread=thread)
+        result = await agent.run(query, session=session)
         print(f"Agent: {result}\n")
 
 

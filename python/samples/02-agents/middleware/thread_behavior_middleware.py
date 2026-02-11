@@ -6,7 +6,6 @@ from typing import Annotated
 
 from agent_framework import (
     AgentContext,
-    ChatMessageStore,
     tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -16,19 +15,19 @@ from pydantic import Field
 """
 Thread Behavior MiddlewareTypes Example
 
-This sample demonstrates how middleware can access and track thread state across multiple agent runs.
+This sample demonstrates how middleware can access and track session state across multiple agent runs.
 The example shows:
 
-- How AgentContext.thread property behaves across multiple runs
-- How middleware can access conversation history through the thread
-- The timing of when thread messages are populated (before vs after call_next() call)
-- How to track thread state changes across runs
+- How AgentContext.session property behaves across multiple runs
+- How middleware can access conversation history through the session
+- The timing of when session messages are populated (before vs after call_next() call)
+- How to track session state changes across runs
 
 Key behaviors demonstrated:
-1. First run: context.messages is populated, context.thread is initially empty (before call_next())
-2. After call_next(): thread contains input message + response from agent
-3. Second run: context.messages contains only current input, thread contains previous history
-4. After call_next(): thread contains full conversation history (all previous + current messages)
+1. First run: context.messages is populated, context.session is initially empty (before call_next())
+2. After call_next(): session contains input message + response from agent
+3. Second run: context.messages contains only current input, session contains previous history
+4. After call_next(): session contains full conversation history (all previous + current messages)
 """
 
 
@@ -48,28 +47,30 @@ async def thread_tracking_middleware(
     context: AgentContext,
     call_next: Callable[[], Awaitable[None]],
 ) -> None:
-    """MiddlewareTypes that tracks and logs thread behavior across runs."""
-    thread_messages = []
-    if context.thread and context.thread.message_store:
-        thread_messages = await context.thread.message_store.list_messages()
+    """MiddlewareTypes that tracks and logs session behavior across runs."""
+    session_message_count = 0
+    if context.session:
+        memory_state = context.session.state.get("memory", {})
+        session_message_count = len(memory_state.get("messages", []))
 
     print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
-    print(f"[MiddlewareTypes pre-execution] Thread history messages: {len(thread_messages)}")
+    print(f"[MiddlewareTypes pre-execution] Session history messages: {session_message_count}")
 
     # Call call_next to execute the agent
     await call_next()
 
-    # Check thread state after agent execution
-    updated_thread_messages = []
-    if context.thread and context.thread.message_store:
-        updated_thread_messages = await context.thread.message_store.list_messages()
+    # Check session state after agent execution
+    updated_session_message_count = 0
+    if context.session:
+        memory_state = context.session.state.get("memory", {})
+        updated_session_message_count = len(memory_state.get("messages", []))
 
-    print(f"[MiddlewareTypes post-execution] Updated thread messages: {len(updated_thread_messages)}")
+    print(f"[MiddlewareTypes post-execution] Updated session messages: {updated_session_message_count}")
 
 
 async def main() -> None:
-    """Example demonstrating thread behavior in middleware across multiple runs."""
-    print("=== Thread Behavior MiddlewareTypes Example ===")
+    """Example demonstrating session behavior in middleware across multiple runs."""
+    print("=== Session Behavior MiddlewareTypes Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
@@ -78,23 +79,21 @@ async def main() -> None:
         instructions="You are a helpful weather assistant.",
         tools=get_weather,
         middleware=[thread_tracking_middleware],
-        # Configure agent with message store factory to persist conversation history
-        chat_message_store_factory=ChatMessageStore,
     )
 
-    # Create a thread that will persist messages between runs
-    thread = agent.get_new_thread()
+    # Create a session that will persist messages between runs
+    session = agent.create_session()
 
     print("\nFirst Run:")
     query1 = "What's the weather like in Tokyo?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, thread=thread)
+    result1 = await agent.run(query1, session=session)
     print(f"Agent: {result1.text}")
 
     print("\nSecond Run:")
     query2 = "How about in London?"
     print(f"User: {query2}")
-    result2 = await agent.run(query2, thread=thread)
+    result2 = await agent.run(query2, session=session)
     print(f"Agent: {result2.text}")
 
 

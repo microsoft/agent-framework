@@ -12,10 +12,10 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Azure AI Agent with Existing Thread Example
+Azure AI Agent with Existing Session Example
 
-This sample demonstrates working with pre-existing conversation threads
-by providing thread IDs for thread reuse patterns.
+This sample demonstrates working with pre-existing conversation sessions
+by providing session IDs for session reuse patterns.
 """
 
 
@@ -32,7 +32,7 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Azure AI Agent with Existing Thread ===")
+    print("=== Azure AI Agent with Existing Session ===")
 
     # Create the client and provider
     async with (
@@ -40,7 +40,7 @@ async def main() -> None:
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
         AzureAIAgentsProvider(agents_client=agents_client) as provider,
     ):
-        # Create a thread that will persist
+        # Create a session that will persist
         created_thread = await agents_client.threads.create()
 
         try:
@@ -51,12 +51,12 @@ async def main() -> None:
                 tools=get_weather,
             )
 
-            thread = agent.get_new_thread(service_thread_id=created_thread.id)
-            assert thread.is_initialized
-            result = await agent.run("What's the weather like in Tokyo?", thread=thread)
+            session = agent.create_session(service_session_id=created_thread.id)
+            assert session.is_initialized
+            result = await agent.run("What's the weather like in Tokyo?", session=session)
             print(f"Result: {result}\n")
         finally:
-            # Clean up the thread manually
+            # Clean up the session manually
             await agents_client.threads.delete(created_thread.id)
 
 

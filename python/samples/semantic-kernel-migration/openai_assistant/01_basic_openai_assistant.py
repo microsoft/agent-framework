@@ -50,7 +50,7 @@ async def run_agent_framework() -> None:
         print("[AF]", reply.text)
         follow_up = await assistant_agent.run(
             "How many residents live there?",
-            thread=assistant_agent.get_new_thread(),
+            session=assistant_agent.create_session(),
         )
         print("[AF][follow-up]", follow_up.text)
 

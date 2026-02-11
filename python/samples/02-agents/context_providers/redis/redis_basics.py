@@ -32,7 +32,7 @@ import os
 
 from agent_framework import Message, tool
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_redis._provider import RedisProvider
+from agent_framework_redis._context_provider import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
@@ -104,7 +104,7 @@ async def main() -> None:
     # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
     # We attach an embedding vectorizer so the provider can perform hybrid (text + vector)
-    # retrieval. If you prefer text-only retrieval, instantiate RedisProvider without the
+    # retrieval. If you prefer text-only retrieval, instantiate RedisContextProvider without the
     # 'vectorizer' and vector_* parameters.
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
@@ -114,7 +114,7 @@ async def main() -> None:
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
     # scope data for multi-tenant separation; thread_id (set later) narrows to a
     # specific conversation.
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
         application_id="matrix_of_kermits",
@@ -133,21 +133,27 @@ async def main() -> None:
         Message("system", ["runA CONVO: System Message"]),
     ]
 
-    # Declare/start a conversation/thread and write messages under 'runA'.
-    # Threads are logical boundaries used by the provider to group and retrieve
-    # conversation-specific context.
-    await provider.thread_created(thread_id="runA")
-    await provider.invoked(request_messages=messages)
+    # Use the provider's before_run/after_run API to store and retrieve messages.
+    # In practice, the agent handles this automatically; this shows the low-level API.
+    from agent_framework import AgentSession, SessionContext
 
-    # Retrieve relevant memories for a hypothetical model call. The provider uses
-    # the current request messages as the retrieval query and returns context to
-    # be injected into the model's instructions.
-    ctx = await provider.invoking([Message("system", ["B: Assistant Message"])])
+    session = AgentSession(session_id="runA")
+    context = SessionContext()
+    context.extend_messages("input", messages)
+    state = session.state
+
+    # Store messages via after_run
+    await provider.after_run(agent=None, session=session, context=context, state=state)
+
+    # Retrieve relevant memories via before_run
+    query_context = SessionContext()
+    query_context.extend_messages("input", [Message("system", ["B: Assistant Message"])])
+    await provider.before_run(agent=None, session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)
-    print("Model Invoking Result:")
-    print(ctx)
+    print("Before Run Result:")
+    print(query_context)
 
     # Drop / delete the provider index in Redis
     await provider.redis_index.delete()
@@ -163,7 +169,7 @@ async def main() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     # Recreate a clean index so the next scenario starts fresh
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics_2",
         prefix="context_2",
@@ -187,7 +193,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_provider=provider,
+        context_providers=[provider],
     )
 
     # Teach a user preference; the agent writes this to the provider's memory
@@ -210,7 +216,7 @@ async def main() -> None:
     print("\n3. Agent + provider + tool: store and recall tool-derived context")
     print("-" * 40)
     # Text-only provider (full-text search only). Omits vectorizer and related params.
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics_3",
         prefix="context_3",
@@ -229,7 +235,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=search_flights,
-        context_provider=provider,
+        context_providers=[provider],
     )
     # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"

@@ -5,7 +5,7 @@
 Components used in this sample:
 - AzureOpenAIChatClient to construct the writer agent hosted by Agent Framework.
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
-- Durable Functions orchestration to run sequential agent invocations on the same conversation thread.
+- Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
 Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
 `AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
@@ -45,17 +45,17 @@ def _create_writer_agent() -> Any:
 app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True)
 
 
-# 4. Orchestration that runs the agent sequentially on a shared thread for chaining behaviour.
+# 4. Orchestration that runs the agent sequentially on a shared session for chaining behaviour.
 @app.orchestration_trigger(context_name="context")
 def single_agent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, str]:
-    """Run the writer agent twice on the same thread to mirror chaining behaviour."""
+    """Run the writer agent twice on the same session to mirror chaining behaviour."""
 
     writer = app.get_agent(context, WRITER_AGENT_NAME)
-    writer_thread = writer.get_new_thread()
+    writer_session = writer.create_session()
 
     initial = yield writer.run(
         messages="Write a concise inspirational sentence about learning.",
-        thread=writer_thread,
+        session=writer_session,
     )
 
     improved_prompt = (
@@ -65,7 +65,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext) -> Generato
 
     refined = yield writer.run(
         messages=improved_prompt,
-        thread=writer_thread,
+        session=writer_session,
     )
 
     return refined.text

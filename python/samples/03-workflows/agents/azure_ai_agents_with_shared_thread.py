@@ -7,7 +7,7 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessageStore,
+    InMemoryHistoryProvider,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
@@ -59,22 +59,23 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
+    # set the same context provider, with the same source_id, for both agents to share the thread
     writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
+        context_providers=[InMemoryHistoryProvider("memory")],
     )
 
     reviewer = client.as_agent(
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
+        context_providers=[InMemoryHistoryProvider("memory")],
     )
 
-    shared_thread = writer.get_new_thread()
-    # Set the message store to store messages in memory.
-    shared_thread.message_store = ChatMessageStore()
-
-    writer_executor = AgentExecutor(writer, agent_thread=shared_thread)
-    reviewer_executor = AgentExecutor(reviewer, agent_thread=shared_thread)
+    # Create the shared session
+    shared_session = writer.create_session()
+    writer_executor = AgentExecutor(writer, session=shared_session)
+    reviewer_executor = AgentExecutor(reviewer, session=shared_session)
 
     workflow = (
         WorkflowBuilder(start_executor=writer_executor)
@@ -88,13 +89,15 @@ async def main() -> None:
         # Setting store=False to avoid storing messages in the service for this example.
         options={"store": False},
     )
+
     # The final state should be IDLE since the workflow no longer has messages to
     # process after the reviewer agent responds.
     assert result.get_final_state() == WorkflowRunState.IDLE
 
-    # The shared thread now contains the conversation between the writer and reviewer. Print it out.
-    print("=== Shared Thread Conversation ===")
-    for message in shared_thread.message_store.messages:
+    # The shared session now contains the conversation between the writer and reviewer. Print it out.
+    print("=== Shared Session Conversation ===")
+    memory_state = shared_session.state.get("memory", {})
+    for message in memory_state.get("messages", []):
         print(f"{message.author_name or message.role}: {message.text}")
 
 

@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Azure Managed Redis Chat Message Store with Azure AD Authentication
+"""Azure Managed Redis History Provider with Azure AD Authentication
 
 This example demonstrates how to use Azure Managed Redis with Azure AD authentication
-to persist conversational details using RedisChatMessageStore.
+to persist conversational details using RedisHistoryProvider.
 
 Requirements:
   - Azure Managed Redis instance with Azure AD authentication enabled
@@ -22,7 +22,7 @@ import asyncio
 import os
 
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.redis import RedisChatMessageStore
+from agent_framework.redis import RedisHistoryProvider
 from azure.identity.aio import AzureCliCredential
 from redis.credentials import CredentialProvider
 
@@ -60,28 +60,27 @@ async def main() -> None:
     azure_credential = AzureCliCredential()
     credential_provider = AzureCredentialProvider(azure_credential, user_object_id)
 
-    thread_id = "azure_test_thread"
+    session_id = "azure_test_session"
 
-    # Factory for creating Azure Redis chat message store
-    def chat_message_store_factory():
-        return RedisChatMessageStore(
-            credential_provider=credential_provider,
-            host=redis_host,
-            port=10000,
-            ssl=True,
-            thread_id=thread_id,
-            key_prefix="chat_messages",
-            max_messages=100,
-        )
+    # Create Azure Redis history provider
+    history_provider = RedisHistoryProvider(
+        credential_provider=credential_provider,
+        host=redis_host,
+        port=10000,
+        ssl=True,
+        thread_id=session_id,
+        key_prefix="chat_messages",
+        max_messages=100,
+    )
 
     # Create chat client
     client = OpenAIChatClient()
 
-    # Create agent with Azure Redis store
+    # Create agent with Azure Redis history provider
     agent = client.as_agent(
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
-        chat_message_store_factory=chat_message_store_factory,
+        context_providers=[history_provider],
     )
 
     # Conversation

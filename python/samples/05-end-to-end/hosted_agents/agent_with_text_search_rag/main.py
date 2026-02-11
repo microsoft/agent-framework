@@ -6,7 +6,7 @@ from collections.abc import MutableSequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import Context, ContextProvider, Message
+from agent_framework import AgentSession, BaseContextProvider, Message, SessionContext
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
@@ -24,19 +24,30 @@ class TextSearchResult:
     text: str
 
 
-class TextSearchContextProvider(ContextProvider):
+class TextSearchContextProvider(BaseContextProvider):
     """A simple context provider that simulates text search results based on keywords in the user's message."""
 
-    def _get_most_recent_message(self, messages: Message | MutableSequence[Message]) -> Message:
+    def __init__(self):
+        super().__init__("text-search")
+
+    def _get_most_recent_message(self, messages: list[Message]) -> Message:
         """Helper method to extract the most recent message from the input."""
-        if isinstance(messages, Message):
-            return messages
         if messages:
             return messages[-1]
         raise ValueError("No messages provided")
 
     @override
-    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        messages = context.get_messages()
+        if not messages:
+            return
         message = self._get_most_recent_message(messages)
         query = message.text.lower()
 
@@ -80,14 +91,15 @@ class TextSearchContextProvider(ContextProvider):
             )
 
         if not results:
-            return Context()
+            return
 
-        return Context(
-            messages=[
+        context.extend_messages(
+            self.source_id,
+            [
                 Message(
                     role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)
                 )
-            ]
+            ],
         )
 
 
@@ -99,7 +111,7 @@ def main():
             "You are a helpful support specialist for Contoso Outdoors. "
             "Answer questions using the provided context and cite the source document when available."
         ),
-        context_provider=TextSearchContextProvider(),
+        context_providers=[TextSearchContextProvider()],
     )
 
     # Run the agent as a hosted agent

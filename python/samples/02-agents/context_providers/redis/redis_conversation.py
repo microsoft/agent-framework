@@ -2,7 +2,7 @@
 
 """Redis Context Provider: Basic usage and agent integration
 
-This example demonstrates how to use the Redis ChatMessageStoreProtocol to persist
+This example demonstrates how to use the Redis context provider to persist
 conversational details. Pass it as a constructor argument to create_agent.
 
 Requirements:
@@ -18,8 +18,7 @@ import asyncio
 import os
 
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_redis._chat_message_store import RedisChatMessageStore
-from agent_framework_redis._provider import RedisProvider
+from agent_framework_redis._context_provider import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
@@ -37,9 +36,9 @@ async def main() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
 
-    thread_id = "test_thread"
+    session_id = "test_session"
 
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_conversation",
         prefix="redis_conversation",
@@ -50,16 +49,8 @@ async def main() -> None:
         vector_field_name="vector",
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
-        thread_id=thread_id,
+        thread_id=session_id,
     )
-
-    def chat_message_store_factory():
-        return RedisChatMessageStore(
-            redis_url="redis://localhost:6379",
-            thread_id=thread_id,
-            key_prefix="chat_messages",
-            max_messages=100,
-        )
 
     # Create chat client for the agent
     client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
@@ -72,8 +63,7 @@ async def main() -> None:
             "Before answering, always check for stored context"
         ),
         tools=[],
-        context_provider=provider,
-        chat_message_store_factory=chat_message_store_factory,
+        context_providers=[provider],
     )
 
     # Teach a user preference; the agent writes this to the provider's memory

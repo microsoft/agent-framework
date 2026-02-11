@@ -31,7 +31,7 @@ import os
 import uuid
 
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_redis._provider import RedisProvider
+from agent_framework_redis._context_provider import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
@@ -51,16 +51,14 @@ async def example_global_thread_scope() -> None:
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_global",
-        # overwrite_redis_index=True,
-        # drop_redis_index=True,
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
         thread_id=global_thread_id,
-        scope_to_per_operation_thread_id=False,  # Share memories across all threads
+        scope_to_per_operation_thread_id=False,  # Share memories across all sessions
     )
 
     agent = client.as_agent(
@@ -70,7 +68,7 @@ async def example_global_thread_scope() -> None:
             "Before answering, always check for stored context containing information"
         ),
         tools=[],
-        context_provider=provider,
+        context_providers=[provider],
     )
 
     # Store a preference in the global scope
@@ -79,11 +77,11 @@ async def example_global_thread_scope() -> None:
     result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Create a new thread - memories should still be accessible due to global scope
-    new_thread = agent.get_new_thread()
+    # Create a new session - memories should still be accessible due to global scope
+    new_session = agent.create_session()
     query = "What technical responses do I prefer?"
-    print(f"User (new thread): {query}")
-    result = await agent.run(query, thread=new_thread)
+    print(f"User (new session): {query}")
+    result = await agent.run(query, session=new_session)
     print(f"Agent: {result}\n")
 
     # Clean up the Redis index
@@ -91,10 +89,10 @@ async def example_global_thread_scope() -> None:
 
 
 async def example_per_operation_thread_scope() -> None:
-    """Example 2: Per-operation thread scope (memories isolated per thread).
+    """Example 2: Per-operation thread scope (memories isolated per session).
 
-    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single thread
-    throughout its lifetime. Use the same thread object for all operations with that provider.
+    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single session
+    throughout its lifetime. Use the same session object for all operations with that provider.
     """
     print("2. Per-Operation Thread Scope Example:")
     print("-" * 40)
@@ -110,7 +108,7 @@ async def example_per_operation_thread_scope() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
 
-    provider = RedisProvider(
+    provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_dynamic",
         # overwrite_redis_index=True,
@@ -118,7 +116,7 @@ async def example_per_operation_thread_scope() -> None:
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        scope_to_per_operation_thread_id=True,  # Isolate memories per thread
+        scope_to_per_operation_thread_id=True,  # Isolate memories per session
         redis_vectorizer=vectorizer,
         vector_field_name="vector",
         vector_algorithm="hnsw",
@@ -128,34 +126,34 @@ async def example_per_operation_thread_scope() -> None:
     agent = client.as_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
-        context_provider=provider,
+        context_providers=[provider],
     )
 
-    # Create a specific thread for this scoped provider
-    dedicated_thread = agent.get_new_thread()
+    # Create a specific session for this scoped provider
+    dedicated_session = agent.create_session()
 
-    # Store some information in the dedicated thread
+    # Store some information in the dedicated session
     query = "Remember that for this conversation, I'm working on a Python project about data analysis."
-    print(f"User (dedicated thread): {query}")
-    result = await agent.run(query, thread=dedicated_thread)
+    print(f"User (dedicated session): {query}")
+    result = await agent.run(query, session=dedicated_session)
     print(f"Agent: {result}\n")
 
-    # Test memory retrieval in the same dedicated thread
+    # Test memory retrieval in the same dedicated session
     query = "What project am I working on?"
-    print(f"User (same dedicated thread): {query}")
-    result = await agent.run(query, thread=dedicated_thread)
+    print(f"User (same dedicated session): {query}")
+    result = await agent.run(query, session=dedicated_session)
     print(f"Agent: {result}\n")
 
-    # Store more information in the same thread
+    # Store more information in the same session
     query = "Also remember that I prefer using pandas and matplotlib for this project."
-    print(f"User (same dedicated thread): {query}")
-    result = await agent.run(query, thread=dedicated_thread)
+    print(f"User (same dedicated session): {query}")
+    result = await agent.run(query, session=dedicated_session)
     print(f"Agent: {result}\n")
 
     # Test comprehensive memory retrieval
     query = "What do you know about my current project and preferences?"
-    print(f"User (same dedicated thread): {query}")
-    result = await agent.run(query, thread=dedicated_thread)
+    print(f"User (same dedicated session): {query}")
+    result = await agent.run(query, session=dedicated_session)
     print(f"Agent: {result}\n")
 
     # Clean up the Redis index
@@ -178,7 +176,7 @@ async def example_multiple_agents() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
 
-    personal_provider = RedisProvider(
+    personal_provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
         application_id="threads_demo_app",
@@ -193,10 +191,10 @@ async def example_multiple_agents() -> None:
     personal_agent = client.as_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
-        context_provider=personal_provider,
+        context_providers=[personal_provider],
     )
 
-    work_provider = RedisProvider(
+    work_provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
         application_id="threads_demo_app",
@@ -211,7 +209,7 @@ async def example_multiple_agents() -> None:
     work_agent = client.as_agent(
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
-        context_provider=work_provider,
+        context_providers=[work_provider],
     )
 
     # Store personal information

@@ -3,17 +3,17 @@
 import asyncio
 import os
 
-from agent_framework import AgentThread, ChatMessageStore
+from agent_framework import AgentSession
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 
 """
-Sample: Workflow as Agent with Thread Conversation History and Checkpointing
+Sample: Workflow as Agent with Session Conversation History and Checkpointing
 
-This sample demonstrates how to use AgentThread with a workflow wrapped as an agent
+This sample demonstrates how to use AgentSession with a workflow wrapped as an agent
 to maintain conversation history across multiple invocations. When using as_agent(),
-the thread's message store history is included in each workflow run, enabling
+the session's history is included in each workflow run, enabling
 the workflow participants to reference prior conversation context.
 
 It also demonstrates how to enable checkpointing for workflow execution state
@@ -21,8 +21,8 @@ persistence, allowing workflows to be paused and resumed.
 
 Key concepts:
 - Workflows can be wrapped as agents using workflow.as_agent()
-- AgentThread with ChatMessageStore preserves conversation history
-- Each call to agent.run() includes thread history + new message
+- AgentSession preserves conversation history
+- Each call to agent.run() includes session history + new message
 - Participants in the workflow see the full conversation context
 - checkpoint_storage parameter enables workflow state persistence
 
@@ -68,19 +68,18 @@ async def main() -> None:
     # Wrap the workflow as an agent
     agent = workflow.as_agent(name="ConversationalWorkflowAgent")
 
-    # Create a thread with a ChatMessageStore to maintain history
-    message_store = ChatMessageStore()
-    thread = AgentThread(message_store=message_store)
+    # Create a session to maintain history
+    session = agent.create_session()
 
     print("=" * 60)
-    print("Workflow as Agent with Thread - Multi-turn Conversation")
+    print("Workflow as Agent with Session - Multi-turn Conversation")
     print("=" * 60)
 
     # First turn: Introduce a topic
     query1 = "My name is Alex and I'm learning about machine learning."
     print(f"\n[Turn 1] User: {query1}")
 
-    response1 = await agent.run(query1, thread=thread)
+    response1 = await agent.run(query1, session=session)
     if response1.messages:
         for msg in response1.messages:
             speaker = msg.author_name or msg.role
@@ -90,7 +89,7 @@ async def main() -> None:
     query2 = "What was my name again, and what am I learning about?"
     print(f"\n[Turn 2] User: {query2}")
 
-    response2 = await agent.run(query2, thread=thread)
+    response2 = await agent.run(query2, session=session)
     if response2.messages:
         for msg in response2.messages:
             speaker = msg.author_name or msg.role
@@ -100,7 +99,7 @@ async def main() -> None:
     query3 = "Can you suggest a good first project for me to try?"
     print(f"\n[Turn 3] User: {query3}")
 
-    response3 = await agent.run(query3, thread=thread)
+    response3 = await agent.run(query3, session=session)
     if response3.messages:
         for msg in response3.messages:
             speaker = msg.author_name or msg.role
@@ -108,20 +107,20 @@ async def main() -> None:
 
     # Show the accumulated conversation history
     print("\n" + "=" * 60)
-    print("Full Thread History")
+    print("Full Session History")
     print("=" * 60)
-    if thread.message_store:
-        history = await thread.message_store.list_messages()
-        for i, msg in enumerate(history, start=1):
-            role = msg.role if hasattr(msg.role, "value") else str(msg.role)
-            speaker = msg.author_name or role
-            text_preview = msg.text[:80] + "..." if len(msg.text) > 80 else msg.text
-            print(f"{i:02d}. [{speaker}]: {text_preview}")
+    memory_state = session.state.get("memory", {})
+    history = memory_state.get("messages", [])
+    for i, msg in enumerate(history, start=1):
+        role = msg.role if hasattr(msg.role, "value") else str(msg.role)
+        speaker = msg.author_name or role
+        text_preview = msg.text[:80] + "..." if len(msg.text) > 80 else msg.text
+        print(f"{i:02d}. [{speaker}]: {text_preview}")
 
 
-async def demonstrate_thread_serialization() -> None:
+async def demonstrate_session_serialization() -> None:
     """
-    Demonstrates serializing and resuming a thread with a workflow agent.
+    Demonstrates serializing and resuming a session with a workflow agent.
 
     This shows how conversation history can be persisted and restored,
     enabling long-running conversational workflows.
@@ -140,36 +139,35 @@ async def demonstrate_thread_serialization() -> None:
     workflow = SequentialBuilder(participants=[memory_assistant]).build()
     agent = workflow.as_agent(name="MemoryWorkflowAgent")
 
-    # Create initial thread and have a conversation
-    thread = AgentThread(message_store=ChatMessageStore())
+    # Create initial session and have a conversation
+    session = agent.create_session()
 
     print("\n" + "=" * 60)
-    print("Thread Serialization Demo")
+    print("Session Serialization Demo")
     print("=" * 60)
 
     # First interaction
     query = "Remember this: the secret code is ALPHA-7."
     print(f"\n[Session 1] User: {query}")
-    response = await agent.run(query, thread=thread)
+    response = await agent.run(query, session=session)
     if response.messages:
         print(f"[assistant]: {response.messages[0].text}")
 
-    # Serialize thread state (could be saved to database/file)
-    serialized_state = await thread.serialize()
-    print("\n[Serialized thread state for persistence]")
+    # Serialize session state (could be saved to database/file)
+    serialized_state = session.to_dict()
+    print("\n[Serialized session state for persistence]")
 
-    # Simulate a new session by creating a new thread from serialized state
-    restored_thread = AgentThread(message_store=ChatMessageStore())
-    await restored_thread.update_from_thread_state(serialized_state)
+    # Simulate a new session by creating a new session from serialized state
+    restored_session = AgentSession.from_dict(serialized_state)
 
-    # Continue conversation with restored thread
+    # Continue conversation with restored session
     query = "What was the secret code I told you?"
     print(f"\n[Session 2 - Restored] User: {query}")
-    response = await agent.run(query, thread=restored_thread)
+    response = await agent.run(query, session=restored_session)
     if response.messages:
         print(f"[assistant]: {response.messages[0].text}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-    asyncio.run(demonstrate_thread_serialization())
+    asyncio.run(demonstrate_session_serialization())

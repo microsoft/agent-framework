@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentResponse, AgentThread, SupportsAgentRun
+from agent_framework import AgentResponse, AgentSession, SupportsAgentRun
 from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -15,11 +15,11 @@ servers, including user approval workflows for function call security.
 """
 
 
-async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread") -> AgentResponse:
-    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+    """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    result = await agent.run(query, thread=thread, store=True)
+    result = await agent.run(query, session=session, store=True)
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
@@ -34,7 +34,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, thread=thread, store=True)
+        result = await agent.run(new_input, session=session, store=True)
     return result
 
 
@@ -58,17 +58,17 @@ async def main() -> None:
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=[mcp_tool],
         )
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         # First query
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
-        result1 = await handle_approvals_with_thread(query1, agent, thread)
+        result1 = await handle_approvals_with_session(query1, agent, session)
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
         query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
-        result2 = await handle_approvals_with_thread(query2, agent, thread)
+        result2 = await handle_approvals_with_session(query2, agent, session)
         print(f"{agent.name}: {result2}\n")
 
 

@@ -15,11 +15,11 @@ Azure OpenAI Responses Client, including user approval workflows for function ca
 """
 
 if TYPE_CHECKING:
-    from agent_framework import AgentThread, SupportsAgentRun
+    from agent_framework import AgentSession, SupportsAgentRun
 
 
-async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
-    """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
+async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"):
+    """When we don't have a session, we need to ensure we return with the input, approval request and approval."""
     from agent_framework import Message
 
     result = await agent.run(query)
@@ -43,11 +43,11 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
-    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession"):
+    """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    result = await agent.run(query, thread=thread, store=True)
+    result = await agent.run(query, session=session, store=True)
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
@@ -62,12 +62,12 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, thread=thread, store=True)
+        result = await agent.run(new_input, session=session, store=True)
     return result
 
 
-async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
-    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+async def handle_approvals_with_session_streaming(query: str, agent: "SupportsAgentRun", session: "AgentSession"):
+    """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
     new_input: list[Message] = []
@@ -75,7 +75,7 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAge
     while new_input_added:
         new_input_added = False
         new_input.append(Message(role="user", text=query))
-        async for update in agent.run(new_input, thread=thread, options={"store": True}, stream=True):
+        async for update in agent.run(new_input, session=session, options={"store": True}, stream=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
                     print(
@@ -94,9 +94,9 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAge
                 yield update
 
 
-async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
-    """Example showing Mcp Tools with approvals without using a thread."""
-    print("=== Mcp with approvals and without thread ===")
+async def run_hosted_mcp_without_session_and_specific_approval() -> None:
+    """Example showing Mcp Tools with approvals without using a session."""
+    print("=== Mcp with approvals and without session ===")
     credential = AzureCliCredential()
     client = AzureOpenAIResponsesClient(credential=credential)
 
@@ -120,13 +120,13 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
-        result1 = await handle_approvals_without_thread(query1, agent)
+        result1 = await handle_approvals_without_session(query1, agent)
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
         query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
-        result2 = await handle_approvals_without_thread(query2, agent)
+        result2 = await handle_approvals_without_session(query2, agent)
         print(f"{agent.name}: {result2}\n")
 
 
@@ -157,19 +157,19 @@ async def run_hosted_mcp_without_approval() -> None:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
-        result1 = await handle_approvals_without_thread(query1, agent)
+        result1 = await handle_approvals_without_session(query1, agent)
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
         query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
-        result2 = await handle_approvals_without_thread(query2, agent)
+        result2 = await handle_approvals_without_session(query2, agent)
         print(f"{agent.name}: {result2}\n")
 
 
-async def run_hosted_mcp_with_thread() -> None:
-    """Example showing Mcp Tools with approvals using a thread."""
-    print("=== Mcp with approvals and with thread ===")
+async def run_hosted_mcp_with_session() -> None:
+    """Example showing Mcp Tools with approvals using a session."""
+    print("=== Mcp with approvals and with session ===")
     credential = AzureCliCredential()
     client = AzureOpenAIResponsesClient(credential=credential)
 
@@ -190,22 +190,22 @@ async def run_hosted_mcp_with_thread() -> None:
         tools=[mcp_tool],
     ) as agent:
         # First query
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
-        result1 = await handle_approvals_with_thread(query1, agent, thread)
+        result1 = await handle_approvals_with_session(query1, agent, session)
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
         query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
-        result2 = await handle_approvals_with_thread(query2, agent, thread)
+        result2 = await handle_approvals_with_session(query2, agent, session)
         print(f"{agent.name}: {result2}\n")
 
 
-async def run_hosted_mcp_with_thread_streaming() -> None:
-    """Example showing Mcp Tools with approvals using a thread."""
-    print("=== Mcp with approvals and with thread ===")
+async def run_hosted_mcp_with_session_streaming() -> None:
+    """Example showing Mcp Tools with approvals using a session."""
+    print("=== Mcp with approvals and with session ===")
     credential = AzureCliCredential()
     client = AzureOpenAIResponsesClient(credential=credential)
 
@@ -226,11 +226,11 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
         tools=[mcp_tool],
     ) as agent:
         # First query
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         query1 = "How to create an Azure storage account using az cli?"
         print(f"User: {query1}")
         print(f"{agent.name}: ", end="")
-        async for update in handle_approvals_with_thread_streaming(query1, agent, thread):
+        async for update in handle_approvals_with_session_streaming(query1, agent, session):
             print(update, end="")
         print("\n")
         print("\n=======================================\n")
@@ -238,7 +238,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
         query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         print(f"{agent.name}: ", end="")
-        async for update in handle_approvals_with_thread_streaming(query2, agent, thread):
+        async for update in handle_approvals_with_session_streaming(query2, agent, session):
             print(update, end="")
         print("\n")
 
@@ -247,9 +247,9 @@ async def main() -> None:
     print("=== OpenAI Responses Client Agent with Hosted Mcp Tools Examples ===\n")
 
     await run_hosted_mcp_without_approval()
-    await run_hosted_mcp_without_thread_and_specific_approval()
-    await run_hosted_mcp_with_thread()
-    await run_hosted_mcp_with_thread_streaming()
+    await run_hosted_mcp_without_session_and_specific_approval()
+    await run_hosted_mcp_with_session()
+    await run_hosted_mcp_with_session_streaming()
 
 
 if __name__ == "__main__":

@@ -7,11 +7,11 @@ from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 """
-Tool Approvals with Threads
+Tool Approvals with Sessions
 
-This sample demonstrates using tool approvals with threads.
-With threads, you don't need to manually pass previous messages -
-the thread stores and retrieves them automatically.
+This sample demonstrates using tool approvals with sessions.
+With sessions, you don't need to manually pass previous messages -
+the session stores and retrieves them automatically.
 """
 
 
@@ -25,8 +25,8 @@ def add_to_calendar(
 
 
 async def approval_example() -> None:
-    """Example showing approval with threads."""
-    print("=== Tool Approval with Thread ===\n")
+    """Example showing approval with sessions."""
+    print("=== Tool Approval with Session ===\n")
 
     agent = Agent(
         client=AzureOpenAIChatClient(),
@@ -35,12 +35,12 @@ async def approval_example() -> None:
         tools=[add_to_calendar],
     )
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
     # Step 1: Agent requests to call the tool
     query = "Add a dentist appointment on March 15th"
     print(f"User: {query}")
-    result = await agent.run(query, thread=thread)
+    result = await agent.run(query, session=session)
 
     # Check for approval requests
     if result.user_input_requests:
@@ -55,14 +55,14 @@ async def approval_example() -> None:
 
             # Step 2: Send approval response
             approval_response = request.to_function_approval_response(approved=approved)
-            result = await agent.run(Message("user", [approval_response]), thread=thread)
+            result = await agent.run(Message("user", [approval_response]), session=session)
 
     print(f"Agent: {result}\n")
 
 
 async def rejection_example() -> None:
-    """Example showing rejection with threads."""
-    print("=== Tool Rejection with Thread ===\n")
+    """Example showing rejection with sessions."""
+    print("=== Tool Rejection with Session ===\n")
 
     agent = Agent(
         client=AzureOpenAIChatClient(),
@@ -71,11 +71,11 @@ async def rejection_example() -> None:
         tools=[add_to_calendar],
     )
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
     query = "Add a team meeting on December 20th"
     print(f"User: {query}")
-    result = await agent.run(query, thread=thread)
+    result = await agent.run(query, session=session)
 
     if result.user_input_requests:
         for request in result.user_input_requests:
@@ -88,7 +88,7 @@ async def rejection_example() -> None:
 
             # Send rejection response
             rejection_response = request.to_function_approval_response(approved=False)
-            result = await agent.run(Message("user", [rejection_response]), thread=thread)
+            result = await agent.run(Message("user", [rejection_response]), session=session)
 
     print(f"Agent: {result}\n")
 

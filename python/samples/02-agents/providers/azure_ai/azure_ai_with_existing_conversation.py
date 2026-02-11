@@ -61,9 +61,9 @@ async def example_with_conversation_id() -> None:
         print(f"Agent: {result.text}\n")
 
 
-async def example_with_thread() -> None:
-    """This example shows how to specify existing conversation ID with AgentThread."""
-    print("=== Azure AI Agent With Existing Conversation and Thread ===")
+async def example_with_session() -> None:
+    """This example shows how to specify existing conversation ID with AgentSession."""
+    print("=== Azure AI Agent With Existing Conversation and Session ===")
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
@@ -81,23 +81,23 @@ async def example_with_thread() -> None:
         conversation_id = conversation.id
         print(f"Conversation ID: {conversation_id}")
 
-        # Create a thread with the existing ID
-        thread = agent.get_new_thread(service_thread_id=conversation_id)
+        # Create a session with the existing ID
+        session = agent.create_session(service_session_id=conversation_id)
 
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
-        result = await agent.run(query, thread=thread)
+        result = await agent.run(query, session=session)
         print(f"Agent: {result.text}\n")
 
         query = "What was my last question?"
         print(f"User: {query}")
-        result = await agent.run(query, thread=thread)
+        result = await agent.run(query, session=session)
         print(f"Agent: {result.text}\n")
 
 
 async def main() -> None:
     await example_with_conversation_id()
-    await example_with_thread()
+    await example_with_session()
 
 
 if __name__ == "__main__":

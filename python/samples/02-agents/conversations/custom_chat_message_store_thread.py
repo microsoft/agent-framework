@@ -1,92 +1,84 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Collection
+from collections.abc import Sequence
 from typing import Any
 
-from agent_framework import ChatMessageStoreProtocol, Message
-from agent_framework._threads import ChatMessageStoreState
+from agent_framework import AgentSession, BaseHistoryProvider, Message, SessionContext
 from agent_framework.openai import OpenAIChatClient
 
 """
-Custom Chat Message Store Thread Example
+Custom History Provider Example
 
-This sample demonstrates how to implement and use a custom chat message store
-for thread management, allowing you to persist conversation history in your
+This sample demonstrates how to implement and use a custom history provider
+for session management, allowing you to persist conversation history in your
 preferred storage solution (database, file system, etc.).
 """
 
 
-class CustomChatMessageStore(ChatMessageStoreProtocol):
-    """Implementation of custom chat message store.
+class CustomHistoryProvider(BaseHistoryProvider):
+    """Implementation of custom history provider.
     In real applications, this can be an implementation of relational database or vector store."""
 
-    def __init__(self, messages: Collection[Message] | None = None) -> None:
-        self._messages: list[Message] = []
-        if messages:
-            self._messages.extend(messages)
+    def __init__(self) -> None:
+        super().__init__("custom-history")
+        self._storage: dict[str, list[Message]] = {}
 
-    async def add_messages(self, messages: Collection[Message]) -> None:
-        self._messages.extend(messages)
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        key = session_id or "default"
+        return list(self._storage.get(key, []))
 
-    async def list_messages(self) -> list[Message]:
-        return self._messages
-
-    @classmethod
-    async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> "CustomChatMessageStore":
-        """Create a new instance from serialized state."""
-        store = cls()
-        await store.update_from_state(serialized_store_state, **kwargs)
-        return store
-
-    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
-        """Update this instance from serialized state."""
-        if serialized_store_state:
-            state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
-            if state.messages:
-                self._messages.extend(state.messages)
-
-    async def serialize(self, **kwargs: Any) -> Any:
-        """Serialize this store's state."""
-        state = ChatMessageStoreState(messages=self._messages)
-        return state.to_dict(**kwargs)
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        key = session_id or "default"
+        if key not in self._storage:
+            self._storage[key] = []
+        self._storage[key].extend(messages)
 
 
 async def main() -> None:
-    """Demonstrates how to use 3rd party or custom chat message store for threads."""
-    print("=== Thread with 3rd party or custom chat message store ===")
+    """Demonstrates how to use 3rd party or custom history provider for sessions."""
+    print("=== Session with 3rd party or custom history provider ===")
 
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
     agent = OpenAIChatClient().as_agent(
         name="CustomBot",
         instructions="You are a helpful assistant that remembers our conversation.",
-        # Use custom chat message store.
-        # If not provided, the default in-memory store will be used.
-        chat_message_store_factory=CustomChatMessageStore,
+        # Use custom history provider.
+        # If not provided, the default in-memory provider will be used.
+        context_providers=[CustomHistoryProvider()],
     )
 
-    # Start a new thread for the agent conversation.
-    thread = agent.get_new_thread()
+    # Start a new session for the agent conversation.
+    session = agent.create_session()
 
     # Respond to user input.
     query = "Hello! My name is Alice and I love pizza."
     print(f"User: {query}")
-    print(f"Agent: {await agent.run(query, thread=thread)}\n")
+    print(f"Agent: {await agent.run(query, session=session)}\n")
 
-    # Serialize the thread state, so it can be stored for later use.
-    serialized_thread = await thread.serialize()
+    # Serialize the session state, so it can be stored for later use.
+    serialized_session = session.to_dict()
 
-    # The thread can now be saved to a database, file, or any other storage mechanism and loaded again later.
-    print(f"Serialized thread: {serialized_thread}\n")
+    # The session can now be saved to a database, file, or any other storage mechanism and loaded again later.
+    print(f"Serialized session: {serialized_session}\n")
 
-    # Deserialize the thread state after loading from storage.
-    resumed_thread = await agent.deserialize_thread(serialized_thread)
+    # Deserialize the session state after loading from storage.
+    resumed_session = AgentSession.from_dict(serialized_session)
 
     # Respond to user input.
     query = "What do you remember about me?"
     print(f"User: {query}")
-    print(f"Agent: {await agent.run(query, thread=resumed_thread)}\n")
+    print(f"Agent: {await agent.run(query, session=resumed_session)}\n")
 
 
 if __name__ == "__main__":

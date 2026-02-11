@@ -87,17 +87,17 @@ def single_agent_chaining_orchestration(
     # Get the writer agent using the agent context
     writer = agent_context.get_agent(WRITER_AGENT_NAME)
 
-    # Create a new thread for the conversation - this will be shared across both runs
-    writer_thread = writer.get_new_thread()
+    # Create a new session for the conversation - this will be shared across both runs
+    writer_session = writer.create_session()
 
-    logger.debug(f"[Orchestration] Created thread: {writer_thread.session_id}")
+    logger.debug(f"[Orchestration] Created session: {writer_session.session_id}")
 
     prompt = "Write a concise inspirational sentence about learning."
     # First run: Generate an initial inspirational sentence
     logger.info("[Orchestration] First agent run: Generating initial sentence about: %s", prompt)
     initial_response = yield writer.run(
         messages=prompt,
-        thread=writer_thread,
+        session=writer_session,
     )
     logger.info(f"[Orchestration] Initial response: {initial_response.text}")
 
@@ -110,7 +110,7 @@ def single_agent_chaining_orchestration(
     logger.info("[Orchestration] Second agent run: Refining the sentence: %s", improved_prompt)
     refined_response = yield writer.run(
         messages=improved_prompt,
-        thread=writer_thread,
+        session=writer_session,
     )
 
     logger.info(f"[Orchestration] Refined response: {refined_response.text}")

@@ -5,16 +5,16 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, tool
+from agent_framework import AgentSession, tool
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import Field
 
 """
-OpenAI Assistants with Thread Management Example
+OpenAI Assistants with Session Management Example
 
-This sample demonstrates thread management with OpenAI Assistants, showing
-persistent conversation threads and context preservation across interactions.
+This sample demonstrates session management with OpenAI Assistants, showing
+persistent conversation sessions and context preservation across interactions.
 """
 
 
@@ -30,9 +30,9 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}C."
 
 
-async def example_with_automatic_thread_creation() -> None:
-    """Example showing automatic thread creation (service-managed thread)."""
-    print("=== Automatic Thread Creation Example ===")
+async def example_with_automatic_session_creation() -> None:
+    """Example showing automatic session creation (service-managed session)."""
+    print("=== Automatic Session Creation Example ===")
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
@@ -45,26 +45,26 @@ async def example_with_automatic_thread_creation() -> None:
     )
 
     try:
-        # First conversation - no thread provided, will be created automatically
+        # First conversation - no session provided, will be created automatically
         query1 = "What's the weather like in Seattle?"
         print(f"User: {query1}")
         result1 = await agent.run(query1)
         print(f"Agent: {result1.text}")
 
-        # Second conversation - still no thread provided, will create another new thread
+        # Second conversation - still no session provided, will create another new session
         query2 = "What was the last city I asked about?"
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2)
         print(f"Agent: {result2.text}")
-        print("Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n")
+        print("Note: Each call creates a separate session, so the agent doesn't remember previous context.\n")
     finally:
         await client.beta.assistants.delete(agent.id)
 
 
-async def example_with_thread_persistence() -> None:
-    """Example showing thread persistence across multiple conversations."""
-    print("=== Thread Persistence Example ===")
-    print("Using the same thread across multiple conversations to maintain context.\n")
+async def example_with_session_persistence() -> None:
+    """Example showing session persistence across multiple conversations."""
+    print("=== Session Persistence Example ===")
+    print("Using the same session across multiple conversations to maintain context.\n")
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
@@ -77,41 +77,41 @@ async def example_with_thread_persistence() -> None:
     )
 
     try:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
+        # Create a new session that will be reused
+        session = agent.create_session()
 
         # First conversation
         query1 = "What's the weather like in Tokyo?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
+        result1 = await agent.run(query1, session=session)
         print(f"Agent: {result1.text}")
 
-        # Second conversation using the same thread - maintains context
+        # Second conversation using the same session - maintains context
         query2 = "How about London?"
         print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread)
+        result2 = await agent.run(query2, session=session)
         print(f"Agent: {result2.text}")
 
         # Third conversation - agent should remember both previous cities
         query3 = "Which of the cities I asked about has better weather?"
         print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread)
+        result3 = await agent.run(query3, session=session)
         print(f"Agent: {result3.text}")
-        print("Note: The agent remembers context from previous messages in the same thread.\n")
+        print("Note: The agent remembers context from previous messages in the same session.\n")
     finally:
         await client.beta.assistants.delete(agent.id)
 
 
-async def example_with_existing_thread_id() -> None:
-    """Example showing how to work with an existing thread ID from the service."""
-    print("=== Existing Thread ID Example ===")
-    print("Using a specific thread ID to continue an existing conversation.\n")
+async def example_with_existing_session_id() -> None:
+    """Example showing how to work with an existing session ID from the service."""
+    print("=== Existing Session ID Example ===")
+    print("Using a specific session ID to continue an existing conversation.\n")
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
 
-    # First, create a conversation and capture the thread ID
-    existing_thread_id = None
+    # First, create a conversation and capture the session ID
+    existing_session_id = None
     assistant_id = None
 
     agent = await provider.create_agent(
@@ -123,19 +123,19 @@ async def example_with_existing_thread_id() -> None:
     assistant_id = agent.id
 
     try:
-        # Start a conversation and get the thread ID
-        thread = agent.get_new_thread()
+        # Start a conversation and get the session ID
+        session = agent.create_session()
         query1 = "What's the weather in Paris?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
+        result1 = await agent.run(query1, session=session)
         print(f"Agent: {result1.text}")
 
-        # The thread ID is set after the first response
-        existing_thread_id = thread.service_thread_id
-        print(f"Thread ID: {existing_thread_id}")
+        # The session ID is set after the first response
+        existing_session_id = session.service_session_id
+        print(f"Session ID: {existing_session_id}")
 
-        if existing_thread_id:
-            print("\n--- Continuing with the same thread ID using get_agent ---")
+        if existing_session_id:
+            print("\n--- Continuing with the same session ID using get_agent ---")
 
             # Get the existing assistant by ID
             agent2 = await provider.get_agent(
@@ -143,25 +143,25 @@ async def example_with_existing_thread_id() -> None:
                 tools=[get_weather],  # Must provide function implementations
             )
 
-            # Create a thread with the existing ID
-            thread = AgentThread(service_thread_id=existing_thread_id)
+            # Create a session with the existing ID
+            session = AgentSession(service_session_id=existing_session_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")
-            result2 = await agent2.run(query2, thread=thread)
+            result2 = await agent2.run(query2, session=session)
             print(f"Agent: {result2.text}")
-            print("Note: The agent continues the conversation from the previous thread.\n")
+            print("Note: The agent continues the conversation from the previous session.\n")
     finally:
         if assistant_id:
             await client.beta.assistants.delete(assistant_id)
 
 
 async def main() -> None:
-    print("=== OpenAI Assistants Provider Thread Management Examples ===\n")
+    print("=== OpenAI Assistants Provider Session Management Examples ===\n")
 
-    await example_with_automatic_thread_creation()
-    await example_with_thread_persistence()
-    await example_with_existing_thread_id()
+    await example_with_automatic_session_creation()
+    await example_with_session_persistence()
+    await example_with_existing_session_id()
 
 
 if __name__ == "__main__":
