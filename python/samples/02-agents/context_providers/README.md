@@ -136,37 +136,38 @@ Different agents with isolated or shared memory configurations.
 
 ## Building Custom Context Providers
 
-To create a custom context provider, implement the `ContextProvider` protocol:
+To create a custom context provider, extend `BaseContextProvider`:
 
 ```python
-from agent_framework import ContextProvider, Context, Message
-from collections.abc import MutableSequence, Sequence
+from agent_framework import AgentSession, BaseContextProvider, SessionContext, Message
 from typing import Any
 
-class MyContextProvider(ContextProvider):
-    async def invoking(
-        self,
-        messages: Message | MutableSequence[Message],
-        **kwargs: Any
-    ) -> Context:
-        """Provide context before the agent processes the request."""
-        # Return additional instructions, messages, or context
-        return Context(instructions="Additional instructions here")
+class MyContextProvider(BaseContextProvider):
+    def __init__(self):
+        super().__init__("my-context")
 
-    async def invoked(
+    async def before_run(
         self,
-        request_messages: Message | Sequence[Message],
-        response_messages: Message | Sequence[Message] | None = None,
-        invoke_exception: Exception | None = None,
-        **kwargs: Any,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Provide context before the agent processes the request."""
+        context.extend_messages(self.source_id, [Message("system", ["Additional instructions here"])])
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
     ) -> None:
         """Process the response after the agent generates it."""
         # Store information, update memory, etc.
         pass
-
-    def serialize(self) -> str:
-        """Serialize the provider state for persistence."""
-        return "{}"
 ```
 
 See `simple_context_provider.py` for a complete example.

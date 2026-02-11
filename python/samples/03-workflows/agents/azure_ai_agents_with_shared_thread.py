@@ -7,7 +7,6 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    InMemoryHistoryProvider,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,

@@ -135,7 +135,7 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     @overload
     async def run(

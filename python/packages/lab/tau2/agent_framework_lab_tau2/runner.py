@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -357,9 +358,9 @@ class TaskRunner:
         # 1. The initial greeting
         # 2. The assistant's session state (full history, not just the truncated window)
         # 3. The final user message (if any)
-        session_state = self._assistant_executor._session.state
-        all_messages: list[Message] = list(session_state.get("memory", {}).get("messages", []))
-        full_conversation = [first_message] + all_messages
+        session_state: dict[str, Any] = self._assistant_executor._session.state  # type: ignore
+        all_messages: list[Message] = list(session_state.get("memory", {}).get("messages", []))  # type: ignore
+        full_conversation = [first_message, *all_messages]
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
 

@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated, Any
 
 from agent_framework import AgentSession, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
 """
@@ -25,16 +25,18 @@ async def get_weather(
     """Get the weather for a given location."""
     # Get session object from kwargs
     session = kwargs.get("session")
-    if session and isinstance(session, AgentSession):
-        if session.service_session_id:
-            print(f"Session ID: {session.service_session_id}.")
+    if session and isinstance(session, AgentSession) and session.service_session_id:
+        print(f"Session ID: {session.service_session_id}.")
 
     return f"The weather in {location} is cloudy."
 
 
 async def main() -> None:
-    agent = OpenAIChatClient().as_agent(
-        name="WeatherAgent", instructions="You are a helpful weather assistant.", tools=[get_weather]
+    agent = OpenAIResponsesClient().as_agent(
+        name="WeatherAgent",
+        instructions="You are a helpful weather assistant.",
+        tools=[get_weather],
+        options={"store": True},
     )
 
     # Create a session

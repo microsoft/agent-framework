@@ -40,7 +40,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                                         | Create executors to handle agent run methods                                                         |
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
-| Workflow as Agent with Thread          | [agents/workflow_as_agent_with_thread.py](./agents/workflow_as_agent_with_thread.py)                           | Use AgentThread to maintain conversation history across workflow-as-agent invocations                |
+| Workflow as Agent with Session         | [agents/workflow_as_agent_with_thread.py](./agents/workflow_as_agent_with_thread.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
 
 ### checkpoint

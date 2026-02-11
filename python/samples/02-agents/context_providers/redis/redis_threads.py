@@ -31,7 +31,7 @@ import os
 import uuid
 
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework.redis import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 

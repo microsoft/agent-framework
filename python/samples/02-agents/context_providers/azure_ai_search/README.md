@@ -144,7 +144,7 @@ async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
     async with Agent(
         client=client,
         model=model_deployment,
-        context_provider=search_provider,
+        context_providers=[search_provider],
     ) as agent:
         response = await agent.run("What information is in the knowledge base?")
 ```
@@ -169,7 +169,7 @@ search_provider = AzureAISearchContextProvider(
 async with Agent(
     client=client,
     model=model_deployment,
-    context_provider=search_provider,
+    context_providers=[search_provider],
 ) as agent:
     response = await agent.run("Analyze and compare topics across documents")
 ```

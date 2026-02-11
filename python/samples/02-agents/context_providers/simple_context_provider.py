@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, Message, SessionContext, SupportsChatGetResponse
+from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel

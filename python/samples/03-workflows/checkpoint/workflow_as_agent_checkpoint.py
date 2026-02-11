@@ -28,7 +28,6 @@ import asyncio
 import os
 
 from agent_framework import (
-    AgentSession,
     InMemoryCheckpointStorage,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient

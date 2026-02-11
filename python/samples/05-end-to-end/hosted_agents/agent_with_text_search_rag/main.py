@@ -2,7 +2,6 @@
 
 import json
 import sys
-from collections.abc import MutableSequence
 from dataclasses import dataclass
 from typing import Any
 

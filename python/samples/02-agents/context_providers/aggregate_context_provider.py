@@ -13,10 +13,9 @@ You can use built-in providers or implement your own by extending BaseContextPro
 import asyncio
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, Message, SessionContext
+from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
-
 
 # region Example Context Providers
 

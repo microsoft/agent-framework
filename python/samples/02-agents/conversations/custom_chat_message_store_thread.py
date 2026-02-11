@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import Any
 
-from agent_framework import AgentSession, BaseHistoryProvider, Message, SessionContext
+from agent_framework import AgentSession, BaseHistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
 
 """
