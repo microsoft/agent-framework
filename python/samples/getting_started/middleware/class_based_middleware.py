@@ -10,9 +10,9 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    ChatMessage,
     FunctionInvocationContext,
     FunctionMiddleware,
+    Message,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -50,7 +50,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
@@ -61,13 +61,13 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 print("[SecurityAgentMiddleware] Security Warning: Detected sensitive information, blocking request.")
                 # Override the result with warning message
                 context.result = AgentResponse(
-                    messages=[ChatMessage("assistant", ["Detected sensitive information, the request is blocked."])]
+                    messages=[Message("assistant", ["Detected sensitive information, the request is blocked."])]
                 )
-                # Simply don't call next() to prevent execution
+                # Simply don't call call_next() to prevent execution
                 return
 
         print("[SecurityAgentMiddleware] Security check passed.")
-        await next(context)
+        await call_next()
 
 
 class LoggingFunctionMiddleware(FunctionMiddleware):
@@ -76,14 +76,14 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         function_name = context.function.name
         print(f"[LoggingFunctionMiddleware] About to call function: {function_name}.")
 
         start_time = time.time()
 
-        await next(context)
+        await call_next()
 
         end_time = time.time()
         duration = end_time - start_time

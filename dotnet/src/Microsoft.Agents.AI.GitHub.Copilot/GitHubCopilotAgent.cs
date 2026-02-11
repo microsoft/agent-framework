@@ -217,16 +217,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 }
             });
 
-            List<string> tempFiles = [];
+            string? tempDir = null;
             try
             {
                 // Build prompt from text content
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                List<UserMessageDataAttachmentsItem>? attachments = await ProcessDataContentAttachmentsAsync(
+                (List<UserMessageDataAttachmentsItem>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
-                    tempFiles,
                     cancellationToken).ConfigureAwait(false);
 
                 // Send the message with attachments
@@ -245,7 +244,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             }
             finally
             {
-                CleanupTempFiles(tempFiles);
+                CleanupTempDir(tempDir);
             }
         }
         finally
@@ -410,45 +409,23 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
-    private static readonly Dictionary<string, string> s_mediaTypeExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["image/png"] = ".png",
-        ["image/jpeg"] = ".jpg",
-        ["image/jpg"] = ".jpg",
-        ["image/gif"] = ".gif",
-        ["image/webp"] = ".webp",
-        ["image/svg+xml"] = ".svg",
-        ["text/plain"] = ".txt",
-        ["text/html"] = ".html",
-        ["text/markdown"] = ".md",
-        ["application/json"] = ".json",
-        ["application/xml"] = ".xml",
-        ["application/pdf"] = ".pdf"
-    };
-
-    private static string GetExtensionForMediaType(string? mediaType)
-    {
-        return mediaType is not null && s_mediaTypeExtensions.TryGetValue(mediaType, out string? extension) ? extension : ".dat";
-    }
-
-    private static async Task<List<UserMessageDataAttachmentsItem>?> ProcessDataContentAttachmentsAsync(
+    private static async Task<(List<UserMessageDataAttachmentsItem>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
-        List<string> tempFiles,
         CancellationToken cancellationToken)
     {
         List<UserMessageDataAttachmentsItem>? attachments = null;
+        string? tempDir = null;
         foreach (ChatMessage message in messages)
         {
             foreach (AIContent content in message.Contents)
             {
                 if (content is DataContent dataContent)
                 {
-                    // Write DataContent to a temp file
-                    string tempFilePath = Path.Combine(Path.GetTempPath(), $"agentframework_copilot_data_{Guid.NewGuid()}{GetExtensionForMediaType(dataContent.MediaType)}");
-                    await File.WriteAllBytesAsync(tempFilePath, dataContent.Data.ToArray(), cancellationToken).ConfigureAwait(false);
-                    tempFiles.Add(tempFilePath);
+                    tempDir ??= Directory.CreateDirectory(
+                        Path.Combine(Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}")).FullName;
 
-                    // Create attachment
+                    string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
+
                     attachments ??= [];
                     attachments.Add(new UserMessageDataAttachmentsItem
                     {
@@ -460,19 +437,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             }
         }
 
-        return attachments;
+        return (attachments, tempDir);
     }
 
-    private static void CleanupTempFiles(List<string> tempFiles)
+    private static void CleanupTempDir(string? tempDir)
     {
-        foreach (string tempFile in tempFiles)
+        if (tempDir is not null)
         {
             try
             {
-                if (File.Exists(tempFile))
-                {
-                    File.Delete(tempFile);
-                }
+                Directory.Delete(tempDir, recursive: true);
             }
             catch
             {

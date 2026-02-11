@@ -6,7 +6,6 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
-import aiofiles
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
@@ -33,13 +32,12 @@ Show how to:
 
 Prerequisites:
 - Familiarity with WorkflowBuilder, executors, fan out and fan in edges, events, and streaming runs.
-- aiofiles installed for async file I/O.
 - Write access to a tmp directory next to this script.
 - A source text at resources/long_text.txt.
 - Optional for SVG export: install graphviz.
 
 Installation:
-    pip install agent-framework aiofiles graphviz
+    pip install agent-framework graphviz
 """
 
 # Define the temporary directory for storing intermediate results
@@ -128,8 +126,8 @@ class Map(Executor):
 
         # Write this mapper's results as simple text lines for easy debugging.
         file_path = os.path.join(TEMP_DIR, f"map_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{item}: {count}\n" for item, count in results])
+        with open(file_path, "w") as f:
+            f.writelines([f"{item}: {count}\n" for item, count in results])
 
         await ctx.send_message(MapCompleted(file_path))
 
@@ -163,8 +161,8 @@ class Shuffle(Executor):
         async def _process_chunk(chunk: list[tuple[str, list[int]]], index: int) -> None:
             """Write one grouped partition for reducer index and notify that reducer."""
             file_path = os.path.join(TEMP_DIR, f"shuffle_results_{index}.txt")
-            async with aiofiles.open(file_path, "w") as f:
-                await f.writelines([f"{key}: {value}\n" for key, value in chunk])
+            with open(file_path, "w") as f:
+                f.writelines([f"{key}: {value}\n" for key, value in chunk])
             await ctx.send_message(ShuffleCompleted(file_path, self._reducer_ids[index]))
 
         tasks = [asyncio.create_task(_process_chunk(chunk, i)) for i, chunk in enumerate(chunks)]
@@ -179,9 +177,9 @@ class Shuffle(Executor):
         # Load all intermediate pairs.
         map_results: list[tuple[str, int]] = []
         for result in data:
-            async with aiofiles.open(result.file_path, "r") as f:
+            with open(result.file_path) as f:
                 map_results.extend([
-                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in await f.readlines()
+                    (line.strip().split(": ")[0], int(line.strip().split(": ")[1])) for line in f.readlines()
                 ])
 
         # Group values by token.
@@ -230,8 +228,8 @@ class Reduce(Executor):
             return
 
         # Read grouped values from the shuffle output.
-        async with aiofiles.open(data.file_path, "r") as f:
-            lines = await f.readlines()
+        with open(data.file_path) as f:
+            lines = f.readlines()
 
         # Sum values per key. Values are serialized Python lists like [1, 1, ...].
         reduced_results: dict[str, int] = defaultdict(int)
@@ -241,8 +239,8 @@ class Reduce(Executor):
 
         # Persist our partition totals.
         file_path = os.path.join(TEMP_DIR, f"reduced_results_{self.id}.txt")
-        async with aiofiles.open(file_path, "w") as f:
-            await f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
+        with open(file_path, "w") as f:
+            f.writelines([f"{key}: {value}\n" for key, value in reduced_results.items()])
 
         await ctx.send_message(ReduceCompleted(file_path))
 
@@ -259,50 +257,31 @@ class CompletionExecutor(Executor):
 async def main():
     """Construct the map reduce workflow, visualize it, then run it over a sample file."""
 
-    # Step 1: Create the workflow builder and register executors.
-    workflow_builder = (
-        WorkflowBuilder()
-        .register_executor(lambda: Map(id="map_executor_0"), name="map_executor_0")
-        .register_executor(lambda: Map(id="map_executor_1"), name="map_executor_1")
-        .register_executor(lambda: Map(id="map_executor_2"), name="map_executor_2")
-        .register_executor(
-            lambda: Split(["map_executor_0", "map_executor_1", "map_executor_2"], id="split_data_executor"),
-            name="split_data_executor",
-        )
-        .register_executor(lambda: Reduce(id="reduce_executor_0"), name="reduce_executor_0")
-        .register_executor(lambda: Reduce(id="reduce_executor_1"), name="reduce_executor_1")
-        .register_executor(lambda: Reduce(id="reduce_executor_2"), name="reduce_executor_2")
-        .register_executor(lambda: Reduce(id="reduce_executor_3"), name="reduce_executor_3")
-        .register_executor(
-            lambda: Shuffle(
-                ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
-                id="shuffle_executor",
-            ),
-            name="shuffle_executor",
-        )
-        .register_executor(lambda: CompletionExecutor(id="completion_executor"), name="completion_executor")
+    # Step 1: Create executor instances.
+    map_executor_0 = Map(id="map_executor_0")
+    map_executor_1 = Map(id="map_executor_1")
+    map_executor_2 = Map(id="map_executor_2")
+    split_data_executor = Split(["map_executor_0", "map_executor_1", "map_executor_2"], id="split_data_executor")
+    reduce_executor_0 = Reduce(id="reduce_executor_0")
+    reduce_executor_1 = Reduce(id="reduce_executor_1")
+    reduce_executor_2 = Reduce(id="reduce_executor_2")
+    reduce_executor_3 = Reduce(id="reduce_executor_3")
+    shuffle_executor = Shuffle(
+        ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+        id="shuffle_executor",
     )
+    completion_executor = CompletionExecutor(id="completion_executor")
+
+    mappers = [map_executor_0, map_executor_1, map_executor_2]
+    reducers = [reduce_executor_0, reduce_executor_1, reduce_executor_2, reduce_executor_3]
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        workflow_builder
-        .set_start_executor("split_data_executor")
-        .add_fan_out_edges(
-            "split_data_executor",
-            ["map_executor_0", "map_executor_1", "map_executor_2"],
-        )  # Split -> many mappers
-        .add_fan_in_edges(
-            ["map_executor_0", "map_executor_1", "map_executor_2"],
-            "shuffle_executor",
-        )  # All mappers -> shuffle
-        .add_fan_out_edges(
-            "shuffle_executor",
-            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
-        )  # Shuffle -> many reducers
-        .add_fan_in_edges(
-            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
-            "completion_executor",
-        )  # All reducers -> completion
+        WorkflowBuilder(start_executor=split_data_executor)
+        .add_fan_out_edges(split_data_executor, mappers)  # Split -> many mappers
+        .add_fan_in_edges(mappers, shuffle_executor)  # All mappers -> shuffle
+        .add_fan_out_edges(shuffle_executor, reducers)  # Shuffle -> many reducers
+        .add_fan_in_edges(reducers, completion_executor)  # All reducers -> completion
         .build()
     )
 
@@ -325,8 +304,8 @@ async def main():
         print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
 
     # Step 3: Open the text file and read its content.
-    async with aiofiles.open(os.path.join(DIR, "../resources", "long_text.txt"), "r") as f:
-        raw_text = await f.read()
+    with open(os.path.join(DIR, "../resources", "long_text.txt")) as f:
+        raw_text = f.read()
 
     # Step 4: Run the workflow with the raw text as input.
     async for event in workflow.run(raw_text, stream=True):

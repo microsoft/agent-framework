@@ -5,8 +5,8 @@ from collections.abc import AsyncIterable
 from typing import Annotated
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
     WorkflowEvent,
     tool,
 )
@@ -91,10 +91,10 @@ def _print_output(event: WorkflowEvent) -> None:
     if not event.data:
         raise ValueError("WorkflowEvent has no data")
 
-    if not isinstance(event.data, list) and not all(isinstance(msg, ChatMessage) for msg in event.data):
-        raise ValueError("WorkflowEvent data is not a list of ChatMessage")
+    if not isinstance(event.data, list) and not all(isinstance(msg, Message) for msg in event.data):
+        raise ValueError("WorkflowEvent data is not a list of Message")
 
-    messages: list[ChatMessage] = event.data  # type: ignore
+    messages: list[Message] = event.data  # type: ignore
 
     print("\n" + "-" * 60)
     print("Workflow completed. Aggregated results from both agents:")
@@ -126,9 +126,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create two agents focused on different stocks but with the same tool sets
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    microsoft_agent = chat_client.as_agent(
+    microsoft_agent = client.as_agent(
         name="MicrosoftAgent",
         instructions=(
             "You are a personal trading assistant focused on Microsoft (MSFT). "
@@ -137,7 +137,7 @@ async def main() -> None:
         tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
-    google_agent = chat_client.as_agent(
+    google_agent = client.as_agent(
         name="GoogleAgent",
         instructions=(
             "You are a personal trading assistant focused on Google (GOOGL). "
@@ -148,14 +148,14 @@ async def main() -> None:
 
     # 4. Build a concurrent workflow with both agents
     # ConcurrentBuilder requires at least 2 participants for fan-out
-    workflow = ConcurrentBuilder().participants([microsoft_agent, google_agent]).build()
+    workflow = ConcurrentBuilder(participants=[microsoft_agent, google_agent]).build()
 
     # 5. Start the workflow - both agents will process the same task in parallel
     print("Starting concurrent workflow with tool approval...")
     print("-" * 60)
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(
         "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
         "your best judgment based on market sentiment. No need to confirm trades with me.",
@@ -166,7 +166,7 @@ async def main() -> None:
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
     """

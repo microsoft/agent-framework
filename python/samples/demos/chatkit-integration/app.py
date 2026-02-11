@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "fastapi",
+#     "uvicorn",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/demos/chatkit-integration/app.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """
@@ -18,7 +28,7 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import AgentResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role, tool
+from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -207,8 +217,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # Create Agent Framework agent with Azure OpenAI
         # For authentication, run `az login` command in terminal
         try:
-            self.weather_agent = ChatAgent(
-                chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+            self.weather_agent = Agent(
+                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
@@ -280,7 +290,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             conversation_context = "\n".join(user_messages[:3])
 
             title_prompt = [
-                ChatMessage(
+                Message(
                     role=Role.USER,
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
@@ -291,7 +301,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             ]
 
             # Use the chat client directly for a quick, lightweight call
-            response = await self.weather_agent.chat_client.get_response(
+            response = await self.weather_agent.client.get_response(
                 messages=title_prompt,
                 options={
                     "temperature": 0.3,
@@ -458,7 +468,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [Message(role=Role.USER, text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
@@ -563,7 +573,7 @@ async def chatkit_endpoint(request: Request):
 
 
 @app.post("/upload/{attachment_id}")
-async def upload_file(attachment_id: str, file: UploadFile = File(...)):
+async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa: B008
     """Handle file upload for two-phase upload.
 
     The client POSTs the file bytes here after creating the attachment

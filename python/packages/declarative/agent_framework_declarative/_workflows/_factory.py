@@ -10,6 +10,8 @@ Each YAML action becomes a real Executor node in the workflow graph,
 enabling checkpointing, visualization, and pause/resume capabilities.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -71,8 +73,8 @@ class WorkflowFactory:
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            chat_client = AzureOpenAIChatClient()
-            agent = chat_client.as_agent(name="MyAgent", instructions="You are helpful.")
+            client = AzureOpenAIChatClient()
+            agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
@@ -506,7 +508,7 @@ class WorkflowFactory:
             f"Invalid agent definition. Expected 'file', 'kind', or 'connection': {agent_def}"
         )
 
-    def register_agent(self, name: str, agent: SupportsAgentRun | AgentExecutor) -> "WorkflowFactory":
+    def register_agent(self, name: str, agent: SupportsAgentRun | AgentExecutor) -> WorkflowFactory:
         """Register an agent instance with the factory for use in workflows.
 
         Registered agents are available to InvokeAzureAgent actions by name.
@@ -515,7 +517,7 @@ class WorkflowFactory:
         Args:
             name: The name to register the agent under. Must match the agent name
                 referenced in InvokeAzureAgent actions.
-            agent: The agent instance (typically a ChatAgent or similar).
+            agent: The agent instance (typically a Agent or similar).
 
         Returns:
             Self for method chaining.
@@ -552,7 +554,7 @@ class WorkflowFactory:
         self._agents[name] = agent
         return self
 
-    def register_binding(self, name: str, func: Any) -> "WorkflowFactory":
+    def register_binding(self, name: str, func: Any) -> WorkflowFactory:
         """Register a function binding with the factory for use in workflow actions.
 
         Bindings allow workflow actions to invoke Python functions by name.

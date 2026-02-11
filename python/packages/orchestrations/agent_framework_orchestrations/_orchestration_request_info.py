@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from agent_framework._agents import SupportsAgentRun
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._executor import Executor, handler
@@ -44,18 +44,18 @@ class AgentRequestInfoResponse:
     """Response containing additional information requested from users for agents.
 
     Attributes:
-        messages: list[ChatMessage]: Additional messages provided by users. If empty,
+        messages: list[Message]: Additional messages provided by users. If empty,
             the agent response is approved as-is.
     """
 
-    messages: list[ChatMessage]
+    messages: list[Message]
 
     @staticmethod
-    def from_messages(messages: list[ChatMessage]) -> "AgentRequestInfoResponse":
+    def from_messages(messages: list[Message]) -> "AgentRequestInfoResponse":
         """Create an AgentRequestInfoResponse from a list of ChatMessages.
 
         Args:
-            messages: List of ChatMessage instances provided by users.
+            messages: List of Message instances provided by users.
 
         Returns:
             AgentRequestInfoResponse instance.
@@ -72,7 +72,7 @@ class AgentRequestInfoResponse:
         Returns:
             AgentRequestInfoResponse instance.
         """
-        return AgentRequestInfoResponse(messages=[ChatMessage(role="user", text=text) for text in texts])
+        return AgentRequestInfoResponse(messages=[Message(role="user", text=text) for text in texts])
 
     @staticmethod
     def approve() -> "AgentRequestInfoResponse":
@@ -132,11 +132,10 @@ class AgentApprovalExecutor(WorkflowExecutor):
         request_info_executor = AgentRequestInfoExecutor(id="agent_request_info_executor")
 
         return (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=agent_executor)
             # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)
             .add_edge(request_info_executor, agent_executor)
-            .set_start_executor(agent_executor)
             .build()
         )
 

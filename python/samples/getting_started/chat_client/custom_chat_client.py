@@ -4,27 +4,26 @@ import asyncio
 import random
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatMiddlewareLayer,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    Message,
     ResponseStream,
     Role,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework.observability import ChatTelemetryLayer
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    pass
 else:
-    from typing_extensions import TypeVar
+    pass
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -38,15 +37,8 @@ This sample demonstrates implementing a custom chat client and optionally compos
 middleware, telemetry, and function invocation layers explicitly.
 """
 
-TOptions_co = TypeVar(
-    "TOptions_co",
-    bound=TypedDict,  # type: ignore[valid-type]
-    default="ChatOptions",
-    covariant=True,
-)
 
-
-class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class EchoingChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
     """A custom chat client that echoes messages back with modifications.
 
     This demonstrates how to implement a custom chat client by extending BaseChatClient
@@ -69,7 +61,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -90,7 +82,7 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             else:
                 response_text = f"{self.prefix} [No text message found]"
 
-        response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
+        response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(response_text)])
 
         response = ChatResponse(
             messages=[response_message],
@@ -120,11 +112,11 @@ class EchoingChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
 
 
 class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
-    ChatMiddlewareLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
-    FunctionInvocationLayer[TOptions_co],
-    EchoingChatClient[TOptions_co],
-    Generic[TOptions_co],
+    ChatMiddlewareLayer[OptionsCoT],
+    ChatTelemetryLayer[OptionsCoT],
+    FunctionInvocationLayer[OptionsCoT],
+    EchoingChatClient[OptionsCoT],
+    Generic[OptionsCoT],
 ):
     """Echoing chat client that explicitly composes middleware, telemetry, and function layers."""
 
@@ -132,7 +124,7 @@ class EchoingChatClientWithLayers(  # type: ignore[misc,type-var]
 
 
 async def main() -> None:
-    """Demonstrates how to implement and use a custom chat client with ChatAgent."""
+    """Demonstrates how to implement and use a custom chat client with Agent."""
     print("=== Custom Chat Client Example ===\n")
 
     # Create the custom chat client

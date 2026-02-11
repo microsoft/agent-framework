@@ -13,8 +13,8 @@ using the standard request_info pattern for consistency.
 
 Demonstrate:
 - Configuring request info with `.with_request_info()`
-- Handling  with AgentInputRequest data
-- Injecting responses back into the workflow via send_responses_streaming
+- Handling request_info events with AgentInputRequest data
+- Injecting responses back into the workflow via run(responses=..., stream=True)
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
@@ -27,7 +27,7 @@ from typing import cast
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -49,7 +49,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
             print("WORKFLOW COMPLETE")
             print("=" * 60)
             print("Final output:")
-            outputs = cast(list[ChatMessage], event.data)
+            outputs = cast(list[Message], event.data)
             for message in outputs:
                 print(f"[{message.author_name or message.role}]: {message.text}")
 
@@ -88,15 +88,15 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create agents for a sequential document review workflow
-    drafter = chat_client.as_agent(
+    drafter = client.as_agent(
         name="drafter",
         instructions=("You are a document drafter. When given a topic, create a brief draft (2-3 sentences)."),
     )
 
-    editor = chat_client.as_agent(
+    editor = client.as_agent(
         name="editor",
         instructions=(
             "You are an editor. Review the draft and make improvements. "
@@ -104,7 +104,7 @@ async def main() -> None:
         ),
     )
 
-    finalizer = chat_client.as_agent(
+    finalizer = client.as_agent(
         name="finalizer",
         instructions=(
             "You are a finalizer. Take the edited content and create a polished final version. "
@@ -114,22 +114,21 @@ async def main() -> None:
 
     # Build workflow with request info enabled (pauses after each agent responds)
     workflow = (
-        SequentialBuilder()
-        .participants([drafter, editor, finalizer])
+        SequentialBuilder(participants=[drafter, editor, finalizer])
         # Only enable request info for the editor agent
         .with_request_info(agents=["editor"])
         .build()
     )
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run("Write a brief introduction to artificial intelligence.", stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
 

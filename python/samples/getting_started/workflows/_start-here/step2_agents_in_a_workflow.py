@@ -27,15 +27,15 @@ Prerequisites:
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    writer_agent = chat_client.as_agent(
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    writer_agent = client.as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = chat_client.as_agent(
+    reviewer_agent = client.as_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."
@@ -45,8 +45,8 @@ async def main():
     )
 
     # Build the workflow using the fluent builder.
-    # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    # Set the start node via constructor and connect an edge from writer to reviewer.
+    workflow = WorkflowBuilder(start_executor=writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the terminal event.

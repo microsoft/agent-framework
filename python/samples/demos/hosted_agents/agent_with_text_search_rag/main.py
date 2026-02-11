@@ -6,7 +6,7 @@ from collections.abc import MutableSequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import Context, ContextProvider, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
@@ -27,16 +27,16 @@ class TextSearchResult:
 class TextSearchContextProvider(ContextProvider):
     """A simple context provider that simulates text search results based on keywords in the user's message."""
 
-    def _get_most_recent_message(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> ChatMessage:
+    def _get_most_recent_message(self, messages: Message | MutableSequence[Message]) -> Message:
         """Helper method to extract the most recent message from the input."""
-        if isinstance(messages, ChatMessage):
+        if isinstance(messages, Message):
             return messages
         if messages:
             return messages[-1]
         raise ValueError("No messages provided")
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         message = self._get_most_recent_message(messages)
         query = message.text.lower()
 
@@ -84,7 +84,7 @@ class TextSearchContextProvider(ContextProvider):
 
         return Context(
             messages=[
-                ChatMessage(
+                Message(
                     role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)
                 )
             ]

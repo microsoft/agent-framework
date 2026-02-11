@@ -6,13 +6,15 @@ Most orchestration helpers have been moved inline to _run.py.
 This module retains utilities that may be useful for testing or extensions.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from typing import Any
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
 )
 
 from .._utils import get_role_value
@@ -20,7 +22,7 @@ from .._utils import get_role_value
 logger = logging.getLogger(__name__)
 
 
-def pending_tool_call_ids(messages: list[ChatMessage]) -> set[str]:
+def pending_tool_call_ids(messages: list[Message]) -> set[str]:
     """Get IDs of tool calls without corresponding results.
 
     Args:
@@ -40,7 +42,7 @@ def pending_tool_call_ids(messages: list[ChatMessage]) -> set[str]:
     return pending_ids - resolved_ids
 
 
-def is_state_context_message(message: ChatMessage) -> bool:
+def is_state_context_message(message: Message) -> bool:
     """Check if a message is a state context system message.
 
     Args:
@@ -176,7 +178,7 @@ def build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any
     return safe_metadata
 
 
-def latest_approval_response(messages: list[ChatMessage]) -> Content | None:
+def latest_approval_response(messages: list[Message]) -> Content | None:
     """Get the latest approval response from messages.
 
     Args:

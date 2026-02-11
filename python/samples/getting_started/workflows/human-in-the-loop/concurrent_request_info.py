@@ -27,7 +27,7 @@ from typing import Any
 
 from agent_framework import (
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -76,7 +76,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
     # Build prompt with human guidance if provided
     guidance_text = f"\n\nHuman guidance: {human_guidance}" if human_guidance else ""
 
-    system_msg = ChatMessage(
+    system_msg = Message(
         "system",
         text=(
             "You are a synthesis expert. Consolidate the following analyst perspectives "
@@ -84,7 +84,7 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
             "prioritize aspects as directed."
         ),
     )
-    user_msg = ChatMessage("user", text="\n\n".join(expert_sections) + guidance_text)
+    user_msg = Message("user", text="\n\n".join(expert_sections) + guidance_text)
 
     response = await _chat_client.get_response([system_msg, user_msg])
     return response.messages[-1].text if response.messages else ""
@@ -174,8 +174,7 @@ async def main() -> None:
 
     # Build workflow with request info enabled and custom aggregator
     workflow = (
-        ConcurrentBuilder()
-        .participants([technical_analyst, business_analyst, user_experience_analyst])
+        ConcurrentBuilder(participants=[technical_analyst, business_analyst, user_experience_analyst])
         .with_aggregator(aggregate_with_synthesis)
         # Only enable request info for the technical analyst agent
         .with_request_info(agents=["technical_analyst"])
@@ -183,14 +182,14 @@ async def main() -> None:
     )
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run("Analyze the impact of large language models on software development.", stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
 

@@ -80,10 +80,10 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     # Create agent with tools that use kwargs
-    agent = chat_client.as_agent(
+    agent = client.as_agent(
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "
@@ -94,7 +94,7 @@ async def main() -> None:
     )
 
     # Build a sequential workflow
-    workflow = SequentialBuilder().participants([agent]).build()
+    workflow = SequentialBuilder(participants=[agent]).build()
 
     # Expose the workflow as an agent using .as_agent()
     workflow_agent = workflow.as_agent(name="WorkflowAgent")

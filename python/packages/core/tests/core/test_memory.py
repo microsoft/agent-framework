@@ -4,14 +4,14 @@ import sys
 from collections.abc import MutableSequence
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._memory import Context, ContextProvider
 
 
 class MockContextProvider(ContextProvider):
     """Mock ContextProvider for testing."""
 
-    def __init__(self, messages: list[ChatMessage] | None = None) -> None:
+    def __init__(self, messages: list[Message] | None = None) -> None:
         self.context_messages = messages
         self.thread_created_called = False
         self.invoked_called = False
@@ -36,7 +36,7 @@ class MockContextProvider(ContextProvider):
         self.invoked_called = True
         self.new_messages = request_messages
 
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Track invoking calls and return context."""
         self.invoking_called = True
         self.model_invoking_messages = messages
@@ -52,7 +52,7 @@ class MinimalContextProvider(ContextProvider):
     invoked, __aenter__, and __aexit__.
     """
 
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Return empty context."""
         return Context()
 
@@ -69,7 +69,7 @@ class TestContext:
 
     def test_context_with_values(self) -> None:
         """Test Context can be initialized with values."""
-        messages = [ChatMessage(role="user", text="Test message")]
+        messages = [Message(role="user", text="Test message")]
         context = Context(instructions="Test instructions", messages=messages)
         assert context.instructions == "Test instructions"
         assert len(context.messages) == 1
@@ -89,15 +89,15 @@ class TestContextProvider:
     async def test_invoked(self) -> None:
         """Test invoked is called."""
         provider = MockContextProvider()
-        message = ChatMessage(role="user", text="Test message")
+        message = Message(role="user", text="Test message")
         await provider.invoked(message)
         assert provider.invoked_called
         assert provider.new_messages == message
 
     async def test_invoking(self) -> None:
         """Test invoking is called and returns context."""
-        provider = MockContextProvider(messages=[ChatMessage(role="user", text="Context message")])
-        message = ChatMessage(role="user", text="Test message")
+        provider = MockContextProvider(messages=[Message(role="user", text="Context message")])
+        message = Message(role="user", text="Test message")
         context = await provider.invoking(message)
         assert provider.invoking_called
         assert provider.model_invoking_messages == message
@@ -114,7 +114,7 @@ class TestContextProvider:
     async def test_base_invoked_does_nothing(self) -> None:
         """Test that base ContextProvider.invoked does nothing by default."""
         provider = MinimalContextProvider()
-        message = ChatMessage(role="user", text="Test")
+        message = Message(role="user", text="Test")
         await provider.invoked(message)
         await provider.invoked(message, response_messages=message)
         await provider.invoked(message, invoke_exception=Exception("test"))

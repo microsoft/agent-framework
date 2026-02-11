@@ -1,7 +1,11 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ import namespace="Microsoft.Extensions.AI" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateStringExpressionTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateValueExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Copies one or more messages into the specified agent conversation.
 /// </summary>

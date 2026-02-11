@@ -4,9 +4,9 @@ import asyncio
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
@@ -17,7 +17,7 @@ Sample: Group Chat with Agent-Based Manager
 
 What it does:
 - Demonstrates the new set_manager() API for agent-based coordination
-- Manager is a full ChatAgent with access to tools, context, and observability
+- Manager is a full Agent with access to tools, context, and observability
 - Coordinates a researcher and writer agent to solve tasks collaboratively
 
 Prerequisites:
@@ -36,45 +36,49 @@ Guidelines:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.
     # The group chat workflow relies on this to parse the orchestrator's decisions.
     # `response_format` is set internally by the GroupChat workflow when the agent is invoked.
-    orchestrator_agent = ChatAgent(
+    orchestrator_agent = Agent(
         name="Orchestrator",
         description="Coordinates multi-agent collaboration by selecting speakers",
         instructions=ORCHESTRATOR_AGENT_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
     )
 
     # Participant agents
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects relevant background information",
         instructions="Gather concise facts that help a teammate answer the question.",
-        chat_client=chat_client,
+        client=client,
     )
 
-    writer = ChatAgent(
+    writer = Agent(
         name="Writer",
         description="Synthesizes polished answers from gathered information",
         instructions="Compose clear and structured answers using any notes provided.",
-        chat_client=chat_client,
+        client=client,
     )
 
     # Build the group chat workflow
+    # termination_condition: stop after 4 assistant messages
+    # (The agent orchestrator will intelligently decide when to end before this limit but just in case)
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
     workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(agent=orchestrator_agent)
-        .participants([researcher, writer])
+        GroupChatBuilder(
+            participants=[researcher, writer],
+            termination_condition=lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 4,
+            intermediate_outputs=True,
+            orchestrator_agent=orchestrator_agent,
+        )
         # Set a hard termination condition: stop after 4 assistant messages
         # The agent orchestrator will intelligently decide when to end before this limit but just in case
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == "assistant") >= 4)
-        # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowEvent with type "output" events
-        .with_intermediate_outputs()
         .build()
     )
 
@@ -99,7 +103,7 @@ async def main() -> None:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

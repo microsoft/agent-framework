@@ -16,8 +16,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
+    Message,
     UsageDetails,
 )
 
@@ -107,8 +107,8 @@ class WorkflowAgent(BaseAgent):
         except KeyError as exc:  # Defensive: workflow lacks a configured entry point
             raise ValueError("Workflow's start executor is not defined.") from exc
 
-        if not any(is_type_compatible(list[ChatMessage], input_type) for input_type in start_executor.input_types):
-            raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
+        if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
+            raise ValueError("Workflow's start executor cannot handle list[Message]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._workflow: Workflow = workflow
@@ -127,7 +127,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -139,7 +139,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     async def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -150,7 +150,7 @@ class WorkflowAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -202,7 +202,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_non_streaming(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         checkpoint_id: str | None = None,
@@ -225,7 +225,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_streaming(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         checkpoint_id: str | None = None,
@@ -257,7 +257,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        input_messages: list[ChatMessage],
+        input_messages: list[Message],
         response_id: str,
         thread: AgentThread,
         checkpoint_id: str | None = None,
@@ -289,7 +289,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_stream_impl(
         self,
-        input_messages: list[ChatMessage],
+        input_messages: list[Message],
         response_id: str,
         thread: AgentThread,
         checkpoint_id: str | None = None,
@@ -319,7 +319,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_core(
         self,
-        input_messages: list[ChatMessage],
+        input_messages: list[Message],
         thread: AgentThread,
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
@@ -340,25 +340,22 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        # Determine the execution mode based on state
+        # Determine the execution mode based on state.
+        # The streaming flag controls the workflow's internal streaming mode,
+        # which affects executor behavior (e.g. AgentExecutor emits different event
+        # types in streaming vs non-streaming mode).
         if bool(self.pending_requests):
-            # This is a continuation - send function responses back
             function_responses = self._process_pending_requests(input_messages)
-
             if streaming:
-                async for event in self.workflow.send_responses_streaming(function_responses):
+                async for event in self.workflow.run(responses=function_responses, stream=True, **kwargs):
                     yield event
             else:
-                workflow_result = await self.workflow.send_responses(function_responses)
-                for event in workflow_result:
+                for event in await self.workflow.run(responses=function_responses, **kwargs):
                     yield event
 
         elif checkpoint_id is not None:
-            # Resume from checkpoint - don't prepend thread history since workflow state
-            # is being restored from the checkpoint
             if streaming:
                 async for event in self.workflow.run(
-                    message=None,
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
@@ -366,19 +363,15 @@ class WorkflowAgent(BaseAgent):
                 ):
                     yield event
             else:
-                workflow_result = await self.workflow.run(
-                    message=None,
+                for event in await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     **kwargs,
-                )
-                for event in workflow_result:
+                ):
                     yield event
 
         else:
-            # Initial run - build conversation from thread history
             conversation_messages = await self._build_conversation_messages(thread, input_messages)
-
             if streaming:
                 async for event in self.workflow.run(
                     message=conversation_messages,
@@ -388,12 +381,11 @@ class WorkflowAgent(BaseAgent):
                 ):
                     yield event
             else:
-                workflow_result = await self.workflow.run(
+                for event in await self.workflow.run(
                     message=conversation_messages,
                     checkpoint_storage=checkpoint_storage,
                     **kwargs,
-                )
-                for event in workflow_result:
+                ):
                     yield event
 
     # endregion Run Methods
@@ -401,8 +393,8 @@ class WorkflowAgent(BaseAgent):
     async def _build_conversation_messages(
         self,
         thread: AgentThread,
-        input_messages: list[ChatMessage],
-    ) -> list[ChatMessage]:
+        input_messages: list[Message],
+    ) -> list[Message]:
         """Build the complete conversation by prepending thread history to input messages.
 
         Args:
@@ -410,9 +402,9 @@ class WorkflowAgent(BaseAgent):
             input_messages: The new input messages to append.
 
         Returns:
-            A list of ChatMessage objects representing the full conversation.
+            A list of Message objects representing the full conversation.
         """
-        conversation_messages: list[ChatMessage] = []
+        conversation_messages: list[Message] = []
         if thread.message_store:
             history = await thread.message_store.list_messages()
             if history:
@@ -420,7 +412,7 @@ class WorkflowAgent(BaseAgent):
         conversation_messages.extend(input_messages)
         return conversation_messages
 
-    def _process_pending_requests(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
+    def _process_pending_requests(self, input_messages: list[Message]) -> dict[str, Any]:
         """Process pending requests by extracting function responses and updating state.
 
         Args:
@@ -452,7 +444,7 @@ class WorkflowAgent(BaseAgent):
         output_events: list[WorkflowEvent[Any]],
     ) -> AgentResponse:
         """Convert a list of workflow output events to an AgentResponse."""
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         raw_representations: list[object] = []
         merged_usage: UsageDetails | None = None
         latest_created_at: str | None = None
@@ -461,7 +453,7 @@ class WorkflowAgent(BaseAgent):
             if output_event.type == "request_info":
                 function_call, approval_request = self._process_request_info_event(output_event)
                 messages.append(
-                    ChatMessage(
+                    Message(
                         contents=[function_call, approval_request],
                         role="assistant",
                         author_name=output_event.source_executor_id,
@@ -492,11 +484,11 @@ class WorkflowAgent(BaseAgent):
                         if data.created_at
                         else latest_created_at
                     )
-                elif isinstance(data, ChatMessage):
+                elif isinstance(data, Message):
                     messages.append(data)
                     raw_representations.append(data.raw_representation)
-                elif is_instance_of(data, list[ChatMessage]):
-                    chat_messages = cast(list[ChatMessage], data)
+                elif is_instance_of(data, list[Message]):
+                    chat_messages = cast(list[Message], data)
                     messages.extend(chat_messages)
                     raw_representations.append(data)
                 else:
@@ -505,7 +497,7 @@ class WorkflowAgent(BaseAgent):
                         continue
 
                     messages.append(
-                        ChatMessage(
+                        Message(
                             contents=contents,
                             role="assistant",
                             author_name=output_event.executor_id,
@@ -599,7 +591,7 @@ class WorkflowAgent(BaseAgent):
                         )
                     )
                 return updates
-            if isinstance(data, ChatMessage):
+            if isinstance(data, Message):
                 return [
                     AgentResponseUpdate(
                         contents=list(data.contents),
@@ -611,9 +603,9 @@ class WorkflowAgent(BaseAgent):
                         raw_representation=data,
                     )
                 ]
-            if is_instance_of(data, list[ChatMessage]):
-                # Convert each ChatMessage to an AgentResponseUpdate
-                chat_messages = cast(list[ChatMessage], data)
+            if is_instance_of(data, list[Message]):
+                # Convert each Message to an AgentResponseUpdate
+                chat_messages = cast(list[Message], data)
                 updates = []
                 for msg in chat_messages:
                     updates.append(
@@ -677,7 +669,7 @@ class WorkflowAgent(BaseAgent):
         # Ignore workflow-internal events
         return []
 
-    def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
+    def _extract_function_responses(self, input_messages: list[Message]) -> dict[str, Any]:
         """Extract function responses from input messages."""
         function_responses: dict[str, Any] = {}
         for message in input_messages:
@@ -726,7 +718,7 @@ class WorkflowAgent(BaseAgent):
     def _extract_contents(self, data: Any) -> list[Content]:
         """Recursively extract Content from workflow output data."""
         if isinstance(data, list):
-            return [c for item in data for c in self._extract_contents(item)]
+            return [c for item in data for c in self._extract_contents(item)]  # type: ignore
         if isinstance(data, Content):
             return [data]  # type: ignore[redundant-cast]
         if isinstance(data, str):
@@ -828,7 +820,7 @@ class WorkflowAgent(BaseAgent):
             )
 
         # PHASE 2: CONVERT GROUPED UPDATES TO RESPONSES AND MERGE
-        final_messages: list[ChatMessage] = []
+        final_messages: list[Message] = []
         merged_usage: UsageDetails | None = None
         latest_created_at: str | None = None
         merged_additional_properties: dict[str, Any] | None = None

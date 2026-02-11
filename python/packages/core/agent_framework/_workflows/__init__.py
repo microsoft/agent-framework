@@ -13,7 +13,6 @@ from ._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._checkpoint_summary import WorkflowCheckpointSummary, get_checkpoint_summary
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
@@ -52,8 +51,8 @@ from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
-    Message,
     RunnerContext,
+    WorkflowMessage,
 )
 from ._validation import (
     EdgeDuplicationError,
@@ -92,7 +91,6 @@ __all__ = [
     "GraphConnectivityError",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "Message",
     "Runner",
     "RunnerContext",
     "SingleEdgeGroup",
@@ -108,7 +106,6 @@ __all__ = [
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCheckpointException",
-    "WorkflowCheckpointSummary",
     "WorkflowContext",
     "WorkflowConvergenceException",
     "WorkflowErrorDetails",
@@ -117,6 +114,7 @@ __all__ = [
     "WorkflowEventType",
     "WorkflowException",
     "WorkflowExecutor",
+    "WorkflowMessage",
     "WorkflowRunResult",
     "WorkflowRunState",
     "WorkflowRunnerException",
@@ -124,7 +122,6 @@ __all__ = [
     "WorkflowViz",
     "create_edge_runner",
     "executor",
-    "get_checkpoint_summary",
     "handler",
     "resolve_agent_id",
     "response_handler",

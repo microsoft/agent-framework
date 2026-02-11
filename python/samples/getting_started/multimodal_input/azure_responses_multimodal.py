@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -33,7 +33,7 @@ async def test_image() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     image_uri = create_sample_image()
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="What's in this image?"),
@@ -50,7 +50,7 @@ async def test_pdf() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     pdf_bytes = load_sample_pdf()
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="What information can you extract from this document?"),

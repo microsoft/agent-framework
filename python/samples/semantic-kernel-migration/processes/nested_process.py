@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/processes/nested_process.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Nested process comparison between Semantic Kernel Process Framework and Agent Framework sub-workflows."""
@@ -17,7 +26,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-    
     handler,
 )
 from pydantic import BaseModel, Field
@@ -232,7 +240,7 @@ def _build_inner_workflow() -> WorkflowExecutor:
     inner_echo = InnerEchoExecutor()
     inner_repeat = InnerRepeatExecutor()
 
-    inner_workflow = WorkflowBuilder().set_start_executor(inner_echo).add_edge(inner_echo, inner_repeat).build()
+    inner_workflow = WorkflowBuilder(start_executor=inner_echo).add_edge(inner_echo, inner_repeat).build()
 
     return WorkflowExecutor(inner_workflow, id="inner_workflow")
 
@@ -246,8 +254,7 @@ async def run_agent_framework_nested_workflow(initial_message: str) -> Sequence[
     collector = CollectResultExecutor()
 
     outer_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(kickoff)
+        WorkflowBuilder(start_executor=kickoff)
         .add_edge(kickoff, outer_echo)
         .add_edge(outer_echo, outer_repeat)
         .add_edge(outer_repeat, inner_executor)

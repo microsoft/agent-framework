@@ -11,9 +11,9 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     ChatContext,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
     Role,
     tool,
@@ -49,11 +49,11 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def weather_override_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+async def weather_override_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Chat middleware that overrides weather results for both streaming and non-streaming cases."""
 
     # Let the original agent execution complete first
-    await next(context)
+    await call_next()
 
     # Check if there's a result to override (agent called weather function)
     if context.result is not None:
@@ -76,17 +76,17 @@ async def weather_override_middleware(context: ChatContext, next: Callable[[Chat
                     index["value"] += 1
                 return update
 
-            context.result.with_update_hook(_update_hook)
+            context.result.with_transform_hook(_update_hook)
         else:
             # For non-streaming: just replace with a new message
-            current_text = context.result.text or ""
+            current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
             custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
-            context.result = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
+            context.result = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=custom_message)])
 
 
-async def validate_weather_middleware(context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]) -> None:
+async def validate_weather_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Chat middleware that simulates result validation for both streaming and non-streaming cases."""
-    await next(context)
+    await call_next()
 
     validation_note = "Validation: weather data verified."
 
@@ -96,17 +96,17 @@ async def validate_weather_middleware(context: ChatContext, next: Callable[[Chat
     if context.stream and isinstance(context.result, ResponseStream):
 
         def _append_validation_note(response: ChatResponse) -> ChatResponse:
-            response.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
+            response.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
             return response
 
         context.result.with_finalizer(_append_validation_note)
     elif isinstance(context.result, ChatResponse):
-        context.result.messages.append(ChatMessage(role=Role.ASSISTANT, text=validation_note))
+        context.result.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
 
 
-async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentContext], Awaitable[None]]) -> None:
+async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
     """Agent middleware that validates chat middleware effects and cleans the result."""
-    await next(context)
+    await call_next()
 
     if context.result is None:
         return
@@ -118,7 +118,7 @@ async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentC
     def _sanitize(response: AgentResponse) -> AgentResponse:
         found_prefix = state["found_prefix"]
         found_validation = False
-        cleaned_messages: list[ChatMessage] = []
+        cleaned_messages: list[Message] = []
 
         for message in response.messages:
             text = message.text
@@ -139,7 +139,7 @@ async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentC
             text = re.sub(r"\[\d+\]\s*", "", text)
 
             cleaned_messages.append(
-                ChatMessage(
+                Message(
                     role=message.role,
                     text=text.strip(),
                     author_name=message.author_name,
@@ -154,7 +154,7 @@ async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentC
         if not found_validation:
             raise RuntimeError("Expected validation note not found in agent response.")
 
-        cleaned_messages.append(ChatMessage(role=Role.ASSISTANT, text=" Agent: OK"))
+        cleaned_messages.append(Message(role=Role.ASSISTANT, text=" Agent: OK"))
         response.messages = cleaned_messages
         return response
 
@@ -172,7 +172,7 @@ async def agent_cleanup_middleware(context: AgentContext, next: Callable[[AgentC
                 content.text = text
             return update
 
-        context.result.with_update_hook(_clean_update)
+        context.result.with_transform_hook(_clean_update)
         context.result.with_finalizer(_sanitize)
     elif isinstance(context.result, AgentResponse):
         context.result = _sanitize(context.result)

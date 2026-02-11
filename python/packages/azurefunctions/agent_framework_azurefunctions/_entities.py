@@ -7,6 +7,8 @@ Using entities instead of orchestrations provides better state management and
 allows for long-running agent conversations.
 """
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from typing import Any, cast

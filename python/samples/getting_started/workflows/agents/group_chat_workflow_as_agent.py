@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 
@@ -19,34 +19,30 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects relevant background information.",
         instructions="Gather concise facts that help a teammate answer the question.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
+        client=OpenAIChatClient(model_id="gpt-4o-mini"),
     )
 
-    writer = ChatAgent(
+    writer = Agent(
         name="Writer",
         description="Synthesizes a polished answer using the gathered notes.",
         instructions="Compose clear and structured answers using any notes provided.",
-        chat_client=OpenAIResponsesClient(),
+        client=OpenAIResponsesClient(),
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(
-            agent=OpenAIChatClient().as_agent(
-                name="Orchestrator",
-                instructions="You coordinate a team conversation to solve the user's task.",
-            )
-        )
-        .participants([researcher, writer])
-        # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowEvent with type "output" events
-        .with_intermediate_outputs()
-        .build()
-    )
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    workflow = GroupChatBuilder(
+        participants=[researcher, writer],
+        intermediate_outputs=True,
+        orchestrator_agent=OpenAIChatClient().as_agent(
+            name="Orchestrator",
+            instructions="You coordinate a team conversation to solve the user's task.",
+        ),
+    ).build()
 
     task = "Outline the core considerations for planning a community hackathon, and finish with a concise action plan."
 

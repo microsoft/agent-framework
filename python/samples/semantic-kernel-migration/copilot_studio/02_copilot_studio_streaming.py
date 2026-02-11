@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/copilot_studio/02_copilot_studio_streaming.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Stream responses from Copilot Studio agents in SK and AF."""
 

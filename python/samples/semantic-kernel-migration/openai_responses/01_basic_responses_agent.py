@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_responses/01_basic_responses_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Issue a basic Responses API call using SK and Agent Framework."""
 
@@ -26,12 +35,12 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
     from agent_framework.openai import OpenAIResponsesClient
 
-    # AF ChatAgent can swap in an OpenAIResponsesClient directly.
-    chat_agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    # AF Agent can swap in an OpenAIResponsesClient directly.
+    chat_agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="Answer in one concise sentence.",
         name="Expert",
     )

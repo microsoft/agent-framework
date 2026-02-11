@@ -9,7 +9,8 @@ from agent_framework import (
     AgentContext,
     AgentMiddleware,
     AgentResponse,
-    ChatMessage,
+    Message,
+    MiddlewareTermination,
     tool,
 )
 from agent_framework.azure import AzureAIAgentClient
@@ -22,7 +23,7 @@ MiddlewareTypes Termination Example
 This sample demonstrates how middleware can terminate execution using the `context.terminate` flag.
 The example includes:
 
-- PreTerminationMiddleware: Terminates execution before calling next() to prevent agent processing
+- PreTerminationMiddleware: Terminates execution before calling call_next() to prevent agent processing
 - PostTerminationMiddleware: Allows processing to complete but terminates further execution
 
 This is useful for implementing security checks, rate limiting, or early exit conditions.
@@ -48,7 +49,7 @@ class PreTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         # Check if the user message contains any blocked words
         last_message = context.messages[-1] if context.messages else None
@@ -61,7 +62,7 @@ class PreTerminationMiddleware(AgentMiddleware):
                     # Set a custom response
                     context.result = AgentResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 text=(
                                     f"Sorry, I cannot process requests containing '{blocked_word}'. "
@@ -71,11 +72,10 @@ class PreTerminationMiddleware(AgentMiddleware):
                         ]
                     )
 
-                    # Set terminate flag to prevent further processing
-                    context.terminate = True
-                    break
+                    # Terminate to prevent further processing
+                    raise MiddlewareTermination(result=context.result)
 
-        await next(context)
+        await call_next()
 
 
 class PostTerminationMiddleware(AgentMiddleware):
@@ -88,7 +88,7 @@ class PostTerminationMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         print(f"[PostTerminationMiddleware] Processing request (response count: {self.response_count})")
 
@@ -98,10 +98,10 @@ class PostTerminationMiddleware(AgentMiddleware):
                 f"[PostTerminationMiddleware] Maximum responses ({self.max_responses}) reached. "
                 "Terminating further processing."
             )
-            context.terminate = True
+            raise MiddlewareTermination
 
         # Allow the agent to process normally
-        await next(context)
+        await call_next()
 
         # Increment response count after processing
         self.response_count += 1
@@ -158,14 +158,14 @@ async def post_termination_middleware() -> None:
         query = "What about the weather in London?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response (terminated)'}")
+        print(f"Agent: {result.text if result and result.text else 'No response (terminated)'}")
 
         # Third run (should also be terminated)
         print("\n3. Third run (should also be terminated):")
         query = "And New York?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'No response (terminated)'}")
+        print(f"Agent: {result.text if result and result.text else 'No response (terminated)'}")
 
 
 async def main() -> None:

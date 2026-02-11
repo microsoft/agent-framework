@@ -1,12 +1,14 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Client application for starting a single agent chaining orchestration.
 
 This client connects to the Durable Task Scheduler and starts an orchestration
 that runs a writer agent twice sequentially on the same thread, demonstrating
 how conversation context is maintained across multiple agent invocations.
 
-Prerequisites: 
+Prerequisites:
 - The worker must be running with the writer agent and orchestration registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -30,12 +32,12 @@ def get_client(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for client logging
-        
+
     Returns:
         Configured DurableTaskSchedulerClient instance
     """
@@ -58,7 +60,7 @@ def get_client(
 
 def run_client(client: DurableTaskSchedulerClient) -> None:
     """Run client to start and monitor the orchestration.
-    
+
     Args:
         client: The DurableTaskSchedulerClient instance
     """

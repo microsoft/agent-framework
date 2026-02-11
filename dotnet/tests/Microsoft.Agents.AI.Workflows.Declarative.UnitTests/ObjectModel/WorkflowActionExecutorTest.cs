@@ -27,6 +27,8 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal async Task<WorkflowEvent[]> ExecuteAsync(DeclarativeActionExecutor executor)
     {
+        this.State.Bind();
+
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);

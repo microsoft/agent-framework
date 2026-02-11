@@ -51,15 +51,15 @@ Focus on building understanding, not just getting the right answer."""
 async def main() -> None:
     """Run the student-teacher workflow with real Azure AI agents."""
     # Create chat client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Create student and teacher agents
-    student_agent = chat_client.as_agent(
+    student_agent = client.as_agent(
         name="StudentAgent",
         instructions=STUDENT_INSTRUCTIONS,
     )
 
-    teacher_agent = chat_client.as_agent(
+    teacher_agent = client.as_agent(
         name="TeacherAgent",
         instructions=TEACHER_INSTRUCTIONS,
     )

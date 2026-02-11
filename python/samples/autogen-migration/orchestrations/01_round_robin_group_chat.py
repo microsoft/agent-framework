@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/01_round_robin_group_chat.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
 
@@ -77,7 +87,7 @@ async def run_agent_framework() -> None:
     )
 
     # Create sequential workflow
-    workflow = SequentialBuilder().participants([researcher, writer, editor]).build()
+    workflow = SequentialBuilder(participants=[researcher, writer, editor]).build()
 
     # Run the workflow
     print("[Agent Framework] Sequential conversation:")
@@ -137,7 +147,7 @@ async def run_agent_framework_with_cycle() -> None:
             await context.send_message(AgentExecutorRequest(messages=response.full_conversation, should_respond=True))
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=researcher)
         .add_edge(researcher, writer)
         .add_edge(writer, editor)
         .add_edge(
@@ -145,7 +155,6 @@ async def run_agent_framework_with_cycle() -> None:
             check_approval,
         )
         .add_edge(check_approval, researcher)
-        .set_start_executor(researcher)
         .build()
     )
 

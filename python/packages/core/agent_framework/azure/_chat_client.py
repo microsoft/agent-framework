@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
@@ -51,7 +53,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 __all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Azure OpenAI Chat Options TypedDict
@@ -79,7 +81,7 @@ class AzureUserSecurityContext(TypedDict, total=False):
     """The original client's IP address."""
 
 
-class AzureOpenAIChatOptions(OpenAIChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class AzureOpenAIChatOptions(OpenAIChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Azure OpenAI-specific chat options dict.
 
     Extends OpenAIChatOptions with Azure-specific options including
@@ -134,8 +136,8 @@ class AzureOpenAIChatOptions(OpenAIChatOptions[TResponseModel], Generic[TRespons
     Note: You will be charged based on tokens across all choices. Keep n=1 to minimize costs."""
 
 
-TAzureOpenAIChatOptions = TypeVar(
-    "TAzureOpenAIChatOptions",
+AzureOpenAIChatOptionsT = TypeVar(
+    "AzureOpenAIChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureOpenAIChatOptions",
     covariant=True,
@@ -144,17 +146,17 @@ TAzureOpenAIChatOptions = TypeVar(
 
 # endregion
 
-TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
-TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
+ChatResponseT = TypeVar("ChatResponseT", ChatResponse, ChatResponseUpdate)
+AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAIChatClient")
 
 
 class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[TAzureOpenAIChatOptions],
-    FunctionInvocationLayer[TAzureOpenAIChatOptions],
-    ChatTelemetryLayer[TAzureOpenAIChatOptions],
-    RawOpenAIChatClient[TAzureOpenAIChatOptions],
-    Generic[TAzureOpenAIChatOptions],
+    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
+    FunctionInvocationLayer[AzureOpenAIChatOptionsT],
+    ChatTelemetryLayer[AzureOpenAIChatOptionsT],
+    RawOpenAIChatClient[AzureOpenAIChatOptionsT],
+    Generic[AzureOpenAIChatOptionsT],
 ):
     """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
@@ -175,7 +177,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        middleware: Sequence["MiddlewareTypes"] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

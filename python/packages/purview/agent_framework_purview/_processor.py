@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import time
 import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._logging import get_logger
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
@@ -62,13 +63,18 @@ class ScopedContentProcessor:
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def process_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[bool, str | None]:
         """Process messages for policy evaluation.
 
         Args:
             messages: The messages to process
             activity: The activity type (e.g., UPLOAD_TEXT)
+            session_id: Optional session/conversation id. Else, a new GUID is generated.
             user_id: Optional user_id to use for all messages. If provided, this is the fallback.
 
         Returns:
@@ -76,7 +82,7 @@ class ScopedContentProcessor:
             The resolved_user_id can be stored and passed back when processing the response
             to ensure the same user context is maintained throughout the request/response cycle.
         """
-        pc_requests, resolved_user_id = await self._map_messages(messages, activity, user_id)
+        pc_requests, resolved_user_id = await self._map_messages(messages, activity, session_id, user_id)
         should_block = False
         for req in pc_requests:
             resp = await self._process_with_scopes(req)
@@ -90,13 +96,18 @@ class ScopedContentProcessor:
         return should_block, resolved_user_id
 
     async def _map_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, provided_user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        provided_user_id: str | None = None,
     ) -> tuple[list[ProcessContentRequest], str | None]:
         """Map messages to ProcessContentRequests.
 
         Args:
             messages: The messages to map
             activity: The activity type
+            session_id: Optional session/conversation id to use for correlation
             provided_user_id: Optional user_id to use. If provided, this is the fallback.
 
         Returns:
@@ -137,12 +148,14 @@ class ScopedContentProcessor:
         for m in messages:
             message_id = m.message_id or str(uuid.uuid4())
             content = PurviewTextContent(data=m.text or "")
+            correlation_id = (session_id or str(uuid.uuid4())) + "@AF"
             meta = ProcessConversationMetadata(
                 identifier=message_id,
                 content=content,
                 name=f"Agent Framework Message {message_id}",
                 is_truncated=False,
-                correlation_id=str(uuid.uuid4()),
+                correlation_id=correlation_id,
+                sequence_number=time.time_ns(),
             )
             activity_meta = ActivityMetadata(activity=activity)
 
@@ -159,12 +172,13 @@ class ScopedContentProcessor:
             else:
                 raise ValueError("App location not provided or inferable")
 
+            app_version = self._settings.app_version or "Unknown"
             protected_app = ProtectedAppMetadata(
                 name=self._settings.app_name,
-                version="1.0",
+                version=app_version,
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version="1.0")
+            integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version=app_version)
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"

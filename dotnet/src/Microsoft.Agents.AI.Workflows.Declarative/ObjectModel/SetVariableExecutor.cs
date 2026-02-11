@@ -7,7 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
-using Microsoft.PowerFx.Types;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
@@ -16,16 +16,12 @@ internal sealed class SetVariableExecutor(SetVariable model, WorkflowFormulaStat
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        if (this.Model.Value is null)
-        {
-            await this.AssignAsync(this.Model.Variable?.Path, FormulaValue.NewBlank(), context).ConfigureAwait(false);
-        }
-        else
-        {
-            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Value);
+        Throw.IfNull(this.Model.Variable);
+        Throw.IfNull(this.Model.Value);
 
-            await this.AssignAsync(this.Model.Variable?.Path, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
-        }
+        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Value);
+
+        await this.AssignAsync(this.Model.Variable.Path, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
 
         return default;
     }

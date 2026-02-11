@@ -297,15 +297,14 @@ class LaunchCoordinator(Executor):
 
 def build_sub_workflow() -> WorkflowExecutor:
     """Assemble the sub-workflow used by the parent workflow executor."""
+    writer = DraftWriter()
+    router = DraftReviewRouter()
+    finaliser = DraftFinaliser()
     sub_workflow = (
-        WorkflowBuilder()
-        .register_executor(DraftWriter, name="writer")
-        .register_executor(DraftReviewRouter, name="router")
-        .register_executor(DraftFinaliser, name="finaliser")
-        .set_start_executor("writer")
-        .add_edge("writer", "router")
-        .add_edge("router", "finaliser")
-        .add_edge("finaliser", "writer")  # permits revision loops
+        WorkflowBuilder(start_executor=writer)
+        .add_edge(writer, router)
+        .add_edge(router, finaliser)
+        .add_edge(finaliser, writer)  # permits revision loops
         .build()
     )
 
@@ -314,14 +313,12 @@ def build_sub_workflow() -> WorkflowExecutor:
 
 def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
     """Assemble the parent workflow that embeds the sub-workflow."""
+    coordinator = LaunchCoordinator()
+    sub_executor = build_sub_workflow()
     return (
-        WorkflowBuilder()
-        .register_executor(LaunchCoordinator, name="coordinator")
-        .register_executor(build_sub_workflow, name="sub_executor")
-        .set_start_executor("coordinator")
-        .add_edge("coordinator", "sub_executor")
-        .add_edge("sub_executor", "coordinator")
-        .with_checkpointing(storage)
+        WorkflowBuilder(start_executor=coordinator, checkpoint_storage=storage)
+        .add_edge(coordinator, sub_executor)
+        .add_edge(sub_executor, coordinator)
         .build()
     )
 
@@ -348,14 +345,12 @@ async def main() -> None:
     if request_id is None:
         raise RuntimeError("Sub-workflow completed without requesting review.")
 
-    checkpoints = await storage.list_checkpoints(workflow.id)
-    if not checkpoints:
+    resume_checkpoint = await storage.get_latest(workflow_name=workflow.name)
+    if not resume_checkpoint:
         raise RuntimeError("No checkpoints found.")
 
     # Print the checkpoint to show pending requests
     # We didn't handle the request above so the request is still pending the last checkpoint
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-    resume_checkpoint = checkpoints[-1]
     print(f"Using checkpoint {resume_checkpoint.checkpoint_id} at iteration {resume_checkpoint.iteration_count}")
 
     checkpoint_path = storage.storage_path / f"{resume_checkpoint.checkpoint_id}.json"
@@ -380,7 +375,7 @@ async def main() -> None:
 
     approval_response = "approve"
     output_event: WorkflowEvent | None = None
-    async for event in workflow2.send_responses_streaming({request_info_event.request_id: approval_response}):
+    async for event in workflow2.run(stream=True, responses={request_info_event.request_id: approval_response}):
         if event.type == "output":
             output_event = event
 

@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import FunctionCallContent, FunctionResultContent, tool
+from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -55,11 +55,11 @@ async def main():
         if msg.text:
             print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
         for content in msg.contents:
-            if isinstance(content, FunctionCallContent):
+            if content.type == "function_call":
                 print(
                     f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
                 )
-            if isinstance(content, FunctionResultContent):
+            if content.type == "function_result":
                 print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
 
 

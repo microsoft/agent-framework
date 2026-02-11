@@ -7,7 +7,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponseUpdate,
-    ChatMessage,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -84,7 +84,7 @@ async def enrich_with_references(
         f"{external_note}\n\n"
         "Please update the prior assistant answer so it weaves this note into the guidance."
     )
-    conversation.append(ChatMessage("user", [follow_up]))
+    conversation.append(Message("user", [follow_up]))
 
     # Output a new AgentExecutorRequest for the next agent in the workflow.
     # Agents in workflows handle this type and will generate a response based on the request.
@@ -110,8 +110,7 @@ async def main() -> None:
     )
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(research_agent)
+        WorkflowBuilder(start_executor=research_agent)
         .add_edge(research_agent, enrich_with_references)
         .add_edge(enrich_with_references, final_editor_agent)
         .build()

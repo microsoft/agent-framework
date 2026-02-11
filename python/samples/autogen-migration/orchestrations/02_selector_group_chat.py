@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/02_selector_group_chat.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen SelectorGroupChat vs Agent Framework GroupChatBuilder.
 
@@ -85,18 +95,14 @@ async def run_agent_framework() -> None:
         description="Expert in databases and SQL",
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .participants([python_expert, javascript_expert, database_expert])
-        .with_orchestrator(
-            agent=client.as_agent(
-                name="selector_manager",
-                instructions="Based on the conversation, select the most appropriate expert to respond next.",
-            ),
-        )
-        .with_max_rounds(1)
-        .build()
-    )
+    workflow = GroupChatBuilder(
+        participants=[python_expert, javascript_expert, database_expert],
+        max_rounds=1,
+        orchestrator_agent=client.as_agent(
+            name="selector_manager",
+            instructions="Based on the conversation, select the most appropriate expert to respond next.",
+        ),
+    ).build()
 
     # Run with a question that requires expert selection
     print("[Agent Framework] Group chat conversation:")

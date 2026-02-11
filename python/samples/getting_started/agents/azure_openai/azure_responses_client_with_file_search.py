@@ -2,14 +2,14 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
+from agent_framework import Agent, Content
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
 Azure OpenAI Responses Client with File Search Example
 
-This sample demonstrates using HostedFileSearchTool with Azure OpenAI Responses Client
+This sample demonstrates using get_file_search_tool() with Azure OpenAI Responses Client
 for direct document-based question answering and information retrieval.
 
 Prerequisites:
@@ -22,7 +22,7 @@ Prerequisites:
 # Helper functions
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, HostedVectorStoreContent]:
+async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
     """Create a vector store with sample documents."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
@@ -35,7 +35,7 @@ async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, 
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, HostedVectorStoreContent(vector_store_id=vector_store.id)
+    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
 async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
@@ -51,12 +51,15 @@ async def main() -> None:
     # Make sure you're logged in via 'az login' before running this sample
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
-    file_id, vector_store = await create_vector_store(client)
+    file_id, vector_store_id = await create_vector_store(client)
 
-    agent = ChatAgent(
-        chat_client=client,
+    # Create file search tool using instance method
+    file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store_id])
+
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
-        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tools=[file_search_tool],
     )
 
     query = "What is the weather today? Do a file search to find the answer."
@@ -64,7 +67,7 @@ async def main() -> None:
     result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    await delete_vector_store(client, file_id, vector_store.vector_store_id)
+    await delete_vector_store(client, file_id, vector_store_id)
 
 
 if __name__ == "__main__":

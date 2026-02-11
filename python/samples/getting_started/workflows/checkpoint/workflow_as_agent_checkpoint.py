@@ -27,7 +27,6 @@ import asyncio
 
 from agent_framework import (
     AgentThread,
-    ChatAgent,
     ChatMessageStore,
     InMemoryCheckpointStorage,
 )
@@ -41,22 +40,19 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="assistant",
-            instructions="You are a helpful assistant. Keep responses brief.",
-        )
+    assistant = client.as_agent(
+        name="assistant",
+        instructions="You are a helpful assistant. Keep responses brief.",
+    )
 
-    def create_reviewer() -> ChatAgent:
-        return chat_client.as_agent(
-            name="reviewer",
-            instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
-        )
+    reviewer = client.as_agent(
+        name="reviewer",
+        instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
+    )
 
-    # Build sequential workflow with participant factories
-    workflow = SequentialBuilder().register_participants([create_assistant, create_reviewer]).build()
+    workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
     agent = workflow.as_agent(name="CheckpointedAgent")
 
     # Create checkpoint storage
@@ -73,7 +69,7 @@ async def basic_checkpointing() -> None:
         print(f"[{speaker}]: {msg.text}")
 
     # Show checkpoints that were created
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nCheckpoints created: {len(checkpoints)}")
     for i, cp in enumerate(checkpoints[:5], 1):
         print(f"  {i}. {cp.checkpoint_id}")
@@ -85,15 +81,14 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="memory_assistant",
-            instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
-        )
+    assistant = client.as_agent(
+        name="memory_assistant",
+        instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
+    )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="MemoryAgent")
 
     # Create both thread (for conversation) and checkpoint storage (for workflow state)
@@ -115,7 +110,7 @@ async def checkpointing_with_thread() -> None:
         print(f"[assistant]: {response2.messages[0].text}")
 
     # Show accumulated state
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nTotal checkpoints across both turns: {len(checkpoints)}")
 
     if thread.message_store:
@@ -129,15 +124,14 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    def create_assistant() -> ChatAgent:
-        return chat_client.as_agent(
-            name="streaming_assistant",
-            instructions="You are a helpful assistant.",
-        )
+    assistant = client.as_agent(
+        name="streaming_assistant",
+        instructions="You are a helpful assistant.",
+    )
 
-    workflow = SequentialBuilder().register_participants([create_assistant]).build()
+    workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="StreamingCheckpointAgent")
 
     checkpoint_storage = InMemoryCheckpointStorage()
@@ -153,7 +147,7 @@ async def streaming_with_checkpoints() -> None:
 
     print()  # Newline after streaming
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nCheckpoints created during stream: {len(checkpoints)}")
 
 

@@ -3,6 +3,7 @@
 import asyncio
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,16 +18,15 @@ else:
 # `agent_framework.builtin` chat client or mock the writer executor. We keep the
 # concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessage,
     Executor,
     FileCheckpointStorage,
+    Message,
     Workflow,
     WorkflowBuilder,
-    WorkflowCheckpoint,
     WorkflowContext,
-    get_checkpoint_summary,
     handler,
     response_handler,
 )
@@ -96,7 +96,7 @@ class BriefPreparer(Executor):
         # Hand the prompt to the writer agent. We always route through the
         # workflow context so the runtime can capture messages for checkpointing.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -158,7 +158,7 @@ class ReviewGateway(Executor):
             f"Human guidance: {reply}"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[ChatMessage("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
 
@@ -178,44 +178,22 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
+    writer_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        instructions="Write concise, warm release notes that sound human and helpful.",
+        name="writer",
+    )
+    writer = AgentExecutor(writer_agent)
+    review_gateway = ReviewGateway(id="review_gateway", writer_id="writer")
+    prepare_brief = BriefPreparer(id="prepare_brief", agent_id="writer")
+
     workflow_builder = (
-        WorkflowBuilder(max_iterations=6)
-        .register_agent(
-            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-                instructions="Write concise, warm release notes that sound human and helpful.",
-                # The agent name is stable across runs which keeps checkpoints deterministic.
-                name="writer",
-            ),
-            name="writer",
-        )
-        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
-        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
-        .set_start_executor("prepare_brief")
-        .add_edge("prepare_brief", "writer")
-        .add_edge("writer", "review_gateway")
-        .add_edge("review_gateway", "writer")  # revisions loop
-        .with_checkpointing(checkpoint_storage=checkpoint_storage)
+        WorkflowBuilder(max_iterations=6, start_executor=prepare_brief, checkpoint_storage=checkpoint_storage)
+        .add_edge(prepare_brief, writer)
+        .add_edge(writer, review_gateway)
+        .add_edge(review_gateway, writer)  # revisions loop
     )
 
     return workflow_builder.build()
-
-
-def render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
-    """Pretty-print saved checkpoints with the new framework summaries."""
-
-    print("\nCheckpoint summary:")
-    for summary in [get_checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)]:
-        # Compose a single line per checkpoint so the user can scan the output
-        # and pick the resume point that still has outstanding human work.
-        line = (
-            f"- {summary.checkpoint_id} | timestamp={summary.timestamp} | iter={summary.iteration_count} "
-            f"| targets={summary.targets} | states={summary.executor_ids}"
-        )
-        if summary.status:
-            line += f" | status={summary.status}"
-        if summary.pending_request_info_events:
-            line += f" | pending_request_id={summary.pending_request_info_events[0].request_id}"
-        print(line)
 
 
 def prompt_for_responses(requests: dict[str, HumanApprovalRequest]) -> dict[str, str]:
@@ -249,7 +227,7 @@ async def run_interactive_session(
 
     while True:
         if responses:
-            event_stream = workflow.send_responses_streaming(responses)
+            event_stream = workflow.run(stream=True, responses=responses)
             requests.clear()
             responses = None
         else:
@@ -305,16 +283,12 @@ async def main() -> None:
     result = await run_interactive_session(workflow, initial_message=brief)
     print(f"Workflow completed with: {result}")
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
     if not checkpoints:
         print("No checkpoints recorded.")
         return
 
-    # Show the user what is available before we prompt for the index. The
-    # summary helper keeps this output consistent with other tooling.
-    render_checkpoint_summary(checkpoints)
-
-    sorted_cps = sorted(checkpoints, key=lambda c: c.timestamp)
+    sorted_cps = sorted(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
     print("\nAvailable checkpoints:")
     for idx, cp in enumerate(sorted_cps):
         print(f"  [{idx}] id={cp.checkpoint_id} iter={cp.iteration_count}")
@@ -338,10 +312,6 @@ async def main() -> None:
         return
 
     chosen = sorted_cps[idx]
-    summary = get_checkpoint_summary(chosen)
-    if summary.status == "completed":
-        print("Selected checkpoint already reflects a completed workflow; nothing to resume.")
-        return
 
     new_workflow = create_workflow(checkpoint_storage=storage)
     # Resume with a fresh workflow instance. The checkpoint carries the

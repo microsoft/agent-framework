@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from agent_framework import AgentResponseUpdate, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.openai import OpenAIAssistantProvider
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate
+from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from openai import AsyncOpenAI
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
@@ -17,7 +17,7 @@ from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import Code
 """
 OpenAI Assistants with Code Interpreter Example
 
-This sample demonstrates using HostedCodeInterpreterTool with OpenAI Assistants
+This sample demonstrates using get_code_interpreter_tool() with OpenAI Assistants
 for Python code execution and mathematical problem solving.
 """
 
@@ -42,17 +42,18 @@ def get_code_interpreter_chunk(chunk: AgentResponseUpdate) -> str | None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with OpenAI Assistants."""
+    """Example showing how to use the code interpreter tool with OpenAI Assistants."""
     print("=== OpenAI Assistants Provider with Code Interpreter Example ===")
 
     client = AsyncOpenAI()
     provider = OpenAIAssistantProvider(client)
+    chat_client = OpenAIAssistantsClient(client=client)
 
     agent = await provider.create_agent(
         name="CodeHelper",
         model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[chat_client.get_code_interpreter_tool()],
     )
 
     try:

@@ -8,17 +8,18 @@ from typing import Any
 from typing_extensions import Never
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatAgent,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
+    Message,
     ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
@@ -38,7 +39,7 @@ class _ToolCallingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -48,7 +49,7 @@ class _ToolCallingAgent(BaseAgent):
             return ResponseStream(self._run_stream_impl(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
+            return AgentResponse(messages=[Message("assistant", ["done"])])
 
         return _run()
 
@@ -96,7 +97,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     agent = _ToolCallingAgent(id="tool_agent", name="ToolAgent")
     agent_exec = AgentExecutor(agent, id="tool_exec")
 
-    workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
+    workflow = WorkflowBuilder(start_executor=agent_exec).build()
 
     # Act: run in streaming mode
     events: list[WorkflowEvent[AgentResponseUpdate]] = []
@@ -155,7 +156,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -174,7 +175,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
         if self._iteration == 0:
             if self._parallel_request:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -188,7 +189,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                 )
             else:
                 response = ChatResponse(
-                    messages=ChatMessage(
+                    messages=Message(
                         "assistant",
                         [
                             Content.from_function_call(
@@ -198,7 +199,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                     )
                 )
         else:
-            response = ChatResponse(messages=ChatMessage("assistant", ["Tool executed successfully."]))
+            response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
 
         self._iteration += 1
         return response
@@ -242,18 +243,14 @@ async def test_executor(agent_executor_response: AgentExecutorResponse, ctx: Wor
 async def test_agent_executor_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles tool calls requiring approval."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(),
+    agent = Agent(
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(agent)
-        .add_edge(agent, test_executor)
-        .with_output_from([test_executor])
-        .build()
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
     )
 
     # Act
@@ -267,9 +264,9 @@ async def test_agent_executor_tool_call_with_approval() -> None:
     assert approval_request.data.function_call.arguments == '{"query": "test"}'
 
     # Act
-    events = await workflow.send_responses({
-        approval_request.request_id: approval_request.data.to_function_approval_response(True)
-    })
+    events = await workflow.run(
+        responses={approval_request.request_id: approval_request.data.to_function_approval_response(True)}
+    )
 
     # Assert
     final_response = events.get_outputs()
@@ -280,13 +277,13 @@ async def test_agent_executor_tool_call_with_approval() -> None:
 async def test_agent_executor_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles tool calls requiring approval in streaming mode."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(),
+    agent = Agent(
+        client=MockChatClient(),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = WorkflowBuilder(start_executor=agent).add_edge(agent, test_executor).build()
 
     # Act
     request_info_events: list[WorkflowEvent] = []
@@ -303,9 +300,9 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 
     # Act
     output: str | None = None
-    async for event in workflow.send_responses_streaming({
-        approval_request.request_id: approval_request.data.to_function_approval_response(True)
-    }):
+    async for event in workflow.run(
+        stream=True, responses={approval_request.request_id: approval_request.data.to_function_approval_response(True)}
+    ):
         if event.type == "output":
             output = event.data
 
@@ -317,18 +314,14 @@ async def test_agent_executor_tool_call_with_approval_streaming() -> None:
 async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(parallel_request=True),
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(agent)
-        .add_edge(agent, test_executor)
-        .with_output_from([test_executor])
-        .build()
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
     )
 
     # Act
@@ -346,7 +339,7 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
         approval_request.request_id: approval_request.data.to_function_approval_response(True)  # type: ignore
         for approval_request in events.get_request_info_events()
     }
-    events = await workflow.send_responses(responses)
+    events = await workflow.run(responses=responses)
 
     # Assert
     final_response = events.get_outputs()
@@ -357,13 +350,13 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
 async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval in streaming mode."""
     # Arrange
-    agent = ChatAgent(
-        chat_client=MockChatClient(parallel_request=True),
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
         name="ApprovalAgent",
         tools=[mock_tool_requiring_approval],
     )
 
-    workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, test_executor).build()
+    workflow = WorkflowBuilder(start_executor=agent).add_edge(agent, test_executor).build()
 
     # Act
     request_info_events: list[WorkflowEvent] = []
@@ -385,10 +378,214 @@ async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> No
     }
 
     output: str | None = None
-    async for event in workflow.send_responses_streaming(responses):
+    async for event in workflow.run(stream=True, responses=responses):
         if event.type == "output":
             output = event.data
 
     # Assert
     assert output is not None
     assert output == "Tool executed successfully."
+
+
+# --- Declaration-only tool tests ---
+
+declaration_only_tool = FunctionTool(
+    name="client_side_tool",
+    func=None,
+    description="A client-side tool that the framework cannot execute.",
+    input_model={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+)
+
+
+class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    """Mock chat client that calls a declaration-only tool on first iteration."""
+
+    def __init__(self, parallel_request: bool = False) -> None:
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self._iteration: int = 0
+        self._parallel_request: bool = parallel_request
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            return self._build_response_stream(self._stream_response())
+
+        async def _get_response() -> ChatResponse:
+            return self._create_response()
+
+        return _get_response()
+
+    def _create_response(self) -> ChatResponse:
+        if self._iteration == 0:
+            if self._parallel_request:
+                response = ChatResponse(
+                    messages=Message(
+                        "assistant",
+                        [
+                            Content.from_function_call(
+                                call_id="1", name="client_side_tool", arguments='{"query": "test"}'
+                            ),
+                            Content.from_function_call(
+                                call_id="2", name="client_side_tool", arguments='{"query": "test2"}'
+                            ),
+                        ],
+                    )
+                )
+            else:
+                response = ChatResponse(
+                    messages=Message(
+                        "assistant",
+                        [
+                            Content.from_function_call(
+                                call_id="1", name="client_side_tool", arguments='{"query": "test"}'
+                            )
+                        ],
+                    )
+                )
+        else:
+            response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
+
+        self._iteration += 1
+        return response
+
+    async def _stream_response(self) -> AsyncIterable[ChatResponseUpdate]:
+        if self._iteration == 0:
+            if self._parallel_request:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}'),
+                        Content.from_function_call(
+                            call_id="2", name="client_side_tool", arguments='{"query": "test2"}'
+                        ),
+                    ],
+                    role="assistant",
+                )
+            else:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}')
+                    ],
+                    role="assistant",
+                )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
+
+        self._iteration += 1
+
+
+async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:
+    """Test that AgentExecutor emits request_info when agent calls a declaration-only tool."""
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = (
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
+    )
+
+    # Act
+    events = await workflow.run("Use the client side tool")
+
+    # Assert - workflow should pause with a request_info event
+    request_info_events = events.get_request_info_events()
+    assert len(request_info_events) == 1
+    request = request_info_events[0]
+    assert request.data.type == "function_call"
+    assert request.data.name == "client_side_tool"
+    assert request.data.call_id == "1"
+
+    # Act - provide the function result to resume the workflow
+    events = await workflow.run(
+        responses={
+            request.request_id: Content.from_function_result(call_id=request.data.call_id, result="client result")
+        }
+    )
+
+    # Assert - workflow should complete
+    final_response = events.get_outputs()
+    assert len(final_response) == 1
+    assert final_response[0] == "Tool executed successfully."
+
+
+async def test_agent_executor_declaration_only_tool_emits_request_info_streaming() -> None:
+    """Test that AgentExecutor emits request_info for declaration-only tools in streaming mode."""
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = WorkflowBuilder(start_executor=agent).add_edge(agent, test_executor).build()
+
+    # Act
+    request_info_events: list[WorkflowEvent] = []
+    async for event in workflow.run("Use the client side tool", stream=True):
+        if event.type == "request_info":
+            request_info_events.append(event)
+
+    # Assert
+    assert len(request_info_events) == 1
+    request = request_info_events[0]
+    assert request.data.type == "function_call"
+    assert request.data.name == "client_side_tool"
+    assert request.data.call_id == "1"
+
+    # Act - provide the function result
+    output: str | None = None
+    async for event in workflow.run(
+        stream=True,
+        responses={
+            request.request_id: Content.from_function_result(call_id=request.data.call_id, result="client result")
+        },
+    ):
+        if event.type == "output":
+            output = event.data
+
+    # Assert
+    assert output is not None
+    assert output == "Tool executed successfully."
+
+
+async def test_agent_executor_parallel_declaration_only_tool_emits_request_info() -> None:
+    """Test that AgentExecutor emits request_info for parallel declaration-only tool calls."""
+    agent = Agent(
+        client=DeclarationOnlyMockChatClient(parallel_request=True),
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+
+    workflow = (
+        WorkflowBuilder(start_executor=agent, output_executors=[test_executor]).add_edge(agent, test_executor).build()
+    )
+
+    # Act
+    events = await workflow.run("Use the client side tool")
+
+    # Assert - should get 2 request_info events
+    request_info_events = events.get_request_info_events()
+    assert len(request_info_events) == 2
+    for req in request_info_events:
+        assert req.data.type == "function_call"
+        assert req.data.name == "client_side_tool"
+
+    # Act - provide both function results
+    responses = {
+        req.request_id: Content.from_function_result(call_id=req.data.call_id, result=f"result for {req.data.call_id}")
+        for req in request_info_events
+    }
+    events = await workflow.run(responses=responses)
+
+    # Assert - workflow should complete
+    final_response = events.get_outputs()
+    assert len(final_response) == 1
+    assert final_response[0] == "Tool executed successfully."

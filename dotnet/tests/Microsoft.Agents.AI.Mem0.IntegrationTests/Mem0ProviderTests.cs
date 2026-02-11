@@ -56,7 +56,7 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [input], aiContextProviderMessages: null));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [input]));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
         await sut.ClearStoredMemoriesAsync();
         var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
@@ -80,7 +80,7 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro], aiContextProviderMessages: null));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro]));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
         await sut.ClearStoredMemoriesAsync();
         var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
@@ -108,7 +108,7 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.DoesNotContain("Caoimhe", ctxBefore2.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut1.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro], aiContextProviderMessages: null));
+        await sut1.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro]));
         var ctxAfterAdding1 = await GetContextWithRetryAsync(sut1, question);
         var ctxAfterAdding2 = await GetContextWithRetryAsync(sut2, question);
 

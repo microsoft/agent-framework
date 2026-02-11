@@ -5,7 +5,7 @@ import json
 from typing import Annotated, Any
 
 from agent_framework import (
-    ChatMessage,
+    Message,
     WorkflowExecutor,
     tool,
 )
@@ -74,10 +74,10 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
     # Create an agent with tools that use kwargs
-    inner_agent = chat_client.as_agent(
+    inner_agent = client.as_agent(
         name="data_agent",
         instructions=(
             "You are a data access agent. Use the available tools to help users. "
@@ -88,7 +88,7 @@ async def main() -> None:
     )
 
     # Build the inner (sub) workflow with the agent
-    inner_workflow = SequentialBuilder().participants([inner_agent]).build()
+    inner_workflow = SequentialBuilder(participants=[inner_agent]).build()
 
     # Wrap the inner workflow in a WorkflowExecutor to use it as a sub-workflow
     subworkflow_executor = WorkflowExecutor(
@@ -97,7 +97,7 @@ async def main() -> None:
     )
 
     # Build the outer (parent) workflow containing the sub-workflow
-    outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
+    outer_workflow = SequentialBuilder(participants=[subworkflow_executor]).build()
 
     # Define custom context that will flow through to the sub-workflow's agent
     user_token = {
@@ -134,7 +134,7 @@ async def main() -> None:
             output_data = event.data
             if isinstance(output_data, list):
                 for item in output_data:  # type: ignore
-                    if isinstance(item, ChatMessage) and item.text:
+                    if isinstance(item, Message) and item.text:
                         print(f"\n[Final Answer]: {item.text}")
 
     print("\n" + "=" * 70)

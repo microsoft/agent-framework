@@ -9,8 +9,8 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -28,7 +28,7 @@ Pipeline layout:
 writer_agent -> Coordinator -> writer_agent -> Coordinator -> final_editor_agent -> Coordinator -> output
 
 The writer agent drafts marketing copy. A custom executor emits a request_info event (type='request_info') so a
-human can comment, then relays the human guidance back into the conversation before the final editor agent 
+human can comment, then relays the human guidance back into the conversation before the final editor agent
 produces the polished output.
 
 Demonstrates:
@@ -47,7 +47,7 @@ class DraftFeedbackRequest:
     """Payload sent for human review."""
 
     prompt: str = ""
-    conversation: list[ChatMessage] = field(default_factory=lambda: [])
+    conversation: list[Message] = field(default_factory=lambda: [])
 
 
 class Coordinator(Executor):
@@ -71,7 +71,7 @@ class Coordinator(Executor):
 
         # Writer agent response; request human feedback.
         # Preserve the full conversation so that the final editor has context.
-        conversation: list[ChatMessage]
+        conversation: list[Message]
         if draft.full_conversation is not None:
             conversation = list(draft.full_conversation)
         else:
@@ -100,7 +100,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [ChatMessage("user", text="The draft is approved as-is.")],
+                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_name,
@@ -108,14 +108,14 @@ class Coordinator(Executor):
             return
 
         # Human provided feedback; prompt the writer to revise.
-        conversation: list[ChatMessage] = list(original_request.conversation)
+        conversation: list[Message] = list(original_request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(ChatMessage("user", text=instruction))
+        conversation.append(Message("user", text=instruction))
         await ctx.send_message(
             AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_name
         )
@@ -184,8 +184,7 @@ async def main() -> None:
 
     # Build the workflow.
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(writer_agent)
+        WorkflowBuilder(start_executor=writer_agent)
         .add_edge(writer_agent, coordinator)
         .add_edge(coordinator, writer_agent)
         .add_edge(final_editor_agent, coordinator)
@@ -199,7 +198,7 @@ async def main() -> None:
     )
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(
         "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
         stream=True,
@@ -209,7 +208,7 @@ async def main() -> None:
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
     print("\nWorkflow complete.")

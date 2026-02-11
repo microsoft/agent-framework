@@ -1,6 +1,6 @@
 /**
  * Streaming State Persistence
- * 
+ *
  * Manages browser storage of streaming response state to enable:
  * - Resume interrupted streams after page refresh
  * - Replay cached events before fetching new ones
@@ -73,7 +73,7 @@ export function loadStreamingState(conversationId: string): StreamingState | nul
   try {
     const key = getStorageKey(conversationId);
     const data = localStorage.getItem(key);
-    
+
     if (!data) {
       return null;
     }
@@ -111,9 +111,9 @@ export function updateStreamingState(
   try {
     const existing = loadStreamingState(conversationId);
     const sequenceNumber = "sequence_number" in event ? event.sequence_number : undefined;
-    
+
     const newEvents = existing ? [...existing.events, event] : [event];
-    
+
     const state: StreamingState = {
       conversationId,
       responseId,
@@ -174,7 +174,7 @@ export function clearExpiredStreamingStates(): void {
           if (data) {
             const state: StreamingState = JSON.parse(data);
             const age = now - state.timestamp;
-            
+
             if (age > STATE_EXPIRY_MS || state.completed) {
               localStorage.removeItem(key);
             }

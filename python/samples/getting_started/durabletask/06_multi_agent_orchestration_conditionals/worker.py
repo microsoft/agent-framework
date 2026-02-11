@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Worker process for hosting spam detection and email assistant agents with conditional orchestration.
 
 This worker registers two domain-specific agents (spam detector and email assistant) and an
@@ -16,7 +18,7 @@ import os
 from collections.abc import Generator
 from typing import Any, cast
 
-from agent_framework import AgentResponse, ChatAgent
+from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -49,11 +51,11 @@ class EmailPayload(BaseModel):
     email_content: str
 
 
-def create_spam_agent() -> "ChatAgent":
+def create_spam_agent() -> "Agent":
     """Create the Spam Detection agent using Azure OpenAI.
-    
+
     Returns:
-        ChatAgent: The configured Spam Detection agent
+        Agent: The configured Spam Detection agent
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=SPAM_AGENT_NAME,
@@ -61,11 +63,11 @@ def create_spam_agent() -> "ChatAgent":
     )
 
 
-def create_email_agent() -> "ChatAgent":
+def create_email_agent() -> "Agent":
     """Create the Email Assistant agent using Azure OpenAI.
-    
+
     Returns:
-        ChatAgent: The configured Email Assistant agent
+        Agent: The configured Email Assistant agent
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=EMAIL_AGENT_NAME,
@@ -75,11 +77,11 @@ def create_email_agent() -> "ChatAgent":
 
 def handle_spam_email(context: ActivityContext, reason: str) -> str:
     """Activity function to handle spam emails.
-    
+
     Args:
         context: The activity context
         reason: The reason why the email was marked as spam
-        
+
     Returns:
         str: Confirmation message
     """
@@ -89,11 +91,11 @@ def handle_spam_email(context: ActivityContext, reason: str) -> str:
 
 def send_email(context: ActivityContext, message: str) -> str:
     """Activity function to send emails.
-    
+
     Args:
         context: The activity context
         message: The email message to send
-        
+
     Returns:
         str: Confirmation message
     """
@@ -103,17 +105,17 @@ def send_email(context: ActivityContext, message: str) -> str:
 
 def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any) -> Generator[Task[Any], Any, str]:
     """Orchestration that detects spam and conditionally drafts email responses.
-    
+
     This orchestration:
     1. Validates the input payload
     2. Runs the spam detection agent
     3. If spam: calls handle_spam_email activity
     4. If legitimate: runs email assistant agent and calls send_email activity
-    
+
     Args:
         context: The orchestration context
         payload_raw: The input payload dictionary
-        
+
     Returns:
         str: Result message from activity functions
     """
@@ -198,12 +200,12 @@ def get_worker(
     log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
-    
+
     Args:
         taskhub: Task hub name (defaults to TASKHUB env var or "default")
         endpoint: Scheduler endpoint (defaults to ENDPOINT env var or "http://localhost:8080")
         log_handler: Optional logging handler for worker logging
-        
+
     Returns:
         Configured DurableTaskSchedulerWorker instance
     """
@@ -226,10 +228,10 @@ def get_worker(
 
 def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
     """Set up the worker with agents, orchestrations, and activities registered.
-    
+
     Args:
         worker: The DurableTaskSchedulerWorker instance
-        
+
     Returns:
         DurableAIAgentWorker with agents, orchestrations, and activities registered
     """

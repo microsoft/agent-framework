@@ -6,9 +6,9 @@ from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.openai import OpenAIChatClient
@@ -64,7 +64,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
                 print("=" * 60)
                 print("Final discussion summary:")
                 # To make the type checker happy, we cast event.data to the expected type
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 for msg in outputs:
                     speaker = msg.author_name or msg.role
                     print(f"[{speaker}]: {msg.text}")
@@ -92,45 +92,41 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    researcher_agent = ChatAgent(
+    researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions="You are a Researcher. You find information and gather facts.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
-    analyst_agent = ChatAgent(
+    analyst_agent = Agent(
         name="AnalystAgent",
         description="Data analyst who processes and summarizes research findings",
         instructions="You are an Analyst. You analyze findings and create summaries.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the workflow",
         instructions="You coordinate a team to complete tasks efficiently.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")
 
-    workflow = (
-        MagenticBuilder()
-        .participants([researcher_agent, analyst_agent])
-        .with_manager(
-            agent=manager_agent,
-            max_round_count=10,
-            max_stall_count=1,
-            max_reset_count=2,
-        )
-        # Request human input for plan review
-        .with_plan_review()
-        # Enable intermediate outputs to observe the conversation as it unfolds
-        # Intermediate outputs will be emitted as WorkflowEvent with type "output"
-        .with_intermediate_outputs()
-        .build()
-    )
+    # enable_plan_review=True: Request human input for plan review
+    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
+    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    workflow = MagenticBuilder(
+        participants=[researcher_agent, analyst_agent],
+        enable_plan_review=True,
+        intermediate_outputs=True,
+        manager_agent=manager_agent,
+        max_round_count=10,
+        max_stall_count=1,
+        max_reset_count=2,
+    ).build()
 
     task = "Research sustainable aviation fuel technology and summarize the findings."
 
@@ -139,14 +135,14 @@ async def main() -> None:
     print("=" * 60)
 
     # Initiate the first run of the workflow.
-    # Runs are not isolated; state is preserved across multiple calls to run or send_responses_streaming.
+    # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(task, stream=True)
 
     pending_responses = await process_event_stream(stream)
     while pending_responses is not None:
         # Run the workflow until there is no more human feedback to provide,
         # in which case this workflow completes.
-        stream = workflow.send_responses_streaming(pending_responses)
+        stream = workflow.run(stream=True, responses=pending_responses)
         pending_responses = await process_event_stream(stream)
 
 

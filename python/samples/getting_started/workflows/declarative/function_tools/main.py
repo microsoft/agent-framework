@@ -62,8 +62,8 @@ def get_item_price(name: Annotated[str, Field(description="Menu item name")]) ->
 
 async def main():
     # Create agent with tools
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    menu_agent = chat_client.as_agent(
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    menu_agent = client.as_agent(
         name="MenuAgent",
         instructions="Answer questions about menu items, specials, and prices.",
         tools=[get_menu, get_specials, get_item_price],
@@ -90,7 +90,7 @@ async def main():
     while True:
         if pending_request_id:
             response = ExternalInputResponse(user_input=user_input)
-            stream = workflow.send_responses_streaming({pending_request_id: response})
+            stream = workflow.run(stream=True, responses={pending_request_id: response})
         else:
             stream = workflow.run({"userInput": user_input}, stream=True)
 
