@@ -15,7 +15,10 @@ def test_realtime_event_types():
     event_types = [
         "audio",
         "transcript",
+        "input_transcript",
+        "response_transcript",
         "tool_call",
+        "tool_result",
         "interrupted",
         "error",
         "session_update",
