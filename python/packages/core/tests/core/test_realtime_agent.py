@@ -521,9 +521,9 @@ async def test_realtime_agent_stores_multiple_turns():
     assert len(messages) == 4
     assert messages[0].role == "user"
     assert messages[0].text == "What time is it?"
-    assert messages[1].role == "user"
-    assert messages[1].text == "Thanks!"
-    assert messages[2].role == "assistant"
-    assert messages[2].text == "It is 3 PM."
+    assert messages[1].role == "assistant"
+    assert messages[1].text == "It is 3 PM."
+    assert messages[2].role == "user"
+    assert messages[2].text == "Thanks!"
     assert messages[3].role == "assistant"
     assert messages[3].text == "You're welcome."

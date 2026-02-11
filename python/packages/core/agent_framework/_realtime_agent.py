@@ -137,8 +137,7 @@ class RealtimeAgent(BaseAgent):
 
         await self._client.connect(config)
 
-        input_messages: list[ChatMessage] = []
-        response_messages: list[ChatMessage] = []
+        all_messages: list[ChatMessage] = []
 
         try:
             send_task = asyncio.create_task(self._send_audio_loop(audio_input))
@@ -148,11 +147,11 @@ class RealtimeAgent(BaseAgent):
                     if event.type == "input_transcript":
                         text = event.data.get("text", "")
                         if text:
-                            input_messages.append(ChatMessage(role="user", text=text))
+                            all_messages.append(ChatMessage(role="user", text=text))
                     elif event.type == "response_transcript":
                         text = event.data.get("text", "")
                         if text:
-                            response_messages.append(ChatMessage(role="assistant", text=text))
+                            all_messages.append(ChatMessage(role="assistant", text=text))
                     yield event
             finally:
                 send_task.cancel()
@@ -160,7 +159,12 @@ class RealtimeAgent(BaseAgent):
                     await send_task
         finally:
             await self._client.disconnect()
-            await self._notify_thread_of_new_messages(thread, input_messages, response_messages)
+            input_messages = [m for m in all_messages if m.role == "user"]
+            response_messages = [m for m in all_messages if m.role == "assistant"]
+            if all_messages:
+                await thread.on_new_messages(all_messages)
+            if thread.context_provider:
+                await thread.context_provider.invoked(input_messages, response_messages)
 
     async def _send_audio_loop(self, audio_input: AsyncIterator[bytes]) -> None:
         try:
