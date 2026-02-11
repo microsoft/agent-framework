@@ -31,10 +31,9 @@ from contextlib import asynccontextmanager
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
-    HostedCodeInterpreterTool,
+    Message,
     WorkflowEvent,
     WorkflowRunState,
 )
@@ -83,7 +82,7 @@ def _handle_events(events: list[WorkflowEvent]) -> tuple[list[WorkflowEvent[Hand
                             file_ids.append(file_id)
                             print(f"[Found file annotation: file_id={file_id}]")
             elif event.type == "output":
-                conversation = cast(list[ChatMessage], event.data)
+                conversation = cast(list[Message], event.data)
                 if isinstance(conversation, list):
                     print("\n=== Final Conversation Snapshot ===")
                     for message in conversation:
@@ -95,7 +94,7 @@ def _handle_events(events: list[WorkflowEvent]) -> tuple[list[WorkflowEvent[Hand
 
 
 @asynccontextmanager
-async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tuple[ChatAgent, ChatAgent]]:
+async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tuple[Agent, Agent]]:
     """Create agents using V1 AzureAIAgentClient."""
     from agent_framework.azure import AzureAIAgentClient
 
@@ -109,20 +108,23 @@ async def create_agents_v1(credential: AzureCliCredential) -> AsyncIterator[tupl
             ),
         )
 
+        # Create code interpreter tool using instance method
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         code_specialist = client.as_agent(
             name="code_specialist",
             instructions=(
                 "You are a Python code specialist. Use the code interpreter to execute Python code "
                 "and create files when requested. Always save files to /mnt/data/ directory."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         yield triage, code_specialist  # type: ignore
 
 
 @asynccontextmanager
-async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tuple[ChatAgent, ChatAgent]]:
+async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tuple[Agent, Agent]]:
     """Create agents using V2 AzureAIClient.
 
     Each agent needs its own client instance because the V2 client binds
@@ -139,6 +141,9 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
             instructions="You are a triage agent. Your ONLY job is to route requests to the appropriate specialist.",
         )
 
+        # Create code interpreter tool using instance method
+        code_interpreter_tool = code_client.get_code_interpreter_tool()
+
         code_specialist = code_client.as_agent(
             name="CodeSpecialist",
             instructions=(
@@ -147,7 +152,7 @@ async def create_agents_v2(credential: AzureCliCredential) -> AsyncIterator[tupl
                 "Always save files to /mnt/data/ directory. "
                 "Do NOT discuss handoffs or routing - just complete the coding task directly."
             ),
-            tools=[HostedCodeInterpreterTool()],
+            tools=[code_interpreter_tool],
         )
 
         yield triage, code_specialist

@@ -53,7 +53,7 @@ def get_current_time() -> str:
 async def simple_agent_middleware(context, call_next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Agent middleware that runs before and after agent execution."""
     print("[Agent MiddlewareTypes] Before agent execution")
-    await call_next(context)
+    await call_next()
     print("[Agent MiddlewareTypes] After agent execution")
 
 
@@ -61,7 +61,7 @@ async def simple_agent_middleware(context, call_next):  # type: ignore - paramet
 async def simple_function_middleware(context, call_next):  # type: ignore - parameters intentionally untyped to demonstrate decorator functionality
     """Function middleware that runs before and after function calls."""
     print(f"[Function MiddlewareTypes] Before calling: {context.function.name}")  # type: ignore
-    await call_next(context)
+    await call_next()
     print(f"[Function MiddlewareTypes] After calling: {context.function.name}")  # type: ignore
 
 

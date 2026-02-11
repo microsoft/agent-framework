@@ -11,9 +11,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
     ContextProvider,
+    Message,
     ResponseStream,
     normalize_messages,
 )
@@ -210,7 +210,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = False,
         thread: AgentThread | None = None,
@@ -220,7 +220,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -229,7 +229,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -259,7 +259,7 @@ class CopilotStudioAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -274,7 +274,7 @@ class CopilotStudioAgent(BaseAgent):
         question = "\n".join([message.text for message in input_messages])
 
         activities = self.client.ask_question(question, thread.service_thread_id)
-        response_messages: list[ChatMessage] = []
+        response_messages: list[Message] = []
         response_id: str | None = None
 
         response_messages = [message async for message in self._process_activities(activities, streaming=False)]
@@ -284,7 +284,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def _run_stream_impl(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -338,7 +338,7 @@ class CopilotStudioAgent(BaseAgent):
 
         return conversation_id
 
-    async def _process_activities(self, activities: AsyncIterable[Any], streaming: bool) -> AsyncIterable[ChatMessage]:
+    async def _process_activities(self, activities: AsyncIterable[Any], streaming: bool) -> AsyncIterable[Message]:
         """Process activities from the Copilot Studio agent.
 
         Args:
@@ -347,13 +347,13 @@ class CopilotStudioAgent(BaseAgent):
                 or non-streaming (message activities) responses.
 
         Yields:
-            ChatMessage objects created from the activities.
+            Message objects created from the activities.
         """
         async for activity in activities:
             if activity.text and (
                 (activity.type == "message" and not streaming) or (activity.type == "typing" and streaming)
             ):
-                yield ChatMessage(
+                yield Message(
                     role="assistant",
                     contents=[Content.from_text(activity.text)],
                     author_name=activity.from_property.name if activity.from_property else None,

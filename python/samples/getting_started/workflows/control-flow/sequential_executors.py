@@ -62,11 +62,12 @@ async def main() -> None:
     """Build a two step sequential workflow and run it with streaming to observe events."""
     # Step 1: Build the workflow graph.
     # Order matters. We connect upper_case_executor -> reverse_text_executor and set the start.
+    upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
+    reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
+
     workflow = (
-        WorkflowBuilder(start_executor="upper_case_executor")
-        .register_executor(lambda: UpperCaseExecutor(id="upper_case_executor"), name="upper_case_executor")
-        .register_executor(lambda: ReverseTextExecutor(id="reverse_text_executor"), name="reverse_text_executor")
-        .add_edge("upper_case_executor", "reverse_text_executor")
+        WorkflowBuilder(start_executor=upper_case_executor)
+        .add_edge(upper_case_executor, reverse_text_executor)
         .build()
     )
 

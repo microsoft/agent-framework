@@ -69,7 +69,7 @@ def equal(arg1: str, arg2: str) -> bool:
 
 ```python
 # Core
-from agent_framework import ChatAgent, ChatMessage, tool
+from agent_framework import ChatAgent, Message, tool
 
 # Components
 from agent_framework.observability import enable_instrumentation
@@ -84,10 +84,10 @@ from agent_framework.azure import AzureOpenAIChatClient
 Define `__all__` in each module. Avoid `from module import *` in `__init__.py` files:
 
 ```python
-__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+__all__ = ["ChatAgent", "Message", "ChatResponse"]
 
 from ._agents import ChatAgent
-from ._types import ChatMessage, ChatResponse
+from ._types import Message, ChatResponse
 ```
 
 ## Performance Guidelines

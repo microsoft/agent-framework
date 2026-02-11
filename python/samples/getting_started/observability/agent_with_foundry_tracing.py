@@ -16,7 +16,7 @@ from random import randint
 from typing import Annotated
 
 import dotenv
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -30,7 +30,7 @@ from pydantic import Field
 This sample shows you can can setup telemetry in Microsoft Foundry for a custom agent.
 First ensure you have a Foundry workspace with Application Insights enabled.
 And use the Operate tab to Register an Agent.
-Set the OpenTelemetry agent ID to the value used below in the ChatAgent creation: `weather-agent` (or change both).
+Set the OpenTelemetry agent ID to the value used below in the Agent creation: `weather-agent` (or change both).
 The sample uses the Azure Monitor OpenTelemetry exporter to send traces to Application Insights.
 So ensure you have the `azure-monitor-opentelemetry` package installed.
 """
@@ -85,8 +85,8 @@ async def main():
         with get_tracer().start_as_current_span("Weather Agent Chat", kind=SpanKind.CLIENT) as current_span:
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-            agent = ChatAgent(
-                chat_client=OpenAIResponsesClient(),
+            agent = Agent(
+                client=OpenAIResponsesClient(),
                 tools=get_weather,
                 name="WeatherAgent",
                 instructions="You are a weather assistant.",

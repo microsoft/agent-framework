@@ -14,6 +14,7 @@ _IMPORTS = [
     "OpenAIResponse",
     "ResponseStreamEvent",
     "main",
+    "register_cleanup",
     "serve",
     "__version__",
 ]

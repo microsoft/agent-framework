@@ -7,15 +7,16 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
-    ChatAgent,
+    Agent,
     ChatContext,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
+    Message,
     MiddlewareTermination,
     ResponseStream,
+    Role,
     chat_middleware,
     function_middleware,
     tool,
@@ -37,14 +38,14 @@ def cleanup_resources():
 @chat_middleware
 async def security_filter_middleware(
     context: ChatContext,
-    call_next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Chat middleware that blocks requests containing sensitive information."""
     blocked_terms = ["password", "secret", "api_key", "token"]
 
     # Check only the last message (most recent user input)
     last_message = context.messages[-1] if context.messages else None
-    if last_message and last_message.role == "user" and last_message.text:
+    if last_message and last_message.role == Role.USER and last_message.text:
         message_lower = last_message.text.lower()
         for term in blocked_terms:
             if term in message_lower:
@@ -55,34 +56,37 @@ async def security_filter_middleware(
                 )
 
                 if context.stream:
-                    # Streaming mode: return async generator
+                    # Streaming mode: wrap in ResponseStream
                     async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
                             contents=[Content.from_text(text=msg)],
-                            role="assistant",
+                            role=Role.ASSISTANT,
                         )
 
-                    context.result = ResponseStream(blocked_stream(), finalizer=ChatResponse.from_updates)
+                    response = ChatResponse(
+                        messages=[Message(role=Role.ASSISTANT, text=error_message)]
+                    )
+                    context.result = ResponseStream(blocked_stream(), finalizer=lambda _, r=response: r)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
-                                role="assistant",
+                            Message(
+                                role=Role.ASSISTANT,
                                 text=error_message,
                             )
                         ]
                     )
 
-                raise MiddlewareTermination
+                raise MiddlewareTermination(result=context.result)
 
-    await call_next(context)
+    await call_next()
 
 
 @function_middleware
 async def atlantis_location_filter_middleware(
     context: FunctionInvocationContext,
-    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function middleware that blocks weather requests for Atlantis."""
     # Check if location parameter is "atlantis"
@@ -92,9 +96,9 @@ async def atlantis_location_filter_middleware(
             "Blocked! Hold up right there!! Tell the user that "
             "'Atlantis is a special place, we must never ask about the weather there!!'"
         )
-        raise MiddlewareTermination
+        raise MiddlewareTermination(result=context.result)
 
-    await call_next(context)
+    await call_next()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
@@ -136,7 +140,7 @@ def send_email(
 
 
 # Agent instance following Agent Framework conventions
-agent = ChatAgent(
+agent = Agent(
     name="AzureWeatherAgent",
     description="A helpful agent that provides weather information and forecasts",
     instructions="""
@@ -144,7 +148,7 @@ agent = ChatAgent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],

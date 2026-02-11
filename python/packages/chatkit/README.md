@@ -7,9 +7,9 @@ Specifically, it mirrors the [Agent SDK integration](https://github.com/openai/c
 - `stream_agent_response`: A helper to convert a streamed `AgentResponseUpdate`
   from a Microsoft Agent Framework agent that implements `SupportsAgentRun` to ChatKit events.
 - `ThreadItemConverter`: A extendable helper class to convert ChatKit thread items to
-  `ChatMessage` objects that can be consumed by an Agent Framework agent.
+  `Message` objects that can be consumed by an Agent Framework agent.
 - `simple_to_agent_input`: A helper function that uses the default implementation
-  of `ThreadItemConverter` to convert a ChatKit thread to a list of `ChatMessage`,
+  of `ThreadItemConverter` to convert a ChatKit thread to a list of `Message`,
   useful for getting started quickly.
 
 ## Installation
@@ -63,7 +63,7 @@ from azure.identity import AzureCliCredential
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.chatkit import simple_to_agent_input, stream_agent_response
 
@@ -74,8 +74,8 @@ from chatkit.types import ThreadMetadata, UserMessageItem, ThreadStreamEvent
 from your_store import YourStore  # type: ignore[import-not-found]  # Replace with your Store implementation
 
 # Define your agent with tools
-agent = ChatAgent(
-    chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+agent = Agent(
+    client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     instructions="You are a helpful assistant.",
     tools=[],  # Add your tools here
 )

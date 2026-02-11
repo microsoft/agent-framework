@@ -39,7 +39,7 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
     functions need to be included for tool execution during approval flows.
 
     Args:
-        agent: Agent instance to collect tools from. Works with ChatAgent
+        agent: Agent instance to collect tools from. Works with Agent
             or any agent with default_options and optional mcp_tools attributes.
 
     Returns:
@@ -53,7 +53,7 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
     tools_from_agent = default_options.get("tools") if isinstance(default_options, dict) else None
     server_tools = list(tools_from_agent) if tools_from_agent else []
 
-    # Include functions from connected MCP tools (only available on ChatAgent)
+    # Include functions from connected MCP tools (only available on Agent)
     mcp_tools = getattr(agent, "mcp_tools", None)
     if mcp_tools:
         server_tools.extend(_collect_mcp_tool_functions(mcp_tools))
@@ -70,19 +70,19 @@ def register_additional_client_tools(agent: SupportsAgentRun, client_tools: list
     """Register client tools as additional declaration-only tools to avoid server execution.
 
     Args:
-        agent: Agent instance to register tools on. Works with ChatAgent
-            or any agent with a chat_client attribute.
+        agent: Agent instance to register tools on. Works with Agent
+            or any agent with a client attribute.
         client_tools: List of client tools to register.
     """
     if not client_tools:
         return
 
-    chat_client = getattr(agent, "chat_client", None)
-    if chat_client is None:
+    client = getattr(agent, "client", None)
+    if client is None:
         return
 
-    if isinstance(chat_client, BaseChatClient) and chat_client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
-        chat_client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
+    if isinstance(client, BaseChatClient) and client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
+        client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
         logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 

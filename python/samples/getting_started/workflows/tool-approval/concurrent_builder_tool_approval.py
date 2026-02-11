@@ -5,8 +5,8 @@ from collections.abc import AsyncIterable
 from typing import Annotated
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
     WorkflowEvent,
     tool,
 )
@@ -91,10 +91,10 @@ def _print_output(event: WorkflowEvent) -> None:
     if not event.data:
         raise ValueError("WorkflowEvent has no data")
 
-    if not isinstance(event.data, list) and not all(isinstance(msg, ChatMessage) for msg in event.data):
-        raise ValueError("WorkflowEvent data is not a list of ChatMessage")
+    if not isinstance(event.data, list) and not all(isinstance(msg, Message) for msg in event.data):
+        raise ValueError("WorkflowEvent data is not a list of Message")
 
-    messages: list[ChatMessage] = event.data  # type: ignore
+    messages: list[Message] = event.data  # type: ignore
 
     print("\n" + "-" * 60)
     print("Workflow completed. Aggregated results from both agents:")
@@ -126,9 +126,9 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create two agents focused on different stocks but with the same tool sets
-    chat_client = OpenAIChatClient()
+    client = OpenAIChatClient()
 
-    microsoft_agent = chat_client.as_agent(
+    microsoft_agent = client.as_agent(
         name="MicrosoftAgent",
         instructions=(
             "You are a personal trading assistant focused on Microsoft (MSFT). "
@@ -137,7 +137,7 @@ async def main() -> None:
         tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
-    google_agent = chat_client.as_agent(
+    google_agent = client.as_agent(
         name="GoogleAgent",
         instructions=(
             "You are a personal trading assistant focused on Google (GOOGL). "

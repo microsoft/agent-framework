@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent_framework import Content, HostedCodeInterpreterTool
+from agent_framework import Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ async def main() -> None:
     agent = client.as_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
-        tools=HostedCodeInterpreterTool(),
+        tools=client.get_code_interpreter_tool(),
         default_options={
             "max_tokens": 20000,
             "thinking": {"type": "enabled", "budget_tokens": 10000},

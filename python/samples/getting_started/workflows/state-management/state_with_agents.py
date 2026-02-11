@@ -7,10 +7,10 @@ from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -103,7 +103,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -134,7 +134,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from workflow state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
     )
 
 
@@ -154,7 +154,7 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
         raise RuntimeError("This executor should only handle spam messages.")
 
 
-def create_spam_detection_agent() -> ChatAgent:
+def create_spam_detection_agent() -> Agent:
     """Creates a spam detection agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -167,7 +167,7 @@ def create_spam_detection_agent() -> ChatAgent:
     )
 
 
-def create_email_assistant_agent() -> ChatAgent:
+def create_email_assistant_agent() -> Agent:
     """Creates an email assistant agent."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions=(
@@ -188,21 +188,17 @@ async def main() -> None:
     #   store_email -> spam_detection_agent -> to_detection_result -> branch:
     #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
     #     True  -> handle_spam
+    spam_detection_agent = create_spam_detection_agent()
+    email_assistant_agent = create_email_assistant_agent()
+
     workflow = (
-        WorkflowBuilder(start_executor="store_email")
-        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
-        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
-        .register_executor(lambda: store_email, name="store_email")
-        .register_executor(lambda: to_detection_result, name="to_detection_result")
-        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
-        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
-        .register_executor(lambda: handle_spam, name="handle_spam")
-        .add_edge("store_email", "spam_detection_agent")
-        .add_edge("spam_detection_agent", "to_detection_result")
-        .add_edge("to_detection_result", "submit_to_email_assistant", condition=get_condition(False))
-        .add_edge("to_detection_result", "handle_spam", condition=get_condition(True))
-        .add_edge("submit_to_email_assistant", "email_assistant_agent")
-        .add_edge("email_assistant_agent", "finalize_and_send")
+        WorkflowBuilder(start_executor=store_email)
+        .add_edge(store_email, spam_detection_agent)
+        .add_edge(spam_detection_agent, to_detection_result)
+        .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))
+        .add_edge(to_detection_result, handle_spam, condition=get_condition(True))
+        .add_edge(submit_to_email_assistant, email_assistant_agent)
+        .add_edge(email_assistant_agent, finalize_and_send)
         .build()
     )
 

@@ -148,32 +148,25 @@ class DeclarativeWorkflowBuilder:
         if self._validate:
             self._validate_workflow(actions)
 
-        # Use a placeholder for start_executor; it will be overwritten below via _set_start_executor
+        # Create a stable entry node as the start executor, then wire it to the first action.
+        # This avoids needing a placeholder since the entry executor isn't known until after
+        # _create_executors_for_actions runs (which itself needs the builder to add edges).
+        entry_node = JoinExecutor({"kind": "Entry"}, id="_workflow_entry")
+        self._executors[entry_node.id] = entry_node
         builder = WorkflowBuilder(
-            start_executor="_declarative_placeholder",
+            start_executor=entry_node,
             name=self._workflow_id,
             checkpoint_storage=self._checkpoint_storage,
         )
 
-        # First pass: create all executors
-        entry_executor = self._create_executors_for_actions(actions, builder)
+        # Create all executors and wire sequential edges
+        first_executor = self._create_executors_for_actions(actions, builder)
 
-        # Set the entry point
-        if entry_executor:
-            # Check if entry is a control flow structure (If/Switch)
-            if getattr(entry_executor, "_is_if_structure", False) or getattr(
-                entry_executor, "_is_switch_structure", False
-            ):
-                # Create an entry passthrough node and wire to the structure's branches
-                entry_node = JoinExecutor({"kind": "Entry"}, id="_workflow_entry")
-                self._executors[entry_node.id] = entry_node
-                builder._set_start_executor(entry_node)
-                # Use _add_sequential_edge which knows how to wire to structures
-                self._add_sequential_edge(builder, entry_node, entry_executor)
-            else:
-                builder._set_start_executor(entry_executor)
-        else:
+        if not first_executor:
             raise ValueError("Failed to create any executors from actions.")
+
+        # Wire entry node to the first action (handles both regular and control flow targets)
+        self._add_sequential_edge(builder, entry_node, first_executor)
 
         # Resolve pending gotos (back-edges for loops, forward-edges for jumps)
         self._resolve_pending_gotos(builder)
@@ -223,9 +216,11 @@ class DeclarativeWorkflowBuilder:
         for action_def in actions:
             kind = action_def.get("kind", "")
 
-            # Check for duplicate explicit IDs
+            # Check for duplicate or reserved explicit IDs
             explicit_id = action_def.get("id")
             if explicit_id:
+                if explicit_id == "_workflow_entry":
+                    raise ValueError(f"Action ID '{explicit_id}' is reserved for internal use. Choose a different ID.")
                 if explicit_id in seen_ids:
                     raise ValueError(f"Duplicate action ID '{explicit_id}'. Action IDs must be unique.")
                 seen_ids.add(explicit_id)

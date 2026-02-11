@@ -9,8 +9,8 @@ import pytest
 from agent_framework import (
     Executor,
     InProcRunnerContext,
-    Message,
     WorkflowContext,
+    WorkflowMessage,
     handler,
 )
 from agent_framework._workflows._edge import (
@@ -193,7 +193,7 @@ async def test_single_edge_group_send_message() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is True
@@ -212,7 +212,7 @@ async def test_single_edge_group_send_message_with_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is True
@@ -231,7 +231,7 @@ async def test_single_edge_group_send_message_with_invalid_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -250,7 +250,7 @@ async def test_single_edge_group_send_message_with_invalid_data() -> None:
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -270,7 +270,7 @@ async def test_single_edge_group_send_message_with_condition_pass() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is True
@@ -292,7 +292,7 @@ async def test_single_edge_group_send_message_with_condition_fail() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="different")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     # Should return True because message was processed, but condition failed
@@ -318,7 +318,9 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
@@ -363,7 +365,7 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter) -> Non
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="fail")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     # Clear any build spans
     span_exporter.clear()
@@ -398,7 +400,7 @@ async def test_single_edge_group_tracing_type_mismatch(span_exporter) -> None:
 
     # Send incompatible data type
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     # Clear any build spans
     span_exporter.clear()
@@ -432,7 +434,7 @@ async def test_single_edge_group_tracing_target_mismatch(span_exporter) -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="wrong_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="wrong_target")
 
     # Clear any build spans
     span_exporter.clear()
@@ -500,7 +502,7 @@ async def test_source_edge_group_send_message() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
 
@@ -523,7 +525,7 @@ async def test_source_edge_group_send_message_with_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
     success = await edge_runner.send_message(message, state, ctx)
 
@@ -546,7 +548,7 @@ async def test_source_edge_group_send_message_with_invalid_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -566,7 +568,7 @@ async def test_source_edge_group_send_message_with_invalid_data() -> None:
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -586,7 +588,7 @@ async def test_source_edge_group_send_message_only_one_successful_send() -> None
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
 
@@ -635,7 +637,7 @@ async def test_source_edge_group_with_selection_func_send_message() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, state, ctx)
@@ -663,7 +665,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with pytest.raises(RuntimeError):
         await edge_runner.send_message(message, state, ctx)
@@ -688,7 +690,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_target() 
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, state, ctx)
@@ -717,7 +719,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_no
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target2.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target2.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -742,7 +744,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_d
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -767,7 +769,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_in
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -791,7 +793,9 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
@@ -841,7 +845,7 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(
+    message = WorkflowMessage(
         data=data,
         source_id=source.id,
         target_id=target1.id,
@@ -927,7 +931,7 @@ async def test_target_edge_group_send_message_buffer() -> None:
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(
-            Message(data=data, source_id=source1.id),
+            WorkflowMessage(data=data, source_id=source1.id),
             state,
             ctx,
         )
@@ -937,7 +941,7 @@ async def test_target_edge_group_send_message_buffer() -> None:
         assert len(edge_runner._buffer[source1.id]) == 1  # type: ignore
 
         success = await edge_runner.send_message(
-            Message(data=data, source_id=source2.id),
+            WorkflowMessage(data=data, source_id=source2.id),
             state,
             ctx,
         )
@@ -963,7 +967,7 @@ async def test_target_edge_group_send_message_with_invalid_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source1.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source1.id, target_id="invalid_target")
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -984,7 +988,7 @@ async def test_target_edge_group_send_message_with_invalid_data() -> None:
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source1.id)
+    message = WorkflowMessage(data=data, source_id=source1.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -1017,7 +1021,9 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
 
     # Send first message (should be buffered)
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1),
+        WorkflowMessage(
+            data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1
+        ),
         state,
         ctx,
     )
@@ -1049,7 +1055,9 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     span_exporter.clear()
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2),
+        WorkflowMessage(
+            data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2
+        ),
         state,
         ctx,
     )
@@ -1093,7 +1101,7 @@ async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
 
     # Send incompatible data type
     data = "invalid_data"
-    message = Message(data=data, source_id=source1.id)
+    message = WorkflowMessage(data=data, source_id=source1.id)
 
     # Clear any build spans
     span_exporter.clear()
@@ -1130,7 +1138,7 @@ async def test_fan_in_edge_group_with_multiple_message_types() -> None:
     data = MockMessage(data="test")
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id),
+        WorkflowMessage(data=data, source_id=source1.id),
         state,
         ctx,
     )
@@ -1138,7 +1146,7 @@ async def test_fan_in_edge_group_with_multiple_message_types() -> None:
 
     data2 = MockMessageSecondary(data="test")
     success = await edge_runner.send_message(
-        Message(data=data2, source_id=source2.id),
+        WorkflowMessage(data=data2, source_id=source2.id),
         state,
         ctx,
     )
@@ -1161,7 +1169,7 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
     data = MockMessage(data="test")
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id),
+        WorkflowMessage(data=data, source_id=source1.id),
         state,
         ctx,
     )
@@ -1175,7 +1183,7 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
         # source executors as a union.
         data2 = MockMessageSecondary(data="test")
         _ = await edge_runner.send_message(
-            Message(data=data2, source_id=source2.id),
+            WorkflowMessage(data=data2, source_id=source2.id),
             state,
             ctx,
         )
@@ -1275,7 +1283,7 @@ async def test_switch_case_edge_group_send_message() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=-1)
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, state, ctx)
@@ -1285,7 +1293,7 @@ async def test_switch_case_edge_group_send_message() -> None:
 
     # Default condition should
     data = MockMessage(data=1)
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(message, state, ctx)
 
@@ -1314,7 +1322,7 @@ async def test_switch_case_edge_group_send_message_with_invalid_target() -> None
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=-1)
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
@@ -1341,13 +1349,13 @@ async def test_switch_case_edge_group_send_message_with_valid_target() -> None:
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=1)  # Condition will fail
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
     data = MockMessage(data=-1)  # Condition will pass
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
     success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
@@ -1373,7 +1381,7 @@ async def test_switch_case_edge_group_send_message_with_invalid_data() -> None:
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     success = await edge_runner.send_message(message, state, ctx)
     assert success is False

@@ -12,7 +12,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool, ToolProtocol
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool
 
 # Role mapping constants
 AGUI_TO_FRAMEWORK_ROLE: dict[str, str] = {
@@ -200,10 +200,10 @@ def convert_agui_tools_to_agent_framework(
 
 def convert_tools_to_agui_format(
     tools: (
-        ToolProtocol
+        FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None
     ),
 ) -> list[dict[str, Any]] | None:
@@ -225,7 +225,7 @@ def convert_tools_to_agui_format(
 
     # Normalize to list
     if not isinstance(tools, list):
-        tool_list: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = [tools]  # type: ignore[list-item]
+        tool_list: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = [tools]  # type: ignore[list-item]
     else:
         tool_list = tools  # type: ignore[assignment]
 
@@ -256,12 +256,8 @@ def convert_tools_to_agui_format(
                     "parameters": ai_func.parameters(),
                 }
             )
-        elif isinstance(tool_item, ToolProtocol):
-            # Handle other ToolProtocol implementations
-            # For now, we'll skip non-FunctionTool instances as they may not have
-            # the parameters() method. This matches .NET behavior which only
-            # converts FunctionToolDeclaration instances.
-            continue
+        # Note: dict-based hosted tools (CodeInterpreter, WebSearch, etc.) are passed through
+        # as-is in the first branch. Non-FunctionTool, non-dict items are skipped.
 
     return results if results else None
 

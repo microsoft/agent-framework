@@ -9,8 +9,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     Content,
+    Message,
     Role,
     normalize_messages,
 )
@@ -57,7 +57,7 @@ class EchoAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -81,7 +81,7 @@ class EchoAgent(BaseAgent):
 
     async def _run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -91,11 +91,9 @@ class EchoAgent(BaseAgent):
         normalized_messages = normalize_messages(messages)
 
         if not normalized_messages:
-            response_message = ChatMessage(
+            response_message = Message(
                 role=Role.ASSISTANT,
-                contents=[
-                    Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")
-                ],
+                contents=[Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
             )
         else:
             # For simplicity, echo the last user message
@@ -105,7 +103,7 @@ class EchoAgent(BaseAgent):
             else:
                 echo_text = f"{self.echo_prefix}[Non-text message received]"
 
-            response_message = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
+            response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
 
         # Notify the thread of new messages if provided
         if thread is not None:
@@ -115,7 +113,7 @@ class EchoAgent(BaseAgent):
 
     async def _run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -150,7 +148,7 @@ class EchoAgent(BaseAgent):
 
         # Notify the thread of the complete response if provided
         if thread is not None:
-            complete_response = ChatMessage(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
+            complete_response = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
             await self._notify_thread_of_new_messages(thread, normalized_messages, complete_response)
 
 

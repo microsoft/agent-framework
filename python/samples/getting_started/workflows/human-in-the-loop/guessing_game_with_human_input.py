@@ -8,8 +8,8 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -84,7 +84,7 @@ class TurnManager(Executor):
         - Input is a simple starter token (ignored here).
         - Output is an AgentExecutorRequest that triggers the agent to produce a guess.
         """
-        user = ChatMessage("user", text="Start by making your first guess.")
+        user = Message("user", text="Start by making your first guess.")
         await ctx.send_message(AgentExecutorRequest(messages=[user], should_respond=True))
 
     @handler
@@ -136,7 +136,7 @@ class TurnManager(Executor):
             f"Feedback: {reply}. Your last guess was {last_guess}. "
             f"Use this feedback to adjust and make your next guess (1-10)."
         )
-        user_msg = ChatMessage("user", text=feedback_text)
+        user_msg = Message("user", text=feedback_text)
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 

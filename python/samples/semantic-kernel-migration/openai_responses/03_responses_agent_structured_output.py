@@ -47,11 +47,11 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
     from agent_framework.openai import OpenAIResponsesClient
 
-    chat_agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    chat_agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",
     )

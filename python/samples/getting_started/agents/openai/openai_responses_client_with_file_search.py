@@ -2,13 +2,13 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, Content, HostedFileSearchTool
+from agent_framework import Agent, Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """
 OpenAI Responses Client with File Search Example
 
-This sample demonstrates using HostedFileSearchTool with OpenAI Responses Client
+This sample demonstrates using get_file_search_tool() with OpenAI Responses Client
 for direct document-based question answering and information retrieval.
 """
 
@@ -33,7 +33,6 @@ async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Conte
 
 async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
     """Delete the vector store after using it."""
-
     await client.client.vector_stores.delete(vector_store_id=vector_store_id)
     await client.client.files.delete(file_id=file_id)
 
@@ -45,12 +44,12 @@ async def main() -> None:
 
     stream = False
     print(f"User: {message}")
-    file_id, vector_store = await create_vector_store(client)
+    file_id, vector_store_id = await create_vector_store(client)
 
-    agent = ChatAgent(
-        chat_client=client,
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search through files to find information.",
-        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tools=[client.get_file_search_tool(vector_store_ids=[vector_store_id])],
     )
 
     if stream:
@@ -62,7 +61,7 @@ async def main() -> None:
     else:
         response = await agent.run(message)
         print(f"Assistant: {response}")
-    await delete_vector_store(client, file_id, vector_store.vector_store_id)
+    await delete_vector_store(client, file_id, vector_store_id)
 
 
 if __name__ == "__main__":

@@ -4,11 +4,11 @@ import asyncio
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowContext,
     handler,
 )
@@ -20,15 +20,15 @@ from azure.identity import AzureCliCredential
 Sample: Concurrent Orchestration with Custom Agent Executors
 
 This sample shows a concurrent fan-out/fan-in pattern using child Executor classes
-that each own their ChatAgent. The executors accept AgentExecutorRequest inputs
+that each own their Agent. The executors accept AgentExecutorRequest inputs
 and emit AgentExecutorResponse outputs, which allows reuse of the high-level
 ConcurrentBuilder API and the default aggregator.
 
 Demonstrates:
-- Executors that create their ChatAgent in __init__ (via AzureOpenAIChatClient)
+- Executors that create their Agent in __init__ (via AzureOpenAIChatClient)
 - A @handler that converts AgentExecutorRequest -> AgentExecutorResponse
 - ConcurrentBuilder(participants=[...]) to build fan-out/fan-in
-- Default aggregator returning list[ChatMessage] (one user + one assistant per agent)
+- Default aggregator returning list[Message] (one user + one assistant per agent)
 - Workflow completion when all participants become idle
 
 Prerequisites:
@@ -37,10 +37,10 @@ Prerequisites:
 
 
 class ResearcherExec(Executor):
-    agent: ChatAgent
+    agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "researcher"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "researcher"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
@@ -57,10 +57,10 @@ class ResearcherExec(Executor):
 
 
 class MarketerExec(Executor):
-    agent: ChatAgent
+    agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "marketer"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "marketer"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
@@ -77,10 +77,10 @@ class MarketerExec(Executor):
 
 
 class LegalExec(Executor):
-    agent: ChatAgent
+    agent: Agent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "legal"):
-        self.agent = chat_client.as_agent(
+    def __init__(self, client: AzureOpenAIChatClient, id: str = "legal"):
+        self.agent = client.as_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."
@@ -97,11 +97,11 @@ class LegalExec(Executor):
 
 
 async def main() -> None:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    researcher = ResearcherExec(chat_client)
-    marketer = MarketerExec(chat_client)
-    legal = LegalExec(chat_client)
+    researcher = ResearcherExec(client)
+    marketer = MarketerExec(client)
+    legal = LegalExec(client)
 
     workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).build()
 
@@ -110,7 +110,7 @@ async def main() -> None:
 
     if outputs:
         print("===== Final Aggregated Conversation (messages) =====")
-        messages: list[ChatMessage] | Any = outputs[0]  # Get the first (and typically only) output
+        messages: list[Message] | Any = outputs[0]  # Get the first (and typically only) output
         for i, msg in enumerate(messages, start=1):
             name = msg.author_name if msg.author_name else "user"
             print(f"{'-' * 60}\n\n{i:02d} [{name}]:\n{msg.text}")

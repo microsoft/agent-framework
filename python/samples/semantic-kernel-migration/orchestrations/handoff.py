@@ -16,11 +16,11 @@ from collections.abc import AsyncIterable, Iterator, Sequence
 from typing import cast
 
 from agent_framework import (
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
-from agent_framework.orchestrations import HandoffBuilder, HandoffUserInputRequest
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import HandoffBuilder, HandoffUserInputRequest
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -228,10 +228,10 @@ def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent
     return requests
 
 
-def _extract_final_conversation(events: list[WorkflowEvent]) -> list[ChatMessage]:
+def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
     for event in events:
         if event.type == "output":
-            data = cast(list[ChatMessage], event.data)
+            data = cast(list[Message], event.data)
             return data
     return []
 

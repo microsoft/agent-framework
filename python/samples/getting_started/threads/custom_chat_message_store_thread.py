@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Collection
 from typing import Any
 
-from agent_framework import ChatMessage, ChatMessageStoreProtocol
+from agent_framework import ChatMessageStoreProtocol, Message
 from agent_framework._threads import ChatMessageStoreState
 from agent_framework.openai import OpenAIChatClient
 
@@ -21,15 +21,15 @@ class CustomChatMessageStore(ChatMessageStoreProtocol):
     """Implementation of custom chat message store.
     In real applications, this can be an implementation of relational database or vector store."""
 
-    def __init__(self, messages: Collection[ChatMessage] | None = None) -> None:
-        self._messages: list[ChatMessage] = []
+    def __init__(self, messages: Collection[Message] | None = None) -> None:
+        self._messages: list[Message] = []
         if messages:
             self._messages.extend(messages)
 
-    async def add_messages(self, messages: Collection[ChatMessage]) -> None:
+    async def add_messages(self, messages: Collection[Message]) -> None:
         self._messages.extend(messages)
 
-    async def list_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[Message]:
         return self._messages
 
     @classmethod

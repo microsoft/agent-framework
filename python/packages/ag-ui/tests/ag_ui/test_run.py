@@ -6,7 +6,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
 )
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 
 from agent_framework_ag_ui._run import (
     FlowState,
@@ -212,7 +212,7 @@ class TestInjectStateContext:
 
     def test_no_state_message(self):
         """Returns original messages when no state context needed."""
-        messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+        messages = [Message(role="user", contents=[Content.from_text("Hello")])]
         result = _inject_state_context(messages, {}, {})
         assert result == messages
 
@@ -224,8 +224,8 @@ class TestInjectStateContext:
     def test_last_message_not_user(self):
         """Returns original messages when last message is not from user."""
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
-            ChatMessage(role="assistant", contents=[Content.from_text("Hi")]),
+            Message(role="user", contents=[Content.from_text("Hello")]),
+            Message(role="assistant", contents=[Content.from_text("Hi")]),
         ]
         state = {"key": "value"}
         schema = {"properties": {"key": {"type": "string"}}}
@@ -237,8 +237,8 @@ class TestInjectStateContext:
         """Injects state context before last user message."""
 
         messages = [
-            ChatMessage(role="system", contents=[Content.from_text("You are helpful")]),
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
+            Message(role="system", contents=[Content.from_text("You are helpful")]),
+            Message(role="user", contents=[Content.from_text("Hello")]),
         ]
         state = {"document": "content"}
         schema = {"properties": {"document": {"type": "string"}}}
@@ -405,7 +405,7 @@ def test_extract_approved_state_updates_no_handler():
     """Test _extract_approved_state_updates returns empty with no handler."""
     from agent_framework_ag_ui._run import _extract_approved_state_updates
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, None)
     assert result == {}
 
@@ -416,7 +416,7 @@ def test_extract_approved_state_updates_no_approval():
     from agent_framework_ag_ui._run import _extract_approved_state_updates
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
-    messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, handler)
     assert result == {}
 

@@ -3,7 +3,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import ChatAgent, HostedMCPTool
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun"):
     """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query)
     while len(result.user_input_requests) > 0:
@@ -30,10 +30,13 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
                 f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
                 f" with arguments: {user_input_needed.function_call.arguments}"
             )
-            new_inputs.append(ChatMessage(role="assistant", contents=[user_input_needed]))
+            new_inputs.append(Message(role="assistant", contents=[user_input_needed]))
             user_approval = input("Approve function call? (y/n): ")
             new_inputs.append(
-                ChatMessage(role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")])
+                Message(
+                    role="user",
+                    contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
+                )
             )
 
         result = await agent.run(new_inputs)
@@ -42,7 +45,7 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
 
 async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     result = await agent.run(query, thread=thread, store=True)
     while len(result.user_input_requests) > 0:
@@ -54,7 +57,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
             )
             user_approval = input("Approve function call? (y/n): ")
             new_input.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
@@ -65,13 +68,13 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
 
 async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
     """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
-    new_input: list[ChatMessage] = []
+    new_input: list[Message] = []
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(ChatMessage(role="user", text=query))
+        new_input.append(Message(role="user", text=query))
         async for update in agent.run(new_input, thread=thread, options={"store": True}, stream=True):
             if update.user_input_requests:
                 for user_input_needed in update.user_input_requests:
@@ -81,8 +84,9 @@ async def handle_approvals_with_thread_streaming(query: str, agent: "SupportsAge
                     )
                     user_approval = input("Approve function call? (y/n): ")
                     new_input.append(
-                        ChatMessage(
-                            role="user", contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")]
+                        Message(
+                            role="user",
+                            contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                         )
                     )
                     new_input_added = True
@@ -94,21 +98,24 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     """Example showing Mcp Tools with approvals without using a thread."""
     print("=== Mcp with approvals and without thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
+
+    # Create MCP tool with specific approval settings
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we don't require approval for microsoft_docs_search tool calls
+        # but we do for any other tool
+        approval_mode={"never_require_approval": ["microsoft_docs_search"]},
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+    async with Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we don't require approval for microsoft_docs_search tool calls
-            # but we do for any other tool
-            approval_mode={"never_require_approval": ["microsoft_docs_search"]},
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -127,22 +134,25 @@ async def run_hosted_mcp_without_approval() -> None:
     """Example showing Mcp Tools without approvals."""
     print("=== Mcp without approvals ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
+
+    # Create MCP tool without approval requirements
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we don't require approval for any function calls
+        # this means we will not see the approval messages,
+        # it is fully handled by the service and a final response is returned.
+        approval_mode="never_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+    async with Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we don't require approval for any function calls
-            # this means we will not see the approval messages,
-            # it is fully handled by the service and a final response is returned.
-            approval_mode="never_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         query1 = "How to create an Azure storage account using az cli?"
@@ -161,20 +171,23 @@ async def run_hosted_mcp_with_thread() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
+
+    # Create MCP tool with always require approval
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we require approval for all function calls
+        approval_mode="always_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+    async with Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
-            approval_mode="always_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         thread = agent.get_new_thread()
@@ -194,20 +207,23 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
     """Example showing Mcp Tools with approvals using a thread."""
     print("=== Mcp with approvals and with thread ===")
     credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(credential=credential)
+
+    # Create MCP tool with always require approval
+    mcp_tool = client.get_mcp_tool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        # we require approval for all function calls
+        approval_mode="always_require",
+    )
+
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    async with ChatAgent(
-        chat_client=AzureOpenAIResponsesClient(
-            credential=credential,
-        ),
+    async with Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=HostedMCPTool(
-            name="Microsoft Learn MCP",
-            url="https://learn.microsoft.com/api/mcp",
-            # we require approval for all function calls
-            approval_mode="always_require",
-        ),
+        tools=[mcp_tool],
     ) as agent:
         # First query
         thread = agent.get_new_thread()
