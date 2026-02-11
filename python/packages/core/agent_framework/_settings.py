@@ -149,6 +149,9 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
         # Allow str for SecretString fields (will be coerced)
         if isinstance(value, str) and any(isinstance(a, type) and issubclass(a, str) for a in allowed):
             return
+        # Allow int for float fields (standard numeric promotion)
+        if isinstance(value, int) and float in allowed:
+            return
 
         from .exceptions import ServiceInitializationError
 
