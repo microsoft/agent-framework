@@ -10,4 +10,4 @@ and see the [README](https://github.com/microsoft/agent-framework/tree/main/pyth
 
 # Run samples with the Ollama Conector
 
-You can find samples how to run the connector in the [Ollama provider samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/providers/ollama).
+You can find samples how to run the connector in the [Ollama provider samples](../../samples/02-agents/providers/ollama).

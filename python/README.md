@@ -70,7 +70,7 @@ client = AzureOpenAIChatClient(
 )
 ```
 
-See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
+See the following [setup guide](samples/01-get-started) for more information.
 
 ## 2. Create a Simple Agent
 
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
+You can explore additional agent samples [here](samples/02-agents).
 
 ## 5. Multi-Agent Orchestration
 
@@ -237,10 +237,10 @@ For more advanced orchestration patterns including Sequential, Concurrent, Group
 
 ## More Examples & Samples
 
-- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/chat_client): Direct chat client usage patterns
+- [Getting Started with Agents](samples/02-agents): Basic agent creation and tool usage
+- [Chat Client Examples](samples/02-agents/chat_client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
-- [Workflow Samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/03-workflows): Advanced multi-agent patterns
+- [Workflow Samples](samples/03-workflows): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
 
