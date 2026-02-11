@@ -137,7 +137,7 @@ async def main(client_type: str) -> None:
 
     print("\n" + "=" * 50)
     print("Voice chat with tools is now active!")
-    print("Try asking about the weather, time, or math.")
+    print("Try asking about the weather or time.")
     print("Press Ctrl+C to end the conversation.")
     print("=" * 50 + "\n")
 
