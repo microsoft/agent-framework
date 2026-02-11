@@ -22,6 +22,7 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_responses_client_with_code_interpreter.py`](azure_responses_client_with_code_interpreter.py) | Shows how to use `AzureOpenAIResponsesClient.get_code_interpreter_tool()` with Azure agents to write and execute Python code. Includes helper methods for accessing code interpreter data from response chunks. |
 | [`azure_responses_client_with_explicit_settings.py`](azure_responses_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific responses client, configuring settings explicitly including endpoint and deployment name. |
 | [`azure_responses_client_with_file_search.py`](azure_responses_client_with_file_search.py) | Demonstrates using `AzureOpenAIResponsesClient.get_file_search_tool()` with Azure OpenAI Responses Client for direct document-based question answering and information retrieval from vector stores. |
+| [`azure_responses_client_with_foundry.py`](azure_responses_client_with_foundry.py) | Shows how to create an agent using an Azure AI Foundry project endpoint instead of a direct Azure OpenAI endpoint. Requires the `azure-ai-projects` package. |
 | [`azure_responses_client_with_function_tools.py`](azure_responses_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
 | [`azure_responses_client_with_hosted_mcp.py`](azure_responses_client_with_hosted_mcp.py) | Shows how to integrate Azure OpenAI Responses Client with hosted Model Context Protocol (MCP) servers using `AzureOpenAIResponsesClient.get_mcp_tool()` for extended functionality. |
 | [`azure_responses_client_with_local_mcp.py`](azure_responses_client_with_local_mcp.py) | Shows how to integrate Azure OpenAI Responses Client with local Model Context Protocol (MCP) servers using MCPStreamableHTTPTool for extended functionality. |
@@ -34,6 +35,9 @@ Make sure to set the following environment variables before running the examples
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI Responses deployment
+
+For the Foundry project sample (`azure_responses_client_with_foundry.py`), also set:
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
 
 Optionally, you can set:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-02-15-preview`)

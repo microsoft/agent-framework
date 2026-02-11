@@ -595,7 +595,7 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     assert first_request_id is not None
 
     # Get checkpoint
-    checkpoints = await storage.list_checkpoints(workflow1.id)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow1.name)
     checkpoint_id = max(checkpoints, key=lambda cp: cp.iteration_count).checkpoint_id
 
     # Step 2: Resume workflow from checkpoint

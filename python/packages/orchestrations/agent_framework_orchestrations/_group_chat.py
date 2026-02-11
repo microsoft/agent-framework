@@ -32,7 +32,6 @@ from agent_framework import Agent, AgentThread, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -476,7 +475,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()
-        state["cache"] = encode_chat_messages(self._cache)
+        state["cache"] = self._cache
         serialized_thread = await self._thread.serialize()
         state["thread"] = serialized_thread
 
@@ -486,7 +485,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint."""
         await super().on_checkpoint_restore(state)
-        self._cache = decode_chat_messages(state.get("cache", []))
+        self._cache = state.get("cache", [])
         serialized_thread = state.get("thread")
         if serialized_thread:
             self._thread = await self._agent.deserialize_thread(serialized_thread)

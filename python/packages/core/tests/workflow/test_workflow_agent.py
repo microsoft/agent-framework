@@ -607,7 +607,7 @@ class TestWorkflowAgent:
 
         # Drain workflow events to get checkpoint
         # The workflow should have created checkpoints
-        checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+        checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
         assert len(checkpoints) > 0, "Checkpoints should have been created when checkpoint_storage is provided"
 
     async def test_agent_executor_output_response_false_filters_streaming_events(self):

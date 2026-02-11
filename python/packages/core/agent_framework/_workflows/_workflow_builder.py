@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -88,7 +89,11 @@ class WorkflowBuilder:
 
         Args:
             max_iterations: Maximum number of iterations for workflow convergence. Default is 100.
-            name: Optional human-readable name for the workflow.
+            name: A human-readable name for the workflow builder. This name will be the identifier
+                for all workflow instances created from this builder. If not provided, a unique name
+                will be generated. This will be useful for versioning, monitoring, checkpointing, and
+                debugging workflows. Keeping this name unique across versions of your workflow definitions
+                is recommended for better observability and management.
             description: Optional description of what the workflow does.
             start_executor: The starting executor for the workflow. Can be an Executor instance
                 or SupportsAgentRun instance.
@@ -101,7 +106,7 @@ class WorkflowBuilder:
         self._start_executor: Executor | None = None
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._max_iterations: int = max_iterations
-        self._name: str | None = name
+        self._name: str = name or f"WorkflowBuilder-{uuid.uuid4()!s}"
         self._description: str | None = description
         # Maps underlying SupportsAgentRun object id -> wrapped Executor so we reuse the same wrapper
         # across start_executor / add_edge calls. This avoids multiple AgentExecutor instances
@@ -658,19 +663,18 @@ class WorkflowBuilder:
                     executors,
                     start_executor,
                     context,
-                    self._max_iterations,
-                    name=self._name,
+                    self._name,
                     description=self._description,
+                    max_iterations=self._max_iterations,
                     output_executors=output_executors,
                 )
                 build_attributes: dict[str, Any] = {
+                    OtelAttr.WORKFLOW_BUILDER_NAME: self._name,
                     OtelAttr.WORKFLOW_ID: workflow.id,
                     OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
                 }
-                if workflow.name:
-                    build_attributes[OtelAttr.WORKFLOW_NAME] = workflow.name
-                if workflow.description:
-                    build_attributes[OtelAttr.WORKFLOW_DESCRIPTION] = workflow.description
+                if self._description:
+                    build_attributes[OtelAttr.WORKFLOW_BUILDER_DESCRIPTION] = self._description
                 span.set_attributes(build_attributes)
 
                 # Add workflow build completed event

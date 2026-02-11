@@ -46,7 +46,7 @@ def get_weather(
 
 async def thread_tracking_middleware(
     context: AgentContext,
-    call_next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """MiddlewareTypes that tracks and logs thread behavior across runs."""
     thread_messages = []
@@ -57,7 +57,7 @@ async def thread_tracking_middleware(
     print(f"[MiddlewareTypes pre-execution] Thread history messages: {len(thread_messages)}")
 
     # Call call_next to execute the agent
-    await call_next(context)
+    await call_next()
 
     # Check thread state after agent execution
     updated_thread_messages = []

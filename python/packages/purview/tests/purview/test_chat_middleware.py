@@ -49,7 +49,7 @@ class TestPurviewChatPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
             next_called = False
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 nonlocal next_called
                 next_called = True
 
@@ -57,7 +57,7 @@ class TestPurviewChatPolicyMiddleware:
                     def __init__(self):
                         self.messages = [Message(role="assistant", text="Hi there")]
 
-                ctx.result = Result()
+                chat_context.result = Result()
 
             await middleware.process(chat_context, mock_next)
             assert next_called
@@ -67,7 +67,7 @@ class TestPurviewChatPolicyMiddleware:
     async def test_blocks_prompt(self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext) -> None:
         with patch.object(middleware._processor, "process_messages", return_value=(True, "user-123")):
 
-            async def mock_next(ctx: ChatContext) -> None:  # should not run
+            async def mock_next() -> None:  # should not run
                 raise AssertionError("next should not be called when prompt blocked")
 
             with pytest.raises(MiddlewareTermination):
@@ -88,12 +88,12 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 class Result:
                     def __init__(self):
                         self.messages = [Message(role="assistant", text="Sensitive output")]  # pragma: no cover
 
-                ctx.result = Result()
+                chat_context.result = Result()
 
             await middleware.process(chat_context, mock_next)
             assert call_state["count"] == 2
@@ -114,8 +114,8 @@ class TestPurviewChatPolicyMiddleware:
         )
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: ChatContext) -> None:
-                ctx.result = MagicMock()
+            async def mock_next() -> None:
+                streaming_context.result = MagicMock()
 
             await middleware.process(streaming_context, mock_next)
             assert mock_proc.call_count == 1
@@ -138,10 +138,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Response")]
-                ctx.result = result
+                chat_context.result = result
 
             await middleware.process(chat_context, mock_next)
 
@@ -162,10 +162,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Response")]
-                ctx.result = result
+                chat_context.result = result
 
             await middleware.process(chat_context, mock_next)
 
@@ -194,7 +194,7 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 raise AssertionError("next should not be called")
 
             # Should raise the exception
@@ -224,10 +224,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="OK")]
-                ctx.result = result
+                context.result = result
 
             with pytest.raises(PurviewPaymentRequiredError):
                 await middleware.process(context, mock_next)
@@ -249,7 +249,7 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Response")]
                 context.result = result
@@ -265,9 +265,9 @@ class TestPurviewChatPolicyMiddleware:
         """Test middleware handles result that doesn't have messages attribute."""
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 # Set result to something without messages attribute
-                ctx.result = "Some string result"
+                chat_context.result = "Some string result"
 
             await middleware.process(chat_context, mock_next)
 
@@ -289,7 +289,7 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Response")]
                 context.result = result
@@ -313,7 +313,7 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=ValueError("boom")):
 
-            async def mock_next(_: ChatContext) -> None:
+            async def mock_next() -> None:
                 raise AssertionError("next should not be called")
 
             with pytest.raises(ValueError, match="boom"):
@@ -342,10 +342,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", side_effect=side_effect):
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="OK")]
-                ctx.result = result
+                context.result = result
 
             with pytest.raises(ValueError, match="post"):
                 await middleware.process(context, mock_next)
@@ -361,10 +361,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Hi")]
-                ctx.result = result
+                context.result = result
 
             await middleware.process(context, mock_next)
 
@@ -382,10 +382,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Hi")]
-                ctx.result = result
+                context.result = result
 
             await middleware.process(context, mock_next)
 
@@ -401,10 +401,10 @@ class TestPurviewChatPolicyMiddleware:
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
-            async def mock_next(ctx: ChatContext) -> None:
+            async def mock_next() -> None:
                 result = MagicMock()
                 result.messages = [Message(role="assistant", text="Response")]
-                ctx.result = result
+                context.result = result
 
             await middleware.process(context, mock_next)
 

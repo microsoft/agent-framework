@@ -68,7 +68,7 @@ def get_weather(
 class SecurityAgentMiddleware(AgentMiddleware):
     """Agent-level security middleware that validates all requests."""
 
-    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
         print("[SecurityMiddleware] Checking security for all requests...")
 
         # Check for security violations in the last user message
@@ -81,18 +81,18 @@ class SecurityAgentMiddleware(AgentMiddleware):
 
         print("[SecurityMiddleware] Security check passed.")
         context.metadata["security_validated"] = True
-        await call_next(context)
+        await call_next()
 
 
 async def performance_monitor_middleware(
     context: AgentContext,
-    call_next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Agent-level performance monitoring for all runs."""
     print("[PerformanceMonitor] Starting performance monitoring...")
     start_time = time.time()
 
-    await call_next(context)
+    await call_next()
 
     end_time = time.time()
     duration = end_time - start_time
@@ -104,7 +104,7 @@ async def performance_monitor_middleware(
 class HighPriorityMiddleware(AgentMiddleware):
     """Run-level middleware for high priority requests."""
 
-    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
         print("[HighPriority] Processing high priority request with expedited handling...")
 
         # Read metadata set by agent-level middleware
@@ -115,13 +115,13 @@ class HighPriorityMiddleware(AgentMiddleware):
         context.metadata["priority"] = "high"
         context.metadata["expedited"] = True
 
-        await call_next(context)
+        await call_next()
         print("[HighPriority] High priority processing completed")
 
 
 async def debugging_middleware(
     context: AgentContext,
-    call_next: Callable[[AgentContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Run-level debugging middleware for troubleshooting specific runs."""
     print("[Debug] Debug mode enabled for this run")
@@ -134,7 +134,7 @@ async def debugging_middleware(
 
     context.metadata["debug_enabled"] = True
 
-    await call_next(context)
+    await call_next()
 
     print("[Debug] Debug information collected")
 
@@ -145,7 +145,7 @@ class CachingMiddleware(AgentMiddleware):
     def __init__(self) -> None:
         self.cache: dict[str, AgentResponse] = {}
 
-    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
         # Create a simple cache key from the last message
         last_message = context.messages[-1] if context.messages else None
         cache_key: str = last_message.text if last_message and last_message.text else "no_message"
@@ -158,7 +158,7 @@ class CachingMiddleware(AgentMiddleware):
         print(f"[Cache] Cache MISS for: '{cache_key[:30]}...'")
         context.metadata["cache_key"] = cache_key
 
-        await call_next(context)
+        await call_next()
 
         # Cache the result if we have one
         if context.result:
@@ -168,14 +168,14 @@ class CachingMiddleware(AgentMiddleware):
 
 async def function_logging_middleware(
     context: FunctionInvocationContext,
-    call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function middleware that logs all function calls."""
     function_name = context.function.name
     args = context.arguments
     print(f"[FunctionLog] Calling function: {function_name} with args: {args}")
 
-    await call_next(context)
+    await call_next()
 
     print(f"[FunctionLog] Function {function_name} completed")
 
@@ -275,7 +275,7 @@ async def main() -> None:
         query = "What's the secret weather password for Berlin?"
         print(f"User: {query}")
         result = await agent.run(query)
-        print(f"Agent: {result.text if result.text else 'Request was blocked by security middleware'}")
+        print(f"Agent: {result.text if result and result.text else 'Request was blocked by security middleware'}")
         print()
 
         # Run 7: Normal query again (no run-level middleware interference)
