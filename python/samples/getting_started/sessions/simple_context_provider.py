@@ -28,11 +28,16 @@ class UserInfoMemory(BaseContextProvider):
     def _get_user_info(self, state: dict[str, Any]) -> UserInfo:
         """Load UserInfo from session state, creating it if absent."""
         my_state = state.setdefault(self.source_id, {})
-        return UserInfo.model_validate(my_state.get("user_info", {}))
+        info = my_state.get("user_info")
+        if isinstance(info, UserInfo):
+            return info
+        user_info = UserInfo()
+        my_state["user_info"] = user_info
+        return user_info
 
     def _save_user_info(self, state: dict[str, Any], user_info: UserInfo) -> None:
-        """Persist UserInfo back to session state."""
-        state.setdefault(self.source_id, {})["user_info"] = user_info.model_dump()
+        """Persist UserInfo back to session state (stored as-is; serialized automatically)."""
+        state.setdefault(self.source_id, {})["user_info"] = user_info
 
     async def after_run(
         self,

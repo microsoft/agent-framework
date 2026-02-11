@@ -30,6 +30,7 @@ __all__ = [
     "BaseHistoryProvider",
     "InMemoryHistoryProvider",
     "SessionContext",
+    "register_state_type",
 ]
 
 
@@ -37,16 +38,50 @@ __all__ = [
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
 
-def _register_state_type(cls: type) -> None:
-    """Register a type for automatic deserialization in session state."""
+def register_state_type(cls: type) -> None:
+    """Register a type for automatic deserialization in session state.
+
+    Call this for any custom type (including Pydantic models) that you store
+    in ``session.state`` and want to survive ``to_dict()`` / ``from_dict()``
+    round-trips. Types with ``to_dict``/``from_dict`` methods or Pydantic
+    ``BaseModel`` subclasses are handled automatically.
+
+    The type identifier defaults to ``cls.__name__.lower()`` but can be
+    overridden by defining a ``_get_type_identifier`` classmethod.
+
+    Note:
+        Pydantic models are auto-registered on first serialization, but
+        pre-registering ensures deserialization works even if the model
+        hasn't been serialized in this process yet (e.g. cold-start restore).
+
+    Args:
+        cls: The type to register.
+    """
     type_id: str = getattr(cls, "_get_type_identifier", lambda: cls.__name__.lower())()
     _STATE_TYPE_REGISTRY[type_id] = cls
 
 
+# Keep internal alias for framework use
+_register_state_type = register_state_type
+
+
 def _serialize_value(value: Any) -> Any:
-    """Serialize a single value, handling objects with to_dict()."""
+    """Serialize a single value, handling objects with to_dict() and Pydantic models."""
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
+    # Pydantic BaseModel support — import lazily to avoid hard dep at module level
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(value, BaseModel):
+            data = value.model_dump()
+            type_id: str = getattr(value.__class__, "_get_type_identifier", lambda: value.__class__.__name__.lower())()
+            data["type"] = type_id
+            # Auto-register for round-trip deserialization
+            _STATE_TYPE_REGISTRY.setdefault(type_id, value.__class__)
+            return data
+    except ImportError:
+        pass
     if isinstance(value, list):
         return [_serialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, dict):
@@ -59,8 +94,18 @@ def _deserialize_value(value: Any) -> Any:
     if isinstance(value, dict) and "type" in value:
         type_id = str(value["type"])  # pyright: ignore[reportUnknownArgumentType]
         cls = _STATE_TYPE_REGISTRY.get(type_id)
-        if cls is not None and hasattr(cls, "from_dict"):
-            return cls.from_dict(value)  # type: ignore[union-attr]
+        if cls is not None:
+            if hasattr(cls, "from_dict"):
+                return cls.from_dict(value)  # type: ignore[union-attr]
+            # Pydantic BaseModel support
+            try:
+                from pydantic import BaseModel
+
+                if issubclass(cls, BaseModel):
+                    data = {k: v for k, v in value.items() if k != "type"}
+                    return cls.model_validate(data)
+            except ImportError:
+                pass
     if isinstance(value, list):
         return [_deserialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, dict):
