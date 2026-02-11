@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -115,15 +116,11 @@ async def main() -> None:
         print("No plan review request emitted; nothing to resume.")
         return
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
-    if not checkpoints:
+    resume_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow.name)
+    if not resume_checkpoint:
         print("No checkpoints persisted.")
         return
 
-    resume_checkpoint = max(
-        checkpoints,
-        key=lambda cp: (cp.iteration_count, cp.timestamp),
-    )
     print(f"Using checkpoint {resume_checkpoint.checkpoint_id} at iteration {resume_checkpoint.iteration_count}")
 
     # Show that the checkpoint JSON indeed contains the pending plan-review request record.
@@ -180,7 +177,7 @@ async def main() -> None:
     def _pending_message_count(cp: WorkflowCheckpoint) -> int:
         return sum(len(msg_list) for msg_list in cp.messages.values() if isinstance(msg_list, list))
 
-    all_checkpoints = await checkpoint_storage.list_checkpoints(resume_checkpoint.workflow_id)
+    all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=resume_checkpoint.workflow_name)
     later_checkpoints_with_messages = [
         cp
         for cp in all_checkpoints
@@ -188,10 +185,7 @@ async def main() -> None:
     ]
 
     if later_checkpoints_with_messages:
-        post_plan_checkpoint = max(
-            later_checkpoints_with_messages,
-            key=lambda cp: (cp.iteration_count, cp.timestamp),
-        )
+        post_plan_checkpoint = max(later_checkpoints_with_messages, key=lambda cp: datetime.fromisoformat(cp.timestamp))
     else:
         later_checkpoints = [cp for cp in all_checkpoints if cp.iteration_count > resume_checkpoint.iteration_count]
 
@@ -199,10 +193,7 @@ async def main() -> None:
             print("\nNo additional checkpoints recorded beyond plan approval; sample complete.")
             return
 
-        post_plan_checkpoint = max(
-            later_checkpoints,
-            key=lambda cp: (cp.iteration_count, cp.timestamp),
-        )
+        post_plan_checkpoint = max(later_checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
     print("\n=== Stage 3: resume from post-plan checkpoint ===")
     pending_messages = _pending_message_count(post_plan_checkpoint)
     print(

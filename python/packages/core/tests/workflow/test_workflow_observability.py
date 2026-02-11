@@ -306,8 +306,8 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert len(build_spans_with_metadata) == 1
     metadata_build_span = build_spans_with_metadata[0]
     assert metadata_build_span.attributes is not None
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_NAME) == "Test Pipeline"
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_DESCRIPTION) == "Test workflow description"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_NAME) == "Test Pipeline"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_DESCRIPTION) == "Test workflow description"
 
     # Clear spans to separate build from run tracing
     span_exporter.clear()
@@ -451,14 +451,14 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     await ctx.send_message(message)
 
     # Create a checkpoint that includes the message
-    checkpoint_id = await ctx.create_checkpoint(State(), 0)
+    checkpoint_id = await ctx.create_checkpoint("test_name", "test_hash", State(), None, 0)
     checkpoint = await ctx.load_checkpoint(checkpoint_id)
     assert checkpoint is not None
 
     # Check serialized message includes trace context
     serialized_msg = checkpoint.messages["source"][0]
-    assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
-    assert serialized_msg["source_span_ids"] == ["span123"]
+    assert serialized_msg.trace_contexts == [{"traceparent": "00-trace-span-01"}]
+    assert serialized_msg.source_span_ids == ["span123"]
 
     # Test deserialization
     await ctx.apply_checkpoint(checkpoint)

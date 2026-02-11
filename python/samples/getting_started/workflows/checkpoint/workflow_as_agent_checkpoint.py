@@ -69,7 +69,7 @@ async def basic_checkpointing() -> None:
         print(f"[{speaker}]: {msg.text}")
 
     # Show checkpoints that were created
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nCheckpoints created: {len(checkpoints)}")
     for i, cp in enumerate(checkpoints[:5], 1):
         print(f"  {i}. {cp.checkpoint_id}")
@@ -110,7 +110,7 @@ async def checkpointing_with_thread() -> None:
         print(f"[assistant]: {response2.messages[0].text}")
 
     # Show accumulated state
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nTotal checkpoints across both turns: {len(checkpoints)}")
 
     if thread.message_store:
@@ -147,7 +147,7 @@ async def streaming_with_checkpoints() -> None:
 
     print()  # Newline after streaming
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nCheckpoints created during stream: {len(checkpoints)}")
 
 

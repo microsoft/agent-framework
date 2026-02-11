@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from dataclasses import dataclass  # noqa: I001
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, cast
 
+import pytest
 
 from agent_framework._workflows._checkpoint_encoding import (
-    DATACLASS_MARKER,
-    MODEL_MARKER,
+    _TYPE_MARKER,  # type: ignore
+    CheckpointDecodingError,
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
-from agent_framework._workflows._typing_utils import is_instance_of
 
 
 @dataclass
@@ -30,7 +31,22 @@ class SampleResponse:
     request_id: str
 
 
-def test_decode_dataclass_with_nested_request() -> None:
+# --- Tests for round-trip encode/decode ---
+
+
+def test_roundtrip_simple_dataclass() -> None:
+    """Test encoding and decoding of a simple dataclass."""
+    original = SampleRequest(request_id="test-123", prompt="test prompt")
+
+    encoded = encode_checkpoint_value(original)
+    decoded = cast(SampleRequest, decode_checkpoint_value(encoded))
+
+    assert isinstance(decoded, SampleRequest)
+    assert decoded.request_id == "test-123"
+    assert decoded.prompt == "test prompt"
+
+
+def test_roundtrip_dataclass_with_nested_request() -> None:
     """Test that dataclass with nested dataclass fields can be encoded and decoded correctly."""
     original = SampleResponse(
         data="approve",
@@ -49,45 +65,7 @@ def test_decode_dataclass_with_nested_request() -> None:
     assert decoded.original_request.request_id == "abc"
 
 
-def test_is_instance_of_coerces_nested_dataclass_dict() -> None:
-    """Test that is_instance_of can handle nested structures with dict conversion."""
-    response = SampleResponse(
-        data="approve",
-        original_request=SampleRequest(request_id="req-1", prompt="prompt"),
-        request_id="req-1",
-    )
-
-    # Simulate checkpoint decode fallback leaving a dict
-    response.original_request = cast(
-        Any,
-        {
-            "request_id": "req-1",
-            "prompt": "prompt",
-        },
-    )
-
-    assert is_instance_of(response, SampleResponse)
-    assert isinstance(response.original_request, dict)
-
-    # Verify the dict contains expected values
-    dict_request = cast(dict[str, Any], response.original_request)
-    assert dict_request["request_id"] == "req-1"
-    assert dict_request["prompt"] == "prompt"
-
-
-def test_encode_decode_simple_dataclass() -> None:
-    """Test encoding and decoding of a simple dataclass."""
-    original = SampleRequest(request_id="test-123", prompt="test prompt")
-
-    encoded = encode_checkpoint_value(original)
-    decoded = cast(SampleRequest, decode_checkpoint_value(encoded))
-
-    assert isinstance(decoded, SampleRequest)
-    assert decoded.request_id == "test-123"
-    assert decoded.prompt == "test prompt"
-
-
-def test_encode_decode_nested_structures() -> None:
+def test_roundtrip_nested_structures() -> None:
     """Test encoding and decoding of complex nested structures."""
     nested_data = {
         "requests": [
@@ -110,7 +88,6 @@ def test_encode_decode_nested_structures() -> None:
     assert "requests" in decoded
     assert "responses" in decoded
 
-    # Check the requests list
     requests = cast(list[Any], decoded["requests"])
     assert isinstance(requests, list)
     assert len(requests) == 2
@@ -120,7 +97,6 @@ def test_encode_decode_nested_structures() -> None:
     assert first_request.request_id == "req-1"
     assert second_request.request_id == "req-2"
 
-    # Check the responses dict
     responses = cast(dict[str, Any], decoded["responses"])
     assert isinstance(responses, dict)
     assert "req-1" in responses
@@ -131,108 +107,145 @@ def test_encode_decode_nested_structures() -> None:
     assert response.original_request.request_id == "req-1"
 
 
-def test_encode_allows_marker_key_without_value_key() -> None:
-    """Test that encoding a dict with only the marker key (no 'value') is allowed."""
-    dict_with_marker_only = {
-        MODEL_MARKER: "some.module:FakeClass",
-        "other_key": "test",
+def test_roundtrip_datetime() -> None:
+    """Test round-trip encoding/decoding of datetime objects."""
+    original = datetime(2024, 5, 4, 12, 30, 45, tzinfo=timezone.utc)
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded, datetime)
+    assert decoded == original
+
+
+def test_roundtrip_primitives() -> None:
+    """Test that primitive types round-trip unchanged."""
+    for value in ["hello", 42, 3.14, True, False, None]:
+        assert decode_checkpoint_value(encode_checkpoint_value(value)) == value
+
+
+def test_roundtrip_dict_with_mixed_values() -> None:
+    """Test round-trip of a dict containing both primitives and complex types."""
+    original = {
+        "name": "test",
+        "request": SampleRequest(request_id="r1", prompt="p1"),
+        "count": 5,
     }
-    encoded = encode_checkpoint_value(dict_with_marker_only)
-    assert MODEL_MARKER in encoded
-    assert "other_key" in encoded
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert decoded["name"] == "test"
+    assert decoded["count"] == 5
+    assert isinstance(decoded["request"], SampleRequest)
+    assert decoded["request"].request_id == "r1"
 
 
-def test_encode_allows_value_key_without_marker_key() -> None:
-    """Test that encoding a dict with only 'value' key (no marker) is allowed."""
-    dict_with_value_only = {
-        "value": {"data": "test"},
-        "other_key": "test",
-    }
-    encoded = encode_checkpoint_value(dict_with_value_only)
-    assert "value" in encoded
-    assert "other_key" in encoded
+# --- Tests for decode primitives ---
 
 
-def test_encode_allows_marker_with_value_key() -> None:
-    """Test that encoding a dict with marker and 'value' keys is allowed.
-
-    This is allowed because legitimate encoded data may contain these keys,
-    and security is enforced at deserialization time by validating class types.
-    """
-    dict_with_both = {
-        MODEL_MARKER: "some.module:SomeClass",
-        "value": {"data": "test"},
-        "strategy": "to_dict",
-    }
-    encoded = encode_checkpoint_value(dict_with_both)
-    assert MODEL_MARKER in encoded
-    assert "value" in encoded
+def test_decode_string() -> None:
+    """Test decoding a string passes through unchanged."""
+    assert decode_checkpoint_value("hello") == "hello"
 
 
-class NotADataclass:
+def test_decode_integer() -> None:
+    """Test decoding an integer passes through unchanged."""
+    assert decode_checkpoint_value(42) == 42
+
+
+def test_decode_none() -> None:
+    """Test decoding None passes through unchanged."""
+    assert decode_checkpoint_value(None) is None
+
+
+# --- Tests for decode collections ---
+
+
+def test_decode_plain_dict() -> None:
+    """Test decoding a plain dictionary with primitive values."""
+    data = {"a": 1, "b": "two"}
+    assert decode_checkpoint_value(data) == {"a": 1, "b": "two"}
+
+
+def test_decode_plain_list() -> None:
+    """Test decoding a plain list with primitive values."""
+    data = [1, "two", 3.0]
+    assert decode_checkpoint_value(data) == [1, "two", 3.0]
+
+
+# --- Tests for type verification ---
+
+
+def test_decode_raises_on_type_mismatch() -> None:
+    """Test that decoding raises CheckpointDecodingError when type doesn't match."""
+    # Encode a SampleRequest but tamper with the type marker
+    encoded = encode_checkpoint_value(SampleRequest(request_id="r1", prompt="p1"))
+    assert isinstance(encoded, dict)
+    encoded[_TYPE_MARKER] = "nonexistent.module:FakeClass"
+
+    with pytest.raises(CheckpointDecodingError, match="Type mismatch"):
+        decode_checkpoint_value(encoded)
+
+
+class NotADataclass:  # noqa: B903
     """A regular class that is not a dataclass."""
 
     def __init__(self, value: str) -> None:
         self.value = value
 
-    def get_value(self) -> str:
-        return self.value
+
+def test_roundtrip_regular_class() -> None:
+    """Test that regular (non-dataclass) objects can be round-tripped via pickle."""
+    original = NotADataclass(value="test_value")
+
+    encoded = encode_checkpoint_value(original)
+    decoded = cast(NotADataclass, decode_checkpoint_value(encoded))
+
+    assert isinstance(decoded, NotADataclass)
+    assert decoded.value == "test_value"
 
 
-class NotAModel:
-    """A regular class that does not support the model protocol."""
+def test_roundtrip_tuple() -> None:
+    """Test that tuples preserve their type through encode/decode roundtrip."""
+    original = (1, "two", 3.0)
 
-    def __init__(self, value: str) -> None:
-        self.value = value
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
 
-    def get_value(self) -> str:
-        return self.value
-
-
-def test_decode_rejects_non_dataclass_with_dataclass_marker() -> None:
-    """Test that decode returns raw value when marked class is not a dataclass."""
-    # Manually construct a payload that claims NotADataclass is a dataclass
-    fake_payload = {
-        DATACLASS_MARKER: f"{NotADataclass.__module__}:{NotADataclass.__name__}",
-        "value": {"value": "test_value"},
-    }
-
-    decoded = decode_checkpoint_value(fake_payload)
-
-    # Should return the raw decoded value, not an instance of NotADataclass
-    assert isinstance(decoded, dict)
-    assert decoded["value"] == "test_value"
+    assert isinstance(decoded, tuple)
+    assert decoded == original
 
 
-def test_decode_rejects_non_model_with_model_marker() -> None:
-    """Test that decode returns raw value when marked class doesn't support model protocol."""
-    # Manually construct a payload that claims NotAModel supports the model protocol
-    fake_payload = {
-        MODEL_MARKER: f"{NotAModel.__module__}:{NotAModel.__name__}",
-        "strategy": "to_dict",
-        "value": {"value": "test_value"},
-    }
+def test_roundtrip_set() -> None:
+    """Test that sets preserve their type through encode/decode roundtrip."""
+    original = {1, 2, 3}
 
-    decoded = decode_checkpoint_value(fake_payload)
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
 
-    # Should return the raw decoded value, not an instance of NotAModel
-    assert isinstance(decoded, dict)
-    assert decoded["value"] == "test_value"
+    assert isinstance(decoded, set)
+    assert decoded == original
 
 
-def test_encode_allows_nested_dict_with_marker_keys() -> None:
-    """Test that encoding allows nested dicts containing marker patterns.
+def test_roundtrip_nested_tuple_in_dict() -> None:
+    """Test that tuples nested inside dicts preserve their type."""
+    original = {"items": (1, 2, 3), "name": "test"}
 
-    Security is enforced at deserialization time, not serialization time,
-    so legitimate encoded data can contain markers at any nesting level.
-    """
-    nested_data = {
-        "outer": {
-            MODEL_MARKER: "some.module:SomeClass",
-            "value": {"data": "test"},
-        }
-    }
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
 
-    encoded = encode_checkpoint_value(nested_data)
-    assert "outer" in encoded
-    assert MODEL_MARKER in encoded["outer"]
+    assert isinstance(decoded["items"], tuple)
+    assert decoded["items"] == (1, 2, 3)
+    assert decoded["name"] == "test"
+
+
+def test_roundtrip_set_in_list() -> None:
+    """Test that sets nested inside lists preserve their type."""
+    original = [{"tags": {1, 2, 3}}]
+
+    encoded = encode_checkpoint_value(original)
+    decoded = decode_checkpoint_value(encoded)
+
+    assert isinstance(decoded[0]["tags"], set)
+    assert decoded[0]["tags"] == {1, 2, 3}
