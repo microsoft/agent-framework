@@ -133,7 +133,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         // Act & Assert
         await this.TakeNextTestAsync(
-            displayName: nameof(ForeachTakeNextAsync),
+            displayName: nameof(ForeachTakeNextWithIndexAsync),
             items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
             indexName: "CurrentIndex");
@@ -258,7 +258,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         ForeachExecutor action = new(model, this.State);
 
         // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
+        await this.ExecuteAsync(action, ForeachExecutor.Steps.Next(action.Id), action.TakeNextAsync);
 
         // Assert
         VerifyModel(model, action);
