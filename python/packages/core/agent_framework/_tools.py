@@ -667,8 +667,8 @@ def _build_pydantic_model_from_json_schema(
     required = schema.get("required", [])
     definitions = schema.get("$defs", {})
 
-    # Check if 'properties' is missing or not a dictionary
-    if not properties:
+    # Check if 'properties' is missing, empty, or not a dictionary
+    if not properties or not isinstance(properties, Mapping):
         # Allow extra fields so arguments are preserved even when the schema
         # doesn't declare properties (e.g., MCP servers returning {"type": "object"}).
         return create_model(f"{model_name}_input", __config__=ConfigDict(extra="allow"))

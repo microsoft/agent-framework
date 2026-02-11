@@ -2755,13 +2755,19 @@ async def test_mcp_streamable_http_tool_preserves_args_with_empty_input_schema()
         await tool.load_tools()
 
         for func in tool.functions:
-            # Invoke with arguments that the LLM would send
-            await func.invoke(id="test_id_123", name="test_name")
+            # Simulate the auto-invocation path: model_validate -> invoke(arguments=args)
+            # This is the path that triggers the regression (Pydantic model_dump drops extras)
+            args = func.input_model.model_validate({"id": "test_id_123", "name": "test_name"})
+            await func.invoke(arguments=args)
 
             # Verify arguments reached the MCP session
             mock_session.call_tool.assert_called_once()
             call_args = mock_session.call_tool.call_args
-            arguments = call_args.kwargs.get("arguments", call_args[1] if len(call_args) > 1 else {})
+            arguments = call_args.kwargs.get("arguments")
+            if arguments is None and len(call_args.args) > 1:
+                arguments = call_args.args[1]
+            if arguments is None:
+                arguments = {}
 
             assert arguments.get("id") == "test_id_123", f"Expected 'id' argument for {func.name} but got: {arguments}"
             assert arguments.get("name") == "test_name", (
