@@ -224,6 +224,7 @@ class AzureOpenAIRealtimeClient(AzureOpenAIConfigMixin, BaseRealtimeClient):
     async def disconnect(self) -> None:
         """Disconnect from Azure OpenAI Realtime API."""
         self._connected = False
+        self._pending_function_names.clear()
         if self._connection_manager:
             with contextlib.suppress(Exception):
                 await self._connection_manager.__aexit__(None, None, None)
