@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from agent_framework import ChatAgent, ChatClientProtocol, FunctionTool
+from agent_framework import Agent, FunctionTool, SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 if sys.version_info >= (3, 13):
@@ -165,22 +165,22 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
     For other requests, use the appropriate tool (create_chart, display_timeline, show_comparison_table).
     """
 
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
+OptionsT = TypeVar("OptionsT", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
 
-def ui_generator_agent(chat_client: ChatClientProtocol[TOptions]) -> AgentFrameworkAgent:
+def ui_generator_agent(client: SupportsChatGetResponse[OptionsT]) -> AgentFrameworkAgent:
     """Create a UI generator agent with custom React component rendering.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with UI generation capabilities
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="ui_generator",
         instructions=_UI_GENERATOR_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_haiku, create_chart, display_timeline, show_comparison_table],
         # Force tool usage - the LLM MUST call a tool, cannot respond with plain text
         default_options={"tool_choice": "required"},  # type: ignore

@@ -8,10 +8,10 @@ from collections.abc import MutableSequence, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final
 
-from ._types import ChatMessage
+from ._types import Message
 
 if TYPE_CHECKING:
-    from ._tools import ToolProtocol
+    from ._tools import FunctionTool
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -34,12 +34,12 @@ class Context:
     Examples:
         .. code-block:: python
 
-            from agent_framework import Context, ChatMessage
+            from agent_framework import Context, Message
 
             # Create context with instructions
             context = Context(
                 instructions="Use a professional tone when responding.",
-                messages=[ChatMessage(content="Previous context", role="user")],
+                messages=[Message(content="Previous context", role="user")],
                 tools=[my_tool],
             )
 
@@ -51,8 +51,8 @@ class Context:
     def __init__(
         self,
         instructions: str | None = None,
-        messages: Sequence[ChatMessage] | None = None,
-        tools: Sequence[ToolProtocol] | None = None,
+        messages: Sequence[Message] | None = None,
+        tools: Sequence[FunctionTool] | None = None,
     ):
         """Create a new Context object.
 
@@ -62,8 +62,8 @@ class Context:
             tools: The list of tools to provide to this run.
         """
         self.instructions = instructions
-        self.messages: Sequence[ChatMessage] = messages or []
-        self.tools: Sequence[ToolProtocol] = tools or []
+        self.messages: Sequence[Message] = messages or []
+        self.tools: Sequence[FunctionTool] = tools or []
 
 
 # region ContextProvider
@@ -85,7 +85,7 @@ class ContextProvider(ABC):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ContextProvider, Context, ChatMessage
+            from agent_framework import ContextProvider, Context, Message
 
 
             class CustomContextProvider(ContextProvider):
@@ -96,7 +96,7 @@ class ContextProvider(ABC):
 
             # Use with a chat agent
             async with CustomContextProvider() as provider:
-                agent = ChatAgent(chat_client=client, name="assistant", context_provider=provider)
+                agent = Agent(client=client, name="assistant", context_provider=provider)
     """
 
     # Default prompt to be used by all context providers when assembling memories/instructions
@@ -116,8 +116,8 @@ class ContextProvider(ABC):
 
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
@@ -136,7 +136,7 @@ class ContextProvider(ABC):
         pass
 
     @abstractmethod
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Called just before the model/agent is invoked.
 
         Implementers can load any additional context required at this time,

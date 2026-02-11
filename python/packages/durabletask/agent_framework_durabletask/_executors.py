@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentResponse, AgentThread, ChatMessage, Content, get_logger
+from agent_framework import AgentResponse, AgentThread, Content, Message, get_logger
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -179,7 +179,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         Returns:
             AgentResponse: Acceptance response with correlation ID
         """
-        acceptance_message = ChatMessage(
+        acceptance_message = Message(
             role="system",
             contents=[
                 Content.from_text(
@@ -360,7 +360,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                     "[ClientAgentExecutor] Error converting response for correlation: %s",
                     correlation_id,
                 )
-                error_message = ChatMessage(
+                error_message = Message(
                     role="system",
                     contents=[
                         Content.from_error(
@@ -375,7 +375,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                 self.max_poll_retries,
                 correlation_id,
             )
-            error_message = ChatMessage(
+            error_message = Message(
                 role="system",
                 contents=[
                     Content.from_error(

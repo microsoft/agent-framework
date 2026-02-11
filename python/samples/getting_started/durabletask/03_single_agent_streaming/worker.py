@@ -18,7 +18,7 @@ import os
 from datetime import timedelta
 
 import redis.asyncio as aioredis
-from agent_framework import AgentResponseUpdate, ChatAgent
+from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
@@ -143,11 +143,11 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
             logger.error(f"Error writing end-of-stream marker: {ex}", exc_info=True)
 
 
-def create_travel_agent() -> "ChatAgent":
+def create_travel_agent() -> "Agent":
     """Create the TravelPlanner agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured TravelPlanner agent with travel planning tools.
+        Agent: The configured TravelPlanner agent with travel planning tools.
     """
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="TravelPlanner",

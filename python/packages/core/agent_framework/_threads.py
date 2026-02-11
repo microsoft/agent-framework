@@ -7,7 +7,7 @@ from typing import Any, Protocol, TypeVar
 
 from ._memory import ContextProvider
 from ._serialization import SerializationMixin
-from ._types import ChatMessage
+from ._types import Message
 from .exceptions import AgentThreadException
 
 __all__ = ["AgentThread", "ChatMessageStore", "ChatMessageStoreProtocol"]
@@ -22,17 +22,17 @@ class ChatMessageStoreProtocol(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
 
 
             class MyMessageStore:
                 def __init__(self):
                     self._messages = []
 
-                async def list_messages(self) -> list[ChatMessage]:
+                async def list_messages(self) -> list[Message]:
                     return self._messages
 
-                async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+                async def add_messages(self, messages: Sequence[Message]) -> None:
                     self._messages.extend(messages)
 
                 @classmethod
@@ -52,7 +52,7 @@ class ChatMessageStoreProtocol(Protocol):
             store = MyMessageStore()
     """
 
-    async def list_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[Message]:
         """Gets all the messages from the store that should be used for the next agent invocation.
 
         Messages are returned in ascending chronological order, with the oldest message first.
@@ -65,11 +65,11 @@ class ChatMessageStoreProtocol(Protocol):
         """
         ...
 
-    async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+    async def add_messages(self, messages: Sequence[Message]) -> None:
         """Adds messages to the store.
 
         Args:
-            messages: The sequence of ChatMessage objects to add to the store.
+            messages: The sequence of Message objects to add to the store.
         """
         ...
 
@@ -128,7 +128,7 @@ class ChatMessageStoreState(SerializationMixin):
 
     def __init__(
         self,
-        messages: Sequence[ChatMessage] | Sequence[MutableMapping[str, Any]] | None = None,
+        messages: Sequence[Message] | Sequence[MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the store state.
@@ -141,16 +141,16 @@ class ChatMessageStoreState(SerializationMixin):
 
         """
         if not messages:
-            self.messages: list[ChatMessage] = []
+            self.messages: list[Message] = []
             return
         if not isinstance(messages, list):
             raise TypeError("Messages should be a list")
-        new_messages: list[ChatMessage] = []
+        new_messages: list[Message] = []
         for msg in messages:
-            if isinstance(msg, ChatMessage):
+            if isinstance(msg, Message):
                 new_messages.append(msg)
             else:
-                new_messages.append(ChatMessage.from_dict(msg))
+                new_messages.append(Message.from_dict(msg))
         self.messages = new_messages
 
 
@@ -182,7 +182,7 @@ class AgentThreadState(SerializationMixin):
                 raise TypeError("Could not parse ChatMessageStoreState.")
 
 
-TChatMessageStore = TypeVar("TChatMessageStore", bound="ChatMessageStore")
+ChatMessageStoreT = TypeVar("ChatMessageStoreT", bound="ChatMessageStore")
 
 
 class ChatMessageStore:
@@ -198,13 +198,13 @@ class ChatMessageStore:
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessageStore, ChatMessage
+            from agent_framework import ChatMessageStore, Message
 
             # Create an empty store
             store = ChatMessageStore()
 
             # Add messages
-            message = ChatMessage(role="user", text="Hello")
+            message = Message(role="user", text="Hello")
             await store.add_messages([message])
 
             # Retrieve messages
@@ -217,7 +217,7 @@ class ChatMessageStore:
             restored_store = await ChatMessageStore.deserialize(state)
     """
 
-    def __init__(self, messages: Sequence[ChatMessage] | None = None):
+    def __init__(self, messages: Sequence[Message] | None = None):
         """Create a ChatMessageStore for use in a thread.
 
         Args:
@@ -225,26 +225,26 @@ class ChatMessageStore:
         """
         self.messages = list(messages) if messages else []
 
-    async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+    async def add_messages(self, messages: Sequence[Message]) -> None:
         """Add messages to the store.
 
         Args:
-            messages: Sequence of ChatMessage objects to add to the store.
+            messages: Sequence of Message objects to add to the store.
         """
         self.messages.extend(messages)
 
-    async def list_messages(self) -> list[ChatMessage]:
+    async def list_messages(self) -> list[Message]:
         """Get all messages from the store in chronological order.
 
         Returns:
-            List of ChatMessage objects, ordered from oldest to newest.
+            List of Message objects, ordered from oldest to newest.
         """
         return self.messages
 
     @classmethod
     async def deserialize(
-        cls: type[TChatMessageStore], serialized_store_state: MutableMapping[str, Any], **kwargs: Any
-    ) -> TChatMessageStore:
+        cls: type[ChatMessageStoreT], serialized_store_state: MutableMapping[str, Any], **kwargs: Any
+    ) -> ChatMessageStoreT:
         """Create a new ChatMessageStore instance from serialized state data.
 
         Args:
@@ -289,7 +289,7 @@ class ChatMessageStore:
         return state.to_dict()
 
 
-TAgentThread = TypeVar("TAgentThread", bound="AgentThread")
+AgentThreadT = TypeVar("AgentThreadT", bound="AgentThread")
 
 
 class AgentThread:
@@ -302,21 +302,21 @@ class AgentThread:
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatAgent, ChatMessageStore
+            from agent_framework import Agent, ChatMessageStore
             from agent_framework.openai import OpenAIChatClient
 
             client = OpenAIChatClient(model="gpt-4o")
 
             # Create agent with service-managed threads using a service_thread_id
-            service_agent = ChatAgent(name="assistant", client=client)
+            service_agent = Agent(name="assistant", client=client)
             service_thread = await service_agent.get_new_thread(service_thread_id="thread_abc123")
 
             # Create agent with service-managed threads using conversation_id
-            conversation_agent = ChatAgent(name="assistant", client=client, conversation_id="thread_abc123")
+            conversation_agent = Agent(name="assistant", client=client, conversation_id="thread_abc123")
             conversation_thread = await conversation_agent.get_new_thread()
 
             # Create agent with custom message store factory
-            local_agent = ChatAgent(name="assistant", client=client, chat_message_store_factory=ChatMessageStore)
+            local_agent = Agent(name="assistant", client=client, chat_message_store_factory=ChatMessageStore)
             local_thread = await local_agent.get_new_thread()
 
             # Serialize and restore thread state
@@ -401,11 +401,11 @@ class AgentThread:
 
         self._message_store = message_store
 
-    async def on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
+    async def on_new_messages(self, new_messages: Message | Sequence[Message]) -> None:
         """Invoked when a new message has been contributed to the chat by any participant.
 
         Args:
-            new_messages: The new ChatMessage or sequence of ChatMessage objects to add to the thread.
+            new_messages: The new Message or sequence of Message objects to add to the thread.
         """
         if self._service_thread_id is not None:
             # If the thread messages are stored in the service there is nothing to do here,
@@ -416,7 +416,7 @@ class AgentThread:
             # create a default in memory store.
             self._message_store = ChatMessageStore()
         # If a store has been provided, we need to add the messages to the store.
-        if isinstance(new_messages, ChatMessage):
+        if isinstance(new_messages, Message):
             new_messages = [new_messages]
         await self._message_store.add_messages(new_messages)
 
@@ -437,12 +437,12 @@ class AgentThread:
 
     @classmethod
     async def deserialize(
-        cls: type[TAgentThread],
+        cls: type[AgentThreadT],
         serialized_thread_state: MutableMapping[str, Any],
         *,
         message_store: ChatMessageStoreProtocol | None = None,
         **kwargs: Any,
-    ) -> TAgentThread:
+    ) -> AgentThreadT:
         """Deserializes the state from a dictionary into a new AgentThread instance.
 
         Args:

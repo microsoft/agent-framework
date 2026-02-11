@@ -102,7 +102,7 @@ def _make_powerfx_safe(value: Any) -> Any:
     """Convert a value to a PowerFx-serializable form.
 
     PowerFx can only serialize primitive types, dicts, and lists.
-    Custom objects (like ChatMessage) must be converted to dicts or excluded.
+    Custom objects (like Message) must be converted to dicts or excluded.
 
     Args:
         value: Any Python value
@@ -558,8 +558,8 @@ class DeclarativeWorkflowState:
                 # Try "text" key first (simple dict format)
                 if "text" in last_msg:
                     return str(last_msg["text"])
-                # Try extracting from "contents" (ChatMessage dict format)
-                # ChatMessage.text concatenates text from all TextContent items
+                # Try extracting from "contents" (Message dict format)
+                # Message.text concatenates text from all TextContent items
                 contents = last_msg.get("contents", [])
                 if isinstance(contents, list):
                     text_parts = []

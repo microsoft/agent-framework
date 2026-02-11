@@ -3,6 +3,7 @@
 import asyncio
 
 from agent_framework import (
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessageStore,
@@ -70,15 +71,12 @@ async def main() -> None:
         # Set the message store to store messages in memory.
         shared_thread.message_store = ChatMessageStore()
 
+        writer_executor = AgentExecutor(writer, agent_thread=shared_thread)
+        reviewer_executor = AgentExecutor(reviewer, agent_thread=shared_thread)
+
         workflow = (
-            WorkflowBuilder(start_executor="writer")
-            .register_agent(factory_func=lambda: writer, name="writer", agent_thread=shared_thread)
-            .register_agent(factory_func=lambda: reviewer, name="reviewer", agent_thread=shared_thread)
-            .register_executor(
-                factory_func=lambda: intercept_agent_response,
-                name="intercept_agent_response",
-            )
-            .add_chain(["writer", "intercept_agent_response", "reviewer"])
+            WorkflowBuilder(start_executor=writer_executor)
+            .add_chain([writer_executor, intercept_agent_response, reviewer_executor])
             .build()
         )
 

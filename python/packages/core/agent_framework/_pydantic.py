@@ -14,7 +14,7 @@ HTTPsUrl = Annotated[AnyUrl, UrlConstraints(max_length=2083, allowed_schemes=["h
 __all__ = ["AFBaseSettings", "HTTPsUrl"]
 
 
-TSettings = TypeVar("TSettings", bound="AFBaseSettings")
+SettingsT = TypeVar("SettingsT", bound="AFBaseSettings")
 
 
 class AFBaseSettings(BaseSettings):
@@ -50,7 +50,7 @@ class AFBaseSettings(BaseSettings):
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         super().__init__(**kwargs)
 
-    def __new__(cls: type[TSettings], *args: Any, **kwargs: Any) -> TSettings:
+    def __new__(cls: type[SettingsT], *args: Any, **kwargs: Any) -> SettingsT:
         """Override the __new__ method to set the env_prefix."""
         # for both, if supplied but None, set to default
         if "env_file_encoding" in kwargs and kwargs["env_file_encoding"] is not None:

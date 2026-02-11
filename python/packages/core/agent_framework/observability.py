@@ -39,22 +39,22 @@ if TYPE_CHECKING:  # pragma: no cover
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
     from ._threads import AgentThread
     from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
-        ChatMessage,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
         Content,
         FinishReason,
+        Message,
         ResponseStream,
     )
 
-    TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 __all__ = [
     "OBSERVABILITY_SETTINGS",
@@ -71,7 +71,7 @@ __all__ = [
 
 
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
-TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol[Any]")
+ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
 logger = get_logger()
@@ -122,7 +122,7 @@ OPERATION_DURATION_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
 #
 # This is a workaround, we'll find a generic and better solution - see
 # https://github.com/open-telemetry/semantic-conventions/issues/1701
-class ChatMessageListTimestampFilter(logging.Filter):
+class MessageListTimestampFilter(logging.Filter):
     """A filter to increment the timestamp of INFO logs by 1 microsecond."""
 
     INDEX_KEY: ClassVar[str] = "chat_message_index"
@@ -135,7 +135,7 @@ class ChatMessageListTimestampFilter(logging.Filter):
         return True
 
 
-logger.addFilter(ChatMessageListTimestampFilter())
+logger.addFilter(MessageListTimestampFilter())
 
 
 class OtelAttr(str, Enum):
@@ -1049,15 +1049,15 @@ def _get_token_usage_histogram() -> metrics.Histogram:
     )
 
 
-TOptions_co = TypeVar(
-    "TOptions_co",
+OptionsCoT = TypeVar(
+    "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
 
 
-class ChatTelemetryLayer(Generic[TOptions_co]):
+class ChatTelemetryLayer(Generic[OptionsCoT]):
     """Layer that wraps chat client get_response with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
@@ -1070,39 +1070,39 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
-        options: ChatOptions[TResponseModelT],
+        options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse[TResponseModelT]]: ...
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
@@ -1139,8 +1139,14 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
-            span_cm = _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL)
-            span = span_cm.__enter__()
+            # Create span directly without trace.use_span() context attachment.
+            # Streaming spans are closed asynchronously in cleanup hooks, which run
+            # in a different async context than creation — using use_span() would
+            # cause "Failed to detach context" errors from OpenTelemetry.
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span_name = attributes.get(SpanAttributes.LLM_REQUEST_MODEL, "unknown")
+            span = get_tracer().start_span(f"{operation} {span_name}")
+            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1157,7 +1163,7 @@ class ChatTelemetryLayer(Generic[TOptions_co]):
                 if span_state["closed"]:
                     return
                 span_state["closed"] = True
-                span_cm.__exit__(None, None, None)
+                span.end()
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
@@ -1257,7 +1263,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         thread: AgentThread | None = None,
@@ -1267,7 +1273,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
         thread: AgentThread | None = None,
@@ -1276,7 +1282,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -1326,8 +1332,14 @@ class AgentTelemetryLayer:
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
-            span_cm = _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME)
-            span = span_cm.__enter__()
+            # Create span directly without trace.use_span() context attachment.
+            # Streaming spans are closed asynchronously in cleanup hooks, which run
+            # in a different async context than creation — using use_span() would
+            # cause "Failed to detach context" errors from OpenTelemetry.
+            operation = attributes.get(OtelAttr.OPERATION, "operation")
+            span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
+            span = get_tracer().start_span(f"{operation} {span_name}")
+            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1344,7 +1356,7 @@ class AgentTelemetryLayer:
                 if span_state["closed"]:
                     return
                 span_state["closed"] = True
-                span_cm.__exit__(None, None, None)
+                span.end()
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
@@ -1588,7 +1600,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | ChatMessage | Sequence[str | ChatMessage],
+    messages: str | Message | Sequence[str | Message],
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
@@ -1608,7 +1620,7 @@ def _capture_messages(
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
                 OtelAttr.PROVIDER_NAME: provider_name,
-                ChatMessageListTimestampFilter.INDEX_KEY: index,
+                MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
     if finish_reason:
@@ -1621,7 +1633,7 @@ def _capture_messages(
         span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
 
 
-def _to_otel_message(message: ChatMessage) -> dict[str, Any]:
+def _to_otel_message(message: Message) -> dict[str, Any]:
     """Create a otel representation of a message."""
     return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
 

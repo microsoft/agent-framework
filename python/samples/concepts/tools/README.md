@@ -20,7 +20,7 @@ sequenceDiagram
     participant Agent as Agent.run()
     participant AML as AgentMiddlewareLayer
     participant AMP as AgentMiddlewarePipeline
-    participant RawAgent as RawChatAgent.run()
+    participant RawAgent as RawAgent.run()
     participant CML as ChatMiddlewareLayer
     participant CMP as ChatMiddlewarePipeline
     participant FIL as FunctionInvocationLayer
@@ -46,14 +46,14 @@ sequenceDiagram
     alt Non-Streaming (stream=False)
         RawAgent->>RawAgent: _prepare_run_context() [async]
         Note right of RawAgent: Builds: thread_messages, chat_options, tools
-        RawAgent->>CML: chat_client.get_response(stream=False)
+        RawAgent->>CML: client.get_response(stream=False)
     else Streaming (stream=True)
         RawAgent->>RawAgent: ResponseStream.from_awaitable()
         Note right of RawAgent: Defers async prep to stream consumption
         RawAgent-->>User: Returns ResponseStream immediately
         Note over RawAgent,CML: Async work happens on iteration
         RawAgent->>RawAgent: _prepare_run_context() [deferred]
-        RawAgent->>CML: chat_client.get_response(stream=True)
+        RawAgent->>CML: client.get_response(stream=True)
     end
 
     Note over CML,CMP: Chat Middleware Layer
@@ -132,7 +132,7 @@ sequenceDiagram
 | Field | Type | Description |
 |-------|------|-------------|
 | `agent` | `SupportsAgentRun` | The agent being invoked |
-| `messages` | `list[ChatMessage]` | Input messages (mutable) |
+| `messages` | `list[Message]` | Input messages (mutable) |
 | `thread` | `AgentThread \| None` | Conversation thread |
 | `options` | `Mapping[str, Any]` | Chat options dict |
 | `stream` | `bool` | Whether streaming is enabled |
@@ -142,9 +142,9 @@ sequenceDiagram
 
 **Key Operations:**
 1. `categorize_middleware()` separates middleware by type (agent, chat, function)
-2. Chat and function middleware are forwarded to `chat_client`
+2. Chat and function middleware are forwarded to `client`
 3. `AgentMiddlewarePipeline.execute()` runs the agent middleware chain
-4. Final handler calls `RawChatAgent.run()`
+4. Final handler calls `RawAgent.run()`
 
 **What Can Be Modified:**
 - `context.messages` - Add, remove, or modify input messages
@@ -154,14 +154,14 @@ sequenceDiagram
 
 ### 2. Chat Middleware Layer (`ChatMiddlewareLayer`)
 
-**Entry Point:** `chat_client.get_response(messages, options)`
+**Entry Point:** `client.get_response(messages, options)`
 
 **Context Object:** `ChatContext`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `chat_client` | `ChatClientProtocol` | The chat client |
-| `messages` | `Sequence[ChatMessage]` | Messages to send |
+| `client` | `SupportsChatGetResponse` | The chat client |
+| `messages` | `Sequence[Message]` | Messages to send |
 | `options` | `Mapping[str, Any]` | Chat options |
 | `stream` | `bool` | Whether streaming |
 | `metadata` | `dict` | Shared data between middleware |
@@ -267,7 +267,7 @@ class TerminatingMiddleware(FunctionMiddleware):
         if self.should_terminate(context):
             context.result = "terminated by middleware"
             raise MiddlewareTermination  # Exit function invocation loop
-        await call_next(context)
+        await call_next()
 ```
 
 ## Arguments Added/Altered at Each Layer
@@ -275,7 +275,7 @@ class TerminatingMiddleware(FunctionMiddleware):
 ### Agent Layer → Chat Layer
 
 ```python
-# RawChatAgent._prepare_run_context() builds:
+# RawAgent._prepare_run_context() builds:
 {
     "thread": AgentThread,          # Validated/created thread
     "input_messages": [...],        # Normalized input messages
@@ -347,7 +347,7 @@ class CachingMiddleware(FunctionMiddleware):
             return  # Upstream post-processing still runs
 
         # Option B: Call call_next, then return normally
-        await call_next(context)
+        await call_next()
         self.cache[context.function.name] = context.result
         return  # Normal completion
 ```
@@ -362,7 +362,7 @@ class BlockedFunctionMiddleware(FunctionMiddleware):
         if context.function.name in self.blocked_functions:
             context.result = "Function blocked by policy"
             raise MiddlewareTermination("Blocked")  # Skips ALL post-processing
-        await call_next(context)
+        await call_next()
 ```
 
 ### 3. Raise Any Other Exception
@@ -374,7 +374,7 @@ class ValidationMiddleware(FunctionMiddleware):
     async def process(self, context: FunctionInvocationContext, call_next):
         if not self.is_valid(context.arguments):
             raise ValueError("Invalid arguments")  # Bubbles up to user
-        await call_next(context)
+        await call_next()
 ```
 
 ## `return` vs `raise MiddlewareTermination`
@@ -385,7 +385,7 @@ The key difference is what happens to **upstream middleware's post-processing**:
 class MiddlewareA(AgentMiddleware):
     async def process(self, context, call_next):
         print("A: before")
-        await call_next(context)
+        await call_next()
         print("A: after")  # Does this run?
 
 class MiddlewareB(AgentMiddleware):
@@ -410,7 +410,7 @@ With middleware registered as `[MiddlewareA, MiddlewareB]`:
 
 ## Calling `call_next()` or Not
 
-The decision to call `call_next(context)` determines whether downstream middleware and the actual operation execute:
+The decision to call `call_next()` determines whether downstream middleware and the actual operation execute:
 
 ### Without calling `call_next()` - Skip downstream
 
@@ -430,7 +430,7 @@ async def process(self, context, call_next):
 ```python
 async def process(self, context, call_next):
     # Pre-processing
-    await call_next(context)  # Execute downstream + actual operation
+    await call_next()  # Execute downstream + actual operation
     # Post-processing (context.result now contains real result)
     return
 ```
@@ -450,7 +450,7 @@ async def process(self, context, call_next):
 | `raise MiddlewareTermination` | Yes | ✅ | ✅ | ❌ No |
 | `raise OtherException` | Either | Depends | Depends | ❌ No (exception propagates) |
 
-> **Note:** The first row (`return` after calling `call_next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await call_next(context)` without an explicit `return` statement achieves this pattern.
+> **Note:** The first row (`return` after calling `call_next()`) is the default behavior. Python functions implicitly return `None` at the end, so simply calling `await call_next()` without an explicit `return` statement achieves this pattern.
 
 ## Streaming vs Non-Streaming
 
@@ -463,7 +463,7 @@ Returns `Awaitable[AgentResponse]`:
 ```python
 async def _run_non_streaming():
     ctx = await self._prepare_run_context(...)  # Async preparation
-    response = await self.chat_client.get_response(stream=False, ...)
+    response = await self.client.get_response(stream=False, ...)
     await self._finalize_response_and_update_thread(...)
     return AgentResponse(...)
 ```
@@ -476,7 +476,7 @@ Returns `ResponseStream[AgentResponseUpdate, AgentResponse]` **synchronously**:
 # Async preparation is deferred using ResponseStream.from_awaitable()
 async def _get_stream():
     ctx = await self._prepare_run_context(...)  # Deferred until iteration
-    return self.chat_client.get_response(stream=True, ...)
+    return self.client.get_response(stream=True, ...)
 
 return (
     ResponseStream.from_awaitable(_get_stream())

@@ -4,9 +4,9 @@ import asyncio
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Message,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
@@ -33,20 +33,20 @@ def round_robin_selector(state: GroupChatState) -> str:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Participant agents
-    expert = ChatAgent(
+    expert = Agent(
         name="PythonExpert",
         instructions=(
             "You are an expert in Python in a workgroup. "
             "Your job is to answer Python related questions and refine your answer "
             "based on feedback from all the other participants."
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
-    verifier = ChatAgent(
+    verifier = Agent(
         name="AnswerVerifier",
         instructions=(
             "You are a programming expert in a workgroup. "
@@ -54,10 +54,10 @@ async def main() -> None:
             "out statements that are technically true but practically dangerous."
             "If there is nothing woth pointing out, respond with 'The answer looks good to me.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
-    clarifier = ChatAgent(
+    clarifier = Agent(
         name="AnswerClarifier",
         instructions=(
             "You are an accessibility expert in a workgroup. "
@@ -65,10 +65,10 @@ async def main() -> None:
             "out jargons or complex terms that may be difficult for a beginner to understand."
             "If there is nothing worth pointing out, respond with 'The answer looks clear to me.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
-    skeptic = ChatAgent(
+    skeptic = Agent(
         name="Skeptic",
         instructions=(
             "You are a devil's advocate in a workgroup. "
@@ -76,7 +76,7 @@ async def main() -> None:
             "out caveats, exceptions, and alternative perspectives."
             "If there is nothing worth pointing out, respond with 'I have no further questions.'"
         ),
-        chat_client=chat_client,
+        client=client,
     )
 
     # Build the group chat workflow
@@ -124,7 +124,7 @@ async def main() -> None:
                 print(data.text, end="", flush=True)
             elif event.type == "output":
                 # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 print("\n" + "=" * 80)
                 print("\nFinal Conversation Transcript:\n")
                 for message in outputs:

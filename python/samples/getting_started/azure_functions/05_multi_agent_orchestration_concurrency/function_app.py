@@ -30,14 +30,14 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    physicist = chat_client.as_agent(
+    physicist = client.as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = chat_client.as_agent(
+    chemist = client.as_agent(
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

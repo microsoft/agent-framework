@@ -115,7 +115,7 @@ export function getFieldColumnSpan(
 }
 
 // ============================================================================
-// ChatMessage Pattern Detection (exported for reuse)
+// Message Pattern Detection (exported for reuse)
 // ============================================================================
 
 export function detectChatMessagePattern(
@@ -436,7 +436,7 @@ export function SchemaFormRenderer({
     (name) => !hideFields.includes(name)
   );
 
-  // Detect ChatMessage pattern
+  // Detect Message pattern
   const isChatMessageLike = detectChatMessagePattern(schema, requiredFields);
 
   // Separate required and optional fields
@@ -449,7 +449,7 @@ export function SchemaFormRenderer({
     (name) => !requiredFields.includes(name)
   );
 
-  // For ChatMessage: prioritize text/message/content
+  // For Message: prioritize text/message/content
   const sortedOptionalFields = isChatMessageLike
     ? [...optionalFieldNames].sort((a, b) => {
         const priority = (name: string) =>

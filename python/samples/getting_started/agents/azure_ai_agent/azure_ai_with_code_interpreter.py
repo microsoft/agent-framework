@@ -2,8 +2,8 @@
 
 import asyncio
 
-from agent_framework import AgentResponse, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.azure import AzureAIAgentsProvider
+from agent_framework import AgentResponse, ChatResponseUpdate
+from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterDetailItemObject,
 )
@@ -12,7 +12,7 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent with Code Interpreter Example
 
-This sample demonstrates using HostedCodeInterpreterTool with Azure AI Agents
+This sample demonstrates using get_code_interpreter_tool() with Azure AI Agents
 for Python code execution and mathematical problem solving.
 """
 
@@ -32,7 +32,7 @@ def print_code_interpreter_inputs(response: AgentResponse) -> None:
 
 
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with Azure AI."""
+    """Example showing how to use the code interpreter tool with Azure AI."""
     print("=== Azure AI Agent with Code Interpreter Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -41,10 +41,14 @@ async def main() -> None:
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
+        # Create a client to access hosted tool factory methods
+        client = AzureAIAgentClient(credential=credential)
+        code_interpreter_tool = client.get_code_interpreter_tool()
+
         agent = await provider.create_agent(
             name="CodingAgent",
             instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
-            tools=HostedCodeInterpreterTool(),
+            tools=[code_interpreter_tool],
         )
         query = "Generate the factorial of 100 using python code, show the code and execute it."
         print(f"User: {query}")

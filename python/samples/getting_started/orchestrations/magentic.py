@@ -6,10 +6,9 @@ import logging
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
-    HostedCodeInterpreterTool,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
@@ -24,9 +23,9 @@ Sample: Magentic Orchestration (multi-agent)
 What it does:
 - Orchestrates multiple agents using `MagenticBuilder` with streaming callbacks.
 
-- ResearcherAgent (ChatAgent backed by an OpenAI chat client) for
+- ResearcherAgent (Agent backed by an OpenAI chat client) for
     finding information.
-- CoderAgent (ChatAgent backed by OpenAI Assistants with the hosted
+- CoderAgent (Agent backed by OpenAI Assistants with the hosted
     code interpreter tool) for analysis and computation.
 
 The workflow is configured with:
@@ -44,30 +43,34 @@ Prerequisites:
 
 
 async def main() -> None:
-    researcher_agent = ChatAgent(
+    researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    coder_agent = ChatAgent(
+    # Create code interpreter tool using instance method
+    coder_client = OpenAIResponsesClient()
+    code_interpreter_tool = coder_client.get_code_interpreter_tool()
+
+    coder_agent = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIResponsesClient(),
-        tools=HostedCodeInterpreterTool(),
+        client=coder_client,
+        tools=code_interpreter_tool,
     )
 
     # Create a manager agent for orchestration
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
     )
 
     print("\nBuilding Magentic Workflow...")
@@ -110,7 +113,7 @@ async def main() -> None:
 
         elif event.type == "magentic_orchestrator":
             print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
-            if isinstance(event.data.content, ChatMessage):
+            if isinstance(event.data.content, Message):
                 print(f"Please review the plan:\n{event.data.content.text}")
             elif isinstance(event.data.content, MagenticProgressLedger):
                 print(f"Please review progress ledger:\n{json.dumps(event.data.content.to_dict(), indent=2)}")
@@ -130,7 +133,7 @@ async def main() -> None:
 
     if output_event:
         # The output of the magentic workflow is a collection of chat messages from all participants
-        outputs = cast(list[ChatMessage], output_event.data)
+        outputs = cast(list[Message], output_event.data)
         print("\n" + "=" * 80)
         print("\nFinal Conversation Transcript:\n")
         for message in outputs:

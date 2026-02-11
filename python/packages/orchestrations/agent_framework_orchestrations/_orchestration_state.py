@@ -11,11 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 
 
-def _new_chat_message_list() -> list[ChatMessage]:
-    """Factory function for typed empty ChatMessage list.
+def _new_chat_message_list() -> list[Message]:
+    """Factory function for typed empty Message list.
 
     Satisfies the type checker.
     """
@@ -47,11 +47,11 @@ class OrchestrationState:
         task: Optional primary task/question being orchestrated
     """
 
-    conversation: list[ChatMessage] = field(default_factory=_new_chat_message_list)
+    conversation: list[Message] = field(default_factory=_new_chat_message_list)
     round_index: int = 0
     orchestrator_name: str = ""
     metadata: dict[str, Any] = field(default_factory=_new_metadata_dict)
-    task: ChatMessage | None = None
+    task: Message | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for checkpointing.

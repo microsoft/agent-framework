@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatMessage, Content, ResponseStream
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 from pydantic import BaseModel
 
 from agent_framework_durabletask import (
@@ -26,7 +26,7 @@ from agent_framework_durabletask import (
 )
 from agent_framework_durabletask._entities import DurableTaskEntityStateProvider
 
-TState = TypeVar("TState")
+StateT = TypeVar("StateT")
 
 
 class MockEntityContext:
@@ -37,8 +37,8 @@ class MockEntityContext:
 
     def get_state(
         self,
-        intended_type: type[TState] | None = None,
-        default: TState | None = None,
+        intended_type: type[StateT] | None = None,
+        default: StateT | None = None,
     ) -> Any:
         del intended_type
         if self._state is None:
@@ -71,7 +71,7 @@ def _make_entity(agent: Any, callback: Any = None, *, thread_id: str = "test-thr
 
 
 def _role_value(chat_message: DurableAgentStateMessage) -> str:
-    """Helper to extract the string role from a ChatMessage."""
+    """Helper to extract the string role from a Message."""
     role = getattr(chat_message, "role", None)
     role_value = getattr(role, "value", role)
     if role_value is None:
@@ -81,7 +81,7 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = ChatMessage(role="assistant", text=text) if text is not None else ChatMessage(role="assistant", text="")
+    message = Message(role="assistant", text=text) if text is not None else Message(role="assistant", text="")
     return AgentResponse(messages=[message], created_at="2024-01-01T00:00:00Z")
 
 

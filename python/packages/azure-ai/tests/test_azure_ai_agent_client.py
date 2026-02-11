@@ -8,20 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentThread,
-    ChatAgent,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
+    Message,
+    SupportsChatGetResponse,
     tool,
 )
 from agent_framework._serialization import SerializationMixin
@@ -127,14 +123,14 @@ def test_azure_ai_settings_init_with_explicit_values() -> None:
 
 def test_azure_ai_chat_client_init_with_client(mock_agents_client: MagicMock) -> None:
     """Test AzureAIAgentClient initialization with existing agents_client."""
-    chat_client = create_test_azure_ai_chat_client(
+    client = create_test_azure_ai_chat_client(
         mock_agents_client, agent_id="existing-agent-id", thread_id="test-thread-id"
     )
 
-    assert chat_client.agents_client is mock_agents_client
-    assert chat_client.agent_id == "existing-agent-id"
-    assert chat_client.thread_id == "test-thread-id"
-    assert isinstance(chat_client, ChatClientProtocol)
+    assert client.agents_client is mock_agents_client
+    assert client.agent_id == "existing-agent-id"
+    assert client.thread_id == "test-thread-id"
+    assert isinstance(client, SupportsChatGetResponse)
 
 
 def test_azure_ai_chat_client_init_auto_create_client(
@@ -145,19 +141,19 @@ def test_azure_ai_chat_client_init_auto_create_client(
     azure_ai_settings = AzureAISettings(**azure_ai_unit_test_env)  # type: ignore
 
     # Create client instance directly
-    chat_client = object.__new__(AzureAIAgentClient)
-    chat_client.agents_client = mock_agents_client
-    chat_client.agent_id = None
-    chat_client.thread_id = None
-    chat_client._should_close_client = False  # type: ignore
-    chat_client.credential = None
-    chat_client.model_id = azure_ai_settings.model_deployment_name
-    chat_client.agent_name = None
-    chat_client.additional_properties = {}
-    chat_client.middleware = None
+    client = object.__new__(AzureAIAgentClient)
+    client.agents_client = mock_agents_client
+    client.agent_id = None
+    client.thread_id = None
+    client._should_close_client = False  # type: ignore
+    client.credential = None
+    client.model_id = azure_ai_settings.model_deployment_name
+    client.agent_name = None
+    client.additional_properties = {}
+    client.middleware = None
 
-    assert chat_client.agents_client is mock_agents_client
-    assert chat_client.agent_id is None
+    assert client.agents_client is mock_agents_client
+    assert client.agent_id is None
 
 
 def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
@@ -253,7 +249,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_
 ) -> None:
     """Test _get_agent_id_or_create with temperature and top_p in run_options."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "model": azure_ai_settings.model_deployment_name,
@@ -261,7 +257,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_
         "top_p": 0.9,
     }
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with temperature and top_p parameters
@@ -275,12 +271,12 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _get_agent_id_or_create when agent_id is already provided."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="existing-agent-id")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="existing-agent-id")
 
-    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
+    agent_id = await client._get_agent_id_or_create()  # type: ignore
 
     assert agent_id == "existing-agent-id"
-    assert not chat_client._agent_created
+    assert not client._agent_created
 
 
 async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
@@ -289,17 +285,17 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
-    assert chat_client._agent_created
+    assert client._agent_created
 
 
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_agents_client: MagicMock) -> None:
     """Test thread creation and management through public API."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock get_agent to avoid the async error
     mock_agents_client.get_agent = AsyncMock(return_value=None)
@@ -319,10 +315,10 @@ async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ag
     mock_stream.__aenter__ = AsyncMock(return_value=empty_async_iter())
     mock_stream.__aexit__ = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
     # Call without existing thread - should create new one
-    response = chat_client.get_response(messages, stream=True)
+    response = client.get_response(messages, stream=True)
     # Consume the generator to trigger the method execution
     async for _ in response:
         pass
@@ -336,20 +332,20 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_missing_model(
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create when model_deployment_name is missing."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
-        await chat_client._get_agent_id_or_create()  # type: ignore
+        await client._get_agent_id_or_create()  # type: ignore
 
 
 async def test_azure_ai_chat_client_prepare_options_basic(mock_agents_client: MagicMock) -> None:
     """Test _prepare_options with basic ChatOptions."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"max_tokens": 100, "temperature": 0.7}
 
-    run_options, tool_results = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = await client._prepare_options(messages, chat_options)  # type: ignore
 
     assert run_options is not None
     assert tool_results is None
@@ -357,11 +353,11 @@ async def test_azure_ai_chat_client_prepare_options_basic(mock_agents_client: Ma
 
 async def test_azure_ai_chat_client_prepare_options_no_chat_options(mock_agents_client: MagicMock) -> None:
     """Test _prepare_options with default ChatOptions."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
-    run_options, tool_results = await chat_client._prepare_options(messages, {})  # type: ignore
+    run_options, tool_results = await client._prepare_options(messages, {})  # type: ignore
 
     assert run_options is not None
     assert tool_results is None
@@ -370,15 +366,15 @@ async def test_azure_ai_chat_client_prepare_options_no_chat_options(mock_agents_
 async def test_azure_ai_chat_client_prepare_options_with_image_content(mock_agents_client: MagicMock) -> None:
     """Test _prepare_options with image content."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock get_agent
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     image_content = Content.from_uri(uri="https://example.com/image.jpg", media_type="image/jpeg")
-    messages = [ChatMessage(role="user", contents=[image_content])]
+    messages = [Message(role="user", contents=[image_content])]
 
-    run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
+    run_options, _ = await client._prepare_options(messages, {})  # type: ignore
 
     assert "additional_messages" in run_options
     assert len(run_options["additional_messages"]) == 1
@@ -389,9 +385,9 @@ async def test_azure_ai_chat_client_prepare_options_with_image_content(mock_agen
 
 def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_ai_none(mock_agents_client: MagicMock) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with None input."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai(None)  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai(None)  # type: ignore
 
     assert run_id is None
     assert tool_outputs is None
@@ -400,22 +396,22 @@ def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_ai_none(mock_agents
 
 async def test_azure_ai_chat_client_close_client_when_should_close_true(mock_agents_client: MagicMock) -> None:
     """Test _close_client_if_needed closes agents_client when should_close_client is True."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-    chat_client._should_close_client = True  # type: ignore
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+    client._should_close_client = True  # type: ignore
 
     mock_agents_client.close = AsyncMock()
 
-    await chat_client._close_client_if_needed()  # type: ignore
+    await client._close_client_if_needed()  # type: ignore
 
     mock_agents_client.close.assert_called_once()
 
 
 async def test_azure_ai_chat_client_close_client_when_should_close_false(mock_agents_client: MagicMock) -> None:
     """Test _close_client_if_needed does not close agents_client when should_close_client is False."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-    chat_client._should_close_client = False  # type: ignore
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+    client._should_close_client = False  # type: ignore
 
-    await chat_client._close_client_if_needed()  # type: ignore
+    await client._close_client_if_needed()  # type: ignore
 
     mock_agents_client.close.assert_not_called()
 
@@ -424,52 +420,52 @@ def test_azure_ai_chat_client_update_agent_name_and_description_when_current_is_
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _update_agent_name_and_description updates name when current agent_name is None."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-    chat_client.agent_name = None  # type: ignore
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+    client.agent_name = None  # type: ignore
 
-    chat_client._update_agent_name_and_description("NewAgentName", "description")  # type: ignore
+    client._update_agent_name_and_description("NewAgentName", "description")  # type: ignore
 
-    assert chat_client.agent_name == "NewAgentName"
-    assert chat_client.agent_description == "description"
+    assert client.agent_name == "NewAgentName"
+    assert client.agent_description == "description"
 
 
 def test_azure_ai_chat_client_update_agent_name_and_description_when_current_exists(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _update_agent_name_and_description does not update when current agent_name exists."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-    chat_client.agent_name = "ExistingName"  # type: ignore
-    chat_client.agent_description = "ExistingDescription"  # type: ignore
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+    client.agent_name = "ExistingName"  # type: ignore
+    client.agent_description = "ExistingDescription"  # type: ignore
 
-    chat_client._update_agent_name_and_description("NewAgentName", "description")  # type: ignore
+    client._update_agent_name_and_description("NewAgentName", "description")  # type: ignore
 
-    assert chat_client.agent_name == "ExistingName"
-    assert chat_client.agent_description == "ExistingDescription"
+    assert client.agent_name == "ExistingName"
+    assert client.agent_description == "ExistingDescription"
 
 
 def test_azure_ai_chat_client_update_agent_name_and_description_with_none_input(mock_agents_client: MagicMock) -> None:
     """Test _update_agent_name_and_description with None input."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-    chat_client.agent_name = None  # type: ignore
-    chat_client.agent_description = None  # type: ignore
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+    client.agent_name = None  # type: ignore
+    client.agent_description = None  # type: ignore
 
-    chat_client._update_agent_name_and_description(None, None)  # type: ignore
+    client._update_agent_name_and_description(None, None)  # type: ignore
 
-    assert chat_client.agent_name is None
-    assert chat_client.agent_description is None
+    assert client.agent_name is None
+    assert client.agent_description is None
 
 
 async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_client: MagicMock) -> None:
     """Test _prepare_options with different message types."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Test with system message (becomes instruction)
     messages = [
-        ChatMessage(role="system", text="You are a helpful assistant"),
-        ChatMessage(role="user", text="Hello"),
+        Message(role="system", text="You are a helpful assistant"),
+        Message(role="user", text="Hello"),
     ]
 
-    run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
+    run_options, _ = await client._prepare_options(messages, {})  # type: ignore
 
     assert "instructions" in run_options
     assert "You are a helpful assistant" in run_options["instructions"]
@@ -485,15 +481,15 @@ async def test_azure_ai_chat_client_prepare_options_with_instructions_from_optio
     This verifies that agent instructions set via as_agent(instructions=...)
     are properly included in the API call.
     """
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {
         "instructions": "You are a thoughtful reviewer. Give brief feedback.",
     }
 
-    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options(messages, chat_options)  # type: ignore
 
     assert "instructions" in run_options
     assert "reviewer" in run_options["instructions"].lower()
@@ -507,18 +503,18 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
     When instructions come from both system/developer messages AND from options,
     both should be included in the final instructions.
     """
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
     mock_agents_client.get_agent = AsyncMock(return_value=None)
 
     messages = [
-        ChatMessage(role="system", text="Context: You are reviewing marketing copy."),
-        ChatMessage(role="user", text="Review this tagline"),
+        Message(role="system", text="Context: You are reviewing marketing copy."),
+        Message(role="user", text="Review this tagline"),
     ]
     chat_options: ChatOptions = {
         "instructions": "Be concise and constructive in your feedback.",
     }
 
-    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options(messages, chat_options)  # type: ignore
 
     assert "instructions" in run_options
     instructions_text = run_options["instructions"]
@@ -529,16 +525,16 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
 
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     async def mock_streaming_response():
         yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello back")])
 
     with (
-        patch.object(chat_client, "_inner_get_response", return_value=mock_streaming_response()),
+        patch.object(client, "_inner_get_response", return_value=mock_streaming_response()),
         patch("agent_framework.ChatResponse.from_update_generator") as mock_from_generator,
     ):
-        mock_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Hello back")])
+        mock_response = ChatResponse(messages=[Message(role="assistant", text="Hello back")])
         mock_from_generator.return_value = mock_response
 
         result = await ChatResponse.from_update_generator(mock_streaming_response())
@@ -552,7 +548,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
@@ -561,7 +557,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
         "model": azure_ai_settings.model_deployment_name,
     }
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with run_options parameters
@@ -574,7 +570,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
 
 async def test_azure_ai_chat_client_prepare_thread_cancels_active_run(mock_agents_client: MagicMock) -> None:
     """Test _prepare_thread cancels active thread run when provided."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     mock_thread_run = MagicMock()
     mock_thread_run.id = "run_123"
@@ -582,7 +578,7 @@ async def test_azure_ai_chat_client_prepare_thread_cancels_active_run(mock_agent
 
     run_options = {"additional_messages": []}  # type: ignore
 
-    result = await chat_client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
+    result = await client._prepare_thread("test-thread", mock_thread_run, run_options)  # type: ignore
 
     assert result == "test-thread"
     mock_agents_client.runs.cancel.assert_called_once_with("test-thread", "run_123")
@@ -590,7 +586,7 @@ async def test_azure_ai_chat_client_prepare_thread_cancels_active_run(mock_agent
 
 def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_basic(mock_agents_client: MagicMock) -> None:
     """Test _parse_function_calls_from_azure_ai with basic function call."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     mock_tool_call = MagicMock(spec=RequiredFunctionToolCall)
     mock_tool_call.id = "call_123"
@@ -603,7 +599,7 @@ def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_basic(mock_agen
     mock_event_data = MagicMock(spec=ThreadRun)
     mock_event_data.required_action = mock_submit_action
 
-    result = chat_client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
+    result = client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
 
     assert len(result) == 1
     assert result[0].type == "function_call"
@@ -615,12 +611,12 @@ def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_no_submit_actio
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _parse_function_calls_from_azure_ai when required_action is not SubmitToolOutputsAction."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     mock_event_data = MagicMock(spec=ThreadRun)
     mock_event_data.required_action = MagicMock()
 
-    result = chat_client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
+    result = client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
 
     assert result == []
 
@@ -629,7 +625,7 @@ def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_non_function_to
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _parse_function_calls_from_azure_ai with non-function tool call."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     mock_tool_call = MagicMock()
 
@@ -639,7 +635,7 @@ def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_non_function_to
     mock_event_data = MagicMock(spec=ThreadRun)
     mock_event_data.required_action = mock_submit_action
 
-    result = chat_client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
+    result = client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
 
     assert result == []
 
@@ -648,11 +644,11 @@ async def test_azure_ai_chat_client_prepare_options_with_none_tool_choice(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with tool_choice set to 'none'."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     chat_options: ChatOptions = {"tool_choice": "none"}
 
-    run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options([], chat_options)  # type: ignore
 
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.NONE
 
@@ -661,11 +657,11 @@ async def test_azure_ai_chat_client_prepare_options_with_auto_tool_choice(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with tool_choice set to 'auto'."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     chat_options = {"tool_choice": "auto"}
 
-    run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options([], chat_options)  # type: ignore
 
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
 
@@ -674,16 +670,16 @@ async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specifi
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with required tool_choice specifying a specific function name."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     required_tool_mode = {"mode": "required", "required_function_name": "specific_function_name"}
 
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
     chat_options = {"tools": [dict_tool], "tool_choice": required_tool_mode}
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
 
-    run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options(messages, chat_options)  # type: ignore
 
     # Verify tool_choice is set to the specific named function
     assert "tool_choice" in run_options
@@ -697,14 +693,14 @@ async def test_azure_ai_chat_client_prepare_options_with_response_format(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with response_format configured."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     class TestResponseModel(BaseModel):
         name: str = Field(description="Test name")
 
     chat_options: ChatOptions = {"response_format": TestResponseModel}
 
-    run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options([], chat_options)  # type: ignore
 
     assert "response_format" in run_options
     response_format = run_options["response_format"]
@@ -714,155 +710,138 @@ async def test_azure_ai_chat_client_prepare_options_with_response_format(
 def test_azure_ai_chat_client_service_url_method(mock_agents_client: MagicMock) -> None:
     """Test service_url method returns endpoint."""
     mock_agents_client._config.endpoint = "https://test-endpoint.com/"
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    url = chat_client.service_url()
+    url = client.service_url()
     assert url == "https://test-endpoint.com/"
 
 
 async def test_azure_ai_chat_client_prepare_options_mcp_never_require(mock_agents_client: MagicMock) -> None:
-    """Test _prepare_options with HostedMCPTool having never_require approval mode."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    """Test _prepare_options with MCP dict tool having never_require approval mode."""
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    mcp_tool = HostedMCPTool(name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require")
+    # Create MCP tool with approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require"
+    )
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
-    with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
-        mock_mcp_tool_instance = MagicMock()
-        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
-        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+    run_options, _ = await client._prepare_options(messages, chat_options)  # type: ignore
 
-        run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    # Verify tool_resources is created with correct MCP approval structure
+    assert "tool_resources" in run_options, f"Expected 'tool_resources' in run_options keys: {list(run_options.keys())}"
+    assert "mcp" in run_options["tool_resources"]
+    assert len(run_options["tool_resources"]["mcp"]) == 1
 
-        # Verify tool_resources is created with correct MCP approval structure
-        assert "tool_resources" in run_options, (
-            f"Expected 'tool_resources' in run_options keys: {list(run_options.keys())}"
-        )
-        assert "mcp" in run_options["tool_resources"]
-        assert len(run_options["tool_resources"]["mcp"]) == 1
-
-        mcp_resource = run_options["tool_resources"]["mcp"][0]
-        assert mcp_resource["server_label"] == "Test_MCP_Tool"
-        assert mcp_resource["require_approval"] == "never"
+    mcp_resource = run_options["tool_resources"]["mcp"][0]
+    assert mcp_resource["server_label"] == "Test_MCP_Tool"
+    assert mcp_resource["require_approval"] == "never"
 
 
 async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents_client: MagicMock) -> None:
-    """Test _prepare_options with HostedMCPTool having headers."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    """Test _prepare_options with MCP dict tool having headers."""
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # Test with headers
+    # Test with headers - create MCP tool with all options
     headers = {"Authorization": "Bearer DUMMY_TOKEN", "X-API-Key": "DUMMY_KEY"}
-    mcp_tool = HostedMCPTool(
-        name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
+        name="Test MCP Tool",
+        url="https://example.com/mcp",
+        headers=headers,
+        approval_mode="never_require",
     )
 
-    messages = [ChatMessage(role="user", text="Hello")]
+    messages = [Message(role="user", text="Hello")]
     chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
-    with patch("agent_framework_azure_ai._shared.McpTool") as mock_mcp_tool_class:
-        mock_mcp_tool_instance = MagicMock()
-        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
-        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+    run_options, _ = await client._prepare_options(messages, chat_options)  # type: ignore
 
-        run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
+    # Verify tool_resources is created with headers
+    assert "tool_resources" in run_options
+    assert "mcp" in run_options["tool_resources"]
+    assert len(run_options["tool_resources"]["mcp"]) == 1
 
-        # Verify tool_resources is created with headers
-        assert "tool_resources" in run_options
-        assert "mcp" in run_options["tool_resources"]
-        assert len(run_options["tool_resources"]["mcp"]) == 1
-
-        mcp_resource = run_options["tool_resources"]["mcp"][0]
-        assert mcp_resource["server_label"] == "Test_MCP_Tool"
-        assert mcp_resource["require_approval"] == "never"
-        assert mcp_resource["headers"] == headers
+    mcp_resource = run_options["tool_resources"]["mcp"][0]
+    assert mcp_resource["server_label"] == "Test_MCP_Tool"
+    assert mcp_resource["require_approval"] == "never"
+    assert mcp_resource["headers"] == headers
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_grounding(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with HostedWebSearchTool using Bing Grounding."""
+    """Test _prepare_tools_for_azure_ai with BingGroundingTool from get_web_search_tool()."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = HostedWebSearchTool(
-        additional_properties={
-            "connection_id": "test-connection-id",
-            "count": 5,
-            "freshness": "Day",
-            "market": "en-US",
-            "set_lang": "en",
-        }
-    )
-
-    # Mock BingGroundingTool
+    # Mock BingGroundingTool to avoid SDK validation of connection ID
     with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
         mock_bing_tool = MagicMock()
         mock_bing_tool.definitions = [{"type": "bing_grounding"}]
         mock_bing_grounding.return_value = mock_bing_tool
 
-        result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
+        # get_web_search_tool now returns a BingGroundingTool directly
+        web_search_tool = client.get_web_search_tool(bing_connection_id="test-connection-id")
 
+        # Verify the factory method created the tool with correct args
+        mock_bing_grounding.assert_called_once_with(connection_id="test-connection-id")
+
+        result = await client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
+
+        # BingGroundingTool.definitions should be extended into result
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        call_args = mock_bing_grounding.call_args[1]
-        assert call_args["count"] == 5
-        assert call_args["freshness"] == "Day"
-        assert call_args["market"] == "en-US"
-        assert call_args["set_lang"] == "en"
-        assert "connection_id" in call_args
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_bing_grounding_with_connection_id(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_... with HostedWebSearchTool using Bing Grounding with connection_id (no HTTP call)."""
+    """Test _prepare_tools_for_azure_ai with BingGroundingTool using explicit connection_id."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = HostedWebSearchTool(
-        additional_properties={
-            "connection_id": "direct-connection-id",
-            "count": 3,
-        }
-    )
-
-    # Mock BingGroundingTool
+    # Mock BingGroundingTool to avoid SDK validation of connection ID
     with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
         mock_bing_tool = MagicMock()
         mock_bing_tool.definitions = [{"type": "bing_grounding"}]
         mock_bing_grounding.return_value = mock_bing_tool
 
-        result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
+        web_search_tool = client.get_web_search_tool(bing_connection_id="direct-connection-id")
+
+        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id")
+
+        result = await client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id", count=3)
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_custom_bing(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with HostedWebSearchTool using Custom Bing Search."""
+    """Test _prepare_tools_for_azure_ai with BingCustomSearchTool from get_web_search_tool()."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    web_search_tool = HostedWebSearchTool(
-        additional_properties={
-            "custom_connection_id": "custom-connection-id",
-            "custom_instance_name": "custom-instance",
-            "count": 10,
-        }
-    )
-
-    # Mock BingCustomSearchTool
+    # Mock BingCustomSearchTool to avoid SDK validation
     with patch("agent_framework_azure_ai._chat_client.BingCustomSearchTool") as mock_custom_bing:
         mock_custom_tool = MagicMock()
         mock_custom_tool.definitions = [{"type": "bing_custom_search"}]
         mock_custom_bing.return_value = mock_custom_tool
 
-        result = await chat_client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
+        web_search_tool = client.get_web_search_tool(
+            bing_custom_connection_id="custom-connection-id",
+            bing_custom_instance_id="custom-instance",
+        )
+
+        mock_custom_bing.assert_called_once_with(
+            connection_id="custom-connection-id",
+            instance_name="custom-instance",
+        )
+
+        result = await client._prepare_tools_for_azure_ai([web_search_tool])  # type: ignore
 
         assert len(result) == 1
         assert result[0] == {"type": "bing_custom_search"}
@@ -871,40 +850,32 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_web_search_custom
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_file_search_with_vector_stores(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with HostedFileSearchTool using vector stores."""
+    """Test _prepare_tools_for_azure_ai with FileSearchTool from get_file_search_tool()."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    vector_store_input = Content.from_hosted_vector_store(vector_store_id="vs-123")
-    file_search_tool = HostedFileSearchTool(inputs=[vector_store_input])
+    # get_file_search_tool() now returns a FileSearchTool instance directly
+    file_search_tool = client.get_file_search_tool(vector_store_ids=["vs-123"])
 
-    # Mock FileSearchTool
-    with patch("agent_framework_azure_ai._chat_client.FileSearchTool") as mock_file_search:
-        mock_file_tool = MagicMock()
-        mock_file_tool.definitions = [{"type": "file_search"}]
-        mock_file_tool.resources = {"vector_store_ids": ["vs-123"]}
-        mock_file_search.return_value = mock_file_tool
+    run_options: dict[str, Any] = {}
+    result = await client._prepare_tools_for_azure_ai([file_search_tool], run_options)  # type: ignore
 
-        run_options = {}
-        result = await chat_client._prepare_tools_for_azure_ai([file_search_tool], run_options)  # type: ignore
-
-        assert len(result) == 1
-        assert result[0] == {"type": "file_search"}
-        assert run_options["tool_resources"] == {"vector_store_ids": ["vs-123"]}
-        mock_file_search.assert_called_once_with(vector_store_ids=["vs-123"])
+    assert len(result) == 1
+    assert result[0] == {"type": "file_search"}
+    assert run_options["tool_resources"] == {"file_search": {"vector_store_ids": ["vs-123"]}}
 
 
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _create_agent_stream with tool approvals submission path."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock active thread run that matches the tool run ID
     mock_thread_run = MagicMock()
     mock_thread_run.thread_id = "test-thread"
     mock_thread_run.id = "test-run-id"
-    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
+    client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
 
     # Mock required action results with approval response that matches run ID
     approval_response = Content.from_function_approval_response(
@@ -920,7 +891,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client.runs.submit_tool_outputs_stream = AsyncMock()
 
     with patch("azure.ai.agents.models.AsyncAgentEventHandler", return_value=mock_handler):
-        stream, final_thread_id = await chat_client._create_agent_stream(  # type: ignore
+        stream, final_thread_id = await client._create_agent_stream(  # type: ignore
             "test-agent", {"thread_id": "test-thread"}, [approval_response]
         )
 
@@ -938,7 +909,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
 async def test_azure_ai_chat_client_get_active_thread_run_with_active_run(mock_agents_client: MagicMock) -> None:
     """Test _get_active_thread_run when there's an active run."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock an active run
     mock_run = MagicMock()
@@ -949,7 +920,7 @@ async def test_azure_ai_chat_client_get_active_thread_run_with_active_run(mock_a
 
     mock_agents_client.runs.list = mock_list_runs
 
-    result = await chat_client._get_active_thread_run("thread-123")  # type: ignore
+    result = await client._get_active_thread_run("thread-123")  # type: ignore
 
     assert result == mock_run
 
@@ -957,7 +928,7 @@ async def test_azure_ai_chat_client_get_active_thread_run_with_active_run(mock_a
 async def test_azure_ai_chat_client_get_active_thread_run_no_active_run(mock_agents_client: MagicMock) -> None:
     """Test _get_active_thread_run when there's no active run."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock a completed run (not active)
     mock_run = MagicMock()
@@ -968,16 +939,16 @@ async def test_azure_ai_chat_client_get_active_thread_run_no_active_run(mock_age
 
     mock_agents_client.runs.list = mock_list_runs
 
-    result = await chat_client._get_active_thread_run("thread-123")  # type: ignore
+    result = await client._get_active_thread_run("thread-123")  # type: ignore
 
     assert result is None
 
 
 async def test_azure_ai_chat_client_get_active_thread_run_no_thread(mock_agents_client: MagicMock) -> None:
     """Test _get_active_thread_run with None thread_id."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    result = await chat_client._get_active_thread_run(None)  # type: ignore
+    result = await client._get_active_thread_run(None)  # type: ignore
 
     assert result is None
     # Should not call list since thread_id is None
@@ -986,14 +957,14 @@ async def test_azure_ai_chat_client_get_active_thread_run_no_thread(mock_agents_
 
 async def test_azure_ai_chat_client_service_url(mock_agents_client: MagicMock) -> None:
     """Test service_url method."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock the config endpoint
     mock_config = MagicMock()
     mock_config.endpoint = "https://test-endpoint.com/"
     mock_agents_client._config = mock_config
 
-    result = chat_client.service_url()
+    result = client.service_url()
 
     assert result == "https://test-endpoint.com/"
 
@@ -1002,12 +973,12 @@ async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_tool_result(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with FunctionResultContent."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Test with simple result
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result="Simple result")
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
     assert run_id == "run_123"
     assert tool_approvals is None
@@ -1020,25 +991,25 @@ async def test_azure_ai_chat_client_prepare_tool_outputs_for_azure_tool_result(
 async def test_azure_ai_chat_client_convert_required_action_invalid_call_id(mock_agents_client: MagicMock) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with invalid call_id format."""
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Invalid call_id format - should raise JSONDecodeError
     function_result = Content.from_function_result(call_id="invalid_json", result="result")
 
     with pytest.raises(json.JSONDecodeError):
-        chat_client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
+        client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
 
 async def test_azure_ai_chat_client_convert_required_action_invalid_structure(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with invalid call_id structure."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Valid JSON but invalid structure (missing second element)
     function_result = Content.from_function_result(call_id='["run_123"]', result="result")
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
     # Should return None values when structure is invalid
     assert run_id is None
@@ -1056,13 +1027,13 @@ async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
             self.name = name
             self.value = value
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Test with BaseModel result
     mock_result = MockResult(name="test", value=42)
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=mock_result)
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
     assert run_id == "run_123"
     assert tool_approvals is None
@@ -1083,14 +1054,14 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
         def __init__(self, data: str):
             self.data = data
 
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Test with multiple results - mix of BaseModel and regular objects
     mock_basemodel = MockResult(data="model_data")
     results_list = [mock_basemodel, {"key": "value"}, "string_result"]
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=results_list)
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
     assert run_id == "run_123"
     assert tool_outputs is not None
@@ -1111,7 +1082,7 @@ async def test_azure_ai_chat_client_convert_required_action_approval_response(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_outputs_for_azure_ai with FunctionApprovalResponseContent."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Test with approval response - need to provide required fields
     approval_response = Content.from_function_approval_response(
@@ -1122,7 +1093,7 @@ async def test_azure_ai_chat_client_convert_required_action_approval_response(
         approved=True,
     )
 
-    run_id, tool_outputs, tool_approvals = chat_client._prepare_tool_outputs_for_azure_ai([approval_response])  # type: ignore
+    run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([approval_response])  # type: ignore
 
     assert run_id == "run_123"
     assert tool_outputs is None
@@ -1136,7 +1107,7 @@ async def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_approval_
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _parse_function_calls_from_azure_ai with approval action."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock SubmitToolApprovalAction with RequiredMcpToolCall
     mock_tool_call = MagicMock(spec=RequiredMcpToolCall)
@@ -1150,7 +1121,7 @@ async def test_azure_ai_chat_client_parse_function_calls_from_azure_ai_approval_
     mock_event_data = MagicMock(spec=ThreadRun)
     mock_event_data.required_action = mock_approval_action
 
-    result = chat_client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
+    result = client._parse_function_calls_from_azure_ai(mock_event_data, "response_123")  # type: ignore
 
     assert len(result) == 1
     assert result[0].type == "function_approval_request"
@@ -1164,12 +1135,12 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_agent_name(
 ) -> None:
     """Test _get_agent_id_or_create uses default name when no agent_name set."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Ensure agent_name is None to test the default
-    chat_client.agent_name = None  # type: ignore
+    client.agent_name = None  # type: ignore
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with default "UnnamedAgent"
@@ -1183,12 +1154,12 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_response_format(
 ) -> None:
     """Test _get_agent_id_or_create with response_format in run_options."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Test with response_format in run_options
     run_options = {"response_format": {"type": "json_object"}, "model": azure_ai_settings.model_deployment_name}
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with response_format
@@ -1202,7 +1173,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
 ) -> None:
     """Test _get_agent_id_or_create with tool_resources in run_options."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Test with tool_resources in run_options
     run_options = {
@@ -1210,7 +1181,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
         "model": azure_ai_settings.model_deployment_name,
     }
 
-    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+    agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with tool_resources
@@ -1223,13 +1194,13 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _create_agent_stream with tool outputs submission path."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Mock active thread run that matches the tool run ID
     mock_thread_run = MagicMock()
     mock_thread_run.thread_id = "test-thread"
     mock_thread_run.id = "test-run-id"
-    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
+    client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
 
     # Mock required action results with matching run ID
     function_result = Content.from_function_result(call_id='["test-run-id", "test-call-id"]', result="test result")
@@ -1239,7 +1210,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
     mock_agents_client.runs.submit_tool_outputs_stream = AsyncMock()
 
     with patch("azure.ai.agents.models.AsyncAgentEventHandler", return_value=mock_handler):
-        stream, final_thread_id = await chat_client._create_agent_stream(  # type: ignore
+        stream, final_thread_id = await client._create_agent_stream(  # type: ignore
             agent_id="test-agent", run_options={"thread_id": "test-thread"}, required_action_results=[function_result]
         )
 
@@ -1250,7 +1221,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
 
 def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_agents_client: MagicMock) -> None:
     """Test _extract_url_citations with MessageDeltaChunk containing URL citations."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Create mock URL citation annotation
     mock_url_citation = MagicMock()
@@ -1278,7 +1249,7 @@ def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_agents_c
     mock_chunk.delta = mock_delta
 
     # Call the method with empty azure_search_tool_calls
-    citations = chat_client._extract_url_citations(mock_chunk, [])  # type: ignore
+    citations = client._extract_url_citations(mock_chunk, [])  # type: ignore
 
     # Verify results
     assert len(citations) == 1
@@ -1296,7 +1267,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_with_file_path_annotati
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _extract_file_path_contents with MessageDeltaChunk containing file path annotation."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Create mock file_path annotation
     mock_file_path = MagicMock()
@@ -1321,7 +1292,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_with_file_path_annotati
     mock_chunk.delta = mock_delta
 
     # Call the method
-    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+    file_contents = client._extract_file_path_contents(mock_chunk)
 
     # Verify results
     assert len(file_contents) == 1
@@ -1333,7 +1304,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_with_file_citation_anno
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _extract_file_path_contents with MessageDeltaChunk containing file citation annotation."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Create mock file_citation annotation
     mock_file_citation = MagicMock()
@@ -1358,7 +1329,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_with_file_citation_anno
     mock_chunk.delta = mock_delta
 
     # Call the method
-    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+    file_contents = client._extract_file_path_contents(mock_chunk)
 
     # Verify results
     assert len(file_contents) == 1
@@ -1370,7 +1341,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_empty_annotations(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _extract_file_path_contents with no annotations returns empty list."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Create mock text content with no annotations
     mock_text = MagicMock()
@@ -1388,7 +1359,7 @@ def test_azure_ai_chat_client_extract_file_path_contents_empty_annotations(
     mock_chunk.delta = mock_delta
 
     # Call the method
-    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+    file_contents = client._extract_file_path_contents(mock_chunk)
 
     # Verify results
     assert len(file_contents) == 0
@@ -1407,17 +1378,17 @@ def get_weather(
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
         response = await azure_ai_chat_client.get_response(messages=messages)
@@ -1432,10 +1403,10 @@ async def test_azure_ai_chat_client_get_response() -> None:
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
         response = await azure_ai_chat_client.get_response(
@@ -1453,17 +1424,17 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         messages.append(
-            ChatMessage(
+            Message(
                 role="user",
                 text="The weather in Seattle is currently sunny with a high of 25°C. "
                 "It's a beautiful day for outdoor activities.",
             )
         )
-        messages.append(ChatMessage(role="user", text="What's the weather like today?"))
+        messages.append(Message(role="user", text="What's the weather like today?"))
 
         # Test that the agents_client can be used to get a response
         response = azure_ai_chat_client.get_response(messages=messages, stream=True)
@@ -1484,10 +1455,10 @@ async def test_azure_ai_chat_client_streaming() -> None:
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
     async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, ChatClientProtocol)
+        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
 
-        messages: list[ChatMessage] = []
-        messages.append(ChatMessage(role="user", text="What's the weather like in Seattle?"))
+        messages: list[Message] = []
+        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
 
         # Test that the agents_client can be used to get a response
         response = azure_ai_chat_client.get_response(
@@ -1509,9 +1480,9 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
-    """Test ChatAgent basic run functionality with AzureAIAgentClient."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    """Test Agent basic run functionality with AzureAIAgentClient."""
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -1526,9 +1497,9 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
-    """Test ChatAgent basic streaming functionality with AzureAIAgentClient."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    """Test Agent basic streaming functionality with AzureAIAgentClient."""
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -1546,9 +1517,9 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
-    """Test ChatAgent thread persistence across runs with AzureAIAgentClient."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    """Test Agent thread persistence across runs with AzureAIAgentClient."""
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -1572,9 +1543,9 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
-    """Test ChatAgent existing thread ID functionality with AzureAIAgentClient."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    """Test Agent existing thread ID functionality with AzureAIAgentClient."""
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and get the thread ID
@@ -1590,8 +1561,8 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         assert existing_thread_id is not None
 
     # Now continue with the same thread ID in a new agent instance
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as second_agent:
         # Create a thread with the existing ID
@@ -1610,12 +1581,12 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_code_interpreter():
-    """Test ChatAgent with code interpreter through AzureAIAgentClient."""
+    """Test Agent with code interpreter through AzureAIAgentClient."""
 
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[AzureAIAgentClient.get_code_interpreter_tool()],
     ) as agent:
         # Request code execution
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
@@ -1630,7 +1601,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_file_search():
-    """Test ChatAgent with file search through AzureAIAgentClient."""
+    """Test Agent with file search through AzureAIAgentClient."""
 
     client = AzureAIAgentClient(credential=AzureCliCredential())
     file: FileInfo | None = None
@@ -1645,12 +1616,10 @@ async def test_azure_ai_chat_client_agent_file_search():
         )
 
         # 2. Create file search tool with uploaded resources
-        file_search_tool = HostedFileSearchTool(
-            inputs=[Content.from_hosted_vector_store(vector_store_id=vector_store.id)]
-        )
+        file_search_tool = AzureAIAgentClient.get_file_search_tool(vector_store_ids=[vector_store.id])
 
-        async with ChatAgent(
-            chat_client=client,
+        async with Agent(
+            client=client,
             instructions="You are a helpful assistant that can search through uploaded employee files.",
             tools=[file_search_tool],
         ) as agent:
@@ -1679,17 +1648,17 @@ async def test_azure_ai_chat_client_agent_file_search():
 
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
-    """Integration test for HostedMCPTool with Azure AI Agent using Microsoft Learn MCP."""
+    """Integration test for MCP tool with Azure AI Agent using Microsoft Learn MCP."""
 
-    mcp_tool = HostedMCPTool(
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
         name="Microsoft Learn MCP",
         url="https://learn.microsoft.com/api/mcp",
         description="A Microsoft Learn MCP server for documentation questions",
         approval_mode="never_require",
     )
 
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
@@ -1715,8 +1684,8 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],
     ) as agent:
@@ -1740,8 +1709,8 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     """Test ChatOptions parameter coverage at run level."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         response = await agent.run(
@@ -1764,8 +1733,8 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     """Test ChatOptions parameter coverage agent level."""
-    async with ChatAgent(
-        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
+    async with Agent(
+        client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         tools=[get_weather],
         default_options={
@@ -1789,59 +1758,59 @@ async def test_azure_ai_chat_client_cleanup_agent_when_enabled_and_created(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test that agent is cleaned up when should_cleanup_agent=True and agent was created by client."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id=None, should_cleanup_agent=True)
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id=None, should_cleanup_agent=True)
 
     # Simulate agent creation
-    chat_client.agent_id = "created-agent-id"
-    chat_client._agent_created = True  # type: ignore
+    client.agent_id = "created-agent-id"
+    client._agent_created = True  # type: ignore
 
-    await chat_client._cleanup_agent_if_needed()  # type: ignore
+    await client._cleanup_agent_if_needed()  # type: ignore
 
     # Verify agent was deleted
     mock_agents_client.delete_agent.assert_called_once_with("created-agent-id")
-    assert chat_client.agent_id is None
-    assert chat_client._agent_created is False  # type: ignore
+    assert client.agent_id is None
+    assert client._agent_created is False  # type: ignore
 
 
 async def test_azure_ai_chat_client_no_cleanup_when_disabled(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test that agent is not cleaned up when should_cleanup_agent=False."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id=None, should_cleanup_agent=False)
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id=None, should_cleanup_agent=False)
 
     # Simulate agent creation
-    chat_client.agent_id = "created-agent-id"
-    chat_client._agent_created = True
+    client.agent_id = "created-agent-id"
+    client._agent_created = True
 
-    await chat_client._cleanup_agent_if_needed()  # type: ignore
+    await client._cleanup_agent_if_needed()  # type: ignore
 
     # Verify agent was NOT deleted
     mock_agents_client.delete_agent.assert_not_called()
-    assert chat_client.agent_id == "created-agent-id"
-    assert chat_client._agent_created is True
+    assert client.agent_id == "created-agent-id"
+    assert client._agent_created is True
 
 
 async def test_azure_ai_chat_client_no_cleanup_when_agent_not_created_by_client(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test that agent is not cleaned up when it was not created by this client instance."""
-    chat_client = create_test_azure_ai_chat_client(
+    client = create_test_azure_ai_chat_client(
         mock_agents_client, agent_id="existing-agent-id", should_cleanup_agent=True
     )
 
     # Agent exists but was not created by this client (_agent_created = False)
-    assert chat_client._agent_created is False  # type: ignore
+    assert client._agent_created is False  # type: ignore
 
-    await chat_client._cleanup_agent_if_needed()  # type: ignore
+    await client._cleanup_agent_if_needed()  # type: ignore
 
     # Verify agent was NOT deleted
     mock_agents_client.delete_agent.assert_not_called()
-    assert chat_client.agent_id == "existing-agent-id"
+    assert client.agent_id == "existing-agent-id"
 
 
 def test_azure_ai_chat_client_capture_azure_search_tool_calls(mock_agents_client: MagicMock) -> None:
     """Test _capture_azure_search_tool_calls method."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Mock Azure AI Search tool call
     mock_tool_call = MagicMock()
@@ -1855,7 +1824,7 @@ def test_azure_ai_chat_client_capture_azure_search_tool_calls(mock_agents_client
 
     # Call the method with a list to capture tool calls
     azure_search_tool_calls: list[dict[str, Any]] = []
-    chat_client._capture_azure_search_tool_calls(mock_step_data, azure_search_tool_calls)  # type: ignore
+    client._capture_azure_search_tool_calls(mock_step_data, azure_search_tool_calls)  # type: ignore
 
     # Verify tool call was captured
     assert len(azure_search_tool_calls) == 1
@@ -1869,10 +1838,10 @@ def test_azure_ai_chat_client_get_real_url_from_citation_reference_no_tool_calls
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _get_real_url_from_citation_reference with no tool calls."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # No tool calls - pass empty list
-    result = chat_client._get_real_url_from_citation_reference("doc_1", [])  # type: ignore
+    result = client._get_real_url_from_citation_reference("doc_1", [])  # type: ignore
     assert result == "doc_1"
 
 
@@ -1880,51 +1849,51 @@ def test_azure_ai_chat_client_get_real_url_from_citation_reference_invalid_outpu
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _get_real_url_from_citation_reference with invalid output format."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Tool call with invalid output format
     azure_search_tool_calls = [
         {"id": "call_123", "type": "azure_ai_search", "azure_ai_search": {"output": "invalid_json_format"}}
     ]
 
-    result = chat_client._get_real_url_from_citation_reference("doc_1", azure_search_tool_calls)  # type: ignore
+    result = client._get_real_url_from_citation_reference("doc_1", azure_search_tool_calls)  # type: ignore
     assert result == "doc_1"
 
 
 async def test_azure_ai_chat_client_context_manager(mock_agents_client: MagicMock) -> None:
     """Test AzureAIAgentClient as async context manager."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Mock close method to avoid actual cleanup
-    chat_client.close = AsyncMock()
+    client.close = AsyncMock()
 
-    async with chat_client as client:
-        assert client is chat_client
+    async with client as client:
+        assert client is client
 
     # Verify close was called on exit
-    chat_client.close.assert_called_once()
+    client.close.assert_called_once()
 
 
 async def test_azure_ai_chat_client_close_method(mock_agents_client: MagicMock) -> None:
     """Test AzureAIAgentClient close method."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Mock cleanup methods
-    chat_client._cleanup_agent_if_needed = AsyncMock()
-    chat_client._close_client_if_needed = AsyncMock()
+    client._cleanup_agent_if_needed = AsyncMock()
+    client._close_client_if_needed = AsyncMock()
 
-    await chat_client.close()
+    await client.close()
 
     # Verify cleanup methods were called
-    chat_client._cleanup_agent_if_needed.assert_called_once()
-    chat_client._close_client_if_needed.assert_called_once()
+    client._cleanup_agent_if_needed.assert_called_once()
+    client._close_client_if_needed.assert_called_once()
 
 
 def test_azure_ai_chat_client_extract_url_citations_with_azure_search_enhanced_url(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _extract_url_citations with Azure AI Search URL enhancement."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Add Azure Search tool calls for URL enhancement
     azure_search_tool_calls = [
@@ -1961,7 +1930,7 @@ def test_azure_ai_chat_client_extract_url_citations_with_azure_search_enhanced_u
     mock_chunk = MagicMock(spec=MessageDeltaChunk)
     mock_chunk.delta = mock_delta
 
-    citations = chat_client._extract_url_citations(mock_chunk, azure_search_tool_calls)  # type: ignore
+    citations = client._extract_url_citations(mock_chunk, azure_search_tool_calls)  # type: ignore
 
     # Verify real URL was used
     assert len(citations) == 1
@@ -2006,7 +1975,7 @@ async def test_azure_ai_chat_client_prepare_options_with_mapping_response_format
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with Mapping-based response_format (runtime JSON schema)."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Runtime JSON schema dict
     response_format_dict = {
@@ -2019,7 +1988,7 @@ async def test_azure_ai_chat_client_prepare_options_with_mapping_response_format
 
     chat_options: ChatOptions = {"response_format": response_format_dict}  # type: ignore[typeddict-item]
 
-    run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
+    run_options, _ = await client._prepare_options([], chat_options)  # type: ignore
 
     assert "response_format" in run_options
     # Should pass through as-is for Mapping types
@@ -2030,20 +1999,20 @@ async def test_azure_ai_chat_client_prepare_options_with_invalid_response_format
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_options with invalid response_format raises error."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Invalid response_format (not BaseModel or Mapping)
     chat_options: ChatOptions = {"response_format": "invalid_format"}  # type: ignore[typeddict-item]
 
     with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic BaseModel"):
-        await chat_client._prepare_options([], chat_options)  # type: ignore
+        await client._prepare_options([], chat_options)  # type: ignore
 
 
 async def test_azure_ai_chat_client_prepare_tool_definitions_with_agent_tool_resources(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tool_definitions_and_resources copies tool_resources from agent definition."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Create mock agent definition with tool_resources
     mock_agent_definition = MagicMock()
@@ -2053,7 +2022,7 @@ async def test_azure_ai_chat_client_prepare_tool_definitions_with_agent_tool_res
     run_options: dict[str, Any] = {}
     options: dict[str, Any] = {}
 
-    await chat_client._prepare_tool_definitions_and_resources(options, mock_agent_definition, run_options)  # type: ignore
+    await client._prepare_tool_definitions_and_resources(options, mock_agent_definition, run_options)  # type: ignore
 
     # Verify tool_resources was copied to run_options
     assert "tool_resources" in run_options
@@ -2064,52 +2033,51 @@ def test_azure_ai_chat_client_prepare_mcp_resources_with_dict_approval_mode(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_mcp_resources with dict-based approval mode (always_require_approval)."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # MCP tool with dict-based approval mode
-    mcp_tool = HostedMCPTool(
+    # MCP tool with dict-based approval mode - use approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
         name="Test MCP",
         url="https://example.com/mcp",
-        approval_mode={"always_require_approval": {"tool1", "tool2"}},
+        approval_mode={"always_require_approval": ["tool1", "tool2"]},
     )
 
-    result = chat_client._prepare_mcp_resources([mcp_tool])  # type: ignore
+    result = client._prepare_mcp_resources([mcp_tool])  # type: ignore
 
     assert len(result) == 1
     assert result[0]["server_label"] == "Test_MCP"
     assert "require_approval" in result[0]
-    assert result[0]["require_approval"] == {"always": {"tool1", "tool2"}}
 
 
 def test_azure_ai_chat_client_prepare_mcp_resources_with_never_require_dict(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_mcp_resources with dict-based approval mode (never_require_approval)."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # MCP tool with never_require_approval dict
-    mcp_tool = HostedMCPTool(
+    # MCP tool with never require approval - use approval_mode parameter
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
         name="Test MCP",
         url="https://example.com/mcp",
-        approval_mode={"never_require_approval": {"safe_tool"}},
+        approval_mode={"never_require_approval": ["safe_tool"]},
     )
 
-    result = chat_client._prepare_mcp_resources([mcp_tool])  # type: ignore
+    result = client._prepare_mcp_resources([mcp_tool])  # type: ignore
 
     assert len(result) == 1
-    assert result[0]["require_approval"] == {"never": {"safe_tool"}}
+    assert "require_approval" in result[0]
 
 
 def test_azure_ai_chat_client_prepare_messages_with_function_result(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_messages extracts function_result content."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result="test result")
-    messages = [ChatMessage(role="user", contents=[function_result])]
+    messages = [Message(role="user", contents=[function_result])]
 
-    additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
+    additional_messages, instructions, required_action_results = client._prepare_messages(messages)  # type: ignore
 
     # function_result should be extracted, not added to additional_messages
     assert additional_messages is None
@@ -2122,14 +2090,14 @@ def test_azure_ai_chat_client_prepare_messages_with_raw_content_block(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_messages handles raw MessageInputContentBlock in content."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+    client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Create content with raw_representation that is a MessageInputContentBlock
     raw_block = MessageInputTextBlock(text="Raw block text")
     custom_content = Content(type="custom", raw_representation=raw_block)
-    messages = [ChatMessage(role="user", contents=[custom_content])]
+    messages = [Message(role="user", contents=[custom_content])]
 
-    additional_messages, instructions, required_action_results = chat_client._prepare_messages(messages)  # type: ignore
+    additional_messages, instructions, required_action_results = client._prepare_messages(messages)  # type: ignore
 
     assert additional_messages is not None
     assert len(additional_messages) == 1
@@ -2140,16 +2108,15 @@ def test_azure_ai_chat_client_prepare_messages_with_raw_content_block(
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_mcp_tool(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai with HostedMCPTool."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    """Test _prepare_tools_for_azure_ai with MCP dict tool."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    mcp_tool = HostedMCPTool(
+    mcp_tool = AzureAIAgentClient.get_mcp_tool(
         name="Test MCP Server",
         url="https://example.com/mcp",
-        allowed_tools=["tool1", "tool2"],
     )
 
-    tool_definitions = await chat_client._prepare_tools_for_azure_ai([mcp_tool])  # type: ignore
+    tool_definitions = await client._prepare_tools_for_azure_ai([mcp_tool])  # type: ignore
 
     assert len(tool_definitions) >= 1
     # The McpTool.definitions property returns the tool definitions
@@ -2162,12 +2129,12 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_tool_definition(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tools_for_azure_ai with ToolDefinition passthrough."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Pass a ToolDefinition directly - should be passed through as-is
     tool_def = CodeInterpreterToolDefinition()
 
-    tool_definitions = await chat_client._prepare_tools_for_azure_ai([tool_def])  # type: ignore
+    tool_definitions = await client._prepare_tools_for_azure_ai([tool_def])  # type: ignore
 
     assert len(tool_definitions) == 1
     assert tool_definitions[0] is tool_def
@@ -2177,12 +2144,12 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_dict_passthrough(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test _prepare_tools_for_azure_ai with dict passthrough."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
     # Pass a dict tool definition - should be passed through as-is
     dict_tool = {"type": "function", "function": {"name": "test_func", "parameters": {}}}
 
-    tool_definitions = await chat_client._prepare_tools_for_azure_ai([dict_tool])  # type: ignore
+    tool_definitions = await client._prepare_tools_for_azure_ai([dict_tool])  # type: ignore
 
     assert len(tool_definitions) == 1
     assert tool_definitions[0] is dict_tool
@@ -2191,14 +2158,16 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_dict_passthrough(
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_unsupported_type(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _prepare_tools_for_azure_ai raises error for unsupported tool type."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+    """Test _prepare_tools_for_azure_ai passes through unsupported tool types."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Pass an unsupported tool type
+    # Pass an unsupported tool type - it should be passed through unchanged
     class UnsupportedTool:
         pass
 
     unsupported_tool = UnsupportedTool()
 
-    with pytest.raises(ServiceInitializationError, match="Unsupported tool type"):
-        await chat_client._prepare_tools_for_azure_ai([unsupported_tool])  # type: ignore
+    # Unsupported tools are now passed through unchanged (server will reject if invalid)
+    tool_definitions = await client._prepare_tools_for_azure_ai([unsupported_tool])  # type: ignore
+    assert len(tool_definitions) == 1
+    assert tool_definitions[0] is unsupported_tool

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import ChatMessage, Content
+from agent_framework import Content, Message
 from agent_framework.ollama import OllamaChatClient
 
 """
@@ -32,7 +32,7 @@ async def test_image() -> None:
 
     image_uri = create_sample_image()
 
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="What's in this image?"),

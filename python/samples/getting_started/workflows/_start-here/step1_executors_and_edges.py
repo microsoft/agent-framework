@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import (
     Executor,
+    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -47,6 +48,11 @@ What this example shows
 
 - Fluent WorkflowBuilder API:
     add_edge(A, B) to connect nodes, set_start_executor(A), then build() -> Workflow.
+
+- State isolation via helper functions:
+    Wrapping executor instantiation and workflow building inside a function
+    (e.g., create_workflow()) ensures each call produces fresh, independent
+    instances. This is the recommended pattern for reuse.
 
 - Running and results:
     workflow.run(initial_input) executes the graph. Terminal nodes yield
@@ -152,18 +158,28 @@ class ExclamationAdder(Executor):
         await ctx.send_message(result)  # type: ignore
 
 
+def create_workflow() -> Workflow:
+    """Create a fresh workflow with isolated state.
+
+    Wrapping workflow construction in a helper function ensures each call
+    produces independent executor instances. This is the recommended pattern
+    for reuse — call create_workflow() each time you need a new workflow so
+    that no state leaks between runs.
+    """
+    upper_case = UpperCase(id="upper_case_executor")
+
+    return WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
+
+
 async def main():
     """Build and run workflows using the fluent builder API."""
 
-    # Workflow 1: Using introspection-based type detection
-    # -----------------------------------------------------
-    upper_case = UpperCase(id="upper_case_executor")
-
-    # Build the workflow using a fluent pattern:
-    # 1) start_executor=... in constructor declares the entry point
-    # 2) add_edge(from_node, to_node) defines a directed edge upper_case -> reverse_text
-    # 3) build() finalizes and returns an immutable Workflow object
-    workflow1 = WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
+    # Workflow 1: Using the helper function pattern for state isolation
+    # ------------------------------------------------------------------
+    # Each call to create_workflow() returns a workflow with fresh executor
+    # instances. This is the recommended pattern when you need to run the
+    # same workflow topology multiple times with clean state.
+    workflow1 = create_workflow()
 
     # Run the workflow by sending the initial message to the start node.
     # The run(...) call returns an event collection; its get_outputs() method
@@ -175,6 +191,7 @@ async def main():
 
     # Workflow 2: Using explicit type parameters on @handler
     # -------------------------------------------------------
+    upper_case = UpperCase(id="upper_case_executor")
     exclamation_adder = ExclamationAdder(id="exclamation_adder")
 
     # This workflow demonstrates the explicit input/output feature:

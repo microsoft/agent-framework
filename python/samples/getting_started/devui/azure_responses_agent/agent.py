@@ -21,7 +21,7 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def extract_key_points(
 
 
 # Agent using Azure OpenAI Responses API (supports PDF uploads!)
-agent = ChatAgent(
+agent = Agent(
     name="AzureResponsesAgent",
     description="An agent that can analyze PDFs, images, and other documents using Azure OpenAI Responses API",
     instructions="""
@@ -85,7 +85,7 @@ agent = ChatAgent(
     For PDFs, you can read and understand the text, tables, and structure.
     For images, you can describe what you see and extract any text.
     """,
-    chat_client=AzureOpenAIResponsesClient(
+    client=AzureOpenAIResponsesClient(
         deployment_name=_deployment_name,
         endpoint=_endpoint,
         api_version="2025-03-01-preview",  # Required for Responses API

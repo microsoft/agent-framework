@@ -19,7 +19,7 @@ from collections.abc import Generator
 from datetime import timedelta
 from typing import Any, cast
 
-from agent_framework import AgentResponse, ChatAgent
+from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -54,11 +54,11 @@ class HumanApproval(BaseModel):
     feedback: str = ""
 
 
-def create_writer_agent() -> "ChatAgent":
+def create_writer_agent() -> "Agent":
     """Create the Writer agent using Azure OpenAI.
 
     Returns:
-        ChatAgent: The configured Writer agent
+        Agent: The configured Writer agent
     """
     instructions = (
         "You are a professional content writer who creates high-quality articles on various topics. "

@@ -4,8 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Content, HostedFileSearchTool
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import FileInfo, VectorStore
 from azure.identity.aio import AzureCliCredential
@@ -45,8 +44,9 @@ async def main() -> None:
             vector_store = await agents_client.vector_stores.create_and_poll(file_ids=[file.id], name="my_vectorstore")
             print(f"Created vector store, vector store ID: {vector_store.id}")
 
-            # 2. Create file search tool with uploaded resources
-            file_search_tool = HostedFileSearchTool(inputs=[Content.from_hosted_vector_store(vector_store_id=vector_store.id)])
+            # 2. Create a client to access hosted tool factory methods
+            client = AzureAIClient(credential=credential)
+            file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
 
             # 3. Create an agent with file search capabilities using the provider
             agent = await provider.create_agent(
@@ -55,7 +55,7 @@ async def main() -> None:
                     "You are a helpful assistant that can search through uploaded employee files "
                     "to answer questions about employees."
                 ),
-                tools=file_search_tool,
+                tools=[file_search_tool],
             )
 
             # 4. Simulate conversation with the agent

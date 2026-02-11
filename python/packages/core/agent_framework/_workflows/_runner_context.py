@@ -29,25 +29,25 @@ T = TypeVar("T")
 
 
 class MessageType(Enum):
-    """Enumeration of message types in the workflow."""
+    """Enumeration of WorkflowMessage types in the workflow."""
 
     STANDARD = "standard"
-    """A standard message between executors."""
+    """A standard WorkflowMessage between executors."""
 
     RESPONSE = "response"
-    """A response message to a pending request."""
+    """A response WorkflowMessage to a pending request."""
 
 
 @dataclass
-class Message:
-    """A class representing a message in the workflow."""
+class WorkflowMessage:
+    """A class representing a WorkflowMessage in the workflow."""
 
     data: Any
     source_id: str
     target_id: str | None = None
     type: MessageType = MessageType.STANDARD
 
-    # OpenTelemetry trace context fields for message propagation
+    # OpenTelemetry trace context fields for WorkflowMessage propagation
     # These are plural to support fan-in scenarios where multiple messages are aggregated
     trace_contexts: list[dict[str, str]] | None = None  # W3C Trace Context headers from multiple sources
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
@@ -67,7 +67,7 @@ class Message:
         return self.source_span_ids[0] if self.source_span_ids else None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the Message to a dictionary for serialization."""
+        """Convert the WorkflowMessage to a dictionary for serialization."""
         return {
             "data": encode_checkpoint_value(self.data),
             "source_id": self.source_id,
@@ -79,16 +79,16 @@ class Message:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> Message:
-        """Create a Message from a dictionary."""
+    def from_dict(data: dict[str, Any]) -> WorkflowMessage:
+        """Create a WorkflowMessage from a dictionary."""
         # Validation
         if "data" not in data:
-            raise KeyError("Missing 'data' field in Message dictionary.")
+            raise KeyError("Missing 'data' field in WorkflowMessage dictionary.")
 
         if "source_id" not in data:
-            raise KeyError("Missing 'source_id' field in Message dictionary.")
+            raise KeyError("Missing 'source_id' field in WorkflowMessage dictionary.")
 
-        return Message(
+        return WorkflowMessage(
             data=decode_checkpoint_value(data["data"]),
             source_id=data["source_id"],
             target_id=data.get("target_id"),
@@ -119,15 +119,15 @@ class RunnerContext(Protocol):
     If checkpoint storage is not configured, checkpoint methods may raise.
     """
 
-    async def send_message(self, message: Message) -> None:
-        """Send a message from the executor to the context.
+    async def send_message(self, WorkflowMessage: WorkflowMessage) -> None:
+        """Send a WorkflowMessage from the executor to the context.
 
         Args:
-            message: The message to be sent.
+            WorkflowMessage: The WorkflowMessage to be sent.
         """
         ...
 
-    async def drain_messages(self) -> dict[str, list[Message]]:
+    async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         """Drain all messages from the context.
 
         Returns:
@@ -291,7 +291,7 @@ class InProcRunnerContext:
         Args:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
-        self._messages: dict[str, list[Message]] = {}
+        self._messages: dict[str, list[WorkflowMessage]] = {}
         # Event queue for immediate streaming of events
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
@@ -307,11 +307,11 @@ class InProcRunnerContext:
         self._streaming: bool = False
 
     # region Messaging and Events
-    async def send_message(self, message: Message) -> None:
-        self._messages.setdefault(message.source_id, [])
-        self._messages[message.source_id].append(message)
+    async def send_message(self, WorkflowMessage: WorkflowMessage) -> None:
+        self._messages.setdefault(WorkflowMessage.source_id, [])
+        self._messages[WorkflowMessage.source_id].append(WorkflowMessage)
 
-    async def drain_messages(self) -> dict[str, list[Message]]:
+    async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         messages = copy(self._messages)
         self._messages.clear()
         return messages
@@ -422,7 +422,7 @@ class InProcRunnerContext:
         self._messages.clear()
         messages_data = checkpoint.messages
         for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [Message.from_dict(msg) for msg in message_list]
+            self._messages[source_id] = [WorkflowMessage.from_dict(msg) for msg in message_list]
 
         # Restore pending request info events
         self._pending_request_info_events.clear()
@@ -504,7 +504,7 @@ class InProcRunnerContext:
         source_executor_id = event.source_executor_id
 
         # Create ResponseMessage instance
-        response_msg = Message(
+        response_msg = WorkflowMessage(
             data=response,
             source_id=INTERNAL_SOURCE_ID(source_executor_id),
             target_id=source_executor_id,

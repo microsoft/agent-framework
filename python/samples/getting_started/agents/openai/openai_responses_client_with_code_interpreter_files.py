@@ -4,14 +4,14 @@ import asyncio
 import os
 import tempfile
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from openai import AsyncOpenAI
 
 """
 OpenAI Responses Client with Code Interpreter and Files Example
 
-This sample demonstrates using HostedCodeInterpreterTool with OpenAI Responses Client
+This sample demonstrates using get_code_interpreter_tool() with OpenAI Responses Client
 for Python code execution and data analysis with uploaded files.
 """
 
@@ -66,10 +66,11 @@ async def main() -> None:
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
     # Create agent using OpenAI Responses client
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    client = OpenAIResponsesClient()
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can analyze data files using Python code.",
-        tools=HostedCodeInterpreterTool(inputs=[{"file_id": file_id}]),
+        tools=client.get_code_interpreter_tool(file_ids=[file_id]),
     )
 
     # Test the code interpreter with the uploaded file

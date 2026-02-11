@@ -2,30 +2,29 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, HostedWebSearchTool
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 
 """
 OpenAI Responses Client with Web Search Example
 
-This sample demonstrates using HostedWebSearchTool with OpenAI Responses Client
+This sample demonstrates using get_web_search_tool() with OpenAI Responses Client
 for direct real-time information retrieval and current data access.
 """
 
 
 async def main() -> None:
-    # Test that the agent will use the web search tool with location
-    additional_properties = {
-        "user_location": {
-            "country": "US",
-            "city": "Seattle",
-        }
-    }
+    client = OpenAIResponsesClient()
 
-    agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    # Create web search tool with location context
+    web_search_tool = client.get_web_search_tool(
+        user_location={"city": "Seattle", "country": "US"},
+    )
+
+    agent = Agent(
+        client=client,
         instructions="You are a helpful assistant that can search the web for current information.",
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+        tools=[web_search_tool],
     )
 
     message = "What is the current weather? Do not ask for my current location."

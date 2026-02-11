@@ -223,7 +223,7 @@ export interface AgentResponseUpdate {
 
 // Agent run response (final)
 export interface AgentResponse {
-  messages: ChatMessage[];
+  messages: Message[];
   response_id?: string;
   created_at?: CreatedAtT;
   usage_details?: UsageDetails;
@@ -232,7 +232,7 @@ export interface AgentResponse {
 }
 
 // Chat message
-export interface ChatMessage {
+export interface Message {
   contents: Content[];
   role?: Role;
   author_name?: string;

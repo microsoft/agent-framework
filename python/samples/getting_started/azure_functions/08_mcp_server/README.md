@@ -142,20 +142,20 @@ The sample shows how to enable MCP tool triggers with flexible agent configurati
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
 # Create Azure OpenAI Chat Client
-chat_client = AzureOpenAIChatClient()
+client = AzureOpenAIChatClient()
 
 # Define agents with different roles
-joker_agent = chat_client.as_agent(
+joker_agent = client.as_agent(
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
-stock_agent = chat_client.as_agent(
+stock_agent = client.as_agent(
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
-plant_agent = chat_client.as_agent(
+plant_agent = client.as_agent(
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

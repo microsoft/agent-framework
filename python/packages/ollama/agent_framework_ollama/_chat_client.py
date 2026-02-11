@@ -9,7 +9,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from itertools import chain
@@ -18,7 +17,6 @@ from typing import Any, ClassVar, Generic, TypedDict
 from agent_framework import (
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -27,9 +25,8 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedWebSearchTool,
+    Message,
     ResponseStream,
-    ToolProtocol,
     UsageDetails,
     get_logger,
 )
@@ -65,13 +62,13 @@ else:
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Ollama Chat Options TypedDict
 
 
-class OllamaChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Ollama-specific chat options dict.
 
     Extends base ChatOptions with Ollama-specific parameters.
@@ -272,7 +269,7 @@ OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Ollama model option parameter names."""
 
-TOllamaChatOptions = TypeVar("TOllamaChatOptions", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
+OllamaChatOptionsT = TypeVar("OllamaChatOptionsT", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
@@ -291,10 +288,10 @@ logger = get_logger("agent_framework.ollama")
 
 
 class OllamaChatClient(
-    ChatMiddlewareLayer[TOllamaChatOptions],
-    FunctionInvocationLayer[TOllamaChatOptions],
-    ChatTelemetryLayer[TOllamaChatOptions],
-    BaseChatClient[TOllamaChatOptions],
+    ChatMiddlewareLayer[OllamaChatOptionsT],
+    FunctionInvocationLayer[OllamaChatOptionsT],
+    ChatTelemetryLayer[OllamaChatOptionsT],
+    BaseChatClient[OllamaChatOptionsT],
 ):
     """Ollama Chat completion class with middleware, telemetry, and function invocation support."""
 
@@ -343,7 +340,7 @@ class OllamaChatClient(
         self.model_id = ollama_settings.model_id
         self.client = client or AsyncClient(host=ollama_settings.host)
         # Save Host URL for serialization with to_dict()
-        self.host = str(self.client._client.base_url)
+        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
         super().__init__(
             middleware=middleware,
@@ -356,7 +353,7 @@ class OllamaChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -397,7 +394,7 @@ class OllamaChatClient(
 
         return _get_response()
 
-    def _prepare_options(self, messages: Sequence[ChatMessage], options: Mapping[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         # Handle instructions by prepending to messages as system message
         instructions = options.get("instructions")
         if instructions:
@@ -448,13 +445,13 @@ class OllamaChatClient(
 
         return run_options
 
-    def _prepare_messages_for_ollama(self, messages: Sequence[ChatMessage]) -> list[OllamaMessage]:
+    def _prepare_messages_for_ollama(self, messages: Sequence[Message]) -> list[OllamaMessage]:
         ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
-    def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
-        message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
+    def _prepare_message_for_ollama(self, message: Message) -> list[OllamaMessage]:
+        message_converters: dict[str, Callable[[Message], list[OllamaMessage]]] = {
             "system": self._format_system_message,
             "user": self._format_user_message,
             "assistant": self._format_assistant_message,
@@ -462,10 +459,10 @@ class OllamaChatClient(
         }
         return message_converters[message.role](message)
 
-    def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_system_message(self, message: Message) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
 
-    def _format_user_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_user_message(self, message: Message) -> list[OllamaMessage]:
         if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
             raise ServiceInvalidRequestError(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
@@ -483,7 +480,7 @@ class OllamaChatClient(
             user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]
 
-    def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_assistant_message(self, message: Message) -> list[OllamaMessage]:
         text_content = message.text
         # Ollama shouldn't have encrypted reasoning, so we just process text.
         reasoning_contents = "".join((c.text or "") for c in message.contents if c.type == "text_reasoning")
@@ -506,7 +503,7 @@ class OllamaChatClient(
             ]
         return [assistant_message]
 
-    def _format_tool_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
         return [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
@@ -538,7 +535,7 @@ class OllamaChatClient(
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[Message(role="assistant", contents=contents)],
             model_id=response.model,
             created_at=response.created_at,
             usage_details=UsageDetails(
@@ -559,21 +556,22 @@ class OllamaChatClient(
             resp.append(fcc)
         return resp
 
-    def _prepare_tools_for_ollama(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
-        chat_tools: list[dict[str, Any]] = []
+    def _prepare_tools_for_ollama(self, tools: list[Any]) -> list[Any]:
+        """Prepare tools for the Ollama API.
+
+        Converts FunctionTool to JSON schema format. All other tools pass through unchanged.
+
+        Args:
+            tools: List of tools to prepare.
+
+        Returns:
+            List of tool definitions ready for the Ollama API.
+        """
+        chat_tools: list[Any] = []
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case HostedWebSearchTool():
-                        raise ServiceInvalidRequestError("HostedWebSearchTool is not supported by the Ollama client.")
-                    case _:
-                        raise ServiceInvalidRequestError(
-                            "Unsupported tool type '"
-                            f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: FunctionTool."
-                        )
+            if isinstance(tool, FunctionTool):
+                chat_tools.append(tool.to_json_schema_spec())
             else:
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                # Pass through all other tools unchanged
+                chat_tools.append(tool)
         return chat_tools

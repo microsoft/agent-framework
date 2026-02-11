@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponse,
-    ChatAgent,
-    ChatMessage,
     Content,
     FileCheckpointStorage,
+    Message,
     Workflow,
     WorkflowEvent,
     tool,
@@ -57,7 +57,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
 
 
-def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent]:
+def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
     triage = client.as_agent(
@@ -91,7 +91,7 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, 
     return triage, refund, order
 
 
-def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow, ChatAgent, ChatAgent, ChatAgent]:
+def create_workflow(checkpoint_storage: FileCheckpointStorage) -> tuple[Workflow, Agent, Agent, Agent]:
     """Build the handoff workflow with checkpointing enabled."""
 
     client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -284,9 +284,9 @@ async def resume_with_responses(
 
         elif event.type == "output":
             print("\n[Workflow Output Event - Conversation Update]")
-            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
-                # Now safe to cast event.data to list[ChatMessage]
-                conversation = cast(list[ChatMessage], event.data)  # type: ignore
+            if event.data and isinstance(event.data, list) and all(isinstance(msg, Message) for msg in event.data):  # type: ignore
+                # Now safe to cast event.data to list[Message]
+                conversation = cast(list[Message], event.data)  # type: ignore
                 for msg in conversation[-3:]:  # Show last 3 messages
                     author = msg.author_name or msg.role
                     text = msg.text[:100] + "..." if len(msg.text) > 100 else msg.text

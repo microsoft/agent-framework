@@ -14,7 +14,6 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -24,8 +23,8 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    Message,
     ResponseStream,
-    ToolProtocol,
     UsageDetails,
     get_logger,
     prepare_function_call_results,
@@ -62,7 +61,7 @@ __all__ = [
     "BedrockSettings",
 ]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -91,7 +90,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.
@@ -183,7 +182,7 @@ BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Bedrock Converse API parameter names."""
 
-TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
+BedrockChatOptionsT = TypeVar("BedrockChatOptionsT", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
@@ -219,11 +218,11 @@ class BedrockSettings(AFBaseSettings):
 
 
 class BedrockChatClient(
-    ChatMiddlewareLayer[TBedrockChatOptions],
-    FunctionInvocationLayer[TBedrockChatOptions],
-    ChatTelemetryLayer[TBedrockChatOptions],
-    BaseChatClient[TBedrockChatOptions],
-    Generic[TBedrockChatOptions],
+    ChatMiddlewareLayer[BedrockChatOptionsT],
+    FunctionInvocationLayer[BedrockChatOptionsT],
+    ChatTelemetryLayer[BedrockChatOptionsT],
+    BaseChatClient[BedrockChatOptionsT],
+    Generic[BedrockChatOptionsT],
 ):
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
@@ -325,7 +324,7 @@ class BedrockChatClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -359,7 +358,7 @@ class BedrockChatClient(
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -410,7 +409,7 @@ class BedrockChatClient(
         return run_options
 
     def _prepare_bedrock_messages(
-        self, messages: Sequence[ChatMessage]
+        self, messages: Sequence[Message]
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
         prompts: list[dict[str, str]] = []
         conversation: list[dict[str, Any]] = []
@@ -482,7 +481,7 @@ class BedrockChatClient(
 
         return aligned_blocks
 
-    def _convert_message_to_content_blocks(self, message: ChatMessage) -> list[dict[str, Any]]:
+    def _convert_message_to_content_blocks(self, message: Message) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
@@ -564,7 +563,7 @@ class BedrockChatClient(
                 return {"text": str(value)}
         return {"text": str(value)}
 
-    def _prepare_tools(self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
+    def _prepare_tools(self, tools: list[FunctionTool | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
         converted: list[dict[str, Any]] = []
         if not tools:
             return None
@@ -593,7 +592,7 @@ class BedrockChatClient(
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage(role="assistant", contents=contents, raw_representation=message)
+        chat_message = Message(role="assistant", contents=contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")

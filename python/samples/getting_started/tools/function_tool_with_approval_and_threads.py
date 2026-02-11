@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import ChatAgent, ChatMessage, tool
+from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 """
@@ -28,8 +28,8 @@ async def approval_example() -> None:
     """Example showing approval with threads."""
     print("=== Tool Approval with Thread ===\n")
 
-    agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(),
+    agent = Agent(
+        client=AzureOpenAIChatClient(),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -55,7 +55,7 @@ async def approval_example() -> None:
 
             # Step 2: Send approval response
             approval_response = request.to_function_approval_response(approved=approved)
-            result = await agent.run(ChatMessage("user", [approval_response]), thread=thread)
+            result = await agent.run(Message("user", [approval_response]), thread=thread)
 
     print(f"Agent: {result}\n")
 
@@ -64,8 +64,8 @@ async def rejection_example() -> None:
     """Example showing rejection with threads."""
     print("=== Tool Rejection with Thread ===\n")
 
-    agent = ChatAgent(
-        chat_client=AzureOpenAIChatClient(),
+    agent = Agent(
+        client=AzureOpenAIChatClient(),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -88,7 +88,7 @@ async def rejection_example() -> None:
 
             # Send rejection response
             rejection_response = request.to_function_approval_response(approved=False)
-            result = await agent.run(ChatMessage("user", [rejection_response]), thread=thread)
+            result = await agent.run(Message("user", [rejection_response]), thread=thread)
 
     print(f"Agent: {result}\n")
 
