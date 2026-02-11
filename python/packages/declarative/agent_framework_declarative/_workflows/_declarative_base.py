@@ -37,7 +37,14 @@ from agent_framework._workflows import (
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
-from powerfx import Engine
+
+try:
+    from powerfx import Engine
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+    Engine = None  # type: ignore[assignment, misc]
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -362,6 +369,14 @@ class DeclarativeWorkflowState:
         # Pre-process nested custom functions (e.g., Upper(MessageText(...)))
         # Replace them with their evaluated results before sending to PowerFx
         formula = self._preprocess_custom_functions(formula)
+
+        # Check if powerfx is available
+        if not _powerfx_available:
+            raise ImportError(
+                "The 'powerfx' package is required to evaluate PowerFx expressions. "
+                "Please install .NET and the 'powerfx' package to use PowerFx expressions. "
+                "See https://github.com/microsoft/agent-framework for installation instructions."
+            )
 
         engine = Engine()
         symbols = self._to_powerfx_symbols()
