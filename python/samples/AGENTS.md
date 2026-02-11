@@ -66,20 +66,28 @@ python/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **OpenAI Responses** via `OpenAIResponsesClient`:
+All canonical samples (01-get-started) use **Azure OpenAI Responses** via `AzureOpenAIResponsesClient`
+with an Azure AI Foundry project endpoint:
 
 ```python
 import os
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
-client = OpenAIResponsesClient(
-    api_key=os.environ["OPENAI_API_KEY"],
-    model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+credential = AzureCliCredential()
+client = AzureOpenAIResponsesClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    credential=credential,
 )
 agent = client.as_agent(name="...", instructions="...")
 ```
 
-Environment variables should always be **explicit** (pass `api_key=`, `model_id=`).
+Environment variables:
+- `AZURE_AI_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` — Model deployment name (e.g. gpt-4o)
+
+For authentication, run `az login` before running samples.
 
 ## Snippet tags for docs integration
 

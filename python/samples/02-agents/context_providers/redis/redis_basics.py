@@ -37,7 +37,7 @@ from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.

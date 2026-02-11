@@ -11,10 +11,14 @@ from typing import Any
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
-# Ensure local getting_started package can be imported when running as a script.
+# Ensure local package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
 if str(_SAMPLES_ROOT) not in sys.path:
     sys.path.insert(0, str(_SAMPLES_ROOT))
+# Also add the current directory for sibling imports
+_CURRENT_DIR = str(Path(__file__).resolve().parent)
+if _CURRENT_DIR not in sys.path:
+    sys.path.insert(0, _CURRENT_DIR)
 
 from agent_framework import (  # noqa: E402
     Content,
@@ -26,7 +30,7 @@ from agent_framework import (  # noqa: E402
     handler,
     response_handler,
 )
-from getting_started.workflows.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
+from workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,

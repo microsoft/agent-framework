@@ -106,7 +106,7 @@ $env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
 Navigate to the sample directory and install dependencies. For example:
 
 ```bash
-cd samples/getting_started/durabletask/01_single_agent
+cd samples/04-hosting/durabletask/01_single_agent
 pip install -r requirements.txt
 ```
 

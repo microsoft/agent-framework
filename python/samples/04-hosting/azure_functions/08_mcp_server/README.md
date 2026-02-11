@@ -46,7 +46,7 @@ Update your `local.settings.json` with your Azure OpenAI credentials:
 
 1. **Start the Function App**:
    ```bash
-   cd python/samples/getting_started/azure_functions/08_mcp_server
+   cd python/samples/04-hosting/azure_functions/08_mcp_server
    func start
    ```
 

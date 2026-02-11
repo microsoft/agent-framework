@@ -3,21 +3,28 @@
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 """
 Multi-Turn Conversations — Use AgentThread to maintain context
 
 This sample shows how to keep conversation history across multiple calls
 by reusing the same thread object.
+
+Environment variables:
+  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
+  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
 async def main() -> None:
     # <create_agent>
-    client = OpenAIResponsesClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
     )
 
     agent = client.as_agent(

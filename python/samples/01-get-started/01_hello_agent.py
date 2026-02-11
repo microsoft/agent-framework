@@ -3,21 +3,28 @@
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 """
 Hello Agent — Simplest possible agent
 
-This sample creates a minimal agent using OpenAIResponsesClient and runs it
-in both non-streaming and streaming modes.
+This sample creates a minimal agent using AzureOpenAIResponsesClient via an
+Azure AI Foundry project endpoint, and runs it in both non-streaming and streaming modes.
+
+Environment variables:
+  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
+  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
 async def main() -> None:
     # <create_agent>
-    client = OpenAIResponsesClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
     )
 
     agent = client.as_agent(

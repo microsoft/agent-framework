@@ -3,7 +3,8 @@
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 """
 Host Your Agent — Minimal A2A hosting stub
@@ -15,15 +16,21 @@ the A2A hosting layer.
 Prerequisites:
   pip install agent-framework[a2a] --pre
 
+Environment variables:
+  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
+  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
+
 To run a full A2A server, see samples/04-hosting/a2a/ for a complete example.
 """
 
 
 async def main() -> None:
     # <create_agent>
-    client = OpenAIResponsesClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
     )
 
     agent = client.as_agent(

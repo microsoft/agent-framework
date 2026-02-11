@@ -37,7 +37,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/03_single_agent_streaming
+cd samples/04-hosting/durabletask/03_single_agent_streaming
 python sample.py
 ```
 

@@ -14,7 +14,7 @@ The LLM decides whether to retry the call or to respond with something else, bas
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def greet(name: Annotated[str, "Name to greet"]) -> str:
     """Greet someone."""

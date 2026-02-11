@@ -49,8 +49,8 @@ Prerequisites:
 # 1. Define market data tools (no approval required)
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # See:
-# samples/getting_started/tools/function_tool_with_approval.py
-# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval.py
+# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""

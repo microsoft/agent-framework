@@ -20,7 +20,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/05_multi_agent_orchestration_concurrency
+cd samples/04-hosting/durabletask/05_multi_agent_orchestration_concurrency
 python sample.py
 ```
 

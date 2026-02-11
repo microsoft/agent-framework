@@ -27,7 +27,7 @@ import pytest
 import redis.asyncio as aioredis
 
 # Add sample directory to path to import RedisStreamResponseHandler
-SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"
+SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "04-hosting" / "durabletask" / "03_single_agent_streaming"
 sys.path.insert(0, str(SAMPLE_DIR))
 
 from redis_stream_response_handler import RedisStreamResponseHandler  # type: ignore[reportMissingImports] # noqa: E402

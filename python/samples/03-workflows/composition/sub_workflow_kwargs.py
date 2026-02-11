@@ -35,8 +35,8 @@ Prerequisites:
 
 # Define tools that access custom context via **kwargs
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
-# see samples/getting_started/tools/function_tool_with_approval.py and
-# samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# see samples/02-agents/tools/function_tool_with_approval.py and
+# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_authenticated_data(
     resource: Annotated[str, "The resource to fetch"],

@@ -20,7 +20,7 @@ With the environment setup, you can run the sample using the combined approach o
 **Option 1: Combined (Recommended for Testing)**
 
 ```bash
-cd samples/getting_started/durabletask/04_single_agent_orchestration_chaining
+cd samples/04-hosting/durabletask/04_single_agent_orchestration_chaining
 python sample.py
 ```
 

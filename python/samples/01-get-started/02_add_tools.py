@@ -6,7 +6,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
@@ -14,6 +15,10 @@ Add Tools — Give your agent a function tool
 
 This sample shows how to define a function tool with the @tool decorator
 and wire it into an agent so the model can call it.
+
+Environment variables:
+  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
+  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
@@ -31,9 +36,11 @@ def get_weather(
 
 
 async def main() -> None:
-    client = OpenAIResponsesClient(
-        api_key=os.environ["OPENAI_API_KEY"],
-        model_id=os.environ.get("OPENAI_RESPONSES_MODEL_ID", "gpt-4o"),
+    credential = AzureCliCredential()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
     )
 
     # <create_agent_with_tools>
