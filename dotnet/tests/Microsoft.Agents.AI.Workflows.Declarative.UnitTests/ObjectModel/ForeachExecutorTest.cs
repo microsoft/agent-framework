@@ -23,17 +23,17 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     public void ForeachNamingConvention()
     {
         // Arrange
-        string TestId = this.CreateActionId().Value;
+        string testId = this.CreateActionId().Value;
 
         // Act
-        string startStep = ForeachExecutor.Steps.Start(TestId);
-        string nextStep = ForeachExecutor.Steps.Next(TestId);
-        string endStep = ForeachExecutor.Steps.End(TestId);
+        string startStep = ForeachExecutor.Steps.Start(testId);
+        string nextStep = ForeachExecutor.Steps.Next(testId);
+        string endStep = ForeachExecutor.Steps.End(testId);
 
         // Assert
-        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.Start)}", startStep);
-        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.Next)}", nextStep);
-        Assert.Equal($"{TestId}_{nameof(ForeachExecutor.Steps.End)}", endStep);
+        Assert.Equal($"{testId}_{nameof(ForeachExecutor.Steps.Start)}", startStep);
+        Assert.Equal($"{testId}_{nameof(ForeachExecutor.Steps.Next)}", nextStep);
+        Assert.Equal($"{testId}_{nameof(ForeachExecutor.Steps.End)}", endStep);
     }
 
     [Fact]
