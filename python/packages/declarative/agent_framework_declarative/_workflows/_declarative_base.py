@@ -30,7 +30,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from agent_framework._workflows import (
     Executor,
@@ -44,7 +44,8 @@ try:
     _powerfx_available = True
 except (ImportError, RuntimeError):
     _powerfx_available = False
-    Engine = None  # type: ignore[assignment, misc]
+    if TYPE_CHECKING:
+        from powerfx import Engine  # type: ignore[assignment]
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
