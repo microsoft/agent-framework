@@ -7,7 +7,6 @@
 // Note: Memory extraction in Azure AI Foundry is asynchronous and takes time. This sample demonstrates
 // a simple polling approach to wait for memory updates to complete before querying.
 
-using System.ClientModel.Primitives;
 using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -21,15 +20,7 @@ string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
 AzureCliCredential credential = new();
-
-// Add a debug handler to log all HTTP requests
-DebugHttpClientHandler debugHandler = new() { CheckCertificateRevocationList = true };
-HttpClient httpClient = new(debugHandler);
-AIProjectClientOptions clientOptions = new()
-{
-    Transport = new HttpClientPipelineTransport(httpClient)
-};
-AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential, clientOptions);
+AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 
 // Get the ChatClient from the AIProjectClient's OpenAI property using the deployment name.
 AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
@@ -82,53 +73,3 @@ await memoryProvider.WhenUpdatesCompletedAsync();
 
 AgentSession newSession = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));
-
-// Debug HTTP handler to log all requests (commented out by default)
-internal sealed class DebugHttpClientHandler : HttpClientHandler
-{
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        if (!request.RequestUri?.PathAndQuery.Contains("memory-store-sample") ?? false)
-        {
-            return await base.SendAsync(request, cancellationToken);
-        }
-
-        Console.WriteLine("\n=== HTTP REQUEST ===");
-        Console.WriteLine($"Method: {request.Method}");
-        Console.WriteLine($"URI: {request.RequestUri}");
-        Console.WriteLine("Headers:");
-        foreach (var header in request.Headers)
-        {
-            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
-        }
-
-        if (request.Content != null)
-        {
-            string body = await request.Content.ReadAsStringAsync(cancellationToken);
-            Console.WriteLine("Body: " + body);
-        }
-
-        HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
-
-        Console.WriteLine("====================\n");
-
-        Console.WriteLine("\n=== HTTP RESPONSE ===");
-        Console.WriteLine($"Status: {(int)response.StatusCode} {response.StatusCode}");
-        Console.WriteLine("Headers:");
-        foreach (var header in response.Headers)
-        {
-            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
-        }
-
-        foreach (var header in response.Content.Headers)
-        {
-            Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
-        }
-
-        string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        Console.WriteLine("Body: " + responseBody);
-        Console.WriteLine("=====================\n");
-
-        return response;
-    }
-}
