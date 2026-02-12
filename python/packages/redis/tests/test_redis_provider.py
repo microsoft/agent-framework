@@ -209,9 +209,27 @@ class TestRedisProviderModelInvoking:
         assert k["dtype"] == "float32"
         assert k["num_results"] == 10
         assert "filter_expression" in k
+        assert "linear_alpha" in k
 
         # Context assembled from returned memories
         assert ctx.messages and "Hit" in ctx.messages[0].text
+
+    # Ensures HybridQuery receives linear_alpha parameter (redisvl 0.14.0+ compatibility)
+    async def test_hybridquery_uses_linear_alpha_parameter(
+        self, mock_index: AsyncMock, patch_index_from_dict, patch_queries
+    ):  # noqa: ARG002
+        mock_index.query = AsyncMock(return_value=[{"content": "Result"}])
+        provider = RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
+
+        await provider.invoking([Message(role="user", text="query")])
+
+        # Assert: HybridQuery called with linear_alpha parameter (not alpha)
+        assert patch_queries["HybridQuery"].call_count == 1
+        k = patch_queries["calls"]["HybridQuery"][0]
+        assert "linear_alpha" in k
+        assert "alpha" not in k
+        # Default alpha value is 0.7 from _redis_search signature
+        assert k["linear_alpha"] == 0.7
 
 
 class TestRedisProviderContextManager:
