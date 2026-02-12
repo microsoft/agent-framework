@@ -408,6 +408,27 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
+    async def _run_after_providers(
+        self,
+        *,
+        session: AgentSession | None,
+        context: SessionContext,
+    ) -> None:
+        """Run after_run on all context providers in reverse order.
+
+        Keyword Args:
+            session: The conversation session.
+            context: The invocation context with response populated.
+        """
+        state = session.state if session else {}
+        for provider in reversed(self.context_providers):
+            await provider.after_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,  # type: ignore[arg-type]
+                context=context,
+                state=state,
+            )
+
     def as_tool(
         self,
         *,
@@ -973,10 +994,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not session.service_session_id
             and not opts.get("conversation_id")
             and not opts.get("store")
-            and not (
-                getattr(self.client, "STORES_BY_DEFAULT", False)
-                and opts.get("store") is not False
-            )
+            and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
         ):
             self.context_providers.append(InMemoryHistoryProvider("memory"))
 
@@ -1081,27 +1099,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Run after_run providers (reverse order)
         await self._run_after_providers(session=session, context=session_context)
-
-    async def _run_after_providers(
-        self,
-        *,
-        session: AgentSession | None,
-        context: SessionContext,
-    ) -> None:
-        """Run after_run on all context providers in reverse order.
-
-        Keyword Args:
-            session: The conversation session.
-            context: The invocation context with response populated.
-        """
-        state = session.state if session else {}
-        for provider in reversed(self.context_providers):
-            await provider.after_run(
-                agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
-                context=context,
-                state=state,
-            )
 
     async def _prepare_session_and_messages(
         self,

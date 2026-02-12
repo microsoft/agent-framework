@@ -269,9 +269,7 @@ def load_settings(
                 set_fields = [f for f in entry if result.get(f) is not None]
                 if len(set_fields) == 0:
                     names = ", ".join(f"'{f}'" for f in entry)
-                    raise SettingNotFoundError(
-                        f"Exactly one of {names} must be provided, but none was set."
-                    )
+                    raise SettingNotFoundError(f"Exactly one of {names} must be provided, but none was set.")
                 if len(set_fields) > 1:
                     all_names = ", ".join(f"'{f}'" for f in entry)
                     set_names = ", ".join(f"'{f}'" for f in set_fields)
