@@ -34,15 +34,15 @@ async def main() -> None:
     # </create_agent>
 
     # <multi_turn>
-    # Create a thread to maintain conversation history
-    thread = agent.get_new_thread()
+    # Create a session to maintain conversation history
+    session = agent.create_session()
 
     # First turn
-    result = await agent.run("My name is Alice and I love hiking.", thread=thread)
+    result = await agent.run("My name is Alice and I love hiking.", session=session)
     print(f"Agent: {result}\n")
 
     # Second turn — the agent should remember the user's name and hobby
-    result = await agent.run("What do you remember about me?", thread=thread)
+    result = await agent.run("What do you remember about me?", session=session)
     print(f"Agent: {result}")
     # </multi_turn>
 
