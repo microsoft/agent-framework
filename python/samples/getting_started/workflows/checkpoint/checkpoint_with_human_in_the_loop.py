@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from azure.identity import AzureCliCredential
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -30,8 +33,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
 
 """
 Sample: Checkpoint + human-in-the-loop quickstart.
@@ -178,7 +180,11 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
-    writer_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    writer_agent = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         instructions="Write concise, warm release notes that sound human and helpful.",
         name="writer",
     )

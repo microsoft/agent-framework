@@ -72,6 +72,41 @@ class _KwargsCapturingAgent(BaseAgent):
         return _run()
 
 
+class _OptionsAwareAgent(BaseAgent):
+    """Test agent that captures explicit `options` and kwargs passed to run()."""
+
+    captured_options: list[dict[str, Any] | None]
+    captured_kwargs: list[dict[str, Any]]
+
+    def __init__(self, name: str = "options_agent") -> None:
+        super().__init__(name=name, description="Test agent for options capture")
+        self.captured_options = []
+        self.captured_kwargs = []
+
+    def run(
+        self,
+        messages: str | Message | Sequence[str | Message] | None = None,
+        *,
+        stream: bool = False,
+        thread: AgentThread | None = None,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        self.captured_options.append(dict(options) if options is not None else None)
+        self.captured_kwargs.append(dict(kwargs))
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} response")])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", [f"{self.name} response"])])
+
+        return _run()
+
+
 # region Sequential Builder Tests
 
 
@@ -129,6 +164,106 @@ async def test_sequential_run_kwargs_flow() -> None:
 
     assert len(agent.captured_kwargs) >= 1
     assert agent.captured_kwargs[0].get("custom_data") == {"test": True}
+
+
+async def test_sequential_run_options_does_not_conflict_with_agent_options() -> None:
+    """Test workflow.run(options=...) does not conflict with Agent.run(options=...)."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    custom_data = {"session_id": "abc123"}
+    user_token = {"user_name": "alice"}
+    provided_options = {
+        "store": False,
+        "additional_function_arguments": {"source": "workflow-options"},
+    }
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        options=provided_options,
+        custom_data=custom_data,
+        user_token=user_token,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+    assert captured_options.get("store") is False
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("source") == "workflow-options"
+    assert additional_args.get("custom_data") == custom_data
+    assert additional_args.get("user_token") == user_token
+
+    # "options" should be passed once via the dedicated options parameter,
+    # not duplicated in **kwargs.
+    assert len(agent.captured_kwargs) >= 1
+    captured_kwargs = agent.captured_kwargs[0]
+    assert "options" not in captured_kwargs
+    assert captured_kwargs.get("custom_data") == custom_data
+    assert captured_kwargs.get("user_token") == user_token
+
+
+async def test_sequential_run_additional_function_arguments_flattened() -> None:
+    """Test workflow.run(additional_function_arguments=...) maps directly to tool kwargs."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    custom_data = {"session_id": "abc123"}
+    user_token = {"user_name": "alice"}
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("custom_data") == custom_data
+    assert additional_args.get("user_token") == user_token
+    assert "additional_function_arguments" not in additional_args
+
+    assert len(agent.captured_kwargs) >= 1
+    captured_kwargs = agent.captured_kwargs[0]
+    assert "additional_function_arguments" not in captured_kwargs
+
+
+async def test_sequential_run_additional_function_arguments_merges_with_options() -> None:
+    """Test workflow additional_function_arguments merges with workflow options."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        options={"additional_function_arguments": {"source": "workflow-options"}},
+        additional_function_arguments={"custom_data": {"session_id": "abc123"}},
+        user_token={"user_name": "alice"},
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("source") == "workflow-options"
+    assert additional_args.get("custom_data") == {"session_id": "abc123"}
+    assert additional_args.get("user_token") == {"user_name": "alice"}
+    assert "additional_function_arguments" not in additional_args
 
 
 # endregion

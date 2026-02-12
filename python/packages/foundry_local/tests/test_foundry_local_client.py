@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import SupportsChatGetResponse
-from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
+from agent_framework._settings import load_settings
+from agent_framework.exceptions import ServiceInitializationError, SettingNotFoundError
 
 from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
@@ -15,31 +15,43 @@ from agent_framework_foundry_local._foundry_local_client import FoundryLocalSett
 
 def test_foundry_local_settings_init_from_env(foundry_local_unit_test_env: dict[str, str]) -> None:
     """Test FoundryLocalSettings initialization from environment variables."""
-    settings = FoundryLocalSettings(env_file_path="test.env")
+    settings = load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", env_file_path="test.env")
 
-    assert settings.model_id == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+    assert settings["model_id"] == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
 
 
 def test_foundry_local_settings_init_with_explicit_values() -> None:
     """Test FoundryLocalSettings initialization with explicit values."""
-    settings = FoundryLocalSettings(model_id="custom-model-id", env_file_path="test.env")
+    settings = load_settings(
+        FoundryLocalSettings,
+        env_prefix="FOUNDRY_LOCAL_",
+        model_id="custom-model-id",
+        env_file_path="test.env",
+    )
 
-    assert settings.model_id == "custom-model-id"
+    assert settings["model_id"] == "custom-model-id"
 
 
 @pytest.mark.parametrize("exclude_list", [["FOUNDRY_LOCAL_MODEL_ID"]], indirect=True)
 def test_foundry_local_settings_missing_model_id(foundry_local_unit_test_env: dict[str, str]) -> None:
-    """Test FoundryLocalSettings when model_id is missing raises ValidationError."""
-    with pytest.raises(ValidationError):
-        FoundryLocalSettings(env_file_path="test.env")
+    """Test FoundryLocalSettings when model_id is missing raises error."""
+    with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
+        load_settings(
+            FoundryLocalSettings,
+            env_prefix="FOUNDRY_LOCAL_",
+            required_fields=["model_id"],
+            env_file_path="test.env",
+        )
 
 
 def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_env: dict[str, str]) -> None:
     """Test that explicit values override environment variables."""
-    settings = FoundryLocalSettings(model_id="override-model-id", env_file_path="test.env")
+    settings = load_settings(
+        FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", model_id="override-model-id", env_file_path="test.env"
+    )
 
-    assert settings.model_id == "override-model-id"
-    assert settings.model_id != foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+    assert settings["model_id"] == "override-model-id"
+    assert settings["model_id"] != foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
 
 
 # Client Initialization Tests

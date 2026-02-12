@@ -15,14 +15,15 @@ The workflow loops until the teacher gives congratulations or max turns reached.
 Prerequisites:
     - Azure OpenAI deployment with chat completion capability
     - Environment variables:
-        AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-        AZURE_OPENAI_DEPLOYMENT_NAME: Your deployment name (optional, defaults to gpt-4o)
+        AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry Agent Service (V2) project endpoint
+        AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name
 """
 
 import asyncio
+import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 
@@ -51,7 +52,11 @@ Focus on building understanding, not just getting the right answer."""
 async def main() -> None:
     """Run the student-teacher workflow with real Azure AI agents."""
     # Create chat client
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create student and teacher agents
     student_agent = client.as_agent(

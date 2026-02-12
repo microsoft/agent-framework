@@ -11,6 +11,7 @@
 - Moved AgentSession.Serialize to AIAgent.SerializeSession ([#3650](https://github.com/microsoft/agent-framework/pull/3650))
 - Renamed serializedSession parameter to serializedState on DeserializeSessionAsync for consistency ([#3681](https://github.com/microsoft/agent-framework/pull/3681))
 - Introduce Core method pattern for Session management methods on AIAgent ([#3699](https://github.com/microsoft/agent-framework/pull/3699))
+- Changed AIAgent.SerializeSession to AIAgent.SerializeSessionAsync ([#3879](https://github.com/microsoft/agent-framework/pull/3879))
 
 ## v1.0.0-preview.251204.1
 

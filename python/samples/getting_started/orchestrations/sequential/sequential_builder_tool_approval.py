@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from collections.abc import AsyncIterable
 from typing import Annotated, cast
 
@@ -10,8 +11,9 @@ from agent_framework import (
     WorkflowEvent,
     tool,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
+from azure.identity import AzureCliCredential
 
 """
 Sample: Sequential Workflow with Tool Approval Requests
@@ -38,6 +40,7 @@ Demonstrate:
 - Resuming workflow execution after approval via run(responses=..., stream=True).
 
 Prerequisites:
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - OpenAI or Azure OpenAI configured with the required environment variables.
 - Basic familiarity with SequentialBuilder and streaming workflow events.
 """
@@ -99,7 +102,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 2. Create the agent with tools (approval mode is set per-tool via decorator)
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     database_agent = client.as_agent(
         name="DatabaseAgent",
         instructions=(

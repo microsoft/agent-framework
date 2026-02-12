@@ -19,9 +19,12 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var stateStore = new Dictionary<string, JsonElement?>();
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent(
         name: "SpaceNovelWriter",
@@ -40,7 +43,7 @@ AgentResponse response = await agent.RunAsync("Write a very long novel about a t
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)
 {
-    PersistAgentState(agent, session, response.ContinuationToken);
+    await PersistAgentState(agent, session, response.ContinuationToken);
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
@@ -52,9 +55,9 @@ while (response.ContinuationToken is not null)
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AIAgent agent, AgentSession? session, ResponseContinuationToken? continuationToken)
+async Task PersistAgentState(AIAgent agent, AgentSession? session, ResponseContinuationToken? continuationToken)
 {
-    stateStore["session"] = agent.SerializeSession(session!);
+    stateStore["session"] = await agent.SerializeSessionAsync(session!);
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 

@@ -636,7 +636,6 @@ class TestScopedContentProcessorCaching:
         return PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
-            default_user_id="12345678-1234-1234-1234-123456789012",
             purview_app_location=location,
         )
 

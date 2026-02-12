@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import (
     Agent,
 )
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
+from azure.identity import AzureCliCredential
 
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
@@ -16,7 +18,8 @@ orchestration through `workflow.as_agent(...)` so the entire Magentic loop can b
 like any other agent while still emitting callback telemetry.
 
 Prerequisites:
-- OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- OpenAI credentials configured for `AzureOpenAIResponsesClient` and `AzureOpenAIResponsesClient`.
 """
 
 
@@ -28,11 +31,19 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     # Create code interpreter tool using instance method
-    coder_client = OpenAIResponsesClient()
+    coder_client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     code_interpreter_tool = coder_client.get_code_interpreter_tool()
 
     coder_agent = Agent(
@@ -48,7 +59,11 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=OpenAIChatClient(),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     print("\nBuilding Magentic Workflow...")

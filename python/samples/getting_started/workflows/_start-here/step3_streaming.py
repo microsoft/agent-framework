@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import AgentResponseUpdate, Message, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
@@ -13,11 +14,12 @@ This sample creates two agents: a Writer agent creates or edits content, and a R
 evaluates and provides feedback.
 
 Purpose:
-Show how to create agents from AzureOpenAIChatClient and use them directly in a workflow. Demonstrate
+Show how to create agents from AzureOpenAIResponsesClient and use them directly in a workflow. Demonstrate
 how agents can be used in a workflow.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -26,7 +28,11 @@ Prerequisites:
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     writer_agent = client.as_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."

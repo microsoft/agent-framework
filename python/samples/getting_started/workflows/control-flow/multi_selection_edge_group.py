@@ -13,13 +13,14 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    AgentResponseUpdate,
     Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
     executor,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from typing_extensions import Never
@@ -42,6 +43,7 @@ Show how to:
 - Apply conditional persistence logic (short vs long emails).
 
 Prerequisites:
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of multi-selection edge groups and how their selection function maps to target ids.
 - Experience with workflow state for persisting and reusing objects.
@@ -177,12 +179,16 @@ async def handle_uncertain(analysis: AnalysisResult, ctx: WorkflowContext[Never,
 async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, str]) -> None:
     # Simulate DB writes for email and analysis (and summary if present)
     await asyncio.sleep(0.05)
-    await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))
+    await ctx.add_event(DatabaseEvent(type="database_event", data=f"Email {analysis.email_id} saved to database."))  # type: ignore
 
 
 def create_email_analysis_agent() -> Agent:
     """Creates the email analysis agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
@@ -195,7 +201,11 @@ def create_email_analysis_agent() -> Agent:
 
 def create_email_assistant_agent() -> Agent:
     """Creates the email assistant agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
         default_options={"response_format": EmailResponse},
@@ -204,7 +214,11 @@ def create_email_assistant_agent() -> Agent:
 
 def create_email_summary_agent() -> Agent:
     """Creates the email summary agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         instructions=("You are an assistant that helps users summarize emails."),
         name="email_summary_agent",
         default_options={"response_format": EmailSummaryModel},
@@ -267,6 +281,10 @@ async def main() -> None:
         if isinstance(event, DatabaseEvent):
             print(f"{event}")
         elif event.type == "output":
+            if isinstance(event.data, AgentResponseUpdate):
+                # Agent executors stream token-level updates. Skip these to keep sample
+                # output focused on final workflow results.
+                continue
             print(f"Workflow output: {event.data}")
 
     """

@@ -1,17 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
+from typing import cast
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Message
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 
 """
-Sample: Build a sequential workflow orchestration and wrap it as an agent.
+Sample: Sequential workflow (agent-focused API) with shared conversation context
 
-The script assembles a sequential conversation flow with `SequentialBuilder`, then
-invokes the entire orchestration through the `workflow.as_agent(...)` interface so
-other coordinators can reuse the chain as a single participant.
+Build a high-level sequential workflow using SequentialBuilder and two domain agents.
+The shared conversation (list[Message]) flows through each participant. Each agent
+appends its assistant message to the context. The workflow outputs the final conversation
+list when complete.
 
 Note on internal adapters:
 - Sequential orchestration includes small adapter nodes for input normalization
@@ -21,13 +25,18 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
@@ -42,15 +51,16 @@ async def main() -> None:
     # 2) Build sequential workflow: writer -> reviewer
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
-    # 3) Treat the workflow itself as an agent for follow-up invocations
-    agent = workflow.as_agent(name="SequentialWorkflowAgent")
-    prompt = "Write a tagline for a budget-friendly eBike."
-    agent_response = await agent.run(prompt)
+    # 3) Run and collect outputs
+    outputs: list[list[Message]] = []
+    async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
+        if event.type == "output":
+            outputs.append(cast(list[Message], event.data))
 
-    if agent_response.messages:
-        print("\n===== Conversation =====")
-        for i, msg in enumerate(agent_response.messages, start=1):
-            name = msg.author_name or msg.role
+    if outputs:
+        print("===== Final Conversation =====")
+        for i, msg in enumerate(outputs[-1], start=1):
+            name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
             print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
 
     """
@@ -68,16 +78,6 @@ async def main() -> None:
     This tagline clearly communicates affordability and the benefit of extended travel, making it
     appealing to budget-conscious consumers. It has a friendly and motivating tone, though it could
     be slightly shorter for more punch. Overall, a strong and effective suggestion!
-
-    ===== as_agent() Conversation =====
-    ------------------------------------------------------------
-    01 [writer]
-    Go electric, save big—your affordable ride awaits!
-    ------------------------------------------------------------
-    02 [reviewer]
-    Catchy and straightforward! The tagline clearly emphasizes both the electric aspect and the affordability of the
-    eBike. It's inviting and actionable. For even more impact, consider making it slightly shorter:
-    "Go electric, save big." Overall, this is an effective and appealing suggestion for a budget-friendly eBike.
     """
 
 

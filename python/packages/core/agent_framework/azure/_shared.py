@@ -11,28 +11,26 @@ from typing import Any, ClassVar, Final
 from azure.core.credentials import TokenCredential
 from openai import AsyncOpenAI
 from openai.lib.azure import AsyncAzureOpenAI
-from pydantic import SecretStr, model_validator
 
-from .._pydantic import AFBaseSettings, HTTPsUrl
+from .._settings import SecretString
 from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
 from ._entra_id_authentication import get_entra_auth_token
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
-
 logger: logging.Logger = logging.getLogger(__name__)
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 DEFAULT_AZURE_API_VERSION: Final[str] = "2024-10-21"
 DEFAULT_AZURE_TOKEN_ENDPOINT: Final[str] = "https://cognitiveservices.azure.com/.default"  # noqa: S105
 
 
-class AzureOpenAISettings(AFBaseSettings):
+class AzureOpenAISettings(TypedDict, total=False):
     """AzureOpenAI model settings.
 
     The settings are first loaded from environment variables with the prefix 'AZURE_OPENAI_'.
@@ -62,7 +60,7 @@ class AzureOpenAISettings(AFBaseSettings):
             found in the Keys & Endpoint section when examining your resource in
             the Azure portal. You can use either KEY1 or KEY2.
             Can be set via environment variable AZURE_OPENAI_API_KEY.
-        api_version: The API version to use. The default value is `default_api_version`.
+        api_version: The API version to use. The default value is `DEFAULT_AZURE_API_VERSION`.
             Can be set via environment variable AZURE_OPENAI_API_VERSION.
         base_url: The url of the Azure deployment. This value
             can be found in the Keys & Endpoint section when examining
@@ -71,14 +69,8 @@ class AzureOpenAISettings(AFBaseSettings):
             use endpoint if you only want to supply the endpoint.
             Can be set via environment variable AZURE_OPENAI_BASE_URL.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
-            The default value is `default_token_endpoint`.
+            The default value is `DEFAULT_AZURE_TOKEN_ENDPOINT`.
             Can be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
-        default_api_version: The default API version to use if not specified.
-            The default value is "2024-10-21".
-        default_token_endpoint: The default token endpoint to use if not specified.
-            The default value is "https://cognitiveservices.azure.com/.default".
-        env_file_path: The path to the .env file to load settings from.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
 
     Examples:
         .. code-block:: python
@@ -89,60 +81,46 @@ class AzureOpenAISettings(AFBaseSettings):
             # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
             # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4
             # Set AZURE_OPENAI_API_KEY=your-key
-            settings = AzureOpenAISettings()
+            settings = load_settings(AzureOpenAISettings, env_prefix="AZURE_OPENAI_")
 
             # Or passing parameters directly
-            settings = AzureOpenAISettings(
-                endpoint="https://your-endpoint.openai.azure.com", chat_deployment_name="gpt-4", api_key="your-key"
+            settings = load_settings(
+                AzureOpenAISettings,
+                env_prefix="AZURE_OPENAI_",
+                endpoint="https://your-endpoint.openai.azure.com",
+                chat_deployment_name="gpt-4",
+                api_key="your-key",
             )
 
             # Or loading from a .env file
-            settings = AzureOpenAISettings(env_file_path="path/to/.env")
+            settings = load_settings(AzureOpenAISettings, env_prefix="AZURE_OPENAI_", env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "AZURE_OPENAI_"
+    chat_deployment_name: str | None
+    responses_deployment_name: str | None
+    endpoint: str | None
+    base_url: str | None
+    api_key: SecretString | None
+    api_version: str | None
+    token_endpoint: str | None
 
-    chat_deployment_name: str | None = None
-    responses_deployment_name: str | None = None
-    endpoint: HTTPsUrl | None = None
-    base_url: HTTPsUrl | None = None
-    api_key: SecretStr | None = None
-    api_version: str | None = None
-    token_endpoint: str | None = None
-    default_api_version: str = DEFAULT_AZURE_API_VERSION
-    default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT
 
-    def get_azure_auth_token(
-        self, credential: TokenCredential, token_endpoint: str | None = None, **kwargs: Any
-    ) -> str | None:
-        """Retrieve a Microsoft Entra Auth Token for a given token endpoint for the use with Azure OpenAI.
+def _apply_azure_defaults(
+    settings: AzureOpenAISettings,
+    default_api_version: str = DEFAULT_AZURE_API_VERSION,
+    default_token_endpoint: str = DEFAULT_AZURE_TOKEN_ENDPOINT,
+) -> None:
+    """Apply default values for api_version and token_endpoint after loading settings.
 
-        The required role for the token is `Cognitive Services OpenAI Contributor`.
-        The token endpoint may be specified as an environment variable, via the .env
-        file or as an argument. If the token endpoint is not provided, the default is None.
-        The `token_endpoint` argument takes precedence over the `token_endpoint` attribute.
-
-        Args:
-            credential: The Azure AD credential to use.
-            token_endpoint: The token endpoint to use. Defaults to `https://cognitiveservices.azure.com/.default`.
-
-        Keyword Args:
-            **kwargs: Additional keyword arguments to pass to the token retrieval method.
-
-        Returns:
-            The Azure token or None if the token could not be retrieved.
-
-        Raises:
-            ServiceInitializationError: If the token endpoint is not provided.
-        """
-        endpoint_to_use = token_endpoint or self.token_endpoint or self.default_token_endpoint
-        return get_entra_auth_token(credential, endpoint_to_use, **kwargs)
-
-    @model_validator(mode="after")
-    def _validate_fields(self) -> Self:
-        self.api_version = self.api_version or self.default_api_version
-        self.token_endpoint = self.token_endpoint or self.default_token_endpoint
-        return self
+    Args:
+        settings: The loaded Azure OpenAI settings dict.
+        default_api_version: The default API version to use if not set.
+        default_token_endpoint: The default token endpoint to use if not set.
+    """
+    if not settings.get("api_version"):
+        settings["api_version"] = default_api_version
+    if not settings.get("token_endpoint"):
+        settings["token_endpoint"] = default_token_endpoint
 
 
 class AzureOpenAIConfigMixin(OpenAIBase):
@@ -154,8 +132,8 @@ class AzureOpenAIConfigMixin(OpenAIBase):
     def __init__(
         self,
         deployment_name: str,
-        endpoint: HTTPsUrl | None = None,
-        base_url: HTTPsUrl | None = None,
+        endpoint: str | None = None,
+        base_url: str | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
         api_key: str | None = None,
         ad_token: str | None = None,
@@ -170,7 +148,7 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         """Internal class for configuring a connection to an Azure OpenAI service.
 
         The `validate_call` decorator is used with a configuration that allows arbitrary types.
-        This is necessary for types like `HTTPsUrl` and `OpenAIModelTypes`.
+        This is necessary for types like `str` and `OpenAIModelTypes`.
 
         Args:
             deployment_name: Name of the deployment.

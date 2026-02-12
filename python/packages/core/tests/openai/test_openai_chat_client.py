@@ -17,7 +17,6 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
-    prepare_function_call_results,
     tool,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
@@ -281,17 +280,21 @@ def test_chat_response_content_order_text_before_tool_calls(openai_unit_test_env
 
 
 def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, str]):
-    """Test that falsy values (like empty list) in function result are properly handled."""
+    """Test that falsy values (like empty list) in function result are properly handled.
+
+    Note: In practice, FunctionTool.invoke() always returns a pre-parsed string.
+    These tests verify that the OpenAI client correctly passes through string results.
+    """
     client = OpenAIChatClient()
 
-    # Test with empty list (falsy but not None)
+    # Test with empty list serialized as JSON string (as FunctionTool.invoke would produce)
     message_with_empty_list = Message(
-        role="tool", contents=[Content.from_function_result(call_id="call-123", result=[])]
+        role="tool", contents=[Content.from_function_result(call_id="call-123", result="[]")]
     )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_list)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "[]"  # Empty list should be JSON serialized
+    assert openai_messages[0]["content"] == "[]"  # Empty list JSON string
 
     # Test with empty string (falsy but not None)
     message_with_empty_string = Message(
@@ -302,12 +305,14 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
-    # Test with False (falsy but not None)
-    message_with_false = Message(role="tool", contents=[Content.from_function_result(call_id="call-789", result=False)])
+    # Test with False serialized as JSON string (as FunctionTool.invoke would produce)
+    message_with_false = Message(
+        role="tool", contents=[Content.from_function_result(call_id="call-789", result="false")]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_false)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "false"  # False should be JSON serialized
+    assert openai_messages[0]["content"] == "false"  # False JSON string
 
 
 def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]):
@@ -332,9 +337,11 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 
-def test_prepare_function_call_results_string_passthrough():
+def test_parse_result_string_passthrough():
     """Test that string values are passed through directly without JSON encoding."""
-    result = prepare_function_call_results("simple string")
+    from agent_framework import FunctionTool
+
+    result = FunctionTool.parse_result("simple string")
     assert result == "simple string"
     assert isinstance(result, str)
 

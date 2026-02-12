@@ -73,7 +73,7 @@ def build_email_address_validation_workflow() -> Workflow:
             email address to the next executor in the workflow.
             """
             sanitized = email_address.strip()
-            print(f"✂️ Sanitized email address: '{sanitized}'")
+            print(f"Sanitized email address: '{sanitized}'")
             await ctx.send_message(SanitizedEmailResult(original=email_address, sanitized=sanitized, is_valid=False))
 
     class EmailFormatValidator(Executor):
@@ -91,14 +91,14 @@ def build_email_address_validation_workflow() -> Workflow:
             When the format is valid, it sends the validated email address to the next executor in the workflow.
             """
             if "@" not in partial_result.sanitized or "." not in partial_result.sanitized.split("@")[-1]:
-                print(f"❌ Invalid email format: '{partial_result.sanitized}'")
+                print(f"Invalid email format: '{partial_result.sanitized}'")
                 await ctx.yield_output(
                     SanitizedEmailResult(
                         original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
                     )
                 )
                 return
-            print(f"✅ Validated email format: '{partial_result.sanitized}'")
+            print(f"Validated email format: '{partial_result.sanitized}'")
             await ctx.send_message(
                 SanitizedEmailResult(
                     original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
@@ -120,7 +120,7 @@ def build_email_address_validation_workflow() -> Workflow:
             to an external system to user for validation.
             """
             domain = partial_result.sanitized.split("@")[-1]
-            print(f"🔍 Validating domain: '{domain}'")
+            print(f"Validating domain: '{domain}'")
             self._pending_domains[domain] = partial_result
             # Send a request to the external system via the request_info mechanism
             await ctx.request_info(request_data=domain, response_type=bool)
@@ -138,14 +138,14 @@ def build_email_address_validation_workflow() -> Workflow:
                 raise ValueError(f"Received response for unknown domain: '{original_request}'")
             partial_result = self._pending_domains.pop(original_request)
             if is_valid:
-                print(f"✅ Domain '{original_request}' is valid.")
+                print(f"Domain '{original_request}' is valid.")
                 await ctx.yield_output(
                     SanitizedEmailResult(
                         original=partial_result.original, sanitized=partial_result.sanitized, is_valid=True
                     )
                 )
             else:
-                print(f"❌ Domain '{original_request}' is invalid.")
+                print(f"Domain '{original_request}' is invalid.")
                 await ctx.yield_output(
                     SanitizedEmailResult(
                         original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
@@ -201,15 +201,15 @@ class SmartEmailOrchestrator(Executor):
         """
         recipient = email.recipient
         if recipient in self._approved_recipients:
-            print(f"📧 Recipient '{recipient}' has been previously approved.")
+            print(f"Recipient '{recipient}' has been previously approved.")
             await ctx.send_message(email)
             return
         if recipient in self._disapproved_recipients:
-            print(f"🚫 Blocking email to previously disapproved recipient: '{recipient}'")
+            print(f"Blocking email to previously disapproved recipient: '{recipient}'")
             await ctx.yield_output(False)
             return
 
-        print(f"🔍 Validating new recipient email address: '{recipient}'")
+        print(f"Validating new recipient email address: '{recipient}'")
         self._pending_emails[recipient] = email
         await ctx.send_message(recipient)
 
@@ -227,7 +227,7 @@ class SmartEmailOrchestrator(Executor):
             raise TypeError(f"Expected domain string, got {type(request.source_event.data)}")
         domain = request.source_event.data
         is_valid = domain in self._approved_domains
-        print(f"🌐 External domain validation for '{domain}': {'valid' if is_valid else 'invalid'}")
+        print(f"External domain validation for '{domain}': {'valid' if is_valid else 'invalid'}")
         await ctx.send_message(request.create_response(is_valid), target_id=request.executor_id)
 
     @handler
@@ -243,11 +243,11 @@ class SmartEmailOrchestrator(Executor):
         email = self._pending_emails.pop(result.original)
         email.recipient = result.sanitized  # Use the sanitized email address
         if result.is_valid:
-            print(f"✅ Email address '{result.original}' is valid.")
+            print(f"Email address '{result.original}' is valid.")
             self._approved_recipients.add(result.original)
             await ctx.send_message(email)
         else:
-            print(f"🚫 Email address '{result.original}' is invalid. Blocking email.")
+            print(f"Email address '{result.original}' is invalid. Blocking email.")
             self._disapproved_recipients.add(result.original)
             await ctx.yield_output(False)
 
@@ -258,9 +258,9 @@ class EmailDelivery(Executor):
     @handler
     async def handle(self, email: Email, ctx: WorkflowContext[Never, bool]) -> None:
         """Simulate sending the email and yield True as the final result."""
-        print(f"📤 Sending email to '{email.recipient}' with subject '{email.subject}'")
+        print(f"Sending email to '{email.recipient}' with subject '{email.subject}'")
         await asyncio.sleep(1)  # Simulate network delay
-        print(f"✅ Email sent to '{email.recipient}' successfully.")
+        print(f"Email sent to '{email.recipient}' successfully.")
         await ctx.yield_output(True)
 
 
@@ -294,10 +294,10 @@ async def main() -> None:
 
     # Execute the workflow
     for email in test_emails:
-        print(f"\n🚀 Processing email to '{email.recipient}'")
+        print(f"\nProcessing email to '{email.recipient}'")
         async for event in workflow.run(email, stream=True):
             if event.type == "output":
-                print(f"🎉 Final result for '{email.recipient}': {'Delivered' if event.data else 'Blocked'}")
+                print(f"Final result for '{email.recipient}': {'Delivered' if event.data else 'Blocked'}")
 
 
 if __name__ == "__main__":

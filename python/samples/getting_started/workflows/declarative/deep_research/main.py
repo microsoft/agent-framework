@@ -22,9 +22,10 @@ Usage:
 """
 
 import asyncio
+import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
@@ -122,7 +123,11 @@ class ManagerResponse(BaseModel):
 async def main() -> None:
     """Run the deep research workflow."""
     # Create Azure OpenAI client
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agents
     research_agent = client.as_agent(

@@ -27,10 +27,11 @@ from openai.types.beta.threads import (
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -44,7 +45,6 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
@@ -343,35 +343,34 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 client: OpenAIAssistantsClient[MyOptions] = OpenAIAssistantsClient(model_id="gpt-4")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            org_id=org_id,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.chat_model_id:
+        if not openai_settings["chat_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["chat_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
-            base_url=openai_settings.base_url,
+            base_url=openai_settings["base_url"],
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
@@ -805,10 +804,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                 if tool_outputs is None:
                     tool_outputs = []
-                if function_result_content.result:
-                    output = prepare_function_call_results(function_result_content.result)
-                else:
-                    output = "No output received."
+                output = (
+                    function_result_content.result
+                    if function_result_content.result is not None
+                    else "No output received."
+                )
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs

@@ -26,7 +26,7 @@ dependencies = [
     # utilities
     "typing-extensions",
     "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
+    "python-dotenv>=1,<2",
     # telemetry
     "opentelemetry-api>=1.39.0",
     "opentelemetry-sdk>=1.39.0",

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
 from agent_framework import (
@@ -8,7 +9,7 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 
@@ -21,7 +22,8 @@ What it does:
 - Coordinates a researcher and writer agent to solve tasks collaboratively
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured for AzureOpenAIResponsesClient
 """
 
 ORCHESTRATOR_AGENT_INSTRUCTIONS = """
@@ -36,7 +38,11 @@ Guidelines:
 
 async def main() -> None:
     # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.
@@ -88,26 +94,35 @@ async def main() -> None:
     print(f"TASK: {task}\n")
     print("=" * 80)
 
-    # Keep track of the last response to format output nicely in streaming mode
-    last_response_id: str | None = None
+    # Track current speaker for readable streaming output.
+    pending_speaker: str | None = None
+    current_speaker: str | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output":
-            data = event.data
-            if isinstance(data, AgentResponseUpdate):
-                rid = data.response_id
-                if rid != last_response_id:
-                    if last_response_id is not None:
-                        print("\n")
-                    print(f"{data.author_name}:", end=" ", flush=True)
-                    last_response_id = rid
-                print(data.text, end="", flush=True)
-            elif event.type == "output":
-                # The output of the group chat workflow is a collection of chat messages from all participants
-                outputs = cast(list[Message], event.data)
-                print("\n" + "=" * 80)
-                print("\nFinal Conversation Transcript:\n")
-                for message in outputs:
-                    print(f"{message.author_name or message.role}: {message.text}\n")
+        if event.type != "output":
+            continue
+
+        data = event.data
+        if isinstance(data, AgentResponseUpdate):
+            if data.author_name:
+                pending_speaker = data.author_name
+            if not data.text:
+                continue
+
+            speaker = data.author_name or pending_speaker or "assistant"
+            if speaker != current_speaker:
+                if current_speaker is not None:
+                    print("\n")
+                print(f"{speaker}:", end=" ", flush=True)
+                current_speaker = speaker
+            print(data.text, end="", flush=True)
+            continue
+
+        # The output of the group chat workflow is a collection of chat messages from all participants
+        outputs = cast(list[Message], data)
+        print("\n" + "=" * 80)
+        print("\nFinal Conversation Transcript:\n")
+        for message in outputs:
+            print(f"{message.author_name or message.role}: {message.text}\n")
 
 
 if __name__ == "__main__":

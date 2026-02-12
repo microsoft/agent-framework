@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 
@@ -17,7 +18,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from typing_extensions import Never
 
@@ -37,7 +38,8 @@ Demonstrates:
 - Handling human feedback and routing it to the appropriate agents.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -161,13 +163,21 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
     # Create the agents
-    writer_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    writer_agent = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="writer_agent",
         instructions=("You are a marketing writer."),
         tool_choice="required",
     )
 
-    final_editor_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    final_editor_agent = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

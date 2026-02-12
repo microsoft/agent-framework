@@ -319,14 +319,14 @@ async def main() -> None:
     ]
 
     # Run the workflow
-    print(f"🧪 Testing with {len(test_requests)} mixed requests.")
-    print("🚀 Starting main workflow...")
+    print(f"Testing with {len(test_requests)} mixed requests.")
+    print("Starting main workflow...")
     run_result = await main_workflow.run(test_requests)
 
     # Handle request info events
     request_info_events = run_result.get_request_info_events()
     if request_info_events:
-        print(f"\n🔍 Handling {len(request_info_events)} request info events...\n")
+        print(f"\nHandling {len(request_info_events)} request info events...\n")
 
         responses: dict[str, ResourceResponse | PolicyResponse] = {}
         for event in request_info_events:

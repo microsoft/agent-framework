@@ -47,7 +47,7 @@ class TestPurviewClient:
     @pytest.fixture
     def settings(self) -> PurviewSettings:
         """Create test settings."""
-        return PurviewSettings(app_name="Test App", tenant_id="test-tenant", default_user_id="test-user")
+        return PurviewSettings(app_name="Test App", tenant_id="test-tenant")
 
     @pytest.fixture
     async def client(

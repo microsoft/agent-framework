@@ -25,9 +25,12 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 VectorStore vectorStore = new InMemoryVectorStore();
 
 // Create the agent
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
@@ -49,7 +52,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session
 // Serialize the session state, so it can be stored for later use.
 // Since the chat history is stored in the vector store, the serialized session
 // only contains the guid that the messages are stored under in the vector store.
-JsonElement serializedSession = agent.SerializeSession(session);
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n--- Serialized session ---\n");
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, new JsonSerializerOptions { WriteIndented = true }));

@@ -190,6 +190,10 @@ class Runner:
             # Save executor states into the shared state before creating the checkpoint,
             # so that they are included in the checkpoint payload.
             await self._save_executor_states()
+            # `on_checkpoint_save()` writes via State.set(), which stages values in the
+            # pending buffer. Checkpoints serialize committed state only, so commit here
+            # to ensure executor snapshots are captured in this checkpoint.
+            self._state.commit()
 
             checkpoint_id = await self._ctx.create_checkpoint(
                 self._workflow_name,

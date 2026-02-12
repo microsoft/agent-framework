@@ -21,8 +21,9 @@ from agent_framework import (
     get_logger,
     normalize_messages,
 )
+from agent_framework._settings import load_settings
 from agent_framework._types import normalize_tools
-from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
@@ -34,7 +35,6 @@ from claude_agent_sdk import (
     ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
-from pydantic import ValidationError
 
 from ._settings import ClaudeAgentSettings
 
@@ -273,19 +273,18 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
 
         # Load settings from environment and options
-        try:
-            self._settings = ClaudeAgentSettings(
-                cli_path=cli_path,
-                model=model,
-                cwd=cwd,
-                permission_mode=permission_mode,
-                max_turns=max_turns,
-                max_budget_usd=max_budget_usd,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Claude Agent settings.", ex) from ex
+        self._settings = load_settings(
+            ClaudeAgentSettings,
+            env_prefix="CLAUDE_AGENT_",
+            cli_path=cli_path,
+            model=model,
+            cwd=cwd,
+            permission_mode=permission_mode,
+            max_turns=max_turns,
+            max_budget_usd=max_budget_usd,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
@@ -411,18 +410,18 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["resume"] = resume_session_id
 
         # Apply settings from environment
-        if self._settings.cli_path:
-            opts["cli_path"] = self._settings.cli_path
-        if self._settings.model:
-            opts["model"] = self._settings.model
-        if self._settings.cwd:
-            opts["cwd"] = self._settings.cwd
-        if self._settings.permission_mode:
-            opts["permission_mode"] = self._settings.permission_mode
-        if self._settings.max_turns:
-            opts["max_turns"] = self._settings.max_turns
-        if self._settings.max_budget_usd:
-            opts["max_budget_usd"] = self._settings.max_budget_usd
+        if self._settings["cli_path"]:
+            opts["cli_path"] = self._settings["cli_path"]
+        if self._settings["model"]:
+            opts["model"] = self._settings["model"]
+        if self._settings["cwd"]:
+            opts["cwd"] = self._settings["cwd"]
+        if self._settings["permission_mode"]:
+            opts["permission_mode"] = self._settings["permission_mode"]
+        if self._settings["max_turns"]:
+            opts["max_turns"] = self._settings["max_turns"]
+        if self._settings["max_budget_usd"]:
+            opts["max_budget_usd"] = self._settings["max_budget_usd"]
 
         # Apply default options
         for key, value in self._default_options.items():
@@ -484,7 +483,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
 
-    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool[Any, Any]) -> SdkMcpTool[Any]:
+    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool[Any]) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
 
         Args:

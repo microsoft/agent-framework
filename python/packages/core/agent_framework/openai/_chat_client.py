@@ -17,11 +17,12 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from openai.types.chat.completion_create_params import WebSearchOptions
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -36,7 +37,6 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -555,9 +555,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["tool_call_id"] = content.call_id
                     # Always include content for tool results - API requires it even if empty
                     # Functions returning None should still have a tool result message
-                    args["content"] = (
-                        prepare_function_call_results(content.result) if content.result is not None else ""
-                    )
+                    args["content"] = content.result if content.result is not None else ""
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
@@ -718,33 +716,32 @@ class OpenAIChatClient(  # type: ignore[misc]
                 client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            org_id=org_id,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.chat_model_id:
+        if not openai_settings["chat_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            base_url=openai_settings.base_url if openai_settings.base_url else None,
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["chat_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            base_url=openai_settings["base_url"] if openai_settings["base_url"] else None,
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,

@@ -26,7 +26,6 @@ from agent_framework import (
     UsageDetails,
     detect_media_type_from_base64,
     merge_chat_options,
-    prepare_function_call_results,
     tool,
 )
 from agent_framework._types import (
@@ -2072,7 +2071,7 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)
 
 
-# region prepare_function_call_results with Pydantic models
+# region FunctionTool.parse_result with Pydantic models
 
 
 class WeatherResult(BaseModel):
@@ -2089,10 +2088,10 @@ class NestedModel(BaseModel):
     weather: WeatherResult
 
 
-def test_prepare_function_call_results_pydantic_model():
+def test_parse_result_pydantic_model():
     """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
     result = WeatherResult(temperature=22.5, condition="sunny")
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # The result should be a valid JSON string
     assert isinstance(json_result, str)
@@ -2100,13 +2099,13 @@ def test_prepare_function_call_results_pydantic_model():
     assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
 
 
-def test_prepare_function_call_results_pydantic_model_in_list():
+def test_parse_result_pydantic_model_in_list():
     """Test that lists containing Pydantic models are properly serialized."""
     results = [
         WeatherResult(temperature=20.0, condition="cloudy"),
         WeatherResult(temperature=25.0, condition="sunny"),
     ]
-    json_result = prepare_function_call_results(results)
+    json_result = FunctionTool.parse_result(results)
 
     # The result should be a valid JSON string representing a list
     assert isinstance(json_result, str)
@@ -2116,13 +2115,13 @@ def test_prepare_function_call_results_pydantic_model_in_list():
     assert "sunny" in json_result
 
 
-def test_prepare_function_call_results_pydantic_model_in_dict():
+def test_parse_result_pydantic_model_in_dict():
     """Test that dicts containing Pydantic models are properly serialized."""
     results = {
         "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
         "forecast": WeatherResult(temperature=24.0, condition="sunny"),
     }
-    json_result = prepare_function_call_results(results)
+    json_result = FunctionTool.parse_result(results)
 
     # The result should be a valid JSON string representing a dict
     assert isinstance(json_result, str)
@@ -2132,10 +2131,10 @@ def test_prepare_function_call_results_pydantic_model_in_dict():
     assert "sunny" in json_result
 
 
-def test_prepare_function_call_results_nested_pydantic_model():
+def test_parse_result_nested_pydantic_model():
     """Test that nested Pydantic models are properly serialized."""
     result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # The result should be a valid JSON string
     assert isinstance(json_result, str)
@@ -2144,10 +2143,10 @@ def test_prepare_function_call_results_nested_pydantic_model():
     assert "18.0" in json_result or "18" in json_result
 
 
-# region prepare_function_call_results with MCP TextContent-like objects
+# region FunctionTool.parse_result with MCP TextContent-like objects
 
 
-def test_prepare_function_call_results_text_content_single():
+def test_parse_result_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
 
     @dataclass
@@ -2155,14 +2154,14 @@ def test_prepare_function_call_results_text_content_single():
         text: str
 
     result = [MockTextContent("Hello from MCP tool!")]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should extract text and serialize as JSON array of strings
     assert isinstance(json_result, str)
     assert json_result == '["Hello from MCP tool!"]'
 
 
-def test_prepare_function_call_results_text_content_multiple():
+def test_parse_result_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
 
     @dataclass
@@ -2170,14 +2169,14 @@ def test_prepare_function_call_results_text_content_multiple():
         text: str
 
     result = [MockTextContent("First result"), MockTextContent("Second result")]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should extract text from each and serialize as JSON array
     assert isinstance(json_result, str)
     assert json_result == '["First result", "Second result"]'
 
 
-def test_prepare_function_call_results_text_content_with_non_string_text():
+def test_parse_result_text_content_with_non_string_text():
     """Test that objects with non-string text attribute are not treated as TextContent."""
 
     class BadTextContent:
@@ -2185,10 +2184,38 @@ def test_prepare_function_call_results_text_content_with_non_string_text():
             self.text = 12345  # Not a string!
 
     result = [BadTextContent()]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should not extract text since it's not a string, will serialize the object
     assert isinstance(json_result, str)
+
+
+def test_parse_result_none_returns_empty_string():
+    """Test that None returns an empty string."""
+    assert FunctionTool.parse_result(None) == ""
+
+
+def test_parse_result_string_passthrough():
+    """Test that strings are returned as-is."""
+    assert FunctionTool.parse_result("hello world") == "hello world"
+    assert FunctionTool.parse_result('{"key": "value"}') == '{"key": "value"}'
+
+
+def test_parse_result_content_object():
+    """Test that Content objects are serialized via to_dict."""
+    content = Content.from_text("hello")
+    result = FunctionTool.parse_result(content)
+    assert isinstance(result, str)
+    assert "hello" in result
+
+
+def test_parse_result_list_of_content():
+    """Test that list[Content] is serialized to JSON."""
+    contents = [Content.from_text("hello"), Content.from_text("world")]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, str)
+    assert "hello" in result
+    assert "world" in result
 
 
 # endregion

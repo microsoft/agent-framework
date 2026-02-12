@@ -23,10 +23,11 @@ The workflow:
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import (
     AgentExternalInputRequest,
     AgentExternalInputResponse,
@@ -164,7 +165,11 @@ async def main() -> None:
     plugin = TicketingPlugin()
 
     # Create Azure OpenAI client
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agents with structured outputs
     self_service_agent = client.as_agent(
@@ -260,7 +265,9 @@ async def main() -> None:
         async for event in stream:
             if event.type == "output":
                 data = event.data
-                source_id = getattr(event, "source_executor_id", "")
+                # source_executor_id is only available on request_info events.
+                # For output events, use executor_id to identify the emitting node.
+                source_id = event.executor_id or ""
 
                 # Check if this is a SendActivity output (activity text from log_ticket, log_route, etc.)
                 if "log_" in source_id.lower():

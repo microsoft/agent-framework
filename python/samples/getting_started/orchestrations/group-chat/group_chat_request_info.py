@@ -18,11 +18,13 @@ Demonstrate:
 - Steering agent behavior with pre-agent human input
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
 import asyncio
+import os
 from collections.abc import AsyncIterable
 from typing import cast
 
@@ -31,7 +33,7 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, GroupChatBuilder
 from azure.identity import AzureCliCredential
 
@@ -91,7 +93,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agents for a group discussion
     optimist = client.as_agent(

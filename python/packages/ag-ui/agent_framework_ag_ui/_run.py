@@ -31,7 +31,6 @@ from agent_framework import (
     Content,
     Message,
     SupportsAgentRun,
-    prepare_function_call_results,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
@@ -360,7 +359,7 @@ def _emit_tool_result(
     events.append(ToolCallEndEvent(tool_call_id=content.call_id))
     flow.tool_calls_ended.add(content.call_id)  # Track ended tool calls
 
-    result_content = prepare_function_call_results(content.result)
+    result_content = content.result if content.result is not None else ""
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
