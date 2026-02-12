@@ -1890,7 +1890,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
-            additional_function_arguments = dict(additional_opts)  # defensive copy to avoid mutating caller's dict
+            additional_function_arguments = dict(additional_opts)  # type: ignore[call-overload]  # defensive copy
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
