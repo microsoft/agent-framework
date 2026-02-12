@@ -28,9 +28,7 @@ from typing import (
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._memory import ContextProvider
 from ._serialization import SerializationMixin
-from ._threads import ChatMessageStoreProtocol
 from ._tools import (
     FunctionInvocationConfiguration,
     FunctionTool,
@@ -264,7 +262,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
-    # This is used for OTel setup, should be overridden in subclasses
+    STORES_BY_DEFAULT: ClassVar[bool] = False
+    """Whether this client stores conversation history server-side by default.
+
+    Clients that use server-side storage (e.g., OpenAI Responses API with ``store=True``
+    as default, Azure AI Agent sessions) should override this to ``True``.
+    When ``True``, the agent skips auto-injecting ``InMemoryHistoryProvider`` unless the
+    user explicitly sets ``store=False``.
+    """
+    # OTEL_PROVIDER_NAME is used for OTel setup, should be overridden in subclasses
 
     def __init__(
         self,
@@ -448,8 +454,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
@@ -471,9 +476,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 including temperature, max_tokens, model_id, tool_choice, and more.
                 Note: response_format typing does not flow into run outputs when set via default_options,
                 and dict literals are accepted without specialized option typing.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-                If not provided, the default in-memory store will be used.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
@@ -509,8 +512,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             instructions=instructions,
             tools=tools,
             default_options=cast(Any, default_options),
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,

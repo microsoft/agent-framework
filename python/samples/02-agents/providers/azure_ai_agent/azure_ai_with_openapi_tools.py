@@ -76,16 +76,16 @@ async def main() -> None:
             tools=[*openapi_countries.definitions, *openapi_weather.definitions],
         )
 
-        # 5. Simulate conversation with the agent maintaining thread context
+        # 5. Simulate conversation with the agent maintaining session context
         print("=== Azure AI Agent with OpenAPI Tools ===\n")
 
-        # Create a thread to maintain conversation context across multiple runs
-        thread = agent.get_new_thread()
+        # Create a session to maintain conversation context across multiple runs
+        session = agent.create_session()
 
         for user_input in USER_INPUTS:
             print(f"User: {user_input}")
-            # Pass the thread to maintain context across multiple agent.run() calls
-            response = await agent.run(user_input, thread=thread)
+            # Pass the session to maintain context across multiple agent.run() calls
+            response = await agent.run(user_input, session=session)
             print(f"Agent: {response.text}\n")
 
 

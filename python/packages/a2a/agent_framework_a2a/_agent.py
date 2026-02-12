@@ -31,7 +31,7 @@ from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     ContinuationToken,
@@ -211,7 +211,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -223,7 +223,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -234,7 +234,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -246,7 +246,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
-            thread: The conversation thread associated with the message(s).
+            session: The conversation session associated with the message(s).
             continuation_token: Optional token to resume a long-running task
                 instead of starting a new one.
             background: When True, in-progress task updates surface continuation

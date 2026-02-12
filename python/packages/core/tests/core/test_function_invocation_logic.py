@@ -168,8 +168,8 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: Suppo
     agent = Agent(client=chat_client_base, tools=[ai_func])
 
     async def handler(request: web.Request) -> web.Response:
-        thread = agent.get_new_thread()
-        result = await agent.run("Fix issue", thread=thread)
+        session = agent.create_session()
+        result = await agent.run("Fix issue", session=session)
         return web.Response(text=result.text or "")
 
     app = web.Application()
@@ -230,8 +230,8 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Sup
 
     async def init_app() -> web.Application:
         async def handler(request: web.Request) -> web.Response:
-            thread = agent.get_new_thread()
-            result = await agent.run("Fix issue", thread=thread)
+            session = agent.create_session()
+            result = await agent.run("Fix issue", session=session)
             return web.Response(text=result.text or "")
 
         app = web.Application()

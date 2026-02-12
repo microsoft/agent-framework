@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, Content, Message, tool
+from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
 from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
@@ -267,12 +267,12 @@ class TestClaudeAgentRun:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            thread = agent.get_new_thread()
-            await agent.run("Hello", thread=thread)
-            assert thread.service_thread_id == "test-session-id"
+            session = agent.create_session()
+            await agent.run("Hello", session=session)
+            assert session.service_session_id == "test-session-id"
 
-    async def test_run_with_thread(self) -> None:
-        """Test run with existing thread."""
+    async def test_run_with_session(self) -> None:
+        """Test run with existing session."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -302,9 +302,9 @@ class TestClaudeAgentRun:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            thread = agent.get_new_thread()
-            thread.service_thread_id = "existing-session"
-            await agent.run("Hello", thread=thread)
+            session = agent.create_session()
+            session.service_session_id = "existing-session"
+            await agent.run("Hello", session=session)
 
 
 # region Test ClaudeAgent Run Stream
@@ -440,26 +440,18 @@ class TestClaudeAgentRunStream:
 class TestClaudeAgentSessionManagement:
     """Tests for ClaudeAgent session management."""
 
-    def test_get_new_thread(self) -> None:
-        """Test get_new_thread creates a new thread."""
+    def test_create_session(self) -> None:
+        """Test create_session creates a new session."""
         agent = ClaudeAgent()
-        thread = agent.get_new_thread()
-        assert isinstance(thread, AgentThread)
-        assert thread.service_thread_id is None
+        session = agent.create_session()
+        assert isinstance(session, AgentSession)
+        assert session.service_session_id is None
 
-    def test_get_new_thread_with_service_thread_id(self) -> None:
-        """Test get_new_thread with existing service_thread_id."""
+    def test_create_session_with_service_session_id(self) -> None:
+        """Test create_session with existing service_session_id."""
         agent = ClaudeAgent()
-        thread = agent.get_new_thread(service_thread_id="existing-session-123")
-        assert isinstance(thread, AgentThread)
-        assert thread.service_thread_id == "existing-session-123"
-
-    def test_thread_inherits_context_provider(self) -> None:
-        """Test that thread inherits context provider."""
-        mock_provider = MagicMock()
-        agent = ClaudeAgent(context_provider=mock_provider)
-        thread = agent.get_new_thread()
-        assert thread.context_provider == mock_provider
+        session = agent.create_session(session_id="existing-session-123")
+        assert isinstance(session, AgentSession)
 
     async def test_ensure_session_creates_client(self) -> None:
         """Test _ensure_session creates client when not started."""

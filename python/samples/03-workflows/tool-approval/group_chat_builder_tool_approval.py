@@ -48,7 +48,7 @@ Prerequisites:
 # 1. Define tools for different agents
 # NOTE: approval_mode="never_require" is for sample brevity.
 # Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def run_tests(test_suite: Annotated[str, "Name of the test suite to run"]) -> str:
     """Run automated tests for the application."""

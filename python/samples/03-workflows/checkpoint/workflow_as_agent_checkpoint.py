@@ -15,9 +15,9 @@ What you learn:
 - How to resume a workflow-as-agent from a checkpoint
 
 Key concepts:
-- Thread (AgentThread): Maintains conversation history across agent invocations
+- Thread (AgentSession): Maintains conversation history across agent invocations
 - Checkpoint: Persists workflow execution state for pause/resume capability
-- These are complementary: threads track conversation, checkpoints track workflow state
+- These are complementary: sessions track conversation, checkpoints track workflow state
 
 Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
@@ -28,8 +28,6 @@ import asyncio
 import os
 
 from agent_framework import (
-    AgentThread,
-    ChatMessageStore,
     InMemoryCheckpointStorage,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -102,21 +100,21 @@ async def checkpointing_with_thread() -> None:
     workflow = SequentialBuilder(participants=[assistant]).build()
     agent = workflow.as_agent(name="MemoryAgent")
 
-    # Create both thread (for conversation) and checkpoint storage (for workflow state)
-    thread = AgentThread(message_store=ChatMessageStore())
+    # Create both session (for conversation) and checkpoint storage (for workflow state)
+    session = agent.create_session()
     checkpoint_storage = InMemoryCheckpointStorage()
 
     # First turn
     query1 = "My favorite color is blue. Remember that."
     print(f"\n[Turn 1] User: {query1}")
-    response1 = await agent.run(query1, thread=thread, checkpoint_storage=checkpoint_storage)
+    response1 = await agent.run(query1, session=session, checkpoint_storage=checkpoint_storage)
     if response1.messages:
         print(f"[assistant]: {response1.messages[0].text}")
 
-    # Second turn - agent should remember from thread history
+    # Second turn - agent should remember from session history
     query2 = "What's my favorite color?"
     print(f"\n[Turn 2] User: {query2}")
-    response2 = await agent.run(query2, thread=thread, checkpoint_storage=checkpoint_storage)
+    response2 = await agent.run(query2, session=session, checkpoint_storage=checkpoint_storage)
     if response2.messages:
         print(f"[assistant]: {response2.messages[0].text}")
 
@@ -124,9 +122,9 @@ async def checkpointing_with_thread() -> None:
     checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nTotal checkpoints across both turns: {len(checkpoints)}")
 
-    if thread.message_store:
-        history = await thread.message_store.list_messages()
-        print(f"Messages in thread history: {len(history)}")
+    memory_state = session.state.get("memory", {})
+    history = memory_state.get("messages", [])
+    print(f"Messages in session history: {len(history)}")
 
 
 async def streaming_with_checkpoints() -> None:

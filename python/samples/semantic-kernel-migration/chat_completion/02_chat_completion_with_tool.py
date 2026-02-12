@@ -56,10 +56,10 @@ async def run_agent_framework() -> None:
         instructions="Answer menu questions accurately.",
         tools=[specials],
     )
-    thread = chat_agent.get_new_thread()
+    session = chat_agent.create_session()
     reply = await chat_agent.run(
         "What soup can I order today?",
-        thread=thread,
+        session=session,
         tool_choice="auto",
     )
     print("[AF]", reply.text)

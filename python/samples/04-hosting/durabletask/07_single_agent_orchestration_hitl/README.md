@@ -82,6 +82,6 @@ You can view the state of the WriterAgent and orchestration in the Durable Task 
 1. Open your browser and navigate to `http://localhost:8082`
 2. In the dashboard, you can view:
    - Orchestration instance status and pending events
-   - WriterAgent entity state and conversation threads
+   - WriterAgent entity state and conversation sessions
    - Activity execution logs
    - External event history

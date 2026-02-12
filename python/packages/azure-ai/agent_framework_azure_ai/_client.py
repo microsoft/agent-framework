@@ -9,10 +9,9 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
+    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
-    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -808,8 +807,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: AzureAIClientOptionsT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Agent[AzureAIClientOptionsT]:
@@ -829,8 +827,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             kwargs: Any additional keyword arguments.
 
@@ -844,8 +841,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions=instructions,
             tools=tools,
             default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             **kwargs,
         )

@@ -17,7 +17,7 @@ same observability setup function.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -46,13 +46,13 @@ async def main():
             instructions="You are a weather assistant.",
             id="weather-agent",
         )
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         for question in questions:
             print(f"\nUser: {question}")
             print(f"{agent.name}: ", end="")
             async for update in agent.run(
                 question,
-                thread=thread,
+                session=session,
                 stream=True,
             ):
                 if update.text:
