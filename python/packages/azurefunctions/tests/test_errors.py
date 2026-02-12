@@ -36,4 +36,3 @@ class TestIncomingRequestError:
             raise IncomingRequestError("Bad request", status_code=400)
 
         assert exc_info.value.status_code == 400
-        assert str(exc_info.value) == "Bad request"

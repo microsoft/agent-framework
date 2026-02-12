@@ -1168,7 +1168,7 @@ class TestAgentFunctionAppErrorPaths:
     """Test suite for error handling paths."""
 
     def test_init_with_invalid_max_poll_retries(self) -> None:
-        """Test initialization handles invalid max_poll_retries (lines 204-205)."""
+        """Test initialization handles invalid max_poll_retries by falling back to default."""
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
@@ -1181,7 +1181,7 @@ class TestAgentFunctionAppErrorPaths:
         assert app2.max_poll_retries >= 1  # Should use default
 
     def test_init_with_invalid_poll_interval_seconds(self) -> None:
-        """Test initialization handles invalid poll_interval_seconds (lines 210-211)."""
+        """Test initialization handles invalid poll_interval_seconds by falling back to default."""
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
@@ -1194,7 +1194,7 @@ class TestAgentFunctionAppErrorPaths:
         assert app2.poll_interval_seconds > 0  # Should use default
 
     def test_get_agent_raises_for_unregistered_agent(self) -> None:
-        """Test get_agent raises ValueError for unregistered agent (lines 322-323)."""
+        """Test get_agent raises ValueError for unregistered agent."""
         mock_agent = Mock()
         mock_agent.name = "RegisteredAgent"
 
@@ -1208,7 +1208,7 @@ class TestAgentFunctionAppErrorPaths:
             app.get_agent(mock_context, "UnknownAgent")
 
     def test_convert_payload_to_text_with_response_key(self) -> None:
-        """Test _convert_payload_to_text returns response key value (line 919)."""
+        """Test _convert_payload_to_text returns response key value."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         # Test with response key
@@ -1233,7 +1233,7 @@ class TestAgentFunctionAppErrorPaths:
         assert "value" in result
 
     def test_create_session_id_with_thread_id(self) -> None:
-        """Test _create_session_id with provided thread_id (line 929)."""
+        """Test _create_session_id with provided thread_id."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         # With thread_id provided
@@ -1246,7 +1246,7 @@ class TestAgentFunctionAppErrorPaths:
         assert len(session_id.key) > 0
 
     def test_resolve_thread_id_from_body(self) -> None:
-        """Test _resolve_thread_id extracts from body (lines 936-938)."""
+        """Test _resolve_thread_id extracts from body."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         mock_req = Mock()
@@ -1258,19 +1258,21 @@ class TestAgentFunctionAppErrorPaths:
         assert result == "body-thread-123"
 
     def test_select_body_parser_json_content_type(self) -> None:
-        """Test _select_body_parser for JSON content type (line 983)."""
+        """Test _select_body_parser for JSON content type."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         # Test with application/json
         parser, format_str = app._select_body_parser("application/json")
+        assert parser == app._parse_json_body
         assert format_str == "json"
 
         # Test with +json suffix
         parser, format_str = app._select_body_parser("application/vnd.api+json")
+        assert parser == app._parse_json_body
         assert format_str == "json"
 
     def test_accepts_json_response_with_accept_header(self) -> None:
-        """Test _accepts_json_response checks accept header (line 997)."""
+        """Test _accepts_json_response checks accept header."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         # With application/json in accept header
@@ -1284,7 +1286,7 @@ class TestAgentFunctionAppErrorPaths:
         assert result is False
 
     def test_parse_json_body_invalid_type(self) -> None:
-        """Test _parse_json_body raises error for invalid JSON (lines 1008-1015)."""
+        """Test _parse_json_body raises error for invalid JSON."""
         from agent_framework_azurefunctions._errors import IncomingRequestError
 
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
@@ -1297,7 +1299,7 @@ class TestAgentFunctionAppErrorPaths:
             app._parse_json_body(mock_req)
 
     def test_coerce_to_bool_with_none(self) -> None:
-        """Test _coerce_to_bool handles None (lines 1040, 1047, 1049, 1052)."""
+        """Test _coerce_to_bool handles None and various value types."""
         app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
 
         # None returns False

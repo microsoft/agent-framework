@@ -130,7 +130,7 @@ class TestAgentResponseHelpers:
     """Tests for response handling through public AgentTask API."""
 
     def test_try_set_value_exception_handling(self) -> None:
-        """Test try_set_value handles exceptions during response conversion (lines 129-134)."""
+        """Test try_set_value handles exceptions raised when converting a successful task result to AgentResponse."""
         entity_task = _create_entity_task()
         task = AgentTask(entity_task, None, "correlation-id")
 
@@ -302,10 +302,10 @@ class TestAzureFunctionsAgentExecutor:
     """Tests for AzureFunctionsAgentExecutor."""
 
     def test_generate_unique_id(self, mock_context_with_uuid: tuple[Mock, str]) -> None:
-        """Test generate_unique_id method (line 149)."""
+        """Test generate_unique_id method returns UUID from orchestration context."""
         from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
 
-        context, test_uuid_hex = mock_context_with_uuid
+        context, _ = mock_context_with_uuid
         executor = AzureFunctionsAgentExecutor(context)
 
         # Call generate_unique_id

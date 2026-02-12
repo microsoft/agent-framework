@@ -199,7 +199,7 @@ class TestCreateAgentEntity:
         assert persisted_state["data"]["conversationHistory"] == []
 
     def test_entity_function_handles_string_input(self) -> None:
-        """Test that the entity function handles plain string input that falls back to empty string (line 83)."""
+        """Test that the entity function handles non-dict input by converting to string."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("String response"))
 
@@ -209,18 +209,18 @@ class TestCreateAgentEntity:
         mock_context = Mock()
         mock_context.operation_name = "run"
         mock_context.entity_key = "conv-456"
-        # Use a number to force the str() conversion path
+        # Use a number to test the str() conversion path
         mock_context.get_input.return_value = 12345
         mock_context.get_state.return_value = None
 
-        # Execute - should hit error path since entity expects dict or valid JSON string
+        # Execute - entity will convert non-dict input to string
         entity_function(mock_context)
 
-        # Verify the result was set (likely error result)
+        # Verify the result was set
         assert mock_context.set_result.called
 
     def test_entity_function_handles_none_input(self) -> None:
-        """Test that the entity function handles None input converting to empty string (line 83)."""
+        """Test that the entity function handles None input by converting to empty string."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Empty response"))
 
@@ -240,7 +240,7 @@ class TestCreateAgentEntity:
         assert mock_context.set_result.called
 
     def test_entity_function_handles_event_loop_runtime_error(self) -> None:
-        """Test that the entity function handles RuntimeError from get_event_loop (lines 107-109)."""
+        """Test that the entity function handles RuntimeError from get_event_loop by creating a new loop."""
         from unittest.mock import patch
 
         mock_agent = Mock()
@@ -273,7 +273,7 @@ class TestCreateAgentEntity:
             mock_set_loop.assert_called_once_with(mock_loop)
 
     def test_entity_function_handles_running_event_loop(self) -> None:
-        """Test that the entity function handles a running event loop (lines 111-116)."""
+        """Test that the entity function handles a running event loop by creating a temporary loop."""
         from unittest.mock import patch
 
         mock_agent = Mock()
