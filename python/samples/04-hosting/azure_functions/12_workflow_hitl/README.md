@@ -138,4 +138,4 @@ Use the `demo.http` file with the VS Code REST Client extension:
 
 - [07_single_agent_orchestration_hitl](../07_single_agent_orchestration_hitl/) - HITL at orchestrator level (not using MAF pattern)
 - [09_workflow_shared_state](../09_workflow_shared_state/) - Workflow with shared state
-- [guessing_game_with_human_input](../../workflows/human-in-the-loop/guessing_game_with_human_input.py) - MAF HITL pattern (non-durable)
+- [guessing_game_with_human_input](../../../03-workflows/human-in-the-loop/guessing_game_with_human_input.py) - MAF HITL pattern (non-durable)
