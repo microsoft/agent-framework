@@ -17,7 +17,7 @@ with the following configuration:
         "agent-framework": {
             "command": "uv",
             "args": [
-                "--directory=<path to project>/agent-framework/python/samples/getting_started/mcp",
+                "--directory=<path to project>/agent-framework/python/samples/02-agents/mcp",
                 "run",
                 "agent_as_mcp_server.py"
             ],

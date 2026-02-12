@@ -5,7 +5,7 @@
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/getting_started/agents/copilotstudio/copilotstudio_with_explicit_settings.py
+#   uv run samples/02-agents/providers/copilotstudio/copilotstudio_with_explicit_settings.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
