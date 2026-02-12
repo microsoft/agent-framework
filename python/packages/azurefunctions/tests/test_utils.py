@@ -185,7 +185,7 @@ class TestCapturingRunnerContext:
         from agent_framework import State
 
         with pytest.raises(NotImplementedError):
-            await context.create_checkpoint(State(), 1)
+            await context.create_checkpoint("test_workflow", "abc123", State(), None, 1)
 
     @pytest.mark.asyncio
     async def test_load_checkpoint_raises_not_implemented(self, context: CapturingRunnerContext) -> None:
