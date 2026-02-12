@@ -35,6 +35,7 @@ from agent_framework import (
     get_logger,
     prepare_function_call_results,
 )
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
@@ -85,7 +86,7 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
@@ -482,26 +483,26 @@ class AzureAIAgentClient(
                 client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            azure_ai_settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model_deployment_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+        azure_ai_settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # If no agents_client is provided, create one
         should_close_client = False
         if agents_client is None:
-            if not azure_ai_settings.project_endpoint:
+            resolved_endpoint = azure_ai_settings.get("project_endpoint")
+            if not resolved_endpoint:
                 raise ServiceInitializationError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
-            if agent_id is None and not azure_ai_settings.model_deployment_name:
+            if agent_id is None and not azure_ai_settings.get("model_deployment_name"):
                 raise ServiceInitializationError(
                     "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
                     "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
@@ -511,7 +512,7 @@ class AzureAIAgentClient(
             if not credential:
                 raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
             agents_client = AgentsClient(
-                endpoint=azure_ai_settings.project_endpoint,
+                endpoint=resolved_endpoint,
                 credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
@@ -530,7 +531,7 @@ class AzureAIAgentClient(
         self.agent_id = agent_id
         self.agent_name = agent_name
         self.agent_description = agent_description
-        self.model_id = azure_ai_settings.model_deployment_name
+        self.model_id = azure_ai_settings.get("model_deployment_name")
         self.thread_id = thread_id
         self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
         self._agent_created = False  # Track whether agent was created inside this class

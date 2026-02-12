@@ -107,9 +107,8 @@ def test_provider_init_with_credential_and_endpoint(
 
 def test_provider_init_missing_endpoint() -> None:
     """Test AzureAIProjectAgentProvider initialization when endpoint is missing."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = None
-        mock_settings.return_value.model_deployment_name = "test-model"
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
             AzureAIProjectAgentProvider(credential=MagicMock())
@@ -130,9 +129,11 @@ async def test_provider_create_agent(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent method."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
@@ -168,9 +169,11 @@ async def test_provider_create_agent_with_env_model(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent uses model from env var."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
@@ -200,9 +203,8 @@ async def test_provider_create_agent_with_env_model(
 
 async def test_provider_create_agent_missing_model(mock_project_client: MagicMock) -> None:
     """Test AzureAIProjectAgentProvider.create_agent raises when model is missing."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = "https://test.com"
-        mock_settings.return_value.model_deployment_name = None
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
@@ -215,9 +217,11 @@ async def test_provider_create_agent_with_rai_config(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent passes rai_config from default_options."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
@@ -258,9 +262,11 @@ async def test_provider_create_agent_with_reasoning(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test AzureAIProjectAgentProvider.create_agent passes reasoning from default_options."""
-    with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
@@ -465,9 +471,11 @@ async def test_provider_context_manager(mock_project_client: MagicMock) -> None:
         mock_client.close = AsyncMock()
         mock_ai_project_client.return_value = mock_client
 
-        with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-            mock_settings.return_value.project_endpoint = "https://test.com"
-            mock_settings.return_value.model_deployment_name = "test-model"
+        with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "project_endpoint": "https://test.com",
+                "model_deployment_name": "test-model",
+            }
 
             async with AzureAIProjectAgentProvider(credential=MagicMock()) as provider:
                 assert provider._project_client is mock_client  # type: ignore
@@ -494,9 +502,11 @@ async def test_provider_close_method(mock_project_client: MagicMock) -> None:
         mock_client.close = AsyncMock()
         mock_ai_project_client.return_value = mock_client
 
-        with patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings:
-            mock_settings.return_value.project_endpoint = "https://test.com"
-            mock_settings.return_value.model_deployment_name = "test-model"
+        with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "project_endpoint": "https://test.com",
+                "model_deployment_name": "test-model",
+            }
 
             provider = AzureAIProjectAgentProvider(credential=MagicMock())
             await provider.close()
@@ -581,12 +591,14 @@ async def test_provider_create_agent_with_mcp_tool(
         return [tools]
 
     with (
-        patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings,
+        patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings,
         patch("agent_framework_azure_ai._project_provider.to_azure_ai_tools") as mock_to_azure_tools,
         patch("agent_framework_azure_ai._project_provider.normalize_tools", side_effect=mock_normalize_tools),
     ):
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
         mock_to_azure_tools.return_value = [{"type": "function", "name": "mcp_function_1"}]
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
@@ -642,12 +654,14 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
         return [tools]
 
     with (
-        patch("agent_framework_azure_ai._project_provider.AzureAISettings") as mock_settings,
+        patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings,
         patch("agent_framework_azure_ai._project_provider.to_azure_ai_tools") as mock_to_azure_tools,
         patch("agent_framework_azure_ai._project_provider.normalize_tools", side_effect=mock_normalize_tools),
     ):
-        mock_settings.return_value.project_endpoint = azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-        mock_settings.return_value.model_deployment_name = azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+        mock_load_settings.return_value = {
+            "project_endpoint": azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            "model_deployment_name": azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        }
         mock_to_azure_tools.return_value = []
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)

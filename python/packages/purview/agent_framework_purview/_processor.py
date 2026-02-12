@@ -57,8 +57,11 @@ class ScopedContentProcessor:
     def __init__(self, client: PurviewClient, settings: PurviewSettings, cache_provider: CacheProvider | None = None):
         self._client = client
         self._settings = settings
+        cache_ttl = settings.get("cache_ttl_seconds")
+        max_cache = settings.get("max_cache_size_bytes")
         self._cache: CacheProvider = cache_provider or InMemoryCacheProvider(
-            default_ttl_seconds=settings.cache_ttl_seconds, max_size_bytes=settings.max_cache_size_bytes
+            default_ttl_seconds=cache_ttl if cache_ttl is not None else 14400,
+            max_size_bytes=max_cache if max_cache is not None else 200 * 1024 * 1024,
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
@@ -116,10 +119,10 @@ class ScopedContentProcessor:
         results: list[ProcessContentRequest] = []
         token_info = None
 
-        if not (self._settings.tenant_id and self._settings.purview_app_location):
-            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.tenant_id)
+        if not (self._settings.get("tenant_id") and self._settings.get("purview_app_location")):
+            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
 
-        tenant_id = (token_info or {}).get("tenant_id") or self._settings.tenant_id
+        tenant_id = (token_info or {}).get("tenant_id") or self._settings.get("tenant_id")
         if not tenant_id or not _is_valid_guid(tenant_id):
             raise ValueError("Tenant id required or must be inferable from credential")
 
@@ -159,10 +162,11 @@ class ScopedContentProcessor:
             )
             activity_meta = ActivityMetadata(activity=activity)
 
-            if self._settings.purview_app_location:
+            purview_app_location = self._settings.get("purview_app_location")
+            if purview_app_location:
                 policy_location = PolicyLocation(
-                    data_type=self._settings.purview_app_location.get_policy_location()["@odata.type"],
-                    value=self._settings.purview_app_location.location_value,
+                    data_type=purview_app_location.get_policy_location()["@odata.type"],
+                    value=purview_app_location.location_value,
                 )
             elif token_info and token_info.get("client_id"):
                 policy_location = PolicyLocation(
@@ -172,13 +176,14 @@ class ScopedContentProcessor:
             else:
                 raise ValueError("App location not provided or inferable")
 
-            app_version = self._settings.app_version or "Unknown"
             protected_app = ProtectedAppMetadata(
-                name=self._settings.app_name,
-                version=app_version,
+                name=self._settings["app_name"],
+                version=self._settings.get("app_version", "Unknown"),
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version=app_version)
+            integrated_app = IntegratedAppMetadata(
+                name=self._settings["app_name"], version=self._settings.get("app_version", "Unknown")
+            )
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"
@@ -229,11 +234,13 @@ class ScopedContentProcessor:
             ps_resp = cached_ps_resp
         else:
             try:
+                ttl = self._settings.get("cache_ttl_seconds")
+                ttl_seconds = ttl if ttl is not None else 14400
                 ps_resp = await self._client.get_protection_scopes(ps_req)
-                await self._cache.set(cache_key, ps_resp, ttl_seconds=self._settings.cache_ttl_seconds)
+                await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
             except PurviewPaymentRequiredError as ex:
                 # Cache the exception at tenant level so all subsequent requests for this tenant fail fast
-                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=self._settings.cache_ttl_seconds)
+                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
                 raise
 
         if ps_resp.scope_identifier:

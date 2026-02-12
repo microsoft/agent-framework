@@ -16,6 +16,7 @@ from agent_framework import (
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -28,7 +29,6 @@ from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import ValidationError
 
 from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
@@ -123,21 +123,21 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         Raises:
             ServiceInitializationError: If required parameters are missing or invalid.
         """
-        try:
-            self._settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+        self._settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            model_deployment_name=model,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # Track whether we should close client connection
         self._should_close_client = False
 
         if project_client is None:
-            if not self._settings.project_endpoint:
+            resolved_endpoint = self._settings.get("project_endpoint")
+            if not resolved_endpoint:
                 raise ServiceInitializationError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
@@ -147,7 +147,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
 
             project_client = AIProjectClient(
-                endpoint=self._settings.project_endpoint,
+                endpoint=resolved_endpoint,
                 credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
@@ -191,7 +191,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             ServiceInitializationError: If required parameters are missing.
         """
         # Resolve model from parameter or environment variable
-        resolved_model = model or self._settings.model_deployment_name
+        resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
             raise ServiceInitializationError(
                 "Model deployment name is required. Provide 'model' parameter "
