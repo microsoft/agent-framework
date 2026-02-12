@@ -427,9 +427,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
 
                     attachments ??= [];
-                    attachments.Add(new UserMessageDataAttachmentsItem
+                    attachments.Add(new UserMessageDataAttachmentsItemFile
                     {
-                        Type = UserMessageDataAttachmentsItemType.File,
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)
                     });
