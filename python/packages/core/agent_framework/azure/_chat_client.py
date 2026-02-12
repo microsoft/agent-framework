@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 
 from azure.core.credentials import TokenCredential
@@ -23,7 +23,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
@@ -286,6 +286,31 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
+
+    @override
+    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+        """Prepare tools for the Azure OpenAI Chat Completions API.
+
+        Overrides the base implementation to raise an error when web search tools
+        are used, since Azure OpenAI's Chat Completions API does not support the
+        ``web_search_options`` parameter.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            Dict containing tools.
+
+        Raises:
+            ServiceInvalidRequestError: If a web search tool is included.
+        """
+        for tool in tools:
+            if isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
+                raise ServiceInvalidRequestError(
+                    "Web search tools are not supported by Azure OpenAI's Chat Completions API. "
+                    "Use OpenAIChatClient or AzureOpenAIResponsesClient instead."
+                )
+        return super()._prepare_tools_for_openai(tools)
 
     @override
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:

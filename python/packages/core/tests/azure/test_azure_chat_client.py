@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
@@ -646,6 +646,32 @@ def get_story_text() -> str:
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
     return f"The weather in {location} is sunny and 72°F."
+
+
+def test_web_search_tool_raises_error(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that web search tools raise ServiceInvalidRequestError on Azure."""
+    client = AzureOpenAIChatClient()
+
+    web_search_tool = {"type": "web_search"}
+    with pytest.raises(ServiceInvalidRequestError, match="Web search tools are not supported"):
+        client._prepare_tools_for_openai([web_search_tool])
+
+    # Also test with additional options
+    web_search_tool_with_options = {
+        "type": "web_search",
+        "user_location": {"type": "approximate", "approximate": {"city": "Seattle", "country": "US"}},
+    }
+    with pytest.raises(ServiceInvalidRequestError, match="Web search tools are not supported"):
+        client._prepare_tools_for_openai([web_search_tool_with_options])
+
+
+def test_prepare_tools_normal_tools_work(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that normal function tools still work through Azure's _prepare_tools_for_openai."""
+    client = AzureOpenAIChatClient()
+
+    result = client._prepare_tools_for_openai([get_weather])
+    assert "tools" in result
+    assert "web_search_options" not in result
 
 
 @pytest.mark.flaky
