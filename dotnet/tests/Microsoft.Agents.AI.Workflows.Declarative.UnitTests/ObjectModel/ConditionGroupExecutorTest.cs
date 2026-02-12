@@ -113,15 +113,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         ConditionGroupExecutor executor = new(model, this.State);
         ConditionItem firstCondition = model.Conditions[0];
 
-        // Use reflection to create ActionExecutorResult since constructor is internal
-        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            new System.Type[] { typeof(string), typeof(object) },
-            null);
-        Assert.NotNull(constructor);
-
-        object? message = constructor.Invoke(new object[] { "test_executor", ConditionGroupExecutor.Steps.Item(model, firstCondition) });
+        object? message = this.CreateActionExecutorResult(ConditionGroupExecutor.Steps.Item(model, firstCondition));
 
         // Act
         bool isMatch = executor.IsMatch(firstCondition, message);
@@ -138,15 +130,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         ConditionGroupExecutor executor = new(model, this.State);
         ConditionItem firstCondition = model.Conditions[0];
 
-        // Use reflection to create ActionExecutorResult since constructor is internal
-        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            new System.Type[] { typeof(string), typeof(object) },
-            null);
-        Assert.NotNull(constructor);
-
-        object? message = constructor.Invoke(new object[] { "test_executor", "different_step" });
+        object? message = this.CreateActionExecutorResult("different_step");
 
         // Act
         bool isMatch = executor.IsMatch(firstCondition, message);
@@ -162,15 +146,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         ConditionGroup model = this.CreateModelWithElse(nameof(ConditionGroupIsElseTrue));
         ConditionGroupExecutor executor = new(model, this.State);
 
-        // Use reflection to create ActionExecutorResult since constructor is internal
-        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            new System.Type[] { typeof(string), typeof(object) },
-            null);
-        Assert.NotNull(constructor);
-
-        object? message = constructor.Invoke(new object[] { "test_executor", ConditionGroupExecutor.Steps.Else(model) });
+        object? message = this.CreateActionExecutorResult(ConditionGroupExecutor.Steps.Else(model));
 
         // Act
         bool isElse = executor.IsElse(message);
@@ -186,15 +162,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         ConditionGroup model = this.CreateModelWithElse(nameof(ConditionGroupIsElseFalse));
         ConditionGroupExecutor executor = new(model, this.State);
 
-        // Use reflection to create ActionExecutorResult since constructor is internal
-        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            new System.Type[] { typeof(string), typeof(object) },
-            null);
-        Assert.NotNull(constructor);
-
-        object? message = constructor.Invoke(new object[] { "test_executor", "different_step" });
+        object? message = this.CreateActionExecutorResult("different_step");
 
         // Act
         bool isElse = executor.IsElse(message);
@@ -237,7 +205,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         VerifyModel(model, action);
         VerifyInvocationEvent(events);
 
-        // IsDiscreteAction should be false for ConditionGroup
+        // Verify IsDiscreteAction property is false (using reflection since property is protected)
         Assert.Equal(
             false,
             action.GetType().BaseType?
@@ -246,6 +214,21 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
 
         // Verify execution completed without errors
         Assert.NotEmpty(events);
+    }
+
+    /// <summary>
+    /// Creates an ActionExecutorResult using reflection since the constructor is internal.
+    /// </summary>
+    private object CreateActionExecutorResult(string result)
+    {
+        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+            null,
+            new System.Type[] { typeof(string), typeof(object) },
+            null);
+        Assert.NotNull(constructor);
+
+        return constructor.Invoke(new object[] { "test_executor", result });
     }
 
     private ConditionGroup CreateModel(
@@ -336,6 +319,10 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         return AssignParent<ConditionGroup>(actionBuilder);
     }
 
+    /// <summary>
+    /// Creates an ActionScope builder for testing.
+    /// </summary>
+    /// <param name="prefix">Descriptive prefix for the action scope (not used in IDs but kept for code clarity).</param>
     private ActionScope.Builder CreateActions(string prefix)
     {
         ActionScope.Builder actions = new()
