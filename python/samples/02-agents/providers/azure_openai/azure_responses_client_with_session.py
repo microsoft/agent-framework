@@ -5,21 +5,21 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
-Azure OpenAI Chat Client with Session Management Example
+Azure OpenAI Responses Client with Session Management Example
 
-This sample demonstrates session management with Azure OpenAI Chat Client, comparing
+This sample demonstrates session management with Azure OpenAI Responses Client, comparing
 automatic session creation with explicit session management for persistent context.
 """
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -30,13 +30,13 @@ def get_weather(
 
 
 async def example_with_automatic_session_creation() -> None:
-    """Example showing automatic session creation (service-managed session)."""
+    """Example showing automatic session creation."""
     print("=== Automatic Session Creation Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -55,15 +55,17 @@ async def example_with_automatic_session_creation() -> None:
     print("Note: Each call creates a separate session, so the agent doesn't remember previous context.\n")
 
 
-async def example_with_session_persistence() -> None:
-    """Example showing session persistence across multiple conversations."""
-    print("=== Session Persistence Example ===")
-    print("Using the same session across multiple conversations to maintain context.\n")
+async def example_with_session_persistence_in_memory() -> None:
+    """
+    Example showing session persistence across multiple conversations.
+    In this example, messages are stored in-memory.
+    """
+    print("=== Session Persistence Example (In-Memory) ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -91,66 +93,62 @@ async def example_with_session_persistence() -> None:
     print("Note: The agent remembers context from previous messages in the same session.\n")
 
 
-async def example_with_existing_session_messages() -> None:
-    """Example showing how to work with existing session messages for Azure."""
-    print("=== Existing Session Messages Example ===")
+async def example_with_existing_session_id() -> None:
+    """
+    Example showing how to work with an existing session ID from the service.
+    In this example, messages are stored on the server using Azure OpenAI conversation state.
+    """
+    print("=== Existing Session ID Example ===")
+
+    # First, create a conversation and capture the session ID
+    existing_session_id = None
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
 
-    # Start a conversation and build up message history
+    # Start a conversation and get the session ID
     session = agent.create_session()
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, session=session)
+    # Enable Azure OpenAI conversation state by setting `store` parameter to True
+    result1 = await agent.run(query1, session=session, store=True)
     print(f"Agent: {result1.text}")
 
-    # The session now contains the conversation history in state
-    memory_state = session.state.get("memory", {})
-    messages = memory_state.get("messages", [])
-    if messages:
-        print(f"Session contains {len(messages)} messages")
+    # The session ID is set after the first response
+    existing_session_id = session.service_session_id
+    print(f"Session ID: {existing_session_id}")
 
-    print("\n--- Continuing with the same session in a new agent instance ---")
+    if existing_session_id:
+        print("\n--- Continuing with the same session ID in a new agent instance ---")
 
-    # Create a new agent instance but use the existing session with its message history
-    new_agent = Agent(
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
-        instructions="You are a helpful weather agent.",
-        tools=get_weather,
-    )
+        agent = Agent(
+            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+            instructions="You are a helpful weather agent.",
+            tools=get_weather,
+        )
 
-    # Use the same session object which contains the conversation history
-    query2 = "What was the last city I asked about?"
-    print(f"User: {query2}")
-    result2 = await new_agent.run(query2, session=session)
-    print(f"Agent: {result2.text}")
-    print("Note: The agent continues the conversation using the local message history.\n")
+        # Create a session with the existing ID
+        session = AgentSession(service_session_id=existing_session_id)
 
-    print("\n--- Alternative: Creating a new session from existing messages ---")
-
-    # You can also create a new session from existing messages
-    new_session = AgentSession()
-
-    query3 = "How does the Paris weather compare to London?"
-    print(f"User: {query3}")
-    result3 = await new_agent.run(query3, session=new_session)
-    print(f"Agent: {result3.text}")
-    print("Note: This creates a new session with the same conversation history.\n")
+        query2 = "What was the last city I asked about?"
+        print(f"User: {query2}")
+        result2 = await agent.run(query2, session=session, store=True)
+        print(f"Agent: {result2.text}")
+        print("Note: The agent continues the conversation from the previous session by using session ID.\n")
 
 
 async def main() -> None:
-    print("=== Azure Chat Client Agent Session Management Examples ===\n")
+    print("=== Azure OpenAI Response Client Agent Session Management Examples ===\n")
 
     await example_with_automatic_session_creation()
-    await example_with_session_persistence()
-    await example_with_existing_session_messages()
+    await example_with_session_persistence_in_memory()
+    await example_with_existing_session_id()
 
 
 if __name__ == "__main__":

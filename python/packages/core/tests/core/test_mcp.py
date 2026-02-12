@@ -2588,7 +2588,7 @@ async def test_mcp_tool_filters_framework_kwargs():
             chat_options={"some": "option"},  # Should be filtered
             tools=[Mock()],  # Should be filtered
             tool_choice="auto",  # Should be filtered
-            thread=Mock(),  # Should be filtered
+            session=Mock(),  # Should be filtered
             conversation_id="conv-123",  # Should be filtered
             options={"metadata": "value"},  # Should be filtered
         )

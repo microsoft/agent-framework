@@ -800,8 +800,8 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_openai_chat_client_agent_thread_persistence():
-    """Test Azure OpenAI chat client agent thread persistence across runs with AzureOpenAIChatClient."""
+async def test_azure_openai_chat_client_agent_session_persistence():
+    """Test Azure OpenAI chat client agent session persistence across runs with AzureOpenAIChatClient."""
     async with Agent(
         client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
@@ -825,8 +825,8 @@ async def test_azure_openai_chat_client_agent_thread_persistence():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_openai_chat_client_agent_existing_thread():
-    """Test Azure OpenAI chat client agent with existing thread to continue conversations across agent instances."""
+async def test_azure_openai_chat_client_agent_existing_session():
+    """Test Azure OpenAI chat client agent with existing session to continue conversations across agent instances."""
     # First conversation - capture the session
     preserved_session = None
 

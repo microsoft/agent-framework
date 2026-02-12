@@ -433,8 +433,8 @@ async def test_azure_assistants_agent_basic_run_streaming():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_thread_persistence():
-    """Test Agent thread persistence across runs with AzureOpenAIAssistantsClient."""
+async def test_azure_assistants_agent_session_persistence():
+    """Test Agent session persistence across runs with AzureOpenAIAssistantsClient."""
     async with Agent(
         client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
@@ -462,10 +462,10 @@ async def test_azure_assistants_agent_thread_persistence():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_existing_thread_id():
-    """Test Agent with existing thread ID to continue conversations across agent instances."""
-    # First, create a conversation and capture the thread ID
-    existing_thread_id = None
+async def test_azure_assistants_agent_existing_session_id():
+    """Test Agent with existing session ID to continue conversations across agent instances."""
+    # First, create a conversation and capture the session ID
+    existing_session_id = None
 
     async with Agent(
         client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
@@ -482,18 +482,18 @@ async def test_azure_assistants_agent_existing_thread_id():
         assert any(word in response1.text.lower() for word in ["weather", "paris"])
 
         # The session ID is set after the first response
-        existing_thread_id = session.service_session_id
-        assert existing_thread_id is not None
+        existing_session_id = session.service_session_id
+        assert existing_session_id is not None
 
-    # Now continue with the same thread ID in a new agent instance
+    # Now continue with the same session ID in a new agent instance
 
     async with Agent(
-        client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(thread_id=existing_session_id, credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
         # Create a session with the existing ID
-        session = AgentSession(service_session_id=existing_thread_id)
+        session = AgentSession(service_session_id=existing_session_id)
 
         # Ask about the previous conversation
         response2 = await agent.run("What was the last city I asked about?", session=session)

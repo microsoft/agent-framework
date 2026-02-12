@@ -5,20 +5,21 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
-OpenAI Chat Client with Session Management Example
+Azure OpenAI Chat Client with Session Management Example
 
-This sample demonstrates session management with OpenAI Chat Client, showing
-conversation sessions and message history preservation across interactions.
+This sample demonstrates session management with Azure OpenAI Chat Client, comparing
+automatic session creation with explicit session management for persistent context.
 """
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -32,8 +33,10 @@ async def example_with_automatic_session_creation() -> None:
     """Example showing automatic session creation (service-managed session)."""
     print("=== Automatic Session Creation Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = Agent(
-        client=OpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -57,8 +60,10 @@ async def example_with_session_persistence() -> None:
     print("=== Session Persistence Example ===")
     print("Using the same session across multiple conversations to maintain context.\n")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = Agent(
-        client=OpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -87,11 +92,13 @@ async def example_with_session_persistence() -> None:
 
 
 async def example_with_existing_session_messages() -> None:
-    """Example showing how to work with existing session messages for OpenAI."""
+    """Example showing how to work with existing session messages for Azure."""
     print("=== Existing Session Messages Example ===")
 
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option.
     agent = Agent(
-        client=OpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -114,7 +121,7 @@ async def example_with_existing_session_messages() -> None:
 
     # Create a new agent instance but use the existing session with its message history
     new_agent = Agent(
-        client=OpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -128,6 +135,7 @@ async def example_with_existing_session_messages() -> None:
 
     print("\n--- Alternative: Creating a new session from existing messages ---")
 
+    # You can also create a new session from existing messages
     new_session = AgentSession()
 
     query3 = "How does the Paris weather compare to London?"
@@ -138,7 +146,7 @@ async def example_with_existing_session_messages() -> None:
 
 
 async def main() -> None:
-    print("=== OpenAI Chat Client Agent Session Management Examples ===\n")
+    print("=== Azure Chat Client Agent Session Management Examples ===\n")
 
     await example_with_automatic_session_creation()
     await example_with_session_persistence()

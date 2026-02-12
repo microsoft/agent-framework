@@ -916,6 +916,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 if message.author_name is None:
                     message.author_name = ctx["agent_name"]
 
+            # Propagate conversation_id back to session from streaming updates
+            sess = ctx["session"]
+            if sess and not sess.service_session_id and response.raw_representation:
+                raw_items = response.raw_representation if isinstance(response.raw_representation, list) else []
+                for item in raw_items:
+                    if hasattr(item, "conversation_id") and item.conversation_id:
+                        sess.service_session_id = item.conversation_id
+                        break
+
             # Run after_run providers (reverse order)
             session_context = ctx["session_context"]
             session_context._response = AgentResponse(  # type: ignore[assignment]
@@ -1090,6 +1099,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         for message in response.messages:
             if message.author_name is None:
                 message.author_name = agent_name
+
+        # Propagate conversation_id back to session (e.g. thread ID from Assistants API)
+        if session and response.conversation_id and not session.service_session_id:
+            session.service_session_id = response.conversation_id
 
         # Set the response on the context for after_run providers
         session_context._response = AgentResponse(  # type: ignore[assignment]

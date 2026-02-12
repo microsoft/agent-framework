@@ -597,8 +597,8 @@ async def test_json_decode_error_in_tool_result(streaming_chat_client_stub):
     assert len(tool_events) == 0
 
 
-async def test_agent_with_use_service_thread_is_false(streaming_chat_client_stub):
-    """Test that when use_service_thread is False, the AgentSession used to run the agent is NOT set to the service session ID."""
+async def test_agent_with_use_service_session_is_false(streaming_chat_client_stub):
+    """Test that when use_service_session is False, the AgentSession used to run the agent is NOT set to the service session ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     request_service_session_id: str | None = None
@@ -611,7 +611,7 @@ async def test_agent_with_use_service_thread_is_false(streaming_chat_client_stub
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=False)
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=False)
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
@@ -621,8 +621,8 @@ async def test_agent_with_use_service_thread_is_false(streaming_chat_client_stub
     assert request_service_session_id is None  # type: ignore[attr-defined] (service_session_id should be set)
 
 
-async def test_agent_with_use_service_thread_is_true(streaming_chat_client_stub):
-    """Test that when use_service_thread is True, the AgentSession used to run the agent is set to the service session ID."""
+async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub):
+    """Test that when use_service_session is True, the AgentSession used to run the agent is set to the service session ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
     request_service_session_id: str | None = None
@@ -638,7 +638,7 @@ async def test_agent_with_use_service_thread_is_true(streaming_chat_client_stub)
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=True)
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=True)
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 

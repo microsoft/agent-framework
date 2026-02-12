@@ -510,12 +510,12 @@ class TestWorkflowAgent:
         texts = [message.text for message in result.messages]
         assert texts == ["first message", "second message", "third fourth"]
 
-    async def test_thread_conversation_history_included_in_workflow_run(self) -> None:
+    async def test_session_conversation_history_included_in_workflow_run(self) -> None:
         """Test that messages provided to agent.run() are passed through to the workflow."""
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing", streaming=False)
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Thread History Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Session History Test Agent")
 
         # Create a session
         session = AgentSession()
@@ -528,12 +528,12 @@ class TestWorkflowAgent:
         assert len(capturing_executor.received_messages) == 1
         assert capturing_executor.received_messages[0].text == "New user question"
 
-    async def test_thread_conversation_history_included_in_workflow_stream(self) -> None:
+    async def test_session_conversation_history_included_in_workflow_stream(self) -> None:
         """Test that messages provided to agent.run() are passed through when streaming WorkflowAgent."""
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing_stream")
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Thread Stream Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Session Stream Test Agent")
 
         # Create a session
         session = AgentSession()
@@ -546,11 +546,11 @@ class TestWorkflowAgent:
         assert len(capturing_executor.received_messages) == 1
         assert capturing_executor.received_messages[0].text == "How are you?"
 
-    async def test_empty_thread_works_correctly(self) -> None:
+    async def test_empty_session_works_correctly(self) -> None:
         """Test that an empty session (no message store) works correctly."""
-        capturing_executor = ConversationHistoryCapturingExecutor(id="empty_thread_test")
+        capturing_executor = ConversationHistoryCapturingExecutor(id="empty_session_test")
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Empty Thread Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Empty Session Test Agent")
 
         # Create an empty session
         session = AgentSession()

@@ -266,7 +266,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     """Whether this client stores conversation history server-side by default.
 
     Clients that use server-side storage (e.g., OpenAI Responses API with ``store=True``
-    as default, Azure AI Agent threads) should override this to ``True``.
+    as default, Azure AI Agent sessions) should override this to ``True``.
     When ``True``, the agent skips auto-injecting ``InMemoryHistoryProvider`` unless the
     user explicitly sets ``store=False``.
     """

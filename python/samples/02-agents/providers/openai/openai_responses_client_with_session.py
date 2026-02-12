@@ -5,21 +5,20 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
-from azure.identity import AzureCliCredential
+from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
 """
-Azure OpenAI Responses Client with Session Management Example
+OpenAI Responses Client with Session Management Example
 
-This sample demonstrates session management with Azure OpenAI Responses Client, comparing
-automatic session creation with explicit session management for persistent context.
+This sample demonstrates session management with OpenAI Responses Client, showing
+persistent conversation context and simplified response handling.
 """
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -33,10 +32,8 @@ async def example_with_automatic_session_creation() -> None:
     """Example showing automatic session creation."""
     print("=== Automatic Session Creation Example ===")
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -62,10 +59,8 @@ async def example_with_session_persistence_in_memory() -> None:
     """
     print("=== Session Persistence Example (In-Memory) ===")
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -76,19 +71,19 @@ async def example_with_session_persistence_in_memory() -> None:
     # First conversation
     query1 = "What's the weather like in Tokyo?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, session=session)
+    result1 = await agent.run(query1, session=session, store=False)
     print(f"Agent: {result1.text}")
 
     # Second conversation using the same session - maintains context
     query2 = "How about London?"
     print(f"\nUser: {query2}")
-    result2 = await agent.run(query2, session=session)
+    result2 = await agent.run(query2, session=session, store=False)
     print(f"Agent: {result2.text}")
 
     # Third conversation - agent should remember both previous cities
     query3 = "Which of the cities I asked about has better weather?"
     print(f"\nUser: {query3}")
-    result3 = await agent.run(query3, session=session)
+    result3 = await agent.run(query3, session=session, store=False)
     print(f"Agent: {result3.text}")
     print("Note: The agent remembers context from previous messages in the same session.\n")
 
@@ -96,17 +91,15 @@ async def example_with_session_persistence_in_memory() -> None:
 async def example_with_existing_session_id() -> None:
     """
     Example showing how to work with an existing session ID from the service.
-    In this example, messages are stored on the server using Azure OpenAI conversation state.
+    In this example, messages are stored on the server using OpenAI conversation state.
     """
     print("=== Existing Session ID Example ===")
 
     # First, create a conversation and capture the session ID
     existing_session_id = None
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        client=OpenAIResponsesClient(),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -116,8 +109,7 @@ async def example_with_existing_session_id() -> None:
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
-    # Enable Azure OpenAI conversation state by setting `store` parameter to True
-    result1 = await agent.run(query1, session=session, store=True)
+    result1 = await agent.run(query1, session=session)
     print(f"Agent: {result1.text}")
 
     # The session ID is set after the first response
@@ -128,7 +120,7 @@ async def example_with_existing_session_id() -> None:
         print("\n--- Continuing with the same session ID in a new agent instance ---")
 
         agent = Agent(
-            client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+            client=OpenAIResponsesClient(),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         )
@@ -138,13 +130,13 @@ async def example_with_existing_session_id() -> None:
 
         query2 = "What was the last city I asked about?"
         print(f"User: {query2}")
-        result2 = await agent.run(query2, session=session, store=True)
+        result2 = await agent.run(query2, session=session)
         print(f"Agent: {result2.text}")
         print("Note: The agent continues the conversation from the previous session by using session ID.\n")
 
 
 async def main() -> None:
-    print("=== Azure OpenAI Response Client Agent Session Management Examples ===\n")
+    print("=== OpenAI Response Client Agent Session Management Examples ===\n")
 
     await example_with_automatic_session_creation()
     await example_with_session_persistence_in_memory()

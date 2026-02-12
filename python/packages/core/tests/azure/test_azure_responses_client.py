@@ -537,8 +537,8 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_integration_client_agent_existing_thread():
-    """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
+async def test_integration_client_agent_existing_session():
+    """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
     # First conversation - capture the session
     preserved_session = None
 

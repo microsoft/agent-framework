@@ -7,10 +7,10 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
-Multi-Turn Conversations — Use AgentThread to maintain context
+Multi-Turn Conversations — Use AgentSession to maintain context
 
 This sample shows how to keep conversation history across multiple calls
-by reusing the same thread object.
+by reusing the same session object.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
