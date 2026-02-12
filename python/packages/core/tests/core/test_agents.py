@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
-from collections.abc import AsyncIterable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -24,11 +24,15 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
     SupportsChatGetResponse,
+    agent_middleware,
     tool,
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
+from agent_framework._middleware import AgentContext
 from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
+
+from .conftest import MockChatClient
 
 
 def test_agent_thread_type(agent_thread: AgentThread) -> None:
@@ -512,6 +516,51 @@ async def test_chat_agent_as_tool_name_sanitization(client: SupportsChatGetRespo
         agent = Agent(client=client, name=agent_name, description="Test agent")
         tool = agent.as_tool()
         assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
+
+
+async def test_chat_agent_as_tool_propagates_conversation_id(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool passes parent_conversation_id to sub-agent via additional_function_arguments."""
+    mock_client: MockChatClient = client  # type: ignore[assignment]
+    captured_options: dict[str, Any] = {}
+
+    @agent_middleware
+    async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        captured_options.update(context.options or {})
+        await call_next()
+
+    mock_client.responses = [
+        ChatResponse(messages=[Message(role="assistant", text="Sub-agent response")]),
+    ]
+
+    sub_agent = Agent(client=mock_client, name="sub_agent", middleware=[capture_middleware])
+    t = sub_agent.as_tool(name="delegate", arg_name="task")
+
+    await t.invoke(arguments=t.input_model(task="Test delegation"), conversation_id="conv-parent-123")
+
+    additional_args = captured_options.get("additional_function_arguments", {})
+    assert additional_args.get("parent_conversation_id") == "conv-parent-123"
+
+
+async def test_chat_agent_as_tool_no_conversation_id_when_absent(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool does not inject additional_function_arguments when no conversation_id provided."""
+    mock_client: MockChatClient = client  # type: ignore[assignment]
+    captured_options: dict[str, Any] = {}
+
+    @agent_middleware
+    async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        captured_options.update(context.options or {})
+        await call_next()
+
+    mock_client.responses = [
+        ChatResponse(messages=[Message(role="assistant", text="Sub-agent response")]),
+    ]
+
+    sub_agent = Agent(client=mock_client, name="sub_agent", middleware=[capture_middleware])
+    t = sub_agent.as_tool(name="delegate", arg_name="task")
+
+    await t.invoke(arguments=t.input_model(task="Test delegation"), user_id="user-789")
+
+    assert "additional_function_arguments" not in captured_options
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:

@@ -492,16 +492,34 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward runtime context kwargs, excluding arg_name and conversation_id.
+            # Extract conversation_id forwarded from parent agent's tool invocation loop
+            parent_conversation_id = kwargs.get("conversation_id")
+
+            # Forward runtime context kwargs, excluding arg_name, conversation_id, and options.
             forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options")}
+
+            # Pass parent's conversation_id via additional_function_arguments so it reaches
+            # the sub-agent's tools through **kwargs for correlation purposes.
+            # We do NOT pass it via chat options because the sub-agent's chat client should
+            # start its own conversation, not try to continue the parent's.
+            # Merge into any existing options/additional_function_arguments to avoid replacing them.
+            existing_options = kwargs.get("options")
+            run_options: dict[str, Any] | None = dict(existing_options) if isinstance(existing_options, dict) else None
+            if parent_conversation_id:
+                if run_options is None:
+                    run_options = {}
+                existing_additional = run_options.get("additional_function_arguments") or {}
+                merged_additional = dict(existing_additional) if isinstance(existing_additional, dict) else {}
+                merged_additional["parent_conversation_id"] = parent_conversation_id
+                run_options["additional_function_arguments"] = merged_additional
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, **forwarded_kwargs)).text
+                return (await self.run(input_text, stream=False, options=run_options, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
-            async for update in self.run(input_text, stream=True, **forwarded_kwargs):
+            async for update in self.run(input_text, stream=True, options=run_options, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
