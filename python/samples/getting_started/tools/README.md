@@ -21,6 +21,7 @@ keep `approval_mode="always_require"` unless you are confident in the tool behav
 | [`function_tool_with_max_invocations.py`](function_tool_with_max_invocations.py) | Demonstrates limiting the total number of times a tool can be invoked using `max_invocations`. Useful for rate-limiting expensive operations or ensuring tools are only called a specific number of times per conversation. |
 | [`function_tool_with_explicit_schema.py`](function_tool_with_explicit_schema.py) | Demonstrates how to provide an explicit Pydantic model or JSON schema dictionary to the `@tool` decorator via the `schema` parameter, bypassing automatic inference from the function signature. |
 | [`tool_in_class.py`](tool_in_class.py) | Shows how to use the `tool` decorator with class methods to create stateful tools. Demonstrates how class state can control tool behavior dynamically, allowing you to adjust tool functionality at runtime by modifying class properties. |
+| [`agent_as_tool_conversation_id_propagation.py`](agent_as_tool_conversation_id_propagation.py) | Demonstrates how a parent agent's `conversation_id` is automatically propagated to sub-agents wrapped as tools via `as_tool()`. This enables correlating multi-agent conversations in storage systems when using conversation-based APIs. |
 
 ## Key Concepts
 

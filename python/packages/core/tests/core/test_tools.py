@@ -1380,4 +1380,66 @@ def test_nested_object_with_const_and_enum():
         model(config={"type": "production", "level": "critical"})
 
 
-# endregion
+async def test_auto_invoke_function_forwards_conversation_id() -> None:
+    """Test that _auto_invoke_function forwards conversation_id to tools that accept **kwargs."""
+    from agent_framework._tools import _auto_invoke_function
+
+    captured_kwargs: dict[str, Any] = {}
+
+    @tool(approval_mode="never_require")
+    def capturing_tool(query: str, **kwargs: Any) -> str:
+        """A tool that captures kwargs."""
+        captured_kwargs.update(kwargs)
+        return "ok"
+
+    function_call = Content.from_function_call(name="capturing_tool", arguments='{"query": "test"}', call_id="call_1")
+
+    await _auto_invoke_function(
+        function_call,
+        custom_args={"conversation_id": "conv-123", "other_arg": "value"},
+        config={
+            "enabled": True,
+            "max_iterations": 1,
+            "max_consecutive_errors_per_request": 3,
+            "include_detailed_errors": True,
+        },
+        tool_map={"capturing_tool": capturing_tool},
+    )
+
+    assert captured_kwargs.get("conversation_id") == "conv-123"
+    assert captured_kwargs.get("other_arg") == "value"
+
+
+async def test_auto_invoke_function_still_filters_internal_kwargs() -> None:
+    """Test that _auto_invoke_function still filters _function_middleware_pipeline and middleware."""
+    from agent_framework._tools import _auto_invoke_function
+
+    captured_kwargs: dict[str, Any] = {}
+
+    @tool(approval_mode="never_require")
+    def capturing_tool(query: str, **kwargs: Any) -> str:
+        """A tool that captures kwargs."""
+        captured_kwargs.update(kwargs)
+        return "ok"
+
+    function_call = Content.from_function_call(name="capturing_tool", arguments='{"query": "test"}', call_id="call_1")
+
+    await _auto_invoke_function(
+        function_call,
+        custom_args={
+            "_function_middleware_pipeline": "should_be_filtered",
+            "middleware": "should_be_filtered",
+            "conversation_id": "conv-456",
+        },
+        config={
+            "enabled": True,
+            "max_iterations": 1,
+            "max_consecutive_errors_per_request": 3,
+            "include_detailed_errors": True,
+        },
+        tool_map={"capturing_tool": capturing_tool},
+    )
+
+    assert "_function_middleware_pipeline" not in captured_kwargs
+    assert "middleware" not in captured_kwargs
+    assert captured_kwargs.get("conversation_id") == "conv-456"

@@ -1251,11 +1251,11 @@ async def _auto_invoke_function(
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
     # Filter out internal framework kwargs before passing to tools.
-    # conversation_id is an internal tracking ID that should not be forwarded to tools.
+    # conversation_id is forwarded so agent-as-tool wrappers can correlate sub-agent conversations.
     runtime_kwargs: dict[str, Any] = {
         key: value
         for key, value in (custom_args or {}).items()
-        if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
+        if key not in {"_function_middleware_pipeline", "middleware"}
     }
     try:
         args = tool.input_model.model_validate(parsed_args)
@@ -1943,6 +1943,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                     if response.conversation_id is not None:
                         _update_conversation_id(kwargs, response.conversation_id, mutable_options)
+                        additional_function_arguments["conversation_id"] = response.conversation_id
                         prepped_messages = []
 
                     result = await _process_function_requests(
@@ -2055,6 +2056,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                 if response.conversation_id is not None:
                     _update_conversation_id(kwargs, response.conversation_id, mutable_options)
+                    additional_function_arguments["conversation_id"] = response.conversation_id
                     prepped_messages = []
 
                 result = await _process_function_requests(
