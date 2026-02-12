@@ -33,7 +33,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    ChatMessage,
+    Message,
     Workflow,
 )
 from agent_framework._workflows._edge import (
@@ -243,18 +243,18 @@ def build_agent_executor_response(
     if structured_response:
         final_text = json.dumps(structured_response)
 
-    assistant_message = ChatMessage(role="assistant", text=final_text)
+    assistant_message = Message(role="assistant", text=final_text)
 
     agent_response = AgentResponse(
         messages=[assistant_message],
     )
 
     # Build conversation history
-    full_conversation: list[ChatMessage] = []
+    full_conversation: list[Message] = []
     if isinstance(previous_message, AgentExecutorResponse) and previous_message.full_conversation:
         full_conversation.extend(previous_message.full_conversation)
     elif isinstance(previous_message, str):
-        full_conversation.append(ChatMessage(role="user", text=previous_message))
+        full_conversation.append(Message(role="user", text=previous_message))
 
     full_conversation.append(assistant_message)
 

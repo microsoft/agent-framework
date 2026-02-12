@@ -32,7 +32,7 @@ from typing import Any
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     Executor,
     Workflow,
     WorkflowBuilder,
@@ -365,7 +365,7 @@ class InputRouterExecutor(Executor):
 
         await ctx.send_message(
             AgentExecutorRequest(
-                messages=[ChatMessage(role="user", text=message)],
+                messages=[Message(role="user", text=message)],
                 should_respond=True,
             )
         )
