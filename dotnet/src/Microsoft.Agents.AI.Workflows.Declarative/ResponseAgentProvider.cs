@@ -11,9 +11,15 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Declarative;
 
 /// <summary>
-/// Base class for workflow agent providers.
+/// Defines contract used by declarative workflow actions to invoke and manipulate agents and conversations.
 /// </summary>
-public abstract class WorkflowAgentProvider
+/// <remarks>
+/// The shape of this provider contract is very much opinionated around patterns that exist in the Open AI Responses API.
+/// In addition to direct usage of the Responses API, Foundry V2 agents are supported as they are fundamentally based on
+/// the Open AI Responses API.  Using other <see cref="AIAgent"/> or <see cref="ChatClientAgent"/> patterns that are not
+/// based on the Response API is currently not supported.
+/// </remarks>
+public abstract class ResponseAgentProvider
 {
     /// <summary>
     /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
