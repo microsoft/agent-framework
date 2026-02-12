@@ -136,7 +136,11 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """Create a new agent session via the provider."""
         return self._executor.get_new_session(self.name, **kwargs)
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, **kwargs: Any) -> AgentSession:
+        """Retrieve an existing session via the provider.
+
+        For durable agents, sessions do not use `service_session_id` so this is not used.
+        """
         return self._executor.get_new_session(self.name, **kwargs)
 
     def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, SettingNotFoundError
 
 from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
 
@@ -88,7 +88,7 @@ class TestInitSemantic:
         assert provider.source_id == "my-source"
 
     def test_missing_endpoint_raises(self) -> None:
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(ServiceInitializationError, match="endpoint"):
+        with patch.dict(os.environ, {}, clear=True), pytest.raises(SettingNotFoundError, match="endpoint"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint=None,
@@ -97,7 +97,7 @@ class TestInitSemantic:
             )
 
     def test_missing_index_name_semantic_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="index name"):
+        with pytest.raises(SettingNotFoundError, match="index_name"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
@@ -124,7 +124,7 @@ class TestInitAgenticValidation:
     """Initialization validation tests for agentic mode."""
 
     def test_both_index_and_kb_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="not both"):
+        with pytest.raises(SettingNotFoundError, match="multiple were set"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
@@ -137,7 +137,7 @@ class TestInitAgenticValidation:
             )
 
     def test_neither_index_nor_kb_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="provide either"):
+        with pytest.raises(SettingNotFoundError, match="none was set"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",

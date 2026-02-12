@@ -67,14 +67,9 @@ else:
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
-
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-
-
 logger = get_logger("agent_framework")
 
-ThreadTypeT = TypeVar("ThreadTypeT", bound="AgentSession")
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
     "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -978,6 +973,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not session.service_session_id
             and not opts.get("conversation_id")
             and not opts.get("store")
+            and not (
+                getattr(self.client, "STORES_BY_DEFAULT", False)
+                and opts.get("store") is not False
+            )
         ):
             self.context_providers.append(InMemoryHistoryProvider("memory"))
 

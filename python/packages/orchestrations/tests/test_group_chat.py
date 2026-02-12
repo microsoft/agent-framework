@@ -132,7 +132,7 @@ class ConcatenatedJsonManagerAgent(Agent):
         self,
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -346,7 +346,7 @@ class TestGroupChatBuilder:
                 super().__init__(name="", description="test")
 
             def run(
-                self, messages: Any = None, *, stream: bool = False, thread: Any = None, **kwargs: Any
+                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
             ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
                 if stream:
 

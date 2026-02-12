@@ -933,4 +933,54 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
     assert options.get("instructions") == "Context-provided instructions"
 
 
+# region STORES_BY_DEFAULT tests
+
+
+async def test_stores_by_default_skips_inmemory_injection(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=True should not auto-inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    # Simulate a client that stores by default
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # No InMemoryHistoryProvider should have been injected
+    assert not any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_stores_by_default_false_injects_inmemory(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=False (default) should auto-inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # InMemoryHistoryProvider should have been injected
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_stores_by_default_with_store_false_injects_inmemory(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=True but store=False should still inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session, options={"store": False})
+
+    # User explicitly disabled server storage, so InMemoryHistoryProvider should be injected
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+# endregion
+
+
 # endregion

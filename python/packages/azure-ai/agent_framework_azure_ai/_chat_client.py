@@ -210,6 +210,7 @@ class AzureAIAgentClient(
     """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     # region Hosted Tool Factory Methods
 
