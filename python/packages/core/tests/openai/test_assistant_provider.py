@@ -131,9 +131,15 @@ class TestOpenAIAssistantProviderInit:
         """Test initialization fails without API key when settings return None."""
         from unittest.mock import patch
 
-        # Mock OpenAISettings to return None for api_key
-        with patch("agent_framework.openai._assistant_provider.OpenAISettings") as mock_settings:
-            mock_settings.return_value.api_key = None
+        # Mock load_settings to return a dict with None for api_key
+        with patch("agent_framework.openai._assistant_provider.load_settings") as mock_load:
+            mock_load.return_value = {
+                "api_key": None,
+                "org_id": None,
+                "base_url": None,
+                "chat_model_id": None,
+                "responses_model_id": None,
+            }
 
             with pytest.raises(ServiceInitializationError) as exc_info:
                 OpenAIAssistantProvider()

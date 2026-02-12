@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic
+from typing import Any, Generic
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -13,7 +13,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai._chat_client import RawOpenAIChatClient
@@ -115,25 +115,19 @@ FoundryLocalChatOptionsT = TypeVar(
 # endregion
 
 
-class FoundryLocalSettings(AFBaseSettings):
+class FoundryLocalSettings(TypedDict, total=False):
     """Foundry local model settings.
 
     The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Attributes:
+    Keys:
         model_id: The name of the model deployment to use.
             (Env var FOUNDRY_LOCAL_MODEL_ID)
-    Parameters:
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
-    env_prefix: ClassVar[str] = "FOUNDRY_LOCAL_"
-
-    model_id: str
+    model_id: str | None
 
 
 class FoundryLocalClient(
@@ -247,21 +241,27 @@ class FoundryLocalClient(
                 type that is not supported by the model, it will not be found.
 
         """
-        settings = FoundryLocalSettings(
-            model_id=model_id,  # type: ignore
+        settings = load_settings(
+            FoundryLocalSettings,
+            env_prefix="FOUNDRY_LOCAL_",
+            required_fields=["model_id"],
+            model_id=model_id,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=settings.model_id,
+            alias_or_model_id=settings["model_id"],
             device=device,
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{settings.model_id}:{device.value}' not found in Foundry Local."
+                f"Model with ID or alias '{settings['model_id']}:{device.value}' not found in Foundry Local."
                 if device
-                else f"Model with ID or alias '{settings.model_id}' for your current device not found in Foundry Local."
+                else (
+                    f"Model with ID or alias '{settings['model_id']}' for your current device "
+                    "not found in Foundry Local."
+                )
             )
             raise ServiceInitializationError(message)
         if prepare_model:

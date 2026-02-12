@@ -119,7 +119,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test middleware handles result that doesn't have messages attribute."""
         # Set ignore_exceptions to True so AttributeError is caught and logged
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")])
 
@@ -216,7 +216,7 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test that post-check exceptions are propagated when ignore_exceptions=False."""
-        middleware._settings.ignore_exceptions = False
+        middleware._settings["ignore_exceptions"] = False
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")])
 
@@ -242,7 +242,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test that exceptions in pre-check are logged but don't stop processing when ignore_exceptions=True."""
         # Set ignore_exceptions to True
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Test")])
 
@@ -265,7 +265,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test that exceptions in post-check are logged but don't affect result when ignore_exceptions=True."""
         # Set ignore_exceptions to True
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Test")])
 

@@ -798,12 +798,8 @@ def test_chat_message_with_error_content() -> None:
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
 
-    # Message should be prepared with empty content list since ErrorContent returns {}
-    assert len(result) == 1
-    prepared_message = result[0]
-    assert prepared_message["role"] == "assistant"
-    # Content should be a list with empty dict since ErrorContent returns {}
-    assert prepared_message.get("content") == [{}]
+    # Message should be empty since ErrorContent is filtered out
+    assert len(result) == 0
 
 
 def test_chat_message_with_usage_content() -> None:
@@ -823,12 +819,8 @@ def test_chat_message_with_usage_content() -> None:
 
     result = client._prepare_message_for_openai(message, call_id_to_id)
 
-    # Message should be prepared with empty content list since UsageContent returns {}
-    assert len(result) == 1
-    prepared_message = result[0]
-    assert prepared_message["role"] == "assistant"
-    # Content should be a list with empty dict since UsageContent returns {}
-    assert prepared_message.get("content") == [{}]
+    # Message should be empty since UsageContent is filtered out
+    assert len(result) == 0
 
 
 def test_hosted_file_content_preparation() -> None:

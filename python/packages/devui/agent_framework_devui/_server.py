@@ -1059,7 +1059,7 @@ class DevServer:
                     # Extract checkpoint_id from item_id (format: "checkpoint_{checkpoint_id}")
                     checkpoint_id = item_id[len("checkpoint_") :]
                     storage = executor.checkpoint_manager.get_checkpoint_storage(conversation_id)
-                    deleted = await storage.delete_checkpoint(checkpoint_id)
+                    deleted = await storage.delete(checkpoint_id)
 
                     if not deleted:
                         raise HTTPException(status_code=404, detail="Checkpoint not found")

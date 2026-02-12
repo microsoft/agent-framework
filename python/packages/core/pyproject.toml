@@ -26,7 +26,7 @@ dependencies = [
     # utilities
     "typing-extensions",
     "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
+    "python-dotenv>=1,<2",
     # telemetry
     "opentelemetry-api>=1.39.0",
     "opentelemetry-sdk>=1.39.0",
@@ -34,6 +34,7 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
+    "azure-ai-projects >= 2.0.0b3",
     "mcp[ws]>=1.24.0,<2",
     "packaging>=24.1",
 ]

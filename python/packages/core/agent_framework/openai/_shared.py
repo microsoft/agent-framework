@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
 from typing import Any, ClassVar, Union
@@ -20,11 +21,10 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
-from pydantic import SecretStr
 
 from .._logging import get_logger
-from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
+from .._settings import SecretString
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool
 from ..exceptions import ServiceInitializationError
@@ -46,6 +46,11 @@ RESPONSE_TYPE = Union[
 ]
 
 OPTION_TYPE = dict[str, Any]
+
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 __all__ = ["OpenAISettings"]
@@ -74,7 +79,7 @@ def _check_openai_version_for_callable_api_key() -> None:
         logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
 
 
-class OpenAISettings(AFBaseSettings):
+class OpenAISettings(TypedDict, total=False):
     """OpenAI environment settings.
 
     The settings are first loaded from environment variables with the prefix 'OPENAI_'.
@@ -93,8 +98,6 @@ class OpenAISettings(AFBaseSettings):
             Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
             Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
-        env_file_path: The path to the .env file to load settings from.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
 
     Examples:
         .. code-block:: python
@@ -104,22 +107,20 @@ class OpenAISettings(AFBaseSettings):
             # Using environment variables
             # Set OPENAI_API_KEY=sk-...
             # Set OPENAI_CHAT_MODEL_ID=gpt-4
-            settings = OpenAISettings()
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_")
 
             # Or passing parameters directly
-            settings = OpenAISettings(api_key="sk-...", chat_model_id="gpt-4")
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_", api_key="sk-...", chat_model_id="gpt-4")
 
             # Or loading from a .env file
-            settings = OpenAISettings(env_file_path="path/to/.env")
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_", env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "OPENAI_"
-
-    api_key: SecretStr | Callable[[], str | Awaitable[str]] | None = None
-    base_url: str | None = None
-    org_id: str | None = None
-    chat_model_id: str | None = None
-    responses_model_id: str | None = None
+    api_key: SecretString | Callable[[], str | Awaitable[str]] | None
+    base_url: str | None
+    org_id: str | None
+    chat_model_id: str | None
+    responses_model_id: str | None
 
 
 class OpenAIBase(SerializationMixin):
@@ -181,19 +182,18 @@ class OpenAIBase(SerializationMixin):
         return self.client
 
     def _get_api_key(
-        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+        self, api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None
     ) -> str | Callable[[], str | Awaitable[str]] | None:
         """Get the appropriate API key value for client initialization.
 
         Args:
-            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+            api_key: The API key parameter which can be a string, SecretString, callable, or None.
 
         Returns:
             For callable API keys: returns the callable directly.
-            For SecretStr API keys: returns the string value.
-            For string/None API keys: returns as-is.
+            For SecretString/string/None API keys: returns as-is (SecretString is a str subclass).
         """
-        if isinstance(api_key, SecretStr):
+        if isinstance(api_key, SecretString):
             return api_key.get_secret_value()
 
         # Check version compatibility for callable API keys

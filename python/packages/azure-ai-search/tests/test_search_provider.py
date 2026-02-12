@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Context, Message
+from agent_framework._settings import load_settings
 from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
@@ -48,25 +49,27 @@ class TestAzureAISearchSettings:
 
     def test_settings_with_direct_values(self) -> None:
         """Test settings with direct values."""
-        settings = AzureAISearchSettings(
+        settings = load_settings(
+            AzureAISearchSettings,
+            env_prefix="AZURE_SEARCH_",
             endpoint="https://test.search.windows.net",
             index_name="test-index",
             api_key="test-key",
         )
-        assert settings.endpoint == "https://test.search.windows.net"
-        assert settings.index_name == "test-index"
-        # api_key is now SecretStr
-        assert settings.api_key.get_secret_value() == "test-key"
+        assert settings["endpoint"] == "https://test.search.windows.net"
+        assert settings["index_name"] == "test-index"
+        assert settings["api_key"] == "test-key"
 
     def test_settings_with_env_file_path(self) -> None:
         """Test settings with env_file_path parameter."""
-        settings = AzureAISearchSettings(
+        settings = load_settings(
+            AzureAISearchSettings,
+            env_prefix="AZURE_SEARCH_",
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            env_file_path="test.env",
         )
-        assert settings.endpoint == "https://test.search.windows.net"
-        assert settings.index_name == "test-index"
+        assert settings["endpoint"] == "https://test.search.windows.net"
+        assert settings["index_name"] == "test-index"
 
     def test_provider_uses_settings_from_env(self) -> None:
         """Test that provider creates settings internally from env."""
