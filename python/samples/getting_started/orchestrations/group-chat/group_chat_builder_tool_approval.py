@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from collections.abc import AsyncIterable
 from typing import Annotated, cast
 
@@ -10,8 +11,9 @@ from agent_framework import (
     WorkflowEvent,
     tool,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
+from azure.identity import AzureCliCredential
 
 """
 Sample: Group Chat Workflow with Tool Approval Requests
@@ -37,6 +39,7 @@ Demonstrate:
 - Multi-round group chat with tool approval interruption and resumption.
 
 Prerequisites:
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - OpenAI or Azure OpenAI configured with the required environment variables.
 - Basic familiarity with GroupChatBuilder and streaming workflow events.
 """
@@ -126,7 +129,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create specialized agents
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     qa_engineer = client.as_agent(
         name="QAEngineer",

@@ -677,6 +677,40 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
     assert result == {}
 
 
+def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
+    """Text content should use input_text for user and output_text for assistant."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    text_content = Content.from_text(text="hello")
+
+    user_result = client._prepare_content_for_openai("user", text_content, {})
+    assistant_result = client._prepare_content_for_openai("assistant", text_content, {})
+
+    assert user_result["type"] == "input_text"
+    assert assistant_result["type"] == "output_text"
+    assert assistant_result["annotations"] == []
+    assert user_result["text"] == "hello"
+    assert assistant_result["text"] == "hello"
+
+
+def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
+    """Assistant history should be output_text and include required annotations."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", text="What is async/await?"),
+        Message(role="assistant", text="Async/await enables non-blocking concurrency."),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0]["role"] == "user"
+    assert prepared[0]["content"][0]["type"] == "input_text"
+    assert prepared[1]["role"] == "assistant"
+    assert prepared[1]["content"][0]["type"] == "output_text"
+    assert prepared[1]["content"][0]["annotations"] == []
+
+
 def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     """Test _parse_response_from_openai with MCP server tool result."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

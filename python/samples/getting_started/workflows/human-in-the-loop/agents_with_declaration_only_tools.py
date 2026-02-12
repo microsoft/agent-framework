@@ -16,16 +16,18 @@ Flow:
   4. The workflow resumes — the agent sees the tool result and finishes.
 
 Prerequisites:
+  - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
   - Azure OpenAI endpoint configured via environment variables.
   - `az login` for AzureCliCredential.
 """
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from agent_framework import Content, FunctionTool, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 # A declaration-only tool: the schema is sent to the LLM, but the framework
@@ -45,7 +47,11 @@ get_user_location = FunctionTool(
 
 
 async def main() -> None:
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="WeatherBot",
         instructions=(
             "You are a helpful weather assistant. "

@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import AgentThread, ChatMessageStore
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
+from azure.identity import AzureCliCredential
 
 """
 Sample: Workflow as Agent with Thread Conversation History and Checkpointing
@@ -31,13 +33,18 @@ Use cases:
 - Long-running workflows that need pause/resume capability
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured for AzureOpenAIResponsesClient
 """
 
 
 async def main() -> None:
     # Create a chat client
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     assistant = client.as_agent(
         name="assistant",
@@ -119,7 +126,11 @@ async def demonstrate_thread_serialization() -> None:
     This shows how conversation history can be persisted and restored,
     enabling long-running conversational workflows.
     """
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     memory_assistant = client.as_agent(
         name="memory_assistant",

@@ -17,11 +17,13 @@ Demonstrate:
 - Injecting human guidance for specific agents before aggregation
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
 import asyncio
+import os
 from collections.abc import AsyncIterable
 from typing import Any
 
@@ -30,12 +32,12 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
 
 # Store chat client at module level for aggregator access
-_chat_client: AzureOpenAIChatClient | None = None
+_chat_client: AzureOpenAIResponsesClient | None = None
 
 
 async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
@@ -142,7 +144,11 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     global _chat_client
-    _chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    _chat_client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agents that analyze from different perspectives
     technical_analyst = _chat_client.as_agent(

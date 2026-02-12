@@ -366,6 +366,11 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[-1]
+    loaded_checkpoint = await storage.load(resume_checkpoint.checkpoint_id)
+    assert loaded_checkpoint is not None
+    # Regression check: checkpoints with pending request_info must include executor state.
+    assert "_executor_state" in loaded_checkpoint.state
+    assert "magentic_orchestrator" in loaded_checkpoint.state["_executor_state"]
 
     manager2 = FakeManager()
     wf_resume = MagenticBuilder(
@@ -378,7 +383,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     completed: WorkflowEvent | None = None
     req_event = None
     async for event in wf_resume.run(
-        resume_checkpoint.checkpoint_id,
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         stream=True,
     ):
         if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:

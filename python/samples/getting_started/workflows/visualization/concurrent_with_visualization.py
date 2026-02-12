@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from dataclasses import dataclass
 
 from agent_framework import (
@@ -14,7 +15,7 @@ from agent_framework import (
     WorkflowViz,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from typing_extensions import Never
 
@@ -27,7 +28,8 @@ What it does:
 - Visualization: generate Mermaid and GraphViz representations via `WorkflowViz` and optionally export SVG.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agents.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure AI/ Azure OpenAI for `AzureOpenAIResponsesClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.
 """
@@ -90,7 +92,11 @@ async def main() -> None:
 
     # Create agent instances
     researcher = AgentExecutor(
-        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ).as_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
@@ -100,7 +106,11 @@ async def main() -> None:
     )
 
     marketer = AgentExecutor(
-        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ).as_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
@@ -110,7 +120,11 @@ async def main() -> None:
     )
 
     legal = AgentExecutor(
-        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+        AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ).as_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."

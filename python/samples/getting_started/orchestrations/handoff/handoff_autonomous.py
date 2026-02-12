@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import cast
 
 from agent_framework import (
@@ -10,7 +11,7 @@ from agent_framework import (
     Message,
     resolve_agent_id,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffBuilder
 from azure.identity import AzureCliCredential
 
@@ -27,8 +28,9 @@ Routing Pattern:
     User -> Coordinator -> Specialist (iterates N times) -> Handoff -> Final Output
 
 Prerequisites:
+    - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - Environment variables for AzureOpenAIResponsesClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
 
 Key Concepts:
     - Autonomous interaction mode: agents iterate until they handoff
@@ -37,7 +39,7 @@ Key Concepts:
 
 
 def create_agents(
-    client: AzureOpenAIChatClient,
+    client: AzureOpenAIResponsesClient,
 ) -> tuple[Agent, Agent, Agent]:
     """Create coordinator and specialists for autonomous iteration."""
     coordinator = client.as_agent(
@@ -73,7 +75,11 @@ def create_agents(
 
 async def main() -> None:
     """Run an autonomous handoff workflow with specialist iteration enabled."""
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     coordinator, research_agent, summary_agent = create_agents(client)
 
     # Build the workflow with autonomous mode

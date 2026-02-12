@@ -6,12 +6,13 @@ function tools assigned. Exits the loop when the user enters "exit".
 """
 
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
 from agent_framework import FileCheckpointStorage, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
 from pydantic import Field
@@ -62,7 +63,11 @@ def get_item_price(name: Annotated[str, Field(description="Menu item name")]) ->
 
 async def main():
     # Create agent with tools
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     menu_agent = client.as_agent(
         name="MenuAgent",
         instructions="Answer questions about menu items, specials, and prices.",

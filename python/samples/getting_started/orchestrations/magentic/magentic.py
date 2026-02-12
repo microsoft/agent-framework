@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import cast
 
 from agent_framework import (
@@ -11,8 +12,9 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from azure.identity import AzureCliCredential
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -38,7 +40,8 @@ energy efficiency and CO2 emissions of several ML models, streams intermediate
 events, and prints the final answer. The workflow completes when idle.
 
 Prerequisites:
-- OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- OpenAI credentials configured for `AzureOpenAIResponsesClient` and `AzureOpenAIResponsesClient`.
 """
 
 
@@ -50,11 +53,19 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     # Create code interpreter tool using instance method
-    coder_client = OpenAIResponsesClient()
+    coder_client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     code_interpreter_tool = coder_client.get_code_interpreter_tool()
 
     coder_agent = Agent(
@@ -70,7 +81,11 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=OpenAIChatClient(),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     print("\nBuilding Magentic Workflow...")

@@ -942,8 +942,16 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """Prepare content for the OpenAI Responses API format."""
         match content.type:
             case "text":
+                if role == "assistant":
+                    # Assistant history is represented as output text items; Azure validation
+                    # requires `annotations` to be present for this type.
+                    return {
+                        "type": "output_text",
+                        "text": content.text,
+                        "annotations": [],
+                    }
                 return {
-                    "type": "output_text" if role == "assistant" else "input_text",
+                    "type": "input_text",
                     "text": content.text,
                 }
             case "text_reasoning":
