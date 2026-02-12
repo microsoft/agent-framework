@@ -107,46 +107,44 @@ class TestAgentContext:
         assert results["task1"] is context1
         assert results["task2"] is context2
 
-    async def test_context_available_in_middleware(self, chat_client: MockChatClient) -> None:
+    async def test_context_available_in_middleware(self) -> None:
         """Test that agent run context is available in agent middleware."""
+        chat_client = MockChatClient()
         captured_context: AgentContext | None = None
 
         @agent_middleware
-        async def capture_middleware(
-            context: AgentContext, next_handler: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             nonlocal captured_context
             # Get ambient context - should be the same as the passed context
             captured_context = get_current_agent_run_context()
-            await next_handler(context)
+            await call_next()
 
         chat_client.responses = [
             ChatResponse(messages=[Message("assistant", ["Response"])]),
         ]
 
-        agent = Agent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
+        agent = Agent(client=chat_client, name="test_agent", middleware=[capture_middleware])
         await agent.run("Test message")
 
         assert captured_context is not None
         assert captured_context.agent is agent
 
-    async def test_context_available_in_streaming_middleware(self, chat_client: MockChatClient) -> None:
+    async def test_context_available_in_streaming_middleware(self) -> None:
         """Test that agent run context is available in middleware during streaming."""
+        chat_client = MockChatClient()
         captured_context: AgentContext | None = None
 
         @agent_middleware
-        async def capture_middleware(
-            context: AgentContext, next_handler: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             nonlocal captured_context
             captured_context = get_current_agent_run_context()
-            await next_handler(context)
+            await call_next()
 
         chat_client.responses = [
             ChatResponse(messages=[Message("assistant", ["Streaming response"])]),
         ]
 
-        agent = Agent(chat_client=chat_client, name="test_agent", middleware=[capture_middleware])
+        agent = Agent(client=chat_client, name="test_agent", middleware=[capture_middleware])
 
         # Run with streaming and consume the response
         async for _update in agent.run("Test message", stream=True):
