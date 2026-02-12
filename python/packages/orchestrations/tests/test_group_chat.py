@@ -620,7 +620,7 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
 
 
@@ -656,8 +656,8 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"

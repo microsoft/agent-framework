@@ -21,6 +21,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._serialization import SerializationMixin
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
@@ -44,7 +45,7 @@ from azure.ai.agents.models import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
@@ -67,7 +68,7 @@ def create_test_azure_ai_chat_client(
 ) -> AzureAIAgentClient:
     """Helper function to create AzureAIAgentClient instances for testing, bypassing normal validation."""
     if azure_ai_settings is None:
-        azure_ai_settings = AzureAISettings(env_file_path="test.env")
+        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_", env_file_path="test.env")
 
     # Create client instance directly
     client = object.__new__(AzureAIAgentClient)
@@ -78,7 +79,7 @@ def create_test_azure_ai_chat_client(
     client.agent_id = agent_id
     client.agent_name = agent_name
     client.agent_description = None
-    client.model_id = azure_ai_settings.model_deployment_name
+    client.model_id = azure_ai_settings.get("model_deployment_name")
     client.thread_id = thread_id
     client.should_cleanup_agent = should_cleanup_agent
     client._agent_created = False
@@ -104,21 +105,23 @@ def create_test_azure_ai_chat_client(
 
 def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAISettings initialization."""
-    settings = AzureAISettings()
+    settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_")
 
-    assert settings.project_endpoint == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-    assert settings.model_deployment_name == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    assert settings["project_endpoint"] == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+    assert settings["model_deployment_name"] == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 
 
 def test_azure_ai_settings_init_with_explicit_values() -> None:
     """Test AzureAISettings initialization with explicit values."""
-    settings = AzureAISettings(
+    settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
         project_endpoint="https://custom-endpoint.com/",
         model_deployment_name="custom-model",
     )
 
-    assert settings.project_endpoint == "https://custom-endpoint.com/"
-    assert settings.model_deployment_name == "custom-model"
+    assert settings["project_endpoint"] == "https://custom-endpoint.com/"
+    assert settings["model_deployment_name"] == "custom-model"
 
 
 def test_azure_ai_chat_client_init_with_client(mock_agents_client: MagicMock) -> None:
@@ -138,33 +141,29 @@ def test_azure_ai_chat_client_init_auto_create_client(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test AzureAIAgentClient initialization with auto-created agents_client."""
-    azure_ai_settings = AzureAISettings(**azure_ai_unit_test_env)  # type: ignore
+    azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_", **azure_ai_unit_test_env)  # type: ignore
 
     # Create client instance directly
-    client = object.__new__(AzureAIAgentClient)
-    client.agents_client = mock_agents_client
-    client.agent_id = None
-    client.thread_id = None
-    client._should_close_client = False  # type: ignore
-    client.credential = None
-    client.model_id = azure_ai_settings.model_deployment_name
-    client.agent_name = None
-    client.additional_properties = {}
-    client.middleware = None
+    chat_client = object.__new__(AzureAIAgentClient)
+    chat_client.agents_client = mock_agents_client
+    chat_client.agent_id = None
+    chat_client.thread_id = None
+    chat_client._should_close_client = False  # type: ignore
+    chat_client.credential = None
+    chat_client.model_id = azure_ai_settings.get("model_deployment_name")
+    chat_client.agent_name = None
+    chat_client.additional_properties = {}
+    chat_client.middleware = None
 
-    assert client.agents_client is mock_agents_client
-    assert client.agent_id is None
+    assert chat_client.agents_client is mock_agents_client
+    assert chat_client.agent_id is None
 
 
 def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
     """Test AzureAIAgentClient initialization when project_endpoint is missing and no agents_client provided."""
     # Mock AzureAISettings to return settings with None project_endpoint
-    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
-        mock_settings_instance = MagicMock()
-        mock_settings_instance.project_endpoint = None  # This should trigger the error
-        mock_settings_instance.model_deployment_name = "test-model"
-        mock_settings_instance.agent_name = "test-agent"
-        mock_settings.return_value = mock_settings_instance
+    with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
             AzureAIAgentClient(
@@ -179,12 +178,8 @@ def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
 def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation() -> None:
     """Test AzureAIAgentClient initialization when model deployment is missing for agent creation."""
     # Mock AzureAISettings to return settings with None model_deployment_name
-    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
-        mock_settings_instance = MagicMock()
-        mock_settings_instance.project_endpoint = "https://test.com"
-        mock_settings_instance.model_deployment_name = None  # This should trigger the error
-        mock_settings_instance.agent_name = "test-agent"
-        mock_settings.return_value = mock_settings_instance
+    with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
         with pytest.raises(ServiceInitializationError, match="model deployment name is required"):
             AzureAIAgentClient(
@@ -208,20 +203,6 @@ def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: di
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=None,  # Missing credential
         )
-
-
-def test_azure_ai_chat_client_init_validation_error(mock_azure_credential: MagicMock) -> None:
-    """Test that ValidationError in AzureAISettings is properly handled."""
-    with patch("agent_framework_azure_ai._chat_client.AzureAISettings") as mock_settings:
-        # Create a proper ValidationError with empty errors list and model dict
-        mock_settings.side_effect = ValidationError.from_exception_data("AzureAISettings", [])
-
-        with pytest.raises(ServiceInitializationError, match="Failed to create Azure AI settings."):
-            AzureAIAgentClient(
-                project_endpoint="https://test.com",
-                model_deployment_name="test-model",
-                credential=mock_azure_credential,
-            )
 
 
 def test_azure_ai_chat_client_from_dict() -> None:
@@ -248,11 +229,15 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with temperature and top_p in run_options."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
-        "model": azure_ai_settings.model_deployment_name,
+        "model": azure_ai_settings.get("model_deployment_name"),
         "temperature": 0.7,
         "top_p": 0.9,
     }
@@ -284,13 +269,19 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
-    agent_id = await client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create(
+        run_options={"model": azure_ai_settings.get("model_deployment_name")}
+    )  # type: ignore
 
     assert agent_id == "test-agent-id"
-    assert client._agent_created
+    assert chat_client._agent_created
 
 
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_agents_client: MagicMock) -> None:
@@ -547,14 +538,18 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
         "instructions": "Test instructions",
         "response_format": {"type": "json_object"},
-        "model": azure_ai_settings.model_deployment_name,
+        "model": azure_ai_settings.get("model_deployment_name"),
     }
 
     agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
@@ -1134,13 +1129,19 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_agent_name(
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create uses default name when no agent_name set."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Ensure agent_name is None to test the default
     client.agent_name = None  # type: ignore
 
-    agent_id = await client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
+    agent_id = await client._get_agent_id_or_create(
+        run_options={"model": azure_ai_settings.get("model_deployment_name")}
+    )  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with default "UnnamedAgent"
@@ -1153,11 +1154,15 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_response_format(
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with response_format in run_options."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Test with response_format in run_options
-    run_options = {"response_format": {"type": "json_object"}, "model": azure_ai_settings.model_deployment_name}
+    run_options = {"response_format": {"type": "json_object"}, "model": azure_ai_settings.get("model_deployment_name")}
 
     agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore
 
@@ -1172,13 +1177,17 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
     mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
     """Test _get_agent_id_or_create with tool_resources in run_options."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
 
     # Test with tool_resources in run_options
     run_options = {
         "tool_resources": {"vector_store_ids": ["vs-123"]},
-        "model": azure_ai_settings.model_deployment_name,
+        "model": azure_ai_settings.get("model_deployment_name"),
     }
 
     agent_id = await client._get_agent_id_or_create(run_options)  # type: ignore

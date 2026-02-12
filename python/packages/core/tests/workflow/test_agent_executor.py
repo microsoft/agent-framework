@@ -84,15 +84,16 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert initial_agent.call_count == 1
 
     # Verify checkpoint was created
-    checkpoints = await storage.list_checkpoints()
-    assert len(checkpoints) > 0
-
-    # Find a suitable checkpoint to restore (prefer superstep checkpoint)
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-    restore_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
+    assert len(checkpoints) >= 2, (
+        "Expected at least 2 checkpoints. The first one is after the start executor, "
+        "and the second one is after the agent execution."
     )
+
+    # Get the second checkpoint which should contain the state after processing
+    # the first message by the start executor in the sequential workflow
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    restore_checkpoint = checkpoints[1]
 
     # Verify checkpoint contains executor state with both cache and thread
     assert "_executor_state" in restore_checkpoint.state

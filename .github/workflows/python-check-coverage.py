@@ -30,9 +30,11 @@ from dataclasses import dataclass
 # =============================================================================
 ENFORCED_MODULES: set[str] = {
     "packages.azure-ai.agent_framework_azure_ai",
+    "packages.core.agent_framework",
+    "packages.core.agent_framework._workflows",
+    "packages.purview.agent_framework_purview",
     # Add more modules here as coverage improves:
-    # "packages.core.agent_framework",
-    # "packages.core.agent_framework._workflows",
+    # "packages.azure-ai-search.agent_framework_azure_ai_search",
     # "packages.anthropic.agent_framework_anthropic",
 }
 

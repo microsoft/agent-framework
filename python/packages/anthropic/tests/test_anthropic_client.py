@@ -13,6 +13,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from anthropic.types.beta import (
     BetaMessage,
@@ -20,7 +21,7 @@ from anthropic.types.beta import (
     BetaToolUseBlock,
     BetaUsage,
 )
-from pydantic import Field, ValidationError
+from pydantic import Field
 
 from agent_framework_anthropic import AnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
@@ -41,8 +42,12 @@ def create_test_anthropic_client(
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
     if anthropic_settings is None:
-        anthropic_settings = AnthropicSettings(
-            api_key="test-api-key-12345", chat_model_id="claude-3-5-sonnet-20241022", env_file_path="test.env"
+        anthropic_settings = load_settings(
+            AnthropicSettings,
+            env_prefix="ANTHROPIC_",
+            api_key="test-api-key-12345",
+            chat_model_id="claude-3-5-sonnet-20241022",
+            env_file_path="test.env",
         )
 
     # Create client instance directly
@@ -50,7 +55,7 @@ def create_test_anthropic_client(
 
     # Set attributes directly
     client.anthropic_client = mock_anthropic_client
-    client.model_id = model_id or anthropic_settings.chat_model_id
+    client.model_id = model_id or anthropic_settings["chat_model_id"]
     client._last_call_id_name = None
     client.additional_properties = {}
     client.middleware = None
@@ -64,30 +69,34 @@ def create_test_anthropic_client(
 
 def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings initialization."""
-    settings = AnthropicSettings(env_file_path="test.env")
+    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_", env_file_path="test.env")
 
-    assert settings.api_key is not None
-    assert settings.api_key.get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
-    assert settings.chat_model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert settings["api_key"] is not None
+    assert settings["api_key"].get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
+    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
 
 def test_anthropic_settings_init_with_explicit_values() -> None:
     """Test AnthropicSettings initialization with explicit values."""
-    settings = AnthropicSettings(
-        api_key="custom-api-key", chat_model_id="claude-3-opus-20240229", env_file_path="test.env"
+    settings = load_settings(
+        AnthropicSettings,
+        env_prefix="ANTHROPIC_",
+        api_key="custom-api-key",
+        chat_model_id="claude-3-opus-20240229",
+        env_file_path="test.env",
     )
 
-    assert settings.api_key is not None
-    assert settings.api_key.get_secret_value() == "custom-api-key"
-    assert settings.chat_model_id == "claude-3-opus-20240229"
+    assert settings["api_key"] is not None
+    assert settings["api_key"].get_secret_value() == "custom-api-key"
+    assert settings["chat_model_id"] == "claude-3-opus-20240229"
 
 
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
 def test_anthropic_settings_missing_api_key(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings when API key is missing."""
-    settings = AnthropicSettings(env_file_path="test.env")
-    assert settings.api_key is None
-    assert settings.chat_model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_", env_file_path="test.env")
+    assert settings["api_key"] is None
+    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
 
 # Client Initialization Tests
@@ -116,20 +125,10 @@ def test_anthropic_client_init_auto_create_client(anthropic_unit_test_env: dict[
 
 def test_anthropic_client_init_missing_api_key() -> None:
     """Test AnthropicClient initialization when API key is missing."""
-    with patch("agent_framework_anthropic._chat_client.AnthropicSettings") as mock_settings:
-        mock_settings.return_value.api_key = None
-        mock_settings.return_value.chat_model_id = "claude-3-5-sonnet-20241022"
+    with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
+        mock_load.return_value = {"api_key": None, "chat_model_id": "claude-3-5-sonnet-20241022"}
 
         with pytest.raises(ServiceInitializationError, match="Anthropic API key is required"):
-            AnthropicClient()
-
-
-def test_anthropic_client_init_validation_error() -> None:
-    """Test that ValidationError in AnthropicSettings is properly handled."""
-    with patch("agent_framework_anthropic._chat_client.AnthropicSettings") as mock_settings:
-        mock_settings.side_effect = ValidationError.from_exception_data("test", [])
-
-        with pytest.raises(ServiceInitializationError, match="Failed to create Anthropic settings"):
             AnthropicClient()
 
 

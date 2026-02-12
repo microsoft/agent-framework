@@ -345,14 +345,12 @@ async def main() -> None:
     if request_id is None:
         raise RuntimeError("Sub-workflow completed without requesting review.")
 
-    checkpoints = await storage.list_checkpoints(workflow.id)
-    if not checkpoints:
+    resume_checkpoint = await storage.get_latest(workflow_name=workflow.name)
+    if not resume_checkpoint:
         raise RuntimeError("No checkpoints found.")
 
     # Print the checkpoint to show pending requests
     # We didn't handle the request above so the request is still pending the last checkpoint
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-    resume_checkpoint = checkpoints[-1]
     print(f"Using checkpoint {resume_checkpoint.checkpoint_id} at iteration {resume_checkpoint.iteration_count}")
 
     checkpoint_path = storage.storage_path / f"{resume_checkpoint.checkpoint_id}.json"
