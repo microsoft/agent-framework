@@ -37,7 +37,13 @@ from agent_framework._workflows import (
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
-from powerfx import Engine
+
+try:
+    from powerfx import Engine
+except (ImportError, RuntimeError):
+    # ImportError: powerfx package not installed
+    # RuntimeError: .NET runtime not available or misconfigured
+    Engine = None  # type: ignore[assignment, misc]
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -102,7 +108,7 @@ def _make_powerfx_safe(value: Any) -> Any:
     """Convert a value to a PowerFx-serializable form.
 
     PowerFx can only serialize primitive types, dicts, and lists.
-    Custom objects (like ChatMessage) must be converted to dicts or excluded.
+    Custom objects (like Message) must be converted to dicts or excluded.
 
     Args:
         value: Any Python value
@@ -339,7 +345,8 @@ class DeclarativeWorkflowState:
             undefined variables (matching legacy fallback parser behavior).
 
         Raises:
-            ImportError: If the powerfx package is not installed.
+            RuntimeError: If the powerfx package is not installed and the
+                expression requires PowerFx evaluation.
         """
         if not expression:
             return expression
@@ -362,6 +369,13 @@ class DeclarativeWorkflowState:
         # Pre-process nested custom functions (e.g., Upper(MessageText(...)))
         # Replace them with their evaluated results before sending to PowerFx
         formula = self._preprocess_custom_functions(formula)
+
+        if Engine is None:
+            raise RuntimeError(
+                f"PowerFx is not available (dotnet runtime not installed). "
+                f"Expression '={formula[:80]}' cannot be evaluated. "
+                f"Install dotnet and the powerfx package for full PowerFx support."
+            )
 
         engine = Engine()
         symbols = self._to_powerfx_symbols()
@@ -558,8 +572,8 @@ class DeclarativeWorkflowState:
                 # Try "text" key first (simple dict format)
                 if "text" in last_msg:
                     return str(last_msg["text"])
-                # Try extracting from "contents" (ChatMessage dict format)
-                # ChatMessage.text concatenates text from all TextContent items
+                # Try extracting from "contents" (Message dict format)
+                # Message.text concatenates text from all TextContent items
                 contents = last_msg.get("contents", [])
                 if isinstance(contents, list):
                     text_parts = []

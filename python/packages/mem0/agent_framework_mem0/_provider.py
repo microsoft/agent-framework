@@ -7,7 +7,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from agent_framework import ChatMessage, Context, ContextProvider
+from agent_framework import Context, ContextProvider, Message
 from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
 
@@ -103,19 +103,17 @@ class Mem0Provider(ContextProvider):
     @override
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
         self._validate_filters()
 
-        request_messages_list = (
-            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
-        )
+        request_messages_list = [request_messages] if isinstance(request_messages, Message) else list(request_messages)
         response_messages_list = (
             [response_messages]
-            if isinstance(response_messages, ChatMessage)
+            if isinstance(response_messages, Message)
             else list(response_messages)
             if response_messages
             else []
@@ -142,7 +140,7 @@ class Mem0Provider(ContextProvider):
             )
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         """Called before invoking the AI model to provide context.
 
         Args:
@@ -155,7 +153,7 @@ class Mem0Provider(ContextProvider):
             Context: Context object containing instructions with memories.
         """
         self._validate_filters()
-        messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
+        messages_list = [messages] if isinstance(messages, Message) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
         # Validate input text is not empty before searching (possible for function approval responses)
@@ -182,7 +180,7 @@ class Mem0Provider(ContextProvider):
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
         return Context(
-            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            messages=[Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
             if line_separated_memories
             else None
         )

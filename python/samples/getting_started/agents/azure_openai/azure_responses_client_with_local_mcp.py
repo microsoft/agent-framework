@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent, MCPStreamableHTTPTool
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -37,7 +37,7 @@ async def main():
         credential=credential,
     )
 
-    agent: ChatAgent = responses_client.as_agent(
+    agent: Agent = responses_client.as_agent(
         name="DocsAgent",
         instructions=("You are a helpful assistant that can help with Microsoft documentation questions."),
     )
@@ -48,14 +48,14 @@ async def main():
         url=MCP_URL,
     ) as mcp_tool:
         # First query — expect the agent to use the MCP tool if it helps
-        q1 = "How to create an Azure storage account using az cli?"
-        r1 = await agent.run(q1, tools=mcp_tool)
-        print("\n=== Answer 1 ===\n", r1.text)
+        first_query = "How to create an Azure storage account using az cli?"
+        first_response = await agent.run(first_query, tools=mcp_tool)
+        print("\n=== Answer 1 ===\n", first_response.text)
 
         # Follow-up query (connection is reused)
-        q2 = "What is Microsoft Agent Framework?"
-        r2 = await agent.run(q2, tools=mcp_tool)
-        print("\n=== Answer 2 ===\n", r2.text)
+        second_query = "What is Microsoft Agent Framework?"
+        second_response = await agent.run(second_query, tools=mcp_tool)
+        print("\n=== Answer 2 ===\n", second_response.text)
 
 
 if __name__ == "__main__":

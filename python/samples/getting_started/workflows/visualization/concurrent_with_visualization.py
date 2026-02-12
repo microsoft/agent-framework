@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass
 
 from agent_framework import (
+    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
-    ChatMessage,
     Executor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowViz,
@@ -39,7 +39,7 @@ class DispatchToExperts(Executor):
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        initial_message = ChatMessage("user", text=prompt)
+        initial_message = Message("user", text=prompt)
         await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
@@ -85,52 +85,49 @@ class AggregateInsights(Executor):
         await ctx.yield_output(consolidated)
 
 
-def create_researcher_agent() -> ChatAgent:
-    """Creates a research domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
-            " opportunities, and risks."
-        ),
-        name="researcher",
-    )
-
-
-def create_marketer_agent() -> ChatAgent:
-    """Creates a marketing domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
-            " aligned to the prompt."
-        ),
-        name="marketer",
-    )
-
-
-def create_legal_agent() -> ChatAgent:
-    """Creates a legal domain expert agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
-        instructions=(
-            "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
-            " based on the prompt."
-        ),
-        name="legal",
-    )
-
-
 async def main() -> None:
     """Build and run the concurrent workflow with visualization."""
 
+    # Create agent instances
+    researcher = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
+                " opportunities, and risks."
+            ),
+            name="researcher",
+        )
+    )
+
+    marketer = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
+                " aligned to the prompt."
+            ),
+            name="marketer",
+        )
+    )
+
+    legal = AgentExecutor(
+        AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+            instructions=(
+                "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
+                " based on the prompt."
+            ),
+            name="legal",
+        )
+    )
+
+    # Create executor instances
+    dispatcher = DispatchToExperts(id="dispatcher")
+    aggregator = AggregateInsights(id="aggregator")
+
     # Build a simple fan-out/fan-in workflow
     workflow = (
-        WorkflowBuilder(start_executor="dispatcher")
-        .register_agent(create_researcher_agent, name="researcher")
-        .register_agent(create_marketer_agent, name="marketer")
-        .register_agent(create_legal_agent, name="legal")
-        .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
-        .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
-        .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])
-        .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [researcher, marketer, legal])
+        .add_fan_in_edges([researcher, marketer, legal], aggregator)
         .build()
     )
 

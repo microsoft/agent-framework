@@ -33,12 +33,12 @@ from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
 from ._tools import (
     FunctionInvocationConfiguration,
-    ToolProtocol,
+    FunctionTool,
 )
 from ._types import (
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
+    Message,
     ResponseStream,
     prepare_messages,
     validate_chat_options,
@@ -51,7 +51,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from ._agents import ChatAgent
+    from ._agents import Agent
     from ._middleware import (
         MiddlewareTypes,
     )
@@ -67,11 +67,16 @@ logger = get_logger()
 
 __all__ = [
     "BaseChatClient",
-    "ChatClientProtocol",
+    "SupportsChatGetResponse",
+    "SupportsCodeInterpreterTool",
+    "SupportsFileSearchTool",
+    "SupportsImageGenerationTool",
+    "SupportsMCPTool",
+    "SupportsWebSearchTool",
 ]
 
 
-# region ChatClientProtocol Protocol
+# region SupportsChatGetResponse Protocol
 
 # Contravariant for the Protocol
 OptionsContraT = TypeVar(
@@ -86,7 +91,7 @@ ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
 @runtime_checkable
-class ChatClientProtocol(Protocol[OptionsContraT]):
+class SupportsChatGetResponse(Protocol[OptionsContraT]):
     """A protocol for a chat client that can generate responses.
 
     This protocol defines the interface that all chat clients must implement,
@@ -103,7 +108,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatClientProtocol, ChatResponse, ChatMessage
+            from agent_framework import SupportsChatGetResponse, ChatResponse, Message
 
 
             # Any class implementing the required methods is compatible
@@ -128,7 +133,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
 
             # Verify the instance satisfies the protocol
             client = CustomChatClient()
-            assert isinstance(client, ChatClientProtocol)
+            assert isinstance(client, SupportsChatGetResponse)
     """
 
     additional_properties: dict[str, Any]
@@ -136,7 +141,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -146,7 +151,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsContraT | ChatOptions[None] | None = None,
@@ -156,7 +161,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -165,7 +170,7 @@ class ChatClientProtocol(Protocol[OptionsContraT]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -226,7 +231,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import BaseChatClient, ChatResponse, ChatMessage
+            from agent_framework import BaseChatClient, ChatResponse, Message
             from collections.abc import AsyncIterable
 
 
@@ -243,7 +248,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                     else:
                         # Non-streaming implementation
                         return ChatResponse(
-                            messages=[ChatMessage(role="assistant", text="Hello!")], response_id="custom-response"
+                            messages=[Message(role="assistant", text="Hello!")], response_id="custom-response"
                         )
 
 
@@ -338,7 +343,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -365,7 +370,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -375,7 +380,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -385,7 +390,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -394,7 +399,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: str | Message | Sequence[str | Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -437,10 +442,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: ToolProtocol
+        tools: FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
@@ -448,10 +453,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
-    ) -> ChatAgent[OptionsCoT]:
-        """Create a ChatAgent with this client.
+    ) -> Agent[OptionsCoT]:
+        """Create a Agent with this client.
 
-        This is a convenience method that creates a ChatAgent instance with this
+        This is a convenience method that creates a Agent instance with this
         chat client already configured.
 
         Keyword Args:
@@ -474,7 +479,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
-            A ChatAgent instance configured with this chat client.
+            A Agent instance configured with this chat client.
 
         Examples:
             .. code-block:: python
@@ -494,10 +499,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 # Run the agent
                 response = await agent.run("Hello!")
         """
-        from ._agents import ChatAgent
+        from ._agents import Agent
 
-        return ChatAgent(
-            chat_client=self,
+        return Agent(
+            client=self,
             id=id,
             name=name,
             description=description,
@@ -510,3 +515,163 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
+
+
+# endregion
+
+
+# region Tool Support Protocols
+
+
+@runtime_checkable
+class SupportsCodeInterpreterTool(Protocol):
+    """Protocol for clients that support code interpreter tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports code interpreter functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsCodeInterpreterTool
+
+            if isinstance(client, SupportsCodeInterpreterTool):
+                tool = client.get_code_interpreter_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_code_interpreter_tool(**kwargs: Any) -> Any:
+        """Create a code interpreter tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsWebSearchTool(Protocol):
+    """Protocol for clients that support web search tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports web search functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsWebSearchTool
+
+            if isinstance(client, SupportsWebSearchTool):
+                tool = client.get_web_search_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_web_search_tool(**kwargs: Any) -> Any:
+        """Create a web search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsImageGenerationTool(Protocol):
+    """Protocol for clients that support image generation tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports image generation functionality.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsImageGenerationTool
+
+            if isinstance(client, SupportsImageGenerationTool):
+                tool = client.get_image_generation_tool()
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_image_generation_tool(**kwargs: Any) -> Any:
+        """Create an image generation tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsMCPTool(Protocol):
+    """Protocol for clients that support MCP (Model Context Protocol) tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports MCP server connections.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsMCPTool
+
+            if isinstance(client, SupportsMCPTool):
+                tool = client.get_mcp_tool(name="my_mcp", url="https://...")
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_mcp_tool(**kwargs: Any) -> Any:
+        """Create an MCP tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options including
+                name and url for the MCP server.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsFileSearchTool(Protocol):
+    """Protocol for clients that support file search tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports file search functionality with vector stores.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsFileSearchTool
+
+            if isinstance(client, SupportsFileSearchTool):
+                tool = client.get_file_search_tool(vector_store_ids=["vs_123"])
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_file_search_tool(**kwargs: Any) -> Any:
+        """Create a file search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+# endregion

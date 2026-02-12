@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage
+from agent_framework import AgentResponse, Message
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -136,7 +136,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", text="Test response")]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -178,7 +178,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", text='{"answer": "42"}')]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()

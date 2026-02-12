@@ -29,7 +29,7 @@ class DurableAIAgentWorker:
     Example:
         ```python
         from durabletask import TaskHubGrpcWorker
-        from agent_framework import ChatAgent
+        from agent_framework import Agent
         from agent_framework.azure import DurableAIAgentWorker
 
         # Create the underlying worker
@@ -39,7 +39,7 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
-        my_agent = ChatAgent(chat_client=client, name="assistant")
+        my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 
         # Start the worker

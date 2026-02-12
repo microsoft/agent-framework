@@ -20,7 +20,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallStartEvent,
 )
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, tool
+from agent_framework import Agent, Content, Message, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
@@ -54,16 +54,16 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def _create_task_steps_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create the task steps agent using tool-based approach for streaming.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent[Any](
+    agent = Agent[Any](
         name="task_steps_agent",
         instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
@@ -83,7 +83,7 @@ def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrame
     - "Installing platform"
     - "Adding finishing touches"
     """,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_task_steps],
     )
 
@@ -220,30 +220,30 @@ class TaskStepsAgentWithExecution:
 
             # Get the underlying chat agent and client
             chat_agent = self._base_agent.agent  # type: ignore
-            chat_client = chat_agent.chat_client  # type: ignore
+            client = chat_agent.client  # type: ignore
 
             # Build messages for summary call
 
             original_messages = input_data.get("messages", [])
 
-            # Convert to ChatMessage objects if needed
-            messages: list[ChatMessage] = []
+            # Convert to Message objects if needed
+            messages: list[Message] = []
             for msg in original_messages:
                 if isinstance(msg, dict):
                     content_str = msg.get("content", "")
                     if isinstance(content_str, str):
                         messages.append(
-                            ChatMessage(
+                            Message(
                                 role=msg.get("role", "user"),
                                 contents=[Content.from_text(text=content_str)],
                             )
                         )
-                elif isinstance(msg, ChatMessage):
+                elif isinstance(msg, Message):
                     messages.append(msg)
 
             # Add completion message
             messages.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[
                         Content.from_text(
@@ -270,7 +270,7 @@ class TaskStepsAgentWithExecution:
 
                 # Stream completion
                 accumulated_text = ""
-                async for chunk in chat_client.get_response(messages=messages, stream=True):
+                async for chunk in client.get_response(messages=messages, stream=True):
                     # chunk is ChatResponseUpdate
                     if hasattr(chunk, "text") and chunk.text:
                         accumulated_text += chunk.text
@@ -332,14 +332,14 @@ class TaskStepsAgentWithExecution:
             yield run_finished_event
 
 
-def task_steps_agent_wrapped(chat_client: ChatClientProtocol[Any]) -> TaskStepsAgentWithExecution:
+def task_steps_agent_wrapped(client: SupportsChatGetResponse[Any]) -> TaskStepsAgentWithExecution:
     """Create a task steps agent with execution simulation.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A wrapped agent instance with step execution simulation
     """
-    base_agent = _create_task_steps_agent(chat_client)
+    base_agent = _create_task_steps_agent(client)
     return TaskStepsAgentWithExecution(base_agent)

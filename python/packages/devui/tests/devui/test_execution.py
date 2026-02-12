@@ -4,7 +4,7 @@
 
 Tests include:
 - Entity discovery and info retrieval
-- Agent execution (sync and streaming) using real ChatAgent with mock LLM
+- Agent execution (sync and streaming) using real Agent with mock LLM
 - Workflow execution using real WorkflowBuilder with FunctionExecutor
 - Edge cases like non-streaming agents
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_framework import AgentExecutor, ChatAgent, FunctionExecutor, WorkflowBuilder
+from agent_framework import Agent, AgentExecutor, FunctionExecutor, WorkflowBuilder
 
 # Import mock classes from conftest for direct use in some tests
 from conftest import MockBaseChatClient
@@ -77,15 +77,15 @@ async def test_executor_get_entity_info(executor):
 
 
 # =============================================================================
-# Agent Execution Tests (using real ChatAgent with mock LLM)
+# Agent Execution Tests (using real Agent with mock LLM)
 # =============================================================================
 
 
 async def test_agent_sync_execution(executor_with_real_agent):
-    """Test synchronous agent execution with REAL ChatAgent (mock LLM).
+    """Test synchronous agent execution with REAL Agent (mock LLM).
 
     This tests the full execution pipeline without needing an API key:
-    - Real ChatAgent class with middleware
+    - Real Agent class with middleware
     - Real message normalization
     - Mock chat client for LLM calls
     """
@@ -130,7 +130,7 @@ async def test_agent_sync_execution_respects_model_field(executor_with_real_agen
 async def test_chat_client_receives_correct_messages(executor_with_real_agent):
     """Verify the mock chat client receives properly formatted messages.
 
-    This tests that the REAL ChatAgent properly:
+    This tests that the REAL Agent properly:
     - Normalizes input messages
     - Formats messages for the chat client
     """
@@ -297,18 +297,18 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
 
     This is particularly important for workflows with AgentExecutor because:
     - AgentExecutor produces executor_completed event (type='executor_completed') with AgentExecutorResponse
-    - AgentExecutorResponse contains AgentResponse and ChatMessage objects
+    - AgentExecutorResponse contains AgentResponse and Message objects
     - These are SerializationMixin objects, not Pydantic, which caused the original bug
 
     This test ensures the ENTIRE streaming pipeline works end-to-end.
     """
     # Create a workflow with AgentExecutor (the problematic case)
     mock_client = MockBaseChatClient()
-    agent = ChatAgent(
+    agent = Agent(
         id="serialization_test_agent",
         name="Serialization Test Agent",
         description="Agent for testing serialization",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a test assistant.",
     )
 
@@ -466,15 +466,15 @@ async def test_executor_parse_raw_string_for_string_workflow():
 
 @pytest.mark.asyncio
 async def test_executor_parse_converts_to_chat_message_for_sequential_workflow(sequential_workflow):
-    """Sequential workflows convert string input to ChatMessage."""
-    from agent_framework import ChatMessage
+    """Sequential workflows convert string input to Message."""
+    from agent_framework import Message
 
     executor, _entity_id, _mock_client, workflow = sequential_workflow
 
-    # Sequential workflows expect ChatMessage, so raw string becomes ChatMessage
+    # Sequential workflows expect Message, so raw string becomes Message
     parsed = executor._parse_raw_workflow_input(workflow, "hello")
 
-    assert isinstance(parsed, ChatMessage)
+    assert isinstance(parsed, Message)
     assert parsed.text == "hello"
 
 
@@ -538,7 +538,7 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
 
 async def test_executor_handles_streaming_agent():
     """Test executor handles agents with run(stream=True) method."""
-    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content
+    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, Content, Message
 
     class StreamingAgent:
         """Agent with run() method supporting stream parameter."""
@@ -556,7 +556,7 @@ async def test_executor_handles_streaming_agent():
 
         async def _run_impl(self, messages):
             return AgentResponse(
-                messages=[ChatMessage(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])],
+                messages=[Message(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])],
                 response_id="test_123",
             )
 

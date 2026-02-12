@@ -35,15 +35,13 @@ from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
 )
 from .._types import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     UsageDetails,
     prepare_function_call_results,
@@ -214,6 +212,62 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 ):
     """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
 
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_code_interpreter_tool() -> dict[str, Any]:
+        """Create a code interpreter tool configuration for the Assistants API.
+
+        Returns:
+            A dict tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Enable code interpreter
+                tool = OpenAIAssistantsClient.get_code_interpreter_tool()
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        return {"type": "code_interpreter"}
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        max_num_results: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a file search tool configuration for the Assistants API.
+
+        Keyword Args:
+            max_num_results: Maximum number of results to return from file search.
+
+        Returns:
+            A dict tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Basic file search
+                tool = OpenAIAssistantsClient.get_file_search_tool()
+
+                # With result limit
+                tool = OpenAIAssistantsClient.get_file_search_tool(max_num_results=10)
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: dict[str, Any] = {"type": "file_search"}
+
+        if max_num_results is not None:
+            tool["file_search"] = {"max_num_results": max_num_results}
+
+        return tool
+
+    # endregion
+
     def __init__(
         self,
         *,
@@ -352,7 +406,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -605,7 +659,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
@@ -643,16 +697,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             for tool in tools:
                 if isinstance(tool, FunctionTool):
                     tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                elif isinstance(tool, HostedCodeInterpreterTool):
-                    tool_definitions.append({"type": "code_interpreter"})
-                elif isinstance(tool, HostedFileSearchTool):
-                    params: dict[str, Any] = {
-                        "type": "file_search",
-                    }
-                    if tool.max_results is not None:
-                        params["max_num_results"] = tool.max_results
-                    tool_definitions.append(params)
                 elif isinstance(tool, MutableMapping):
+                    # Pass through dict-based tools directly (from static factory methods)
                     tool_definitions.append(tool)
 
         if len(tool_definitions) > 0:

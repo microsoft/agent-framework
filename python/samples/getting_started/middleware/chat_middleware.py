@@ -7,9 +7,9 @@ from typing import Annotated
 
 from agent_framework import (
     ChatContext,
-    ChatMessage,
     ChatMiddleware,
     ChatResponse,
+    Message,
     MiddlewareTermination,
     chat_middleware,
     tool,
@@ -57,7 +57,7 @@ class InputObserverMiddleware(ChatMiddleware):
     async def process(
         self,
         context: ChatContext,
-        call_next: Callable[[ChatContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """Observe and modify input messages before they are sent to AI."""
         print("[InputObserverMiddleware] Observing input messages:")
@@ -69,7 +69,7 @@ class InputObserverMiddleware(ChatMiddleware):
         print(f"[InputObserverMiddleware] Total messages: {len(context.messages)}")
 
         # Modify user messages by creating new messages with enhanced text
-        modified_messages: list[ChatMessage] = []
+        modified_messages: list[Message] = []
         modified_count = 0
 
         for message in context.messages:
@@ -81,7 +81,7 @@ class InputObserverMiddleware(ChatMiddleware):
                     updated_text = self.replacement
                     print(f"[InputObserverMiddleware] Updated: '{original_text}' -> '{updated_text}'")
 
-                modified_message = ChatMessage(message.role, [updated_text])
+                modified_message = Message(message.role, [updated_text])
                 modified_messages.append(modified_message)
                 modified_count += 1
             else:
@@ -91,7 +91,7 @@ class InputObserverMiddleware(ChatMiddleware):
         context.messages[:] = modified_messages
 
         # Continue to next middleware or AI execution
-        await call_next(context)
+        await call_next()
 
         # Observe that processing is complete
         print("[InputObserverMiddleware] Processing completed")
@@ -100,7 +100,7 @@ class InputObserverMiddleware(ChatMiddleware):
 @chat_middleware
 async def security_and_override_middleware(
     context: ChatContext,
-    call_next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function-based middleware that implements security filtering and response override."""
     print("[SecurityMiddleware] Processing input...")
@@ -118,7 +118,7 @@ async def security_and_override_middleware(
                     # Override the response instead of calling AI
                     context.result = ChatResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 text="I cannot process requests containing sensitive information. "
                                 "Please rephrase your question without including passwords, secrets, or other "
@@ -131,7 +131,7 @@ async def security_and_override_middleware(
                     raise MiddlewareTermination
 
     # Continue to next middleware or AI execution
-    await call_next(context)
+    await call_next()
 
 
 async def class_based_chat_middleware() -> None:

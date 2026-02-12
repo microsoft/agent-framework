@@ -105,12 +105,12 @@ class WorkerExecutor(Executor):
 async def main():
     # Build workflow with checkpointing enabled
     checkpoint_storage = InMemoryCheckpointStorage()
+    start = StartExecutor(id="start")
+    worker = WorkerExecutor(id="worker")
     workflow_builder = (
-        WorkflowBuilder(start_executor="start", checkpoint_storage=checkpoint_storage)
-        .register_executor(lambda: StartExecutor(id="start"), name="start")
-        .register_executor(lambda: WorkerExecutor(id="worker"), name="worker")
-        .add_edge("start", "worker")
-        .add_edge("worker", "worker")  # Self-loop for iterative processing
+        WorkflowBuilder(start_executor=start, checkpoint_storage=checkpoint_storage)
+        .add_edge(start, worker)
+        .add_edge(worker, worker)  # Self-loop for iterative processing
     )
 
     # Run workflow with automatic checkpoint recovery
@@ -140,10 +140,9 @@ async def main():
                 break
 
         # Find the latest checkpoint to resume from
-        all_checkpoints = await checkpoint_storage.list_checkpoints()
-        if not all_checkpoints:
+        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow.name)
+        if not latest_checkpoint:
             raise RuntimeError("No checkpoints available to resume from.")
-        latest_checkpoint = all_checkpoints[-1]
         print(
             f"Checkpoint {latest_checkpoint.checkpoint_id}: "
             f"(iter={latest_checkpoint.iteration_count}, messages={latest_checkpoint.messages})"

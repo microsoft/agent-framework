@@ -3,19 +3,19 @@
 from types import UnionType
 from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
-from .._agents import ChatAgent
+from .._agents import Agent
 
 
-def is_chat_agent(agent: Any) -> TypeGuard[ChatAgent]:
-    """Check if the given agent is a ChatAgent.
+def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
+    """Check if the given agent is a Agent.
 
     Args:
         agent (Any): The agent to check.
 
     Returns:
-        TypeGuard[ChatAgent]: True if the agent is a ChatAgent, False otherwise.
+        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
     """
-    return isinstance(agent, ChatAgent)
+    return isinstance(agent, Agent)
 
 
 def resolve_type_annotation(
@@ -255,7 +255,7 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
 
     A type is compatible if values of source_type can be assigned to variables of target_type.
     For example:
-    - list[ChatMessage] is compatible with list[str | ChatMessage]
+    - list[Message] is compatible with list[str | Message]
     - str is compatible with str | int
     - int is compatible with Any
 

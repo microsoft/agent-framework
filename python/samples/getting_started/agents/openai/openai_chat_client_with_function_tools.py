@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from random import randint
 from typing import Annotated
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
@@ -17,7 +17,9 @@ showing both agent-level and query-level tool configuration patterns.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -40,8 +42,8 @@ async def tools_on_agent_level() -> None:
 
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
-    agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    agent = Agent(
+        client=OpenAIChatClient(),
         instructions="You are a helpful assistant that can provide weather and time information.",
         tools=[get_weather, get_time],  # Tools defined at agent creation
     )
@@ -70,8 +72,8 @@ async def tools_on_run_level() -> None:
     print("=== Tools Passed to Run Method ===")
 
     # Agent created without tools
-    agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    agent = Agent(
+        client=OpenAIChatClient(),
         instructions="You are a helpful assistant.",
         # No tools defined here
     )
@@ -100,8 +102,8 @@ async def mixed_tools_example() -> None:
     print("=== Mixed Tools Example (Agent + Run Method) ===")
 
     # Agent created with some base tools
-    agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    agent = Agent(
+        client=OpenAIChatClient(),
         instructions="You are a comprehensive assistant that can help with various information requests.",
         tools=[get_weather],  # Base tool available for all queries
     )

@@ -7,7 +7,7 @@ import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Context, ContextProvider, Message
 from agent_framework._logging import get_logger
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
@@ -511,7 +511,7 @@ class AzureAISearchContextProvider(ContextProvider):
     @override
     async def invoking(
         self,
-        messages: ChatMessage | MutableSequence[ChatMessage],
+        messages: Message | MutableSequence[Message],
         **kwargs: Any,
     ) -> Context:
         """Retrieve relevant context from Azure AI Search before model invocation.
@@ -524,7 +524,7 @@ class AzureAISearchContextProvider(ContextProvider):
             Context object with retrieved documents as messages.
         """
         # Convert to list and filter to USER/ASSISTANT messages with text only
-        messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
+        messages_list = [messages] if isinstance(messages, Message) else list(messages)
 
         def get_role_value(role: str | Any) -> str:
             return role.value if hasattr(role, "value") else str(role)
@@ -553,8 +553,8 @@ class AzureAISearchContextProvider(ContextProvider):
             return Context()
 
         # Create context messages: first message with prompt, then one message per result part
-        context_messages = [ChatMessage(role="user", text=self.context_prompt)]
-        context_messages.extend([ChatMessage(role="user", text=part) for part in search_result_parts])
+        context_messages = [Message(role="user", text=self.context_prompt)]
+        context_messages.extend([Message(role="user", text=part) for part in search_result_parts])
 
         return Context(messages=context_messages)
 
@@ -875,7 +875,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
-    async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:
+    async def _agentic_search(self, messages: list[Message]) -> list[str]:
         """Perform agentic retrieval with multi-hop reasoning using Knowledge Bases.
 
         This mode uses query planning and is slightly slower than semantic search,

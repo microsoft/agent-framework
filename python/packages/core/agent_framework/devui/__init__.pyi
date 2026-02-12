@@ -10,6 +10,7 @@ from agent_framework_devui import (
     ResponseStreamEvent,
     __version__,
     main,
+    register_cleanup,
     serve,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "ResponseStreamEvent",
     "__version__",
     "main",
+    "register_cleanup",
     "serve",
 ]

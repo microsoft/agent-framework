@@ -9,9 +9,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentThread,
     BaseAgent,
-    ChatMessage,
     ChatMessageStore,
     Content,
+    Message,
     ResponseStream,
     WorkflowRunState,
 )
@@ -29,7 +29,7 @@ class _CountingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
         thread: AgentThread | None = None,
@@ -46,7 +46,7 @@ class _CountingAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [f"Response #{self.call_count}: {self.name}"])])
+            return AgentResponse(messages=[Message("assistant", [f"Response #{self.call_count}: {self.name}"])])
 
         return _run()
 
@@ -61,8 +61,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Add some initial messages to the thread to verify thread state persistence
     initial_messages = [
-        ChatMessage(role="user", text="Initial message 1"),
-        ChatMessage(role="assistant", text="Initial response 1"),
+        Message(role="user", text="Initial message 1"),
+        Message(role="assistant", text="Initial response 1"),
     ]
     await initial_thread.on_new_messages(initial_messages)
 
@@ -84,15 +84,16 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert initial_agent.call_count == 1
 
     # Verify checkpoint was created
-    checkpoints = await storage.list_checkpoints()
-    assert len(checkpoints) > 0
-
-    # Find a suitable checkpoint to restore (prefer superstep checkpoint)
-    checkpoints.sort(key=lambda cp: cp.timestamp)
-    restore_checkpoint = next(
-        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
-        checkpoints[-1],
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
+    assert len(checkpoints) >= 2, (
+        "Expected at least 2 checkpoints. The first one is after the start executor, "
+        "and the second one is after the agent execution."
     )
+
+    # Get the second checkpoint which should contain the state after processing
+    # the first message by the start executor in the sequential workflow
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+    restore_checkpoint = checkpoints[1]
 
     # Verify checkpoint contains executor state with both cache and thread
     assert "_executor_state" in restore_checkpoint.state
@@ -165,9 +166,9 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to thread
     thread_messages = [
-        ChatMessage(role="user", text="Message in thread 1"),
-        ChatMessage(role="assistant", text="Thread response 1"),
-        ChatMessage(role="user", text="Message in thread 2"),
+        Message(role="user", text="Message in thread 1"),
+        Message(role="assistant", text="Thread response 1"),
+        Message(role="user", text="Message in thread 2"),
     ]
     await thread.on_new_messages(thread_messages)
 
@@ -175,8 +176,8 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to executor cache
     cache_messages = [
-        ChatMessage(role="user", text="Cached user message"),
-        ChatMessage(role="assistant", text="Cached assistant response"),
+        Message(role="user", text="Cached user message"),
+        Message(role="assistant", text="Cached assistant response"),
     ]
     executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
 

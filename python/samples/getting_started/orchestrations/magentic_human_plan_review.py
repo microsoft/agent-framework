@@ -6,9 +6,9 @@ from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
-    ChatAgent,
-    ChatMessage,
+    Message,
     WorkflowEvent,
 )
 from agent_framework.openai import OpenAIChatClient
@@ -64,7 +64,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
                 print("=" * 60)
                 print("Final discussion summary:")
                 # To make the type checker happy, we cast event.data to the expected type
-                outputs = cast(list[ChatMessage], event.data)
+                outputs = cast(list[Message], event.data)
                 for msg in outputs:
                     speaker = msg.author_name or msg.role
                     print(f"[{speaker}]: {msg.text}")
@@ -92,25 +92,25 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    researcher_agent = ChatAgent(
+    researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions="You are a Researcher. You find information and gather facts.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
-    analyst_agent = ChatAgent(
+    analyst_agent = Agent(
         name="AnalystAgent",
         description="Data analyst who processes and summarizes research findings",
         instructions="You are an Analyst. You analyze findings and create summaries.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the workflow",
         instructions="You coordinate a team to complete tasks efficiently.",
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        client=OpenAIChatClient(model_id="gpt-4o"),
     )
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")

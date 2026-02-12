@@ -17,7 +17,7 @@ pip install agent-framework-devui --pre
 You can also launch it programmatically
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.devui import serve
 
@@ -26,9 +26,9 @@ def get_weather(location: str) -> str:
     return f"Weather in {location}: 72°F and sunny"
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="WeatherAgent",
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     tools=[get_weather]
 )
 
@@ -55,8 +55,8 @@ When DevUI starts with no discovered entities, it displays a **sample entity gal
 
 ```python
 # ✅ Correct - DevUI handles cleanup automatically
-mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", chat_client=chat_client)
-agent = ChatAgent(tools=mcp_tool)
+mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", client=client)
+agent = Agent(tools=mcp_tool)
 serve(entities=[agent])
 ```
 
@@ -68,13 +68,13 @@ Register cleanup hooks to properly close credentials and resources on shutdown:
 
 ```python
 from azure.identity.aio import DefaultAzureCredential
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup, serve
 
 credential = DefaultAzureCredential()
 client = AzureOpenAIChatClient()
-agent = ChatAgent(name="MyAgent", chat_client=client)
+agent = Agent(name="MyAgent", client=client)
 
 # Register cleanup hook - credential will be closed on shutdown
 register_cleanup(agent, credential.close)
@@ -92,7 +92,7 @@ For your agents to be discovered by the DevUI, they must be organized in a direc
 ```
 agents/
 ├── weather_agent/
-│   ├── __init__.py      # Must export: agent = ChatAgent(...)
+│   ├── __init__.py      # Must export: agent = Agent(...)
 │   ├── agent.py
 │   └── .env             # Optional: API keys, config vars
 ├── my_workflow/

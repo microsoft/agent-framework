@@ -17,12 +17,12 @@ from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import ChatAgent, ChatMessage, Context, ContextProvider
+from agent_framework import Agent, Context, ContextProvider, Message
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
 if TYPE_CHECKING:
-    from agent_framework import ToolProtocol
+    from agent_framework import FunctionTool
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -47,7 +47,7 @@ class AggregateContextProvider(ContextProvider):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatAgent
+            from agent_framework import Agent
 
             # Create multiple context providers
             provider1 = CustomContextProvider1()
@@ -58,7 +58,7 @@ class AggregateContextProvider(ContextProvider):
             aggregate = AggregateContextProvider([provider1, provider2, provider3])
 
             # Pass the aggregate to the agent
-            agent = ChatAgent(chat_client=client, name="assistant", context_provider=aggregate)
+            agent = Agent(client=client, name="assistant", context_provider=aggregate)
 
             # You can also add more providers later
             provider4 = CustomContextProvider4()
@@ -90,11 +90,11 @@ class AggregateContextProvider(ContextProvider):
         await asyncio.gather(*[x.thread_created(thread_id) for x in self.providers])
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
         instructions: str = ""
-        return_messages: list[ChatMessage] = []
-        tools: list["ToolProtocol"] = []
+        return_messages: list[Message] = []
+        tools: list["FunctionTool"] = []
         for ctx in contexts:
             if ctx.instructions:
                 instructions += ctx.instructions
@@ -107,8 +107,8 @@ class AggregateContextProvider(ContextProvider):
     @override
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
@@ -167,7 +167,7 @@ class TimeContextProvider(ContextProvider):
     """A simple context provider that adds time-related instructions."""
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         from datetime import datetime
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -181,7 +181,7 @@ class PersonaContextProvider(ContextProvider):
         self.persona = persona
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         return Context(instructions=f"Your persona: {self.persona}. ")
 
 
@@ -192,7 +192,7 @@ class PreferencesContextProvider(ContextProvider):
         self.preferences: dict[str, str] = {}
 
     @override
-    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
+    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
         if not self.preferences:
             return Context()
         prefs_str = ", ".join(f"{k}: {v}" for k, v in self.preferences.items())
@@ -201,14 +201,14 @@ class PreferencesContextProvider(ContextProvider):
     @override
     async def invoked(
         self,
-        request_messages: ChatMessage | Sequence[ChatMessage],
-        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        request_messages: Message | Sequence[Message],
+        response_messages: Message | Sequence[Message] | None = None,
         invoke_exception: Exception | None = None,
         **kwargs: Any,
     ) -> None:
         # Simple example: extract and store preferences from user messages
         # In a real implementation, you might use structured extraction
-        msgs = [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
+        msgs = [request_messages] if isinstance(request_messages, Message) else list(request_messages)
 
         for msg in msgs:
             content = msg.text if hasattr(msg, "text") else ""
@@ -230,7 +230,7 @@ class PreferencesContextProvider(ContextProvider):
 async def main():
     """Demonstrate using AggregateContextProvider to combine multiple providers."""
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIClient(credential=credential)
+        client = AzureAIClient(credential=credential)
 
         # Create individual context providers
         time_provider = TimeContextProvider()
@@ -245,8 +245,8 @@ async def main():
         ])
 
         # Create the agent with the aggregate provider
-        async with ChatAgent(
-            chat_client=chat_client,
+        async with Agent(
+            client=client,
             instructions="You are a helpful assistant.",
             context_provider=aggregate_provider,
         ) as agent:
