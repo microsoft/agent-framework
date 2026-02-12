@@ -138,3 +138,7 @@ class MyClient(BaseChatClient):
     async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
         yield ChatResponseUpdate(...)
 ```
+
+### Running tests
+
+Always use the virtual environment defined, and run with `uv run pytest ...`

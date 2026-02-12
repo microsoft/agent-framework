@@ -19,9 +19,10 @@ from agent_framework import (
     WorkflowRunnerException,
     WorkflowRunState,
     handler,
+    response_handler,
 )
 from agent_framework._workflows._const import EXECUTOR_STATE_KEY
-from agent_framework._workflows._edge import SingleEdgeGroup
+from agent_framework._workflows._edge import InternalEdgeGroup, SingleEdgeGroup
 from agent_framework._workflows._runner import Runner
 from agent_framework._workflows._runner_context import (
     InProcRunnerContext,
@@ -36,6 +37,13 @@ class MockMessage:
     """A mock message for testing purposes."""
 
     data: int
+
+
+@dataclass
+class MockRequest:
+    """A mock request_info payload."""
+
+    value: str
 
 
 class MockExecutor(Executor):
@@ -223,6 +231,28 @@ class SlowExecutor(Executor):
             await ctx.yield_output(message.data)
 
 
+class RequestInfoExecutor(Executor):
+    """Executor that requests external input and yields it once received."""
+
+    def __init__(self, id: str = "request_info_executor"):
+        super().__init__(id=id)
+        self.received_response: str | None = None
+
+    @handler
+    async def handle(self, message: MockMessage, ctx: WorkflowContext[int]) -> None:
+        await ctx.request_info(MockRequest(value=f"request:{message.data}"), str)
+
+    @response_handler
+    async def on_response(
+        self,
+        original_request: MockRequest,
+        response: str,
+        ctx: WorkflowContext[int, int],
+    ) -> None:
+        self.received_response = response
+        await ctx.yield_output(len(response))
+
+
 async def test_runner_cancellation_stops_active_executor():
     """Test that cancelling a workflow properly cancels the active executor."""
     executor_a = SlowExecutor(id="executor_a", work_duration=0.3)
@@ -271,6 +301,40 @@ async def test_runner_cancellation_stops_active_executor():
     assert executor_a.completed_count == 1
     assert executor_b.started_count == 1
     assert executor_b.completed_count == 0  # Should NOT have completed due to cancellation
+
+
+async def test_runner_dispatches_request_handlers_inline():
+    """Runner should dispatch request_handlers and process responses in the same run."""
+    executor = RequestInfoExecutor()
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner(
+        [InternalEdgeGroup(executor.id)],
+        {executor.id: executor},
+        state,
+        ctx,
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+    await executor.execute(
+        MockMessage(data=1),
+        ["START"],
+        state,
+        ctx,
+    )
+
+    async def handle_request(request: MockRequest) -> str:
+        await asyncio.sleep(0.05)
+        return "approved"
+
+    result: int | None = None
+    async for event in runner.run_until_convergence(request_handlers={MockRequest: handle_request}):
+        if event.type == "output":
+            result = event.data
+
+    assert executor.received_response == "approved"
+    assert result == len("approved")
 
 
 class FailingExecutor(Executor):

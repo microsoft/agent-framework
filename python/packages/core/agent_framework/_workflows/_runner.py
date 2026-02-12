@@ -4,8 +4,8 @@ import asyncio
 import contextlib
 import logging
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Sequence
-from typing import Any
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from typing import Any, cast
 
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
@@ -25,6 +25,9 @@ from ._runner_context import (
 from ._state import State
 
 logger = logging.getLogger(__name__)
+
+RequestHandler = Callable[[Any], Awaitable[Any]]
+RequestHandlerMap = Mapping[type[Any], RequestHandler]
 
 
 class Runner:
@@ -75,10 +78,87 @@ class Runner:
         """Reset the iteration count to zero."""
         self._iteration = 0
 
-    async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
-        """Run the workflow until no more messages are sent."""
+    @staticmethod
+    def _type_name(t: type[Any]) -> str:
+        """Return a human-readable type name, handling union/generic aliases."""
+        return getattr(t, "__name__", str(t))
+
+    async def _invoke_request_handler(
+        self,
+        handler_fn: RequestHandler,
+        request_id: str,
+        request_data: Any,
+    ) -> None:
+        """Invoke an async request handler and submit the response to the context."""
+        try:
+            response = await handler_fn(request_data)
+        except Exception:
+            logger.exception(f"Response handler failed for request {request_id} (type={type(request_data).__name__})")
+            return
+
+        try:
+            await self._ctx.send_request_info_response(request_id, response)
+        except Exception:
+            logger.exception(
+                f"Failed to submit response for request {request_id} "
+                f"(type={type(request_data).__name__}). "
+                f"Handler succeeded but response could not be delivered."
+            )
+
+    def _dispatch_request_handler(
+        self,
+        event: WorkflowEvent[Any],
+        request_handlers: RequestHandlerMap | None,
+        outstanding_handler_tasks: set[asyncio.Task[None]] | None,
+    ) -> None:
+        """Schedule a request handler task for request_info events when configured."""
+        if event.type != "request_info" or request_handlers is None or outstanding_handler_tasks is None:
+            return
+
+        request_data: Any = event.data
+        request_data_type: type[Any] = cast(type[Any], type(request_data))
+        matched_handler = request_handlers.get(request_data_type)
+        if matched_handler is None:
+            registered_types = [self._type_name(t) for t in request_handlers]
+            logger.warning(
+                f"No response handler registered for request type "
+                f"{self._type_name(request_data_type)} (request_id={event.request_id}). "
+                f"Registered types: {registered_types}"
+            )
+            return
+
+        task = asyncio.create_task(self._invoke_request_handler(matched_handler, event.request_id, request_data))
+        outstanding_handler_tasks.add(task)
+        task.add_done_callback(outstanding_handler_tasks.discard)
+
+    async def _cancel_outstanding_handler_tasks(
+        self,
+        outstanding_handler_tasks: set[asyncio.Task[None]] | None,
+    ) -> None:
+        """Cancel and await outstanding handler tasks."""
+        if not outstanding_handler_tasks:
+            return
+
+        for task in outstanding_handler_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*outstanding_handler_tasks, return_exceptions=True)
+
+    async def run_until_convergence(
+        self,
+        request_handlers: RequestHandlerMap | None = None,
+    ) -> AsyncGenerator[WorkflowEvent, None]:
+        """Run the workflow until no more messages are sent.
+
+        Args:
+            request_handlers: Optional mapping of request data types to async handler
+                functions. When provided, request_info events are dispatched inline and
+                handler responses are submitted back through the runner context.
+        """
         if self._running:
             raise WorkflowRunnerException("Runner is already running.")
+
+        outstanding_handler_tasks: set[asyncio.Task[None]] | None = set() if request_handlers else None
 
         self._running = True
         previous_checkpoint_id: CheckpointID | None = None
@@ -87,6 +167,7 @@ class Runner:
             if await self._ctx.has_events():
                 logger.info("Yielding pre-loop events")
                 for event in await self._ctx.drain_events():
+                    self._dispatch_request_handler(event, request_handlers, outstanding_handler_tasks)
                     yield event
 
             # Create the first checkpoint. Checkpoints are usually considered to be created at the end of an iteration,
@@ -108,6 +189,7 @@ class Runner:
                         try:
                             # Wait briefly for any new event; timeout allows progress checks
                             event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                            self._dispatch_request_handler(event, request_handlers, outstanding_handler_tasks)
                             yield event
                         except asyncio.TimeoutError:
                             # Periodically continue to let iteration advance
@@ -126,6 +208,7 @@ class Runner:
                     # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
                     if await self._ctx.has_events():
                         for event in await self._ctx.drain_events():
+                            self._dispatch_request_handler(event, request_handlers, outstanding_handler_tasks)
                             yield event
                     raise
                 self._iteration += 1
@@ -133,6 +216,7 @@ class Runner:
                 # Drain any straggler events emitted at tail end
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
+                        self._dispatch_request_handler(event, request_handlers, outstanding_handler_tasks)
                         yield event
 
                 logger.info(f"Completed superstep {self._iteration}")
@@ -147,6 +231,23 @@ class Runner:
 
                 # Check for convergence: no more messages to process
                 if not await self._ctx.has_messages():
+                    if outstanding_handler_tasks is not None:
+                        # Wait for in-flight request handlers before declaring idle.
+                        # A completed handler may enqueue a response message that should
+                        # be processed in another superstep within this same run.
+                        still_running: set[asyncio.Task[None]] = {
+                            task for task in outstanding_handler_tasks if not task.done()
+                        }
+                        while still_running:
+                            wait_result: tuple[set[asyncio.Task[None]], set[asyncio.Task[None]]] = await asyncio.wait(
+                                still_running,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            still_running = wait_result[1]
+                            if await self._ctx.has_messages():
+                                break
+                        if await self._ctx.has_messages():
+                            continue
                     break
 
             if self._iteration >= self._max_iterations and await self._ctx.has_messages():
@@ -155,6 +256,7 @@ class Runner:
             logger.info(f"Workflow completed after {self._iteration} supersteps")
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
+            await self._cancel_outstanding_handler_tasks(outstanding_handler_tasks)
             self._running = False
 
     async def _run_iteration(self) -> None:
