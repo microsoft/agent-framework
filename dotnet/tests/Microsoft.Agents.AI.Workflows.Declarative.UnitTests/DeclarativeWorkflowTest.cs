@@ -52,7 +52,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         await this.RunWorkflowAsync("LoopBreak.yaml");
         this.AssertExecutionCount(expectedCount: 6);
-        this.AssertExecuted("foreach_loop");
+        this.AssertExecuted("foreach_loop", isDiscrete: false);
         this.AssertExecuted("break_loop_now");
         this.AssertExecuted("end_all");
         this.AssertNotExecuted("set_variable_inner");
@@ -64,7 +64,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
         this.AssertExecutionCount(expectedCount: 22);
-        this.AssertExecuted("foreach_loop");
+        this.AssertExecuted("foreach_loop", isDiscrete: false);
         this.AssertExecuted("continue_loop_now");
         this.AssertExecuted("end_all");
         this.AssertNotExecuted("set_variable_inner");
@@ -103,7 +103,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("conditionItem_even", isScope: true);
+            this.AssertExecuted("conditionItem_even", isAction: false);
             this.AssertExecuted("sendActivity_even");
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
@@ -111,7 +111,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd", isScope: true);
+            this.AssertExecuted("conditionItem_odd", isAction: false);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("conditionItem_even");
             this.AssertNotExecuted("sendActivity_even");
@@ -131,13 +131,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertExecuted("conditionGroup_test");
         if (input % 2 == 0)
         {
-            this.AssertExecuted("sendActivity_else", isScope: true);
+            this.AssertExecuted("sendActivity_else", isAction: false);
             this.AssertNotExecuted("conditionItem_odd");
             this.AssertNotExecuted("sendActivity_odd");
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd", isScope: true);
+            this.AssertExecuted("conditionItem_odd", isAction: false);
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("sendActivity_else");
         }
@@ -152,7 +152,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         await this.RunWorkflowAsync("ConditionFallThrough.yaml", input);
         this.AssertExecutionCount(expectedActions);
         this.AssertExecuted("setVariable_test");
-        this.AssertExecuted("conditionGroup_test", isScope: true);
+        this.AssertExecuted("conditionGroup_test", isAction: false);
         if (input % 2 == 0)
         {
             this.AssertNotExecuted("conditionItem_odd");
@@ -160,7 +160,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
         else
         {
-            this.AssertExecuted("conditionItem_odd", isScope: true);
+            this.AssertExecuted("conditionItem_odd", isAction: false);
             this.AssertExecuted("sendActivity_odd");
             this.AssertMessage("ODD");
         }
@@ -307,14 +307,17 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.DoesNotContain(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
     }
 
-    private void AssertExecuted(string executorId, bool isScope = false)
+    private void AssertExecuted(string executorId, bool isAction = true, bool isDiscrete = true)
     {
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorInvokedEvent>(), e => e.ExecutorId == executorId);
         Assert.Contains(this.WorkflowEvents.OfType<ExecutorCompletedEvent>(), e => e.ExecutorId == executorId);
-        if (!isScope)
+        if (isAction)
         {
             Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == executorId);
-            Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
+            if (isDiscrete)
+            {
+                Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == executorId);
+            }
         }
     }
 

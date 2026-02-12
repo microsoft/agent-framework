@@ -413,8 +413,8 @@ def executor_failed_event() -> WorkflowEvent[WorkflowErrorDetails]:
 def test_entities_dir() -> str:
     """Use the samples directory which has proper entity structure."""
     current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "getting_started" / "devui"
+    # Navigate to python/samples/02-agents/devui
+    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "02-agents" / "devui"
     return str(samples_dir.resolve())
 
 
