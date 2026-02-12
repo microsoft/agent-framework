@@ -4,7 +4,7 @@
 
 import pytest
 
-from agent_framework_purview import PurviewAppLocation, PurviewLocationType, PurviewSettings
+from agent_framework_purview import PurviewAppLocation, PurviewLocationType, PurviewSettings, get_purview_scopes
 
 
 class TestPurviewSettings:
@@ -14,10 +14,10 @@ class TestPurviewSettings:
         """Test PurviewSettings with default values."""
         settings = PurviewSettings(app_name="Test App")
 
-        assert settings.app_name == "Test App"
-        assert settings.graph_base_uri == "https://graph.microsoft.com/v1.0/"
-        assert settings.tenant_id is None
-        assert settings.purview_app_location is None
+        assert settings["app_name"] == "Test App"
+        assert settings.get("graph_base_uri") is None
+        assert settings.get("tenant_id") is None
+        assert settings.get("purview_app_location") is None
 
     def test_settings_with_custom_values(self) -> None:
         """Test PurviewSettings with custom values."""
@@ -30,9 +30,9 @@ class TestPurviewSettings:
             purview_app_location=app_location,
         )
 
-        assert settings.graph_base_uri == "https://graph.microsoft-ppe.com"
-        assert settings.tenant_id == "test-tenant-id"
-        assert settings.purview_app_location.location_value == "app-123"
+        assert settings["graph_base_uri"] == "https://graph.microsoft-ppe.com"
+        assert settings["tenant_id"] == "test-tenant-id"
+        assert settings["purview_app_location"].location_value == "app-123"
 
     @pytest.mark.parametrize(
         "graph_uri,expected_scope",
@@ -44,7 +44,7 @@ class TestPurviewSettings:
     def test_get_scopes(self, graph_uri: str, expected_scope: str) -> None:
         """Test get_scopes returns correct scope for different URIs."""
         settings = PurviewSettings(app_name="Test App", graph_base_uri=graph_uri)
-        scopes = settings.get_scopes()
+        scopes = get_purview_scopes(settings)
 
         assert len(scopes) == 1
         assert expected_scope in scopes

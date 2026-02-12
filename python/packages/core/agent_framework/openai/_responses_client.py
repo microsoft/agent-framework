@@ -33,11 +33,12 @@ from openai.types.responses.tool_param import (
     Mcp,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -1810,36 +1811,35 @@ class OpenAIResponsesClient(  # type: ignore[misc]
                 client: OpenAIResponsesClient[MyOptions] = OpenAIResponsesClient(model_id="gpt-4o")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                org_id=org_id,
-                base_url=base_url,
-                responses_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            org_id=org_id,
+            base_url=base_url,
+            responses_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.responses_model_id:
+        if not openai_settings["responses_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.responses_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["responses_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-            base_url=openai_settings.base_url,
+            base_url=openai_settings["base_url"],
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, Literal, TypedDict, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -17,23 +17,21 @@ from agent_framework import (
     ResponseStream,
     normalize_messages,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
-from pydantic import ValidationError
 
 from ._acquire_token import acquire_token
 
 
-class CopilotStudioSettings(AFBaseSettings):
+class CopilotStudioSettings(TypedDict, total=False):
     """Copilot Studio model settings.
 
     The settings are first loaded from environment variables with the prefix 'COPILOTSTUDIOAGENT__'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Keyword Args:
+    Keys:
         environmentid: Environment ID of environment with the Copilot Studio App.
             Can be set via environment variable COPILOTSTUDIOAGENT__ENVIRONMENTID.
         schemaname: The agent identifier or schema name of the Copilot to use.
@@ -42,32 +40,12 @@ class CopilotStudioSettings(AFBaseSettings):
             Can be set via environment variable COPILOTSTUDIOAGENT__AGENTAPPID.
         tenantid: The tenant ID of the App Registration used to login.
             Can be set via environment variable COPILOTSTUDIOAGENT__TENANTID.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework_copilotstudio import CopilotStudioSettings
-
-            # Using environment variables
-            # Set COPILOTSTUDIOAGENT__ENVIRONMENTID=env-123
-            # Set COPILOTSTUDIOAGENT__SCHEMANAME=my-agent
-            settings = CopilotStudioSettings()
-
-            # Or passing parameters directly
-            settings = CopilotStudioSettings(environmentid="env-123", schemaname="my-agent")
-
-            # Or loading from a .env file
-            settings = CopilotStudioSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "COPILOTSTUDIOAGENT__"
-
-    environmentid: str | None = None
-    schemaname: str | None = None
-    agentappid: str | None = None
-    tenantid: str | None = None
+    environmentid: str | None
+    schemaname: str | None
+    agentappid: str | None
+    tenantid: str | None
 
 
 class CopilotStudioAgent(BaseAgent):
@@ -144,54 +122,53 @@ class CopilotStudioAgent(BaseAgent):
             middleware=middleware,
         )
         if not client:
-            try:
-                copilot_studio_settings = CopilotStudioSettings(
-                    environmentid=environment_id,
-                    schemaname=agent_identifier,
-                    agentappid=client_id,
-                    tenantid=tenant_id,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            except ValidationError as ex:
-                raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
+            copilot_studio_settings = load_settings(
+                CopilotStudioSettings,
+                env_prefix="COPILOTSTUDIOAGENT__",
+                environmentid=environment_id,
+                schemaname=agent_identifier,
+                agentappid=client_id,
+                tenantid=tenant_id,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
             if not settings:
-                if not copilot_studio_settings.environmentid:
+                if not copilot_studio_settings["environmentid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio environment ID is required. Set via 'environment_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__ENVIRONMENTID' environment variable."
                     )
-                if not copilot_studio_settings.schemaname:
+                if not copilot_studio_settings["schemaname"]:
                     raise ServiceInitializationError(
                         "Copilot Studio agent identifier/schema name is required. Set via 'agent_identifier' parameter "
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
                 settings = ConnectionSettings(
-                    environment_id=copilot_studio_settings.environmentid,
-                    agent_identifier=copilot_studio_settings.schemaname,
+                    environment_id=copilot_studio_settings["environmentid"],
+                    agent_identifier=copilot_studio_settings["schemaname"],
                     cloud=cloud,
                     copilot_agent_type=agent_type,
                     custom_power_platform_cloud=custom_power_platform_cloud,
                 )
 
             if not token:
-                if not copilot_studio_settings.agentappid:
+                if not copilot_studio_settings["agentappid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio client ID is required. Set via 'client_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__AGENTAPPID' environment variable."
                     )
 
-                if not copilot_studio_settings.tenantid:
+                if not copilot_studio_settings["tenantid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio tenant ID is required. Set via 'tenant_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__TENANTID' environment variable."
                     )
 
                 token = acquire_token(
-                    client_id=copilot_studio_settings.agentappid,
-                    tenant_id=copilot_studio_settings.tenantid,
+                    client_id=copilot_studio_settings["agentappid"],
+                    tenant_id=copilot_studio_settings["tenantid"],
                     username=username,
                     token_cache=token_cache,
                     scopes=scopes,

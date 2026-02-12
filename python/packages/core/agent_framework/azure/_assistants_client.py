@@ -7,12 +7,13 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from pydantic import ValidationError
 
+from .._settings import load_settings
 from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
 from ..openai._assistants_client import OpenAIAssistantsOptions
-from ._shared import AzureOpenAISettings
+from ._entra_id_authentication import get_entra_auth_token
+from ._shared import DEFAULT_AZURE_TOKEN_ENDPOINT, AzureOpenAISettings, _apply_azure_defaults
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -137,23 +138,21 @@ class AzureOpenAIAssistantsClient(
                 client: AzureOpenAIAssistantsClient[MyOptions] = AzureOpenAIAssistantsClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                chat_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-                default_api_version=self.DEFAULT_AZURE_API_VERSION,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure OpenAI settings.", ex) from ex
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            chat_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings, default_api_version=self.DEFAULT_AZURE_API_VERSION)
 
-        if not azure_openai_settings.chat_deployment_name:
+        if not azure_openai_settings["chat_deployment_name"]:
             raise ServiceInitializationError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
@@ -162,40 +161,41 @@ class AzureOpenAIAssistantsClient(
         # Handle authentication: try API key first, then AD token, then Entra ID
         if (
             not async_client
-            and not azure_openai_settings.api_key
+            and not azure_openai_settings["api_key"]
             and not ad_token
             and not ad_token_provider
-            and azure_openai_settings.token_endpoint
+            and azure_openai_settings["token_endpoint"]
             and credential
         ):
-            ad_token = azure_openai_settings.get_azure_auth_token(credential)
+            token_ep = azure_openai_settings["token_endpoint"] or DEFAULT_AZURE_TOKEN_ENDPOINT
+            ad_token = get_entra_auth_token(credential, token_ep)
 
-        if not async_client and not azure_openai_settings.api_key and not ad_token and not ad_token_provider:
+        if not async_client and not azure_openai_settings["api_key"] and not ad_token and not ad_token_provider:
             raise ServiceInitializationError("The Azure OpenAI API key, ad_token, or ad_token_provider is required.")
 
         # Create Azure client if not provided
         if not async_client:
             client_params: dict[str, Any] = {
-                "api_version": azure_openai_settings.api_version,
+                "api_version": azure_openai_settings["api_version"],
                 "default_headers": default_headers,
             }
 
-            if azure_openai_settings.api_key:
-                client_params["api_key"] = azure_openai_settings.api_key.get_secret_value()
+            if azure_openai_settings["api_key"]:
+                client_params["api_key"] = azure_openai_settings["api_key"].get_secret_value()
             elif ad_token:
                 client_params["azure_ad_token"] = ad_token
             elif ad_token_provider:
                 client_params["azure_ad_token_provider"] = ad_token_provider
 
-            if azure_openai_settings.base_url:
-                client_params["base_url"] = str(azure_openai_settings.base_url)
-            elif azure_openai_settings.endpoint:
-                client_params["azure_endpoint"] = str(azure_openai_settings.endpoint)
+            if azure_openai_settings["base_url"]:
+                client_params["base_url"] = str(azure_openai_settings["base_url"])
+            elif azure_openai_settings["endpoint"]:
+                client_params["azure_endpoint"] = str(azure_openai_settings["endpoint"])
 
             async_client = AsyncAzureOpenAI(**client_params)
 
         super().__init__(
-            model_id=azure_openai_settings.chat_deployment_name,
+            model_id=azure_openai_settings["chat_deployment_name"],
             assistant_id=assistant_id,
             assistant_name=assistant_name,
             assistant_description=assistant_description,
