@@ -14,11 +14,11 @@ from typing import Any
 
 from agent_framework import (
     CheckpointStorage,
-    Message,
     RunnerContext,
     State,
     WorkflowCheckpoint,
     WorkflowEvent,
+    WorkflowMessage,
 )
 
 
@@ -36,7 +36,7 @@ class CapturingRunnerContext(RunnerContext):
 
     def __init__(self) -> None:
         """Initialize the capturing runner context."""
-        self._messages: dict[str, list[Message]] = {}
+        self._messages: dict[str, list[WorkflowMessage]] = {}
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
         self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
         self._workflow_id: str | None = None
@@ -44,12 +44,12 @@ class CapturingRunnerContext(RunnerContext):
 
     # region Messaging
 
-    async def send_message(self, message: Message) -> None:
+    async def send_message(self, message: WorkflowMessage) -> None:
         """Capture a message sent by an executor."""
         self._messages.setdefault(message.source_id, [])
         self._messages[message.source_id].append(message)
 
-    async def drain_messages(self) -> dict[str, list[Message]]:
+    async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         """Drain and return all captured messages."""
         messages = copy(self._messages)
         self._messages.clear()

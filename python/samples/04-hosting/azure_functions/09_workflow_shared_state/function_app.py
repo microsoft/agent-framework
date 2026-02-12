@@ -27,7 +27,7 @@ from uuid import uuid4
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatMessage,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -110,7 +110,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(role="user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message(role="user", text=new_email.email_content)], should_respond=True)
     )
 
 
@@ -146,7 +146,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from shared state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[ChatMessage(role="user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message(role="user", text=email.email_content)], should_respond=True)
     )
 
 

@@ -10,9 +10,9 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    ChatMessage,
     Message,
     WorkflowEvent,
+    WorkflowMessage,
 )
 from pydantic import BaseModel
 
@@ -59,7 +59,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_send_message_captures_message(self, context: CapturingRunnerContext) -> None:
         """Test that send_message captures messages correctly."""
-        message = Message(data="test data", target_id="target_1", source_id="source_1")
+        message = WorkflowMessage(data="test data", target_id="target_1", source_id="source_1")
 
         await context.send_message(message)
 
@@ -71,9 +71,9 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_send_multiple_messages_groups_by_source(self, context: CapturingRunnerContext) -> None:
         """Test that messages are grouped by source_id."""
-        msg1 = Message(data="msg1", target_id="target", source_id="source_a")
-        msg2 = Message(data="msg2", target_id="target", source_id="source_a")
-        msg3 = Message(data="msg3", target_id="target", source_id="source_b")
+        msg1 = WorkflowMessage(data="msg1", target_id="target", source_id="source_a")
+        msg2 = WorkflowMessage(data="msg2", target_id="target", source_id="source_a")
+        msg3 = WorkflowMessage(data="msg3", target_id="target", source_id="source_b")
 
         await context.send_message(msg1)
         await context.send_message(msg2)
@@ -86,7 +86,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_drain_messages_clears_messages(self, context: CapturingRunnerContext) -> None:
         """Test that drain_messages clears the message store."""
-        message = Message(data="test", target_id="t", source_id="s")
+        message = WorkflowMessage(data="test", target_id="t", source_id="s")
         await context.send_message(message)
 
         await context.drain_messages()  # First drain
@@ -99,7 +99,7 @@ class TestCapturingRunnerContext:
         """Test has_messages returns correct boolean."""
         assert await context.has_messages() is False
 
-        await context.send_message(Message(data="test", target_id="t", source_id="s"))
+        await context.send_message(WorkflowMessage(data="test", target_id="t", source_id="s"))
 
         assert await context.has_messages() is True
 
@@ -169,7 +169,7 @@ class TestCapturingRunnerContext:
     @pytest.mark.asyncio
     async def test_reset_for_new_run_clears_state(self, context: CapturingRunnerContext) -> None:
         """Test that reset_for_new_run clears all state."""
-        await context.send_message(Message(data="test", target_id="t", source_id="s"))
+        await context.send_message(WorkflowMessage(data="test", target_id="t", source_id="s"))
         await context.add_event(WorkflowEvent.output(executor_id="e", data="event"))
         context.set_streaming(True)
 
@@ -204,18 +204,18 @@ class TestSerializationRoundtrip:
     """Test that serialization roundtrips correctly for types used in Azure Functions workflows."""
 
     def test_roundtrip_chat_message(self) -> None:
-        """Test ChatMessage survives encode → decode roundtrip."""
-        original = ChatMessage(role="user", text="Hello")
+        """Test Message survives encode → decode roundtrip."""
+        original = Message(role="user", text="Hello")
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
 
-        assert isinstance(decoded, ChatMessage)
+        assert isinstance(decoded, Message)
         assert decoded.role == "user"
 
     def test_roundtrip_agent_executor_request(self) -> None:
-        """Test AgentExecutorRequest with nested ChatMessages roundtrips."""
+        """Test AgentExecutorRequest with nested Messages roundtrips."""
         original = AgentExecutorRequest(
-            messages=[ChatMessage(role="user", text="Hi")],
+            messages=[Message(role="user", text="Hi")],
             should_respond=True,
         )
         encoded = serialize_value(original)
@@ -223,14 +223,14 @@ class TestSerializationRoundtrip:
 
         assert isinstance(decoded, AgentExecutorRequest)
         assert len(decoded.messages) == 1
-        assert isinstance(decoded.messages[0], ChatMessage)
+        assert isinstance(decoded.messages[0], Message)
         assert decoded.should_respond is True
 
     def test_roundtrip_agent_executor_response(self) -> None:
         """Test AgentExecutorResponse with nested AgentResponse roundtrips."""
         original = AgentExecutorResponse(
             executor_id="test_exec",
-            agent_response=AgentResponse(messages=[ChatMessage(role="assistant", text="Reply")]),
+            agent_response=AgentResponse(messages=[Message(role="assistant", text="Reply")]),
         )
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
@@ -270,24 +270,24 @@ class TestSerializationRoundtrip:
     def test_roundtrip_list_of_objects(self) -> None:
         """Test list of typed objects roundtrips."""
         original = [
-            ChatMessage(role="user", text="Q"),
-            ChatMessage(role="assistant", text="A"),
+            Message(role="user", text="Q"),
+            Message(role="assistant", text="A"),
         ]
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
 
         assert isinstance(decoded, list)
         assert len(decoded) == 2
-        assert all(isinstance(m, ChatMessage) for m in decoded)
+        assert all(isinstance(m, Message) for m in decoded)
 
     def test_roundtrip_dict_of_objects(self) -> None:
         """Test dict with typed values roundtrips (used for shared state)."""
-        original = {"count": 42, "msg": ChatMessage(role="user", text="Hi")}
+        original = {"count": 42, "msg": Message(role="user", text="Hi")}
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
 
         assert decoded["count"] == 42
-        assert isinstance(decoded["msg"], ChatMessage)
+        assert isinstance(decoded["msg"], Message)
 
     def test_roundtrip_dataclass_with_nested_pydantic(self) -> None:
         """Test dataclass containing a Pydantic model field roundtrips correctly.
