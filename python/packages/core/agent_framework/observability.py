@@ -1557,7 +1557,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
         lambda tools: (
-            json.dumps(tools_dict)
+            json.dumps(tools_dict, ensure_ascii=False)
             if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
             else None
         ),
@@ -1639,12 +1639,14 @@ def _capture_messages(
         )
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
-    span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
+    span.set_attribute(
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
+    )
     if system_instructions:
         if not isinstance(system_instructions, list):
             system_instructions = [system_instructions]
         otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
-        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
+        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
 
 
 def _to_otel_message(message: Message) -> dict[str, Any]:

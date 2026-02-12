@@ -477,7 +477,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
                 if arguments
-                else json.dumps(serializable_kwargs, default=str)
+                else json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
                 if serializable_kwargs
                 else "None"
             })
