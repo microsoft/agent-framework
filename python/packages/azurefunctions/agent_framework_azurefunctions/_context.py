@@ -103,7 +103,10 @@ class CapturingRunnerContext(RunnerContext):
 
     async def create_checkpoint(
         self,
-        shared_state: State,
+        workflow_name: str,
+        graph_signature_hash: str,
+        state: State,
+        previous_checkpoint_id: str | None,
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
