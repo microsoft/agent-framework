@@ -14,7 +14,7 @@ The key is using **kwargs to receive the tools list from the framework, allowing
 runtime modification of available tools.
 
 Run this example with the following cmd (after setting appropriate Azure OpenAI env vars):
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=<your-deployment> && export AZURE_OPENAI_ENDPOINT=<your-endpoint> && uv run python samples/getting_started/tools/samples/getting_started/tools/function_tool_dynamic_tool_exposure.py
+export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=<your-deployment> && export AZURE_OPENAI_ENDPOINT=<your-endpoint> && uv run python samples/getting_started/tools/function_tool_dynamic_tool_exposure.py
 
 """
 
