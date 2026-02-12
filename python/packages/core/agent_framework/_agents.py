@@ -502,9 +502,16 @@ class BaseAgent(SerializationMixin):
             # the sub-agent's tools through **kwargs for correlation purposes.
             # We do NOT pass it via chat options because the sub-agent's chat client should
             # start its own conversation, not try to continue the parent's.
-            run_options: dict[str, Any] | None = None
+            # Merge into any existing options/additional_function_arguments to avoid replacing them.
+            existing_options = kwargs.get("options")
+            run_options: dict[str, Any] | None = dict(existing_options) if isinstance(existing_options, dict) else None
             if parent_conversation_id:
-                run_options = {"additional_function_arguments": {"parent_conversation_id": parent_conversation_id}}
+                if run_options is None:
+                    run_options = {}
+                existing_additional = run_options.get("additional_function_arguments") or {}
+                merged_additional = dict(existing_additional) if isinstance(existing_additional, dict) else {}
+                merged_additional["parent_conversation_id"] = parent_conversation_id
+                run_options["additional_function_arguments"] = merged_additional
 
             if stream_callback is None:
                 # Use non-streaming mode
