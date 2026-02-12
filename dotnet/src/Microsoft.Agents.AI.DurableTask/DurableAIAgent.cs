@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
@@ -215,8 +216,12 @@ public sealed class DurableAIAgent : AIAgent
         AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>(new ChatMessage(ChatRole.User, message), session, serializerOptions, options, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(message);
+
+        return this.RunAsync<T>(new ChatMessage(ChatRole.User, message), session, serializerOptions, options, cancellationToken);
+    }
 
     /// <summary>
     /// Runs the agent with a single chat message, requesting a response of the specified type <typeparamref name="T"/>.
@@ -240,8 +245,12 @@ public sealed class DurableAIAgent : AIAgent
         AgentSession? session = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunAsync<T>([message], session, serializerOptions, options, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(message);
+
+        return this.RunAsync<T>([message], session, serializerOptions, options, cancellationToken);
+    }
 
     /// <summary>
     /// Runs the agent with a collection of chat messages, requesting a response of the specified type <typeparamref name="T"/>.
@@ -275,12 +284,11 @@ public sealed class DurableAIAgent : AIAgent
         options = options?.Clone() ?? new DurableAgentRunOptions();
         options.ResponseFormat = responseFormat;
 
-        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken)
-            // ConfigureAwait(true) is intentional: the Durable Task Framework uses a custom
-            // synchronization context that requires all continuations to execute on the
-            // orchestration thread. Using ConfigureAwait(false) would schedule the continuation
-            // on an arbitrary thread, breaking the orchestration.
-            .ConfigureAwait(true);
+        // ConfigureAwait(false) cannot be used here because the Durable Task Framework uses
+        // a custom synchronization context that requires all continuations to execute on the
+        // orchestration thread. Scheduling the continuation on an arbitrary thread would break
+        // the orchestration.
+        AgentResponse response = await this.RunAsync(messages, session, options, cancellationToken);
 
         return new AgentResponse<T>(response, serializerOptions) { IsWrappedInObject = isWrappedInObject };
     }
