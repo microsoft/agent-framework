@@ -15,9 +15,9 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.FoundryMemory;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MEMORY_STORE_NAME") ?? "sample-memory-store-name";
-string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODEL") ?? "gpt-4.1";
-string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_EMBEDDING_MODEL") ?? "text-embedding-3-large";
+string memoryStoreName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MEMORY_STORE_NAME") ?? "memory-store-sample";
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODEL") ?? "gpt-4.1-mini";
+string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_EMBEDDING_MODEL") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
 AzureCliCredential credential = new();
@@ -88,7 +88,7 @@ internal sealed class DebugHttpClientHandler : HttpClientHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (!request.RequestUri?.PathAndQuery.Contains("sample-memory-store-name") ?? false)
+        if (!request.RequestUri?.PathAndQuery.Contains("memory-store-sample") ?? false)
         {
             return await base.SendAsync(request, cancellationToken);
         }
