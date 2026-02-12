@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Literal, cast
 
 from agent_framework import AgentSession, Message
-from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
 from openai.types.conversations.message import Message as OpenAIMessage
@@ -480,7 +480,7 @@ class InMemoryConversationStore(ConversationStore):
         checkpoint_storage = conv_data.get("checkpoint_storage")
         if checkpoint_storage:
             # Get all checkpoints for this conversation
-            checkpoints = await checkpoint_storage.list_checkpoints()
+            checkpoints = self._list_all_checkpoints(checkpoint_storage)
             for checkpoint in checkpoints:
                 # Create a conversation item for each checkpoint with summary metadata
                 # Full checkpoint state is NOT included here (too large for list view)
@@ -495,7 +495,9 @@ class InMemoryConversationStore(ConversationStore):
                     "id": f"checkpoint_{checkpoint.checkpoint_id}",
                     "type": "checkpoint",
                     "checkpoint_id": checkpoint.checkpoint_id,
-                    "workflow_id": checkpoint.workflow_id,
+                    # Keep workflow_id for backward compatibility with existing UI payloads.
+                    "workflow_id": checkpoint.workflow_name,
+                    "workflow_name": checkpoint.workflow_name,
                     "timestamp": checkpoint.timestamp,
                     "status": "completed",
                     "metadata": {
@@ -506,6 +508,7 @@ class InMemoryConversationStore(ConversationStore):
                         "message_count": sum(len(msgs) for msgs in checkpoint.messages.values()),
                         "size_bytes": checkpoint_size,
                         "version": checkpoint.version,
+                        "graph_signature_hash": checkpoint.graph_signature_hash,
                     },
                 }
                 items.append(cast(ConversationItem, checkpoint_item))
@@ -551,8 +554,9 @@ class InMemoryConversationStore(ConversationStore):
                 return None
 
             # Load full checkpoint from storage
-            checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
-            if not checkpoint:
+            try:
+                checkpoint = await checkpoint_storage.load(checkpoint_id)
+            except Exception:
                 return None
 
             # Calculate size of checkpoint
@@ -566,7 +570,9 @@ class InMemoryConversationStore(ConversationStore):
                 "id": item_id,
                 "type": "checkpoint",
                 "checkpoint_id": checkpoint.checkpoint_id,
-                "workflow_id": checkpoint.workflow_id,
+                # Keep workflow_id for backward compatibility with existing UI payloads.
+                "workflow_id": checkpoint.workflow_name,
+                "workflow_name": checkpoint.workflow_name,
                 "timestamp": checkpoint.timestamp,
                 "status": "completed",
                 "metadata": {
@@ -577,6 +583,7 @@ class InMemoryConversationStore(ConversationStore):
                     "message_count": sum(len(msgs) for msgs in checkpoint.messages.values()),
                     "size_bytes": checkpoint_size,
                     "version": checkpoint.version,
+                    "graph_signature_hash": checkpoint.graph_signature_hash,
                     # 🔥 FULL checkpoint state (lazy loaded)
                     "full_checkpoint": checkpoint.to_dict(),
                 },
@@ -631,8 +638,8 @@ class InMemoryConversationStore(ConversationStore):
                 if conv_meta.get("type") == "workflow_session":
                     checkpoint_storage = conv_data.get("checkpoint_storage")
                     if checkpoint_storage:
-                        checkpoints = await checkpoint_storage.list_checkpoints()
-                        latest = checkpoints[0] if checkpoints else None
+                        checkpoints = self._list_all_checkpoints(checkpoint_storage)
+                        latest = max(checkpoints, key=lambda cp: cp.timestamp) if checkpoints else None
                         conv_meta["checkpoint_summary"] = {
                             "count": len(checkpoints),
                             "latest_iteration": latest.iteration_count if latest else 0,
@@ -653,6 +660,19 @@ class InMemoryConversationStore(ConversationStore):
         results.sort(key=lambda c: c.created_at, reverse=True)
 
         return results
+
+    @staticmethod
+    def _list_all_checkpoints(checkpoint_storage: Any) -> list[WorkflowCheckpoint]:
+        """Return all checkpoints from a conversation-scoped storage instance.
+
+        DevUI uses one checkpoint storage per conversation. Core storage APIs now
+        require workflow_name filters, so we gather directly from in-memory storage
+        internals to provide conversation-wide listing for UI views.
+        """
+        checkpoint_map = getattr(checkpoint_storage, "_checkpoints", None)
+        if isinstance(checkpoint_map, dict):
+            return list(cast(dict[str, WorkflowCheckpoint], checkpoint_map).values())
+        return []
 
 
 class CheckpointConversationManager:

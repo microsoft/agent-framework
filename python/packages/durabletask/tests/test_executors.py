@@ -189,19 +189,29 @@ class TestClientAgentExecutorPollingConfiguration:
         # Verify get_entity was called 2 times (max_poll_retries)
         assert mock_client.get_entity.call_count == 2
 
-    def test_executor_respects_custom_poll_interval(self, mock_client: Mock, sample_run_request: RunRequest) -> None:
+    def test_executor_respects_custom_poll_interval(
+        self,
+        mock_client: Mock,
+        sample_run_request: RunRequest,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Verify executor respects custom poll_interval_seconds during polling."""
         # Create executor with very short interval
         executor = ClientAgentExecutor(mock_client, max_poll_retries=3, poll_interval_seconds=0.01)
 
-        # Measure time taken
-        start = time.time()
-        result = executor.run_durable_agent("test_agent", sample_run_request)
-        elapsed = time.time() - start
+        sleep_calls: list[float] = []
 
-        # Should take roughly 3 * 0.01 = 0.03 seconds (plus overhead)
-        # Be generous with timing to avoid flakiness
-        assert elapsed < 0.2  # Should be quick with 0.01 interval
+        def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        # Use deterministic assertions instead of wall-clock timing to avoid CI flakiness.
+        monkeypatch.setattr("agent_framework_durabletask._executors.time.sleep", fake_sleep)
+
+        result = executor.run_durable_agent("test_agent", sample_run_request)
+
+        assert len(sleep_calls) == 3
+        assert sleep_calls == pytest.approx([0.01, 0.01, 0.01])
+        assert mock_client.get_entity.call_count == 3
         assert isinstance(result, AgentResponse)
 
 

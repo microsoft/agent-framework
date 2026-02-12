@@ -50,6 +50,57 @@ class _CountingAgent(BaseAgent):
         return _run()
 
 
+class _StreamingHookAgent(BaseAgent):
+    """Agent that exposes whether its streaming result hook was executed."""
+
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.result_hook_called = False
+
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text(text="hook test")],
+                    role="assistant",
+                )
+
+            async def _mark_result_hook_called(response: AgentResponse) -> AgentResponse:
+                self.result_hook_called = True
+                return response
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates).with_result_hook(
+                _mark_result_hook_called
+            )
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", ["hook test"])])
+
+        return _run()
+
+
+async def test_agent_executor_streaming_finalizes_stream_and_runs_result_hooks() -> None:
+    """AgentExecutor should call get_final_response() so stream result hooks execute."""
+    agent = _StreamingHookAgent(id="hook_agent", name="HookAgent")
+    executor = AgentExecutor(agent, id="hook_exec")
+    workflow = SequentialBuilder(participants=[executor]).build()
+
+    output_events: list[Any] = []
+    async for event in workflow.run("run hook test", stream=True):
+        if event.type == "output":
+            output_events.append(event)
+
+    assert output_events
+    assert agent.result_hook_called
+
+
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     """Test that workflow checkpoint stores AgentExecutor's cache and session states and restores them correctly."""
     storage = InMemoryCheckpointStorage()

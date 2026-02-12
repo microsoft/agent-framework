@@ -911,19 +911,21 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if ctx is None:
                 return  # No context available (shouldn't happen in normal flow)
 
+            # Update thread with conversation_id derived from streaming raw updates.
+            # Using response_id here can break function-call continuation for APIs
+            # where response IDs are not valid conversation handles.
+            conversation_id = self._extract_conversation_id_from_streaming_response(response)
             # Ensure author names are set for all messages
             for message in response.messages:
                 if message.author_name is None:
                     message.author_name = ctx["agent_name"]
 
-            # Propagate conversation_id back to session from streaming updates
+            # Propagate conversation_id back to session from streaming updates.
+            # For Responses-style APIs this can rotate every turn (response_id-based continuation),
+            # so refresh when a newer value is returned.
             sess = ctx["session"]
-            if sess and not sess.service_session_id and response.raw_representation:
-                raw_items = response.raw_representation if isinstance(response.raw_representation, list) else []
-                for item in raw_items:
-                    if hasattr(item, "conversation_id") and item.conversation_id:
-                        sess.service_session_id = item.conversation_id
-                        break
+            if sess and conversation_id and sess.service_session_id != conversation_id:
+                sess.service_session_id = conversation_id
 
             # Run after_run providers (reverse order)
             session_context = ctx["session_context"]
@@ -973,6 +975,27 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         """Finalize response updates into a single AgentResponse."""
         output_format_type = response_format if isinstance(response_format, type) else None
         return AgentResponse.from_updates(updates, output_format_type=output_format_type)
+
+    @staticmethod
+    def _extract_conversation_id_from_streaming_response(response: AgentResponse[Any]) -> str | None:
+        """Extract conversation_id from streaming raw updates, if present."""
+        raw = response.raw_representation
+        if raw is None:
+            return None
+
+        raw_items: list[Any] = raw if isinstance(raw, list) else [raw]
+        for item in reversed(raw_items):
+            if isinstance(item, Mapping):
+                value = item.get("conversation_id")
+                if isinstance(value, str) and value:
+                    return value
+                continue
+
+            value = getattr(item, "conversation_id", None)
+            if isinstance(value, str) and value:
+                return value
+
+        return None
 
     async def _prepare_run_context(
         self,
@@ -1100,8 +1123,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if message.author_name is None:
                 message.author_name = agent_name
 
-        # Propagate conversation_id back to session (e.g. thread ID from Assistants API)
-        if session and response.conversation_id and not session.service_session_id:
+        # Propagate conversation_id back to session (e.g. thread ID from Assistants API).
+        # For Responses-style APIs this can rotate every turn (response_id-based continuation),
+        # so refresh when a newer value is returned.
+        if session and response.conversation_id and session.service_session_id != response.conversation_id:
             session.service_session_id = response.conversation_id
 
         # Set the response on the context for after_run providers

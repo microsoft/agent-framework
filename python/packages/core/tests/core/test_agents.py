@@ -17,6 +17,7 @@ from agent_framework import (
     BaseContextProvider,
     ChatOptions,
     ChatResponse,
+    ChatResponseUpdate,
     Content,
     FunctionTool,
     Message,
@@ -152,6 +153,111 @@ async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChat
     assert result.text == "test response"
 
     assert session.service_session_id == "123"
+
+
+async def test_chat_client_agent_updates_existing_session_id_non_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
+            conversation_id="resp_new_123",
+        )
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.get_session(service_session_id="resp_old_123")
+
+    await agent.run("Hello", session=session)
+    assert session.service_session_id == "resp_new_123"
+
+
+async def test_chat_client_agent_update_session_id_streaming_uses_conversation_id(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("stream part 1")],
+                role="assistant",
+                response_id="resp_stream_123",
+                conversation_id="conv_stream_456",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_text(" stream part 2")],
+                role="assistant",
+                response_id="resp_stream_123",
+                conversation_id="conv_stream_456",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+
+    stream = agent.run("Hello", session=session, stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+    assert result.text == "stream part 1 stream part 2"
+    assert session.service_session_id == "conv_stream_456"
+
+
+async def test_chat_client_agent_updates_existing_session_id_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("stream part 1")],
+                role="assistant",
+                response_id="resp_stream_123",
+                conversation_id="resp_new_456",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_text(" stream part 2")],
+                role="assistant",
+                response_id="resp_stream_123",
+                conversation_id="resp_new_456",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.get_session(service_session_id="resp_old_456")
+
+    stream = agent.run("Hello", session=session, stream=True)
+    async for _ in stream:
+        pass
+    await stream.get_final_response()
+    assert session.service_session_id == "resp_new_456"
+
+
+async def test_chat_client_agent_update_session_id_streaming_does_not_use_response_id(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("stream response without conversation id")],
+                role="assistant",
+                response_id="resp_only_123",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+
+    stream = agent.run("Hello", session=session, stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+    assert result.text == "stream response without conversation id"
+    assert session.service_session_id is None
 
 
 async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:

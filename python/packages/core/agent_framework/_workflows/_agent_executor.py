@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -358,22 +358,31 @@ class AgentExecutor(Executor):
         run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {})
 
         updates: list[AgentResponseUpdate] = []
-        user_input_requests: list[Content] = []
-        async for update in self._agent.run(
+        streamed_user_input_requests: list[Content] = []
+        stream = self._agent.run(
             self._cache,
             stream=True,
             session=self._session,
             options=options,
             **run_kwargs,
-        ):
+        )
+        async for update in stream:
             updates.append(update)
             await ctx.yield_output(update)
-
             if update.user_input_requests:
-                user_input_requests.extend(update.user_input_requests)
+                streamed_user_input_requests.extend(update.user_input_requests)
 
-        # Build the final AgentResponse from the collected updates
-        if is_chat_agent(self._agent):
+        # Prefer stream finalization when available so result hooks run
+        # (e.g., thread conversation updates). Fall back to reconstructing from updates
+        # for legacy/custom agents that return a plain async iterable.
+        # TODO(evmattso): Integrate workflow agent run handling around ResponseStream so
+        # AgentExecutor does not need this conditional stream-finalization branch.
+        maybe_get_final_response = getattr(stream, "get_final_response", None)
+        get_final_response = maybe_get_final_response if callable(maybe_get_final_response) else None
+        response: AgentResponse[Any]
+        if get_final_response is not None:
+            response = await cast(Callable[[], Awaitable[AgentResponse[Any]]], get_final_response)()
+        elif is_chat_agent(self._agent):
             response_format = self._agent.default_options.get("response_format")
             response = AgentResponse.from_updates(
                 updates,
@@ -383,6 +392,16 @@ class AgentExecutor(Executor):
             response = AgentResponse.from_updates(updates)
 
         # Handle any user input requests after the streaming completes
+        user_input_requests: list[Content] = []
+        seen_request_ids: set[str] = set()
+        for user_input_request in [*streamed_user_input_requests, *response.user_input_requests]:
+            request_id = getattr(user_input_request, "id", None)
+            if isinstance(request_id, str) and request_id:
+                if request_id in seen_request_ids:
+                    continue
+                seen_request_ids.add(request_id)
+            user_input_requests.append(user_input_request)
+
         if user_input_requests:
             for user_input_request in user_input_requests:
                 self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]

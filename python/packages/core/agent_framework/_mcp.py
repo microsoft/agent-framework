@@ -872,7 +872,16 @@ class MCPTool:
             k: v
             for k, v in kwargs.items()
             if k
-            not in {"chat_options", "tools", "tool_choice", "session", "thread", "conversation_id", "options", "response_format"}
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
         }
 
         parser = self.parse_tool_results or _parse_tool_result_from_mcp
