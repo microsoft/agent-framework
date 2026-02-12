@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,7 +29,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
@@ -648,21 +649,36 @@ def get_weather(location: str) -> str:
     return f"The weather in {location} is sunny and 72°F."
 
 
-def test_web_search_tool_raises_error(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Test that web search tools raise ServiceInvalidRequestError on Azure."""
+def test_web_search_tool_filtered_with_warning(azure_openai_unit_test_env: dict[str, str], caplog: pytest.LogCaptureFixture) -> None:
+    """Test that web search tools are filtered out with a warning on Azure."""
     client = AzureOpenAIChatClient()
 
     web_search_tool = {"type": "web_search"}
-    with pytest.raises(ServiceInvalidRequestError, match="Web search tools are not supported"):
-        client._prepare_tools_for_openai([web_search_tool])
+    
+    with caplog.at_level(logging.WARNING):
+        result = client._prepare_tools_for_openai([web_search_tool])
+    
+    assert "Web search tools are not supported" in caplog.text
+    # Web search should be filtered out, result should have no tools or web_search_options
+    assert "web_search_options" not in result
+    assert "tools" not in result
 
-    # Also test with additional options
-    web_search_tool_with_options = {
-        "type": "web_search",
-        "user_location": {"type": "approximate", "approximate": {"city": "Seattle", "country": "US"}},
-    }
-    with pytest.raises(ServiceInvalidRequestError, match="Web search tools are not supported"):
-        client._prepare_tools_for_openai([web_search_tool_with_options])
+
+def test_web_search_tool_filtered_preserves_other_tools(azure_openai_unit_test_env: dict[str, str], caplog: pytest.LogCaptureFixture) -> None:
+    """Test that filtering web search tools preserves other tools in the list."""
+    client = AzureOpenAIChatClient()
+
+    web_search_tool = {"type": "web_search", "search_context_size": "medium"}
+
+    with caplog.at_level(logging.WARNING):
+        result = client._prepare_tools_for_openai([get_weather, web_search_tool])
+    
+    assert "Web search tools are not supported" in caplog.text
+
+    # Normal tool should still be present
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert "web_search_options" not in result
 
 
 def test_prepare_tools_normal_tools_work(azure_openai_unit_test_env: dict[str, str]) -> None:

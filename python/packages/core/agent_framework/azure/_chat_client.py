@@ -23,7 +23,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
@@ -291,26 +291,28 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
     def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
         """Prepare tools for the Azure OpenAI Chat Completions API.
 
-        Overrides the base implementation to raise an error when web search tools
-        are used, since Azure OpenAI's Chat Completions API does not support the
-        ``web_search_options`` parameter.
+        Overrides the base implementation to filter out web search tools,
+        since Azure OpenAI's Chat Completions API does not support the
+        ``web_search_options`` parameter. Web search tools are silently
+        removed with a warning logged.
 
         Args:
             tools: Sequence of tools to prepare.
 
         Returns:
-            Dict containing tools.
-
-        Raises:
-            ServiceInvalidRequestError: If a web search tool is included.
+            Dict containing prepared tools, with web search tools filtered out.
         """
+        filtered_tools: list[Any] = []
         for tool in tools:
             if isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
-                raise ServiceInvalidRequestError(
-                    "Web search tools are not supported by Azure OpenAI's Chat Completions API. "
-                    "Use OpenAIChatClient or AzureOpenAIResponsesClient instead."
+                logger.warning(
+                    "Web search tools are not supported by Azure OpenAI's Chat Completions API "
+                    "and will be skipped. Use OpenAIChatClient or AzureOpenAIResponsesClient "
+                    "for web search support."
                 )
-        return super()._prepare_tools_for_openai(tools)
+                continue
+            filtered_tools.append(tool)
+        return super()._prepare_tools_for_openai(filtered_tools)
 
     @override
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
