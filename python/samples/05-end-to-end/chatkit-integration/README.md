@@ -168,7 +168,7 @@ For **production deployment**:
 1. **Install Python packages:**
 
 ```bash
-cd python/samples/demos/chatkit-integration
+cd python/samples/05-end-to-end/chatkit-integration
 pip install agent-framework-chatkit fastapi uvicorn azure-identity
 ```
 
