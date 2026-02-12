@@ -20,11 +20,10 @@ from agent_framework import (
     Content,
     Context,
     ContextProvider,
-    HostedCodeInterpreterTool,
+    FunctionTool,
     Message,
     SupportsAgentRun,
     SupportsChatGetResponse,
-    ToolProtocol,
     tool,
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
@@ -117,7 +116,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(client: SupportsCha
 
 
 async def test_prepare_thread_does_not_mutate_agent_chat_options(client: SupportsChatGetResponse) -> None:
-    tool = HostedCodeInterpreterTool()
+    tool = {"type": "code_interpreter"}
     agent = Agent(client=client, tools=[tool])
 
     assert agent.default_options.get("tools") is not None
@@ -132,7 +131,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(client: Support
     assert prepared_chat_options.get("tools") is not None
     assert base_tools is not prepared_chat_options["tools"]
 
-    prepared_chat_options["tools"].append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
+    prepared_chat_options["tools"].append({"type": "code_interpreter"})  # type: ignore[arg-type]
     assert len(agent.default_options["tools"]) == 1
 
 
@@ -144,7 +143,7 @@ async def test_chat_client_agent_update_thread_id(chat_client_base: SupportsChat
     chat_client_base.run_responses = [mock_response]
     agent = Agent(
         client=chat_client_base,
-        tools=HostedCodeInterpreterTool(),
+        tools={"type": "code_interpreter"},
     )
     thread = agent.get_new_thread()
 
@@ -207,7 +206,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
         )
     ]
 
-    agent = Agent(client=chat_client_base, tools=HostedCodeInterpreterTool())
+    agent = Agent(client=chat_client_base, tools={"type": "code_interpreter"})
 
     result = await agent.run("Hello")
     assert result.text == "test response"
@@ -806,7 +805,7 @@ def test_sanitize_agent_name_replaces_invalid_chars():
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread(chat_client_base: SupportsChatGetResponse, tool_tool: ToolProtocol):
+async def test_agent_get_new_thread(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
     """Test that get_new_thread returns a new AgentThread."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
 
@@ -818,7 +817,7 @@ async def test_agent_get_new_thread(chat_client_base: SupportsChatGetResponse, t
 
 @pytest.mark.asyncio
 async def test_agent_get_new_thread_with_context_provider(
-    chat_client_base: SupportsChatGetResponse, tool_tool: ToolProtocol
+    chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
 ):
     """Test that get_new_thread passes context_provider to the thread."""
 
@@ -837,7 +836,7 @@ async def test_agent_get_new_thread_with_context_provider(
 
 @pytest.mark.asyncio
 async def test_agent_get_new_thread_with_service_thread_id(
-    chat_client_base: SupportsChatGetResponse, tool_tool: ToolProtocol
+    chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
 ):
     """Test that get_new_thread passes kwargs like service_thread_id to the thread."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
@@ -849,7 +848,7 @@ async def test_agent_get_new_thread_with_service_thread_id(
 
 
 @pytest.mark.asyncio
-async def test_agent_deserialize_thread(chat_client_base: SupportsChatGetResponse, tool_tool: ToolProtocol):
+async def test_agent_deserialize_thread(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
     """Test deserialize_thread restores a thread from serialized state."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
 

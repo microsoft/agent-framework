@@ -35,13 +35,13 @@ def unstable_data_service(
 
 
 async def exception_handling_middleware(
-    context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
+    context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
 ) -> None:
     function_name = context.function.name
 
     try:
         print(f"[ExceptionHandlingMiddleware] Executing function: {function_name}")
-        await call_next(context)
+        await call_next()
         print(f"[ExceptionHandlingMiddleware] Function {function_name} completed successfully.")
     except TimeoutError as e:
         print(f"[ExceptionHandlingMiddleware] Caught TimeoutError: {e}")

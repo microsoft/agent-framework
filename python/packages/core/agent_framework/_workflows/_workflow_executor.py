@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._checkpoint_encoding import decode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
@@ -454,8 +454,7 @@ class WorkflowExecutor(Executor):
         """Get the current state of the WorkflowExecutor for checkpointing purposes."""
         return {
             "execution_contexts": {
-                execution_id: encode_checkpoint_value(execution_context)
-                for execution_id, execution_context in self._execution_contexts.items()
+                execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
         }
@@ -654,21 +653,6 @@ class WorkflowExecutor(Executor):
         try:
             # Resume the sub-workflow with all collected responses
             result = await self.workflow.run(responses=responses_to_send)
-            # Remove handled requests from result. The result may contain the original
-            # RequestInfoEvents that were already handled. This is due to checkpointing
-            # and rehydration of the workflow that re-adds the RequestInfoEvents to the
-            # workflow's _runner_context thus the event queue. When the workflow is resumed,
-            # those events will be emitted at the very beginning of the superstep, prior to
-            # processing messages/responses, creating the illusion that the workflow is
-            # requesting the same information again.
-            for request_id in responses_to_send:
-                event_to_remove = next(
-                    (event for event in result if event.type == "request_info" and event.request_id == request_id),
-                    None,
-                )
-                if event_to_remove:
-                    result.remove(event_to_remove)
-
             # Process the workflow result using shared logic
             await self._process_workflow_result(result, execution_context, ctx)
         finally:

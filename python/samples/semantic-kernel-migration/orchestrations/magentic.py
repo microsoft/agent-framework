@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import Agent, HostedCodeInterpreterTool
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
@@ -138,12 +138,16 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
     )
 
+    # Create code interpreter tool using instance method
+    coder_client = OpenAIResponsesClient()
+    code_interpreter_tool = coder_client.get_code_interpreter_tool()
+
     coder = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        client=OpenAIResponsesClient(),
-        tools=HostedCodeInterpreterTool(),
+        client=coder_client,
+        tools=code_interpreter_tool,
     )
 
     # Create a manager agent for orchestration

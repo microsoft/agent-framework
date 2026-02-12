@@ -18,7 +18,6 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from ._tools import ToolProtocol
 from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
@@ -110,7 +109,7 @@ class SessionContext:
         input_messages: list[Message],
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
-        tools: list[ToolProtocol] | None = None,
+        tools: list[Any] | None = None,
         options: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ):
@@ -131,7 +130,7 @@ class SessionContext:
         self.input_messages = input_messages
         self.context_messages: dict[str, list[Message]] = context_messages or {}
         self.instructions: list[str] = instructions or []
-        self.tools: list[ToolProtocol] = tools or []
+        self.tools: list[Any] = tools or []
         self._response: AgentResponse | None = None
         self.options: dict[str, Any] = options or {}
         self.metadata: dict[str, Any] = metadata or {}
@@ -185,7 +184,7 @@ class SessionContext:
             instructions = [instructions]
         self.instructions.extend(instructions)
 
-    def extend_tools(self, source_id: str, tools: Sequence[ToolProtocol]) -> None:
+    def extend_tools(self, source_id: str, tools: Sequence[Any]) -> None:
         """Add tools to be available for this invocation.
 
         Tools are added with source attribution in their metadata.

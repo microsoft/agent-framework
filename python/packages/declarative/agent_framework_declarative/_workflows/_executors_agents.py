@@ -656,10 +656,22 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         if isinstance(messages_for_agent, list) and messages_for_agent:
             _validate_conversation_history(messages_for_agent, agent_name)
 
+        # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
+        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+
+        run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        options: dict[str, Any] | None = None
+        if run_kwargs:
+            # Merge caller-provided options to avoid duplicate keyword argument
+            options = dict(run_kwargs.get("options") or {})
+            options["additional_function_arguments"] = run_kwargs
+            # Exclude 'options' from splat to avoid TypeError on duplicate keyword
+            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed
         # by their results in the message history
-        result: Any = await agent.run(messages_for_agent)
+        result: Any = await agent.run(messages_for_agent, options=options, **run_kwargs)
         if hasattr(result, "text") and result.text:
             accumulated_response = str(result.text)
             if auto_send:

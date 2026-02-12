@@ -15,7 +15,6 @@ from agent_framework import (
     AgentThread,
     ChatResponse,
     ChatResponseUpdate,
-    HostedCodeInterpreterTool,
     Message,
     SupportsChatGetResponse,
     tool,
@@ -513,7 +512,7 @@ async def test_azure_assistants_agent_code_interpreter():
     async with Agent(
         client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
-        tools=[HostedCodeInterpreterTool()],
+        tools=[AzureOpenAIAssistantsClient.get_code_interpreter_tool()],
     ) as agent:
         # Request code execution
         response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")

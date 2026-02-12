@@ -140,10 +140,9 @@ async def main():
                 break
 
         # Find the latest checkpoint to resume from
-        all_checkpoints = await checkpoint_storage.list_checkpoints()
-        if not all_checkpoints:
+        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow.name)
+        if not latest_checkpoint:
             raise RuntimeError("No checkpoints available to resume from.")
-        latest_checkpoint = all_checkpoints[-1]
         print(
             f"Checkpoint {latest_checkpoint.checkpoint_id}: "
             f"(iter={latest_checkpoint.iteration_count}, messages={latest_checkpoint.messages})"

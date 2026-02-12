@@ -59,15 +59,14 @@ class OrchestrationState:
         Returns:
             Dict with encoded conversation and metadata for persistence
         """
-        from agent_framework._workflows._conversation_state import encode_chat_messages
-
         result: dict[str, Any] = {
-            "conversation": encode_chat_messages(self.conversation),
+            "conversation": self.conversation,
             "round_index": self.round_index,
+            "orchestrator_name": self.orchestrator_name,
             "metadata": dict(self.metadata),
         }
         if self.task is not None:
-            result["task"] = encode_chat_messages([self.task])[0]
+            result["task"] = self.task
         return result
 
     @classmethod
@@ -80,16 +79,15 @@ class OrchestrationState:
         Returns:
             Restored OrchestrationState instance
         """
-        from agent_framework._workflows._conversation_state import decode_chat_messages
-
         task = None
         if "task" in data:
-            decoded_tasks = decode_chat_messages([data["task"]])
+            decoded_tasks = [data["task"]]
             task = decoded_tasks[0] if decoded_tasks else None
 
         return cls(
-            conversation=decode_chat_messages(data.get("conversation", [])),
+            conversation=data.get("conversation", []),
             round_index=data.get("round_index", 0),
+            orchestrator_name=data.get("orchestrator_name", ""),
             metadata=dict(data.get("metadata", {})),
             task=task,
         )

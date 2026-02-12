@@ -430,7 +430,7 @@ class AgentFrameworkExecutor:
             elif hil_responses:
                 # Only auto-resume from latest checkpoint when we have HIL responses
                 # Regular "Run" clicks should start fresh, not resume from checkpoints
-                checkpoints = await checkpoint_storage.list_checkpoints()  # No workflow_id filter needed!
+                checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
                 if checkpoints:
                     latest = max(checkpoints, key=lambda cp: cp.timestamp)
                     checkpoint_id = latest.checkpoint_id

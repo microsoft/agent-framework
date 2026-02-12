@@ -9,7 +9,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from itertools import chain
@@ -26,10 +25,8 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedWebSearchTool,
     Message,
     ResponseStream,
-    ToolProtocol,
     UsageDetails,
     get_logger,
 )
@@ -343,7 +340,7 @@ class OllamaChatClient(
         self.model_id = ollama_settings.model_id
         self.client = client or AsyncClient(host=ollama_settings.host)
         # Save Host URL for serialization with to_dict()
-        self.host = str(self.client._client.base_url)
+        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
         super().__init__(
             middleware=middleware,
@@ -559,21 +556,22 @@ class OllamaChatClient(
             resp.append(fcc)
         return resp
 
-    def _prepare_tools_for_ollama(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
-        chat_tools: list[dict[str, Any]] = []
+    def _prepare_tools_for_ollama(self, tools: list[Any]) -> list[Any]:
+        """Prepare tools for the Ollama API.
+
+        Converts FunctionTool to JSON schema format. All other tools pass through unchanged.
+
+        Args:
+            tools: List of tools to prepare.
+
+        Returns:
+            List of tool definitions ready for the Ollama API.
+        """
+        chat_tools: list[Any] = []
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case HostedWebSearchTool():
-                        raise ServiceInvalidRequestError("HostedWebSearchTool is not supported by the Ollama client.")
-                    case _:
-                        raise ServiceInvalidRequestError(
-                            "Unsupported tool type '"
-                            f"{type(tool).__name__}"
-                            "' for Ollama client. Supported tool types: FunctionTool."
-                        )
+            if isinstance(tool, FunctionTool):
+                chat_tools.append(tool.to_json_schema_spec())
             else:
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
+                # Pass through all other tools unchanged
+                chat_tools.append(tool)
         return chat_tools

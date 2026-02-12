@@ -50,7 +50,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
     async def process(
         self,
         context: AgentContext,
-        call_next: Callable[[AgentContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         # Check for potential security violations in the query
         # Look at the last user message
@@ -67,7 +67,7 @@ class SecurityAgentMiddleware(AgentMiddleware):
                 return
 
         print("[SecurityAgentMiddleware] Security check passed.")
-        await call_next(context)
+        await call_next()
 
 
 class LoggingFunctionMiddleware(FunctionMiddleware):
@@ -76,14 +76,14 @@ class LoggingFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         function_name = context.function.name
         print(f"[LoggingFunctionMiddleware] About to call function: {function_name}.")
 
         start_time = time.time()
 
-        await call_next(context)
+        await call_next()
 
         end_time = time.time()
         duration = end_time - start_time

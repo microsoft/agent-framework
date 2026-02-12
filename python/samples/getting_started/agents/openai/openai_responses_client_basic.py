@@ -29,7 +29,7 @@ response generation, showing both streaming and non-streaming responses.
 @chat_middleware
 async def security_and_override_middleware(
     context: ChatContext,
-    call_next: Callable[[ChatContext], Awaitable[None]],
+    call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Function-based middleware that implements security filtering and response override."""
     print("[SecurityMiddleware] Processing input...")
@@ -60,13 +60,15 @@ async def security_and_override_middleware(
                     raise MiddlewareTermination(result=context.result)
 
     # Continue to next middleware or AI execution
-    await call_next(context)
+    await call_next()
 
     print("[SecurityMiddleware] Response generated.")
     print(type(context.result))
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/getting_started/tools/function_tool_with_approval.py
+# and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -101,7 +103,7 @@ async def streaming_example() -> None:
             middleware=[security_and_override_middleware],
         ),
         instructions="You are a helpful weather agent.",
-        # tools=get_weather,
+        tools=get_weather,
     )
 
     query = "What's the weather like in Portland?"

@@ -15,10 +15,8 @@ from pytest import param
 from agent_framework import (
     ChatResponse,
     Content,
-    HostedWebSearchTool,
     Message,
     SupportsChatGetResponse,
-    ToolProtocol,
     prepare_function_call_results,
     tool,
 )
@@ -172,18 +170,22 @@ async def test_content_filter_exception_handling(openai_unit_test_env: dict[str,
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that unsupported tool types are handled correctly."""
+    """Test that unsupported tool types are passed through unchanged."""
     client = OpenAIChatClient()
 
-    # Create a mock ToolProtocol that's not a FunctionTool
-    unsupported_tool = MagicMock(spec=ToolProtocol)
-    unsupported_tool.__class__.__name__ = "UnsupportedAITool"
+    # Create a random object that's not a FunctionTool, dict, or callable
+    # This simulates an unsupported tool type that gets passed through
+    class UnsupportedTool:
+        pass
 
-    # This should ignore the unsupported ToolProtocol and return empty list
+    unsupported_tool = UnsupportedTool()
+
+    # Unsupported tools are passed through for the API to handle/reject
     result = client._prepare_tools_for_openai([unsupported_tool])  # type: ignore
-    assert result == {}
+    assert "tools" in result
+    assert len(result["tools"]) == 1
 
-    # Also test with a non-ToolProtocol that should be converted to dict
+    # Also test with a dict-based tool that should be passed through
     dict_tool = {"type": "function", "name": "test"}
     result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
     assert result["tools"] == [dict_tool]
@@ -770,8 +772,8 @@ def test_prepare_tools_with_web_search_no_location(openai_unit_test_env: dict[st
     """Test preparing web search tool without user location."""
     client = OpenAIChatClient()
 
-    # Web search tool without additional_properties
-    web_search_tool = HostedWebSearchTool()
+    # Web search tool using static method
+    web_search_tool = OpenAIChatClient.get_web_search_tool()
 
     result = client._prepare_tools_for_openai([web_search_tool])
 
@@ -1071,11 +1073,13 @@ async def test_integration_web_search() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     for streaming in [False, True]:
+        # Use static method for web search tool
+        web_search_tool = OpenAIChatClient.get_web_search_tool()
         content = {
             "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool()],
+                "tools": [web_search_tool],
             },
         }
         if streaming:
@@ -1090,17 +1094,19 @@ async def test_integration_web_search() -> None:
         assert "Zoey" in response.text
 
         # Test that the client will use the web search tool with location
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
+        web_search_tool_with_location = OpenAIChatClient.get_web_search_tool(
+            web_search_options={
+                "user_location": {
+                    "type": "approximate",
+                    "approximate": {"country": "US", "city": "Seattle"},
+                },
             }
-        }
+        )
         content = {
             "messages": "What is the current weather? Do not ask for my current location.",
             "options": {
                 "tool_choice": "auto",
-                "tools": [HostedWebSearchTool(additional_properties=additional_properties)],
+                "tools": [web_search_tool_with_location],
             },
         }
         if streaming:

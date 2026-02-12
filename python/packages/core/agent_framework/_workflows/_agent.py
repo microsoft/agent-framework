@@ -718,7 +718,7 @@ class WorkflowAgent(BaseAgent):
     def _extract_contents(self, data: Any) -> list[Content]:
         """Recursively extract Content from workflow output data."""
         if isinstance(data, list):
-            return [c for item in data for c in self._extract_contents(item)]
+            return [c for item in data for c in self._extract_contents(item)]  # type: ignore
         if isinstance(data, Content):
             return [data]  # type: ignore[redundant-cast]
         if isinstance(data, str):
