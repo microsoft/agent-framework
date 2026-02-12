@@ -302,6 +302,7 @@ keep `approval_mode="always_require"` unless you are confident in the tool behav
 | File | Description |
 |------|-------------|
 | [`getting_started/tools/function_tool_declaration_only.py`](./getting_started/tools/function_tool_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
+| [`getting_started/tools/function_tool_dynamic_tool_exposure.py`](./getting_started/tools/function_tool_dynamic_tool_exposure.py) | Dynamic tool loading where tools can add new tools at runtime |
 | [`getting_started/tools/function_tool_from_dict_with_dependency_injection.py`](./getting_started/tools/function_tool_from_dict_with_dependency_injection.py) | Creating local tools from dictionary definitions using dependency injection |
 | [`getting_started/tools/function_tool_recover_from_failures.py`](./getting_started/tools/function_tool_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
 | [`getting_started/tools/function_tool_with_approval.py`](./getting_started/tools/function_tool_with_approval.py) | User approval workflows for function calls without threads |

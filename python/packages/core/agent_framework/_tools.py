@@ -1316,6 +1316,25 @@ async def _try_execute_function_calls(
     from ._types import Content
 
     tool_map = _get_tool_map(tools)
+
+    # Make tools list available to functions that accept **kwargs
+    # Use the same list object if tools is already a list so modifications persist
+    tools_list: list[Any]
+    if isinstance(tools, list):
+        # Use the same list object so modifications persist
+        tools_list = tools
+    elif isinstance(tools, Sequence) and not isinstance(tools, (str, bytes)):
+        # Convert other sequences to list
+        tools_list = list(tools)
+    elif tools is not None:
+        tools_list = [tools]
+    else:
+        tools_list = []
+
+    # Add tools list to custom_args so functions can access and modify it
+    custom_args_with_tools = dict(custom_args)
+    custom_args_with_tools["tools"] = tools_list
+
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
@@ -1380,7 +1399,7 @@ async def _try_execute_function_calls(
         try:
             result = await _auto_invoke_function(
                 function_call_content=function_call,  # type: ignore[arg-type]
-                custom_args=custom_args,
+                custom_args=custom_args_with_tools,
                 tool_map=tool_map,
                 sequence_index=seq_idx,
                 request_index=attempt_idx,
