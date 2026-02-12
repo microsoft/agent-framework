@@ -540,7 +540,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         if isinstance(value, BaseModel):
             return value.model_dump()
         if hasattr(value, "to_dict"):
-            return value.to_dict(exclude={"raw_representation", "additional_properties"})
+            return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
