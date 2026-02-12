@@ -2,7 +2,6 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Agents.AI.FoundryMemory.Core.Models;
 
 namespace Microsoft.Agents.AI.FoundryMemory;
 
@@ -34,19 +33,4 @@ internal static class FoundryMemoryJsonUtilities
     WriteIndented = false)]
 [JsonSerializable(typeof(FoundryMemoryProviderScope))]
 [JsonSerializable(typeof(FoundryMemoryProvider.FoundryMemoryState))]
-[JsonSerializable(typeof(SearchMemoriesRequest))]
-[JsonSerializable(typeof(SearchMemoriesResponse))]
-[JsonSerializable(typeof(SearchMemoriesOptions))]
-[JsonSerializable(typeof(UpdateMemoriesRequest))]
-[JsonSerializable(typeof(UpdateMemoriesResponse))]
-[JsonSerializable(typeof(UpdateMemoriesError))]
-[JsonSerializable(typeof(DeleteScopeRequest))]
-[JsonSerializable(typeof(CreateMemoryStoreRequest))]
-[JsonSerializable(typeof(MemoryStoreDefinitionRequest))]
-[JsonSerializable(typeof(MemoryStoreResponse))]
-[JsonSerializable(typeof(MemoryInputMessage))]
-[JsonSerializable(typeof(MemoryInputMessage[]))]
-[JsonSerializable(typeof(MemorySearchResult))]
-[JsonSerializable(typeof(MemorySearchResult[]))]
-[JsonSerializable(typeof(MemoryItem))]
 internal partial class FoundryMemoryJsonContext : JsonSerializerContext;

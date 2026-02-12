@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -21,6 +22,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="OpenAI" />
   </ItemGroup>
 
   <PropertyGroup>

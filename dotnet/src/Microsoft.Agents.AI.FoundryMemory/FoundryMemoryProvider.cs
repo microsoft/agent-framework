@@ -10,10 +10,10 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
-using Microsoft.Agents.AI.FoundryMemory.Core.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.FoundryMemory;
 
@@ -130,35 +130,39 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     {
         Throw.IfNull(context);
 
-#pragma warning disable CA1308 // Lowercase required by service
-        MemoryInputMessage[] messageItems = context.RequestMessages
+        List<ResponseItem> messageItems = context.RequestMessages
             .Where(m => !string.IsNullOrWhiteSpace(m.Text))
-            .Select(m => new MemoryInputMessage
-            {
-                Role = m.Role.Value.ToLowerInvariant(),
-                Content = m.Text!
-            })
-            .ToArray();
-#pragma warning restore CA1308
+            .Select(m => (ResponseItem)ToResponseItem(m.Role, m.Text!))
+            .ToList();
 
-        if (messageItems.Length == 0)
+        if (messageItems.Count == 0)
         {
             return new AIContext();
         }
 
         try
         {
-            SearchMemoriesResponse? response = await this._client.SearchMemoriesAsync(
+            MemorySearchOptions searchOptions = new(this._scope.Scope!)
+            {
+                ResultOptions = new MemorySearchResultOptions { MaxMemories = this._maxMemories }
+            };
+
+            foreach (ResponseItem item in messageItems)
+            {
+                searchOptions.Items.Add(item);
+            }
+
+            ClientResult<MemoryStoreSearchResponse> result = await this._client.MemoryStores.SearchMemoriesAsync(
                 this._memoryStoreName,
-                this._scope.Scope!,
-                messageItems,
-                this._maxMemories,
+                searchOptions,
                 cancellationToken).ConfigureAwait(false);
 
-            var memories = response?.Memories?
+            MemoryStoreSearchResponse response = result.Value;
+
+            List<string> memories = response.Memories
                 .Select(m => m.MemoryItem?.Content ?? string.Empty)
                 .Where(c => !string.IsNullOrWhiteSpace(c))
-                .ToList() ?? [];
+                .ToList();
 
             string? outputMessageText = memories.Count == 0
                 ? null
@@ -216,31 +220,35 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         try
         {
-#pragma warning disable CA1308 // Lowercase required by service
-            MemoryInputMessage[] messageItems = context.RequestMessages
+            List<ResponseItem> messageItems = context.RequestMessages
                 .Concat(context.ResponseMessages ?? [])
                 .Where(m => IsAllowedRole(m.Role) && !string.IsNullOrWhiteSpace(m.Text))
-                .Select(m => new MemoryInputMessage
-                {
-                    Role = m.Role.Value.ToLowerInvariant(),
-                    Content = m.Text!
-                })
-                .ToArray();
-#pragma warning restore CA1308
+                .Select(m => (ResponseItem)ToResponseItem(m.Role, m.Text!))
+                .ToList();
 
-            if (messageItems.Length == 0)
+            if (messageItems.Count == 0)
             {
                 return;
             }
 
-            UpdateMemoriesResponse? response = await this._client.UpdateMemoriesAsync(
+            MemoryUpdateOptions updateOptions = new(this._scope.Scope!)
+            {
+                UpdateDelay = this._updateDelay
+            };
+
+            foreach (ResponseItem item in messageItems)
+            {
+                updateOptions.Items.Add(item);
+            }
+
+            ClientResult<MemoryUpdateResult> result = await this._client.MemoryStores.UpdateMemoriesAsync(
                 this._memoryStoreName,
-                this._scope.Scope!,
-                messageItems,
-                this._updateDelay,
+                updateOptions,
                 cancellationToken).ConfigureAwait(false);
 
-            if (response?.UpdateId is not null)
+            MemoryUpdateResult response = result.Value;
+
+            if (response.UpdateId is not null)
             {
                 this._pendingUpdateIds.Enqueue(response.UpdateId);
             }
@@ -249,10 +257,10 @@ public sealed class FoundryMemoryProvider : AIContextProvider
             {
                 this._logger.LogInformation(
                     "FoundryMemoryProvider: Sent {Count} messages to update memories. MemoryStore: '{MemoryStoreName}', Scope: '{Scope}', UpdateId: '{UpdateId}'.",
-                    messageItems.Length,
+                    messageItems.Count,
                     this._memoryStoreName,
                     this.SanitizeLogData(this._scope.Scope),
-                    response?.UpdateId);
+                    response.UpdateId);
             }
         }
         catch (Exception ex)
@@ -277,7 +285,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     {
         try
         {
-            await this._client.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken).ConfigureAwait(false);
+            await this._client.MemoryStores.DeleteScopeAsync(this._memoryStoreName, this._scope.Scope!, cancellationToken).ConfigureAwait(false);
         }
         catch (ClientResultException ex) when (ex.Status == 404)
         {
@@ -370,12 +378,13 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            UpdateMemoriesResponse? response = await this._client.GetUpdateStatusAsync(
+            ClientResult<MemoryUpdateResult> result = await this._client.MemoryStores.GetUpdateResultAsync(
                 this._memoryStoreName,
                 updateId,
                 cancellationToken).ConfigureAwait(false);
 
-            string status = response?.Status ?? "unknown";
+            MemoryUpdateResult response = result.Value;
+            MemoryStoreUpdateStatus status = response.Status;
 
             if (this._logger?.IsEnabled(LogLevel.Debug) is true)
             {
@@ -385,19 +394,23 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                     status);
             }
 
-            switch (status)
+            if (status == MemoryStoreUpdateStatus.Completed || status == MemoryStoreUpdateStatus.Superseded)
             {
-                case UpdateMemoriesResponse.StatusCompleted:
-                case UpdateMemoriesResponse.StatusSuperseded:
-                    return;
-                case UpdateMemoriesResponse.StatusFailed:
-                    throw new InvalidOperationException($"Memory update operation '{updateId}' failed: {response?.Error?.Message}");
-                case UpdateMemoriesResponse.StatusQueued:
-                case UpdateMemoriesResponse.StatusInProgress:
-                    await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
-                    break;
-                default:
-                    throw new InvalidOperationException($"Unknown update status '{status}' for update '{updateId}'.");
+                return;
+            }
+
+            if (status == MemoryStoreUpdateStatus.Failed)
+            {
+                throw new InvalidOperationException($"Memory update operation '{updateId}' failed: {response.ErrorDetails}");
+            }
+
+            if (status == MemoryStoreUpdateStatus.Queued || status == MemoryStoreUpdateStatus.InProgress)
+            {
+                await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unknown update status '{status}' for update '{updateId}'.");
             }
         }
     }
@@ -409,6 +422,21 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         JsonSerializerOptions jso = jsonSerializerOptions ?? FoundryMemoryJsonUtilities.DefaultOptions;
         return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(FoundryMemoryState)));
+    }
+
+    private static MessageResponseItem ToResponseItem(ChatRole role, string text)
+    {
+        if (role == ChatRole.Assistant)
+        {
+            return ResponseItem.CreateAssistantMessageItem(text);
+        }
+
+        if (role == ChatRole.System)
+        {
+            return ResponseItem.CreateSystemMessageItem(text);
+        }
+
+        return ResponseItem.CreateUserMessageItem(text);
     }
 
     private static bool IsAllowedRole(ChatRole role) =>
