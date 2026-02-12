@@ -33,7 +33,6 @@ from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._conversation_state import decode_chat_messages, encode_chat_messages
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -547,7 +546,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()
-        state["cache"] = encode_chat_messages(self._cache)
+        state["cache"] = self._cache
         serialized_session = self._session.to_dict()
         state["session"] = serialized_session
 
@@ -557,7 +556,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint."""
         await super().on_checkpoint_restore(state)
-        self._cache = decode_chat_messages(state.get("cache", []))
+        self._cache = state.get("cache", [])
         serialized_session = state.get("session")
         if serialized_session:
             self._session = AgentSession.from_dict(serialized_session)
