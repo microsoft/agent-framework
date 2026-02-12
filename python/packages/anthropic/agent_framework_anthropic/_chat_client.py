@@ -25,9 +25,8 @@ from agent_framework import (
     TextSpanRegion,
     UsageDetails,
     get_logger,
-    prepare_function_call_results,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
@@ -47,7 +46,7 @@ from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -192,40 +191,20 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 }
 
 
-class AnthropicSettings(AFBaseSettings):
+class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
     The settings are first loaded from environment variables with the prefix 'ANTHROPIC_'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Keyword Args:
+    Keys:
         api_key: The Anthropic API key.
         chat_model_id: The Anthropic chat model ID.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.anthropic import AnthropicSettings
-
-            # Using environment variables
-            # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-            # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
-
-            # Or passing parameters directly
-            settings = AnthropicSettings(chat_model_id="claude-sonnet-4-5-20250929")
-
-            # Or loading from a .env file
-            settings = AnthropicSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "ANTHROPIC_"
-
-    api_key: SecretStr | None = None
-    chat_model_id: str | None = None
+    api_key: SecretString | None
+    chat_model_id: str | None
 
 
 class AnthropicClient(
@@ -311,25 +290,24 @@ class AnthropicClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
-        try:
-            anthropic_settings = AnthropicSettings(
-                api_key=api_key,  # type: ignore[arg-type]
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Anthropic settings.", ex) from ex
+        anthropic_settings = load_settings(
+            AnthropicSettings,
+            env_prefix="ANTHROPIC_",
+            api_key=api_key,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         if anthropic_client is None:
-            if not anthropic_settings.api_key:
+            if not anthropic_settings["api_key"]:
                 raise ServiceInitializationError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings.api_key.get_secret_value(),
+                api_key=anthropic_settings["api_key"].get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
@@ -343,7 +321,7 @@ class AnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings.chat_model_id
+        self.model_id = anthropic_settings["chat_model_id"]
         # streaming requires tracking the last function call ID and name
         self._last_call_id_name: tuple[str, str] | None = None
 
@@ -674,7 +652,7 @@ class AnthropicClient(
                     a_content.append({
                         "type": "tool_result",
                         "tool_use_id": content.call_id,
-                        "content": prepare_function_call_results(content.result),
+                        "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
                 case "text_reasoning":

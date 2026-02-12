@@ -38,14 +38,10 @@ Once comfortable with these, explore the rest of the samples below.
 | Azure AI Agents (Streaming)            | [agents/azure_ai_agents_streaming.py](./agents/azure_ai_agents_streaming.py)                                   | Add Azure AI agents as edges and handle streaming events                                             |
 | Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_thread.py](./agents/azure_ai_agents_with_shared_thread.py)                 | Share a common message thread between multiple Azure AI agents in a workflow                         |
 | Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                                         | Create executors to handle agent run methods                                                         |
-| Sequential Workflow as Agent           | [agents/sequential_workflow_as_agent.py](./agents/sequential_workflow_as_agent.py)                             | Build a sequential workflow orchestrating agents, then expose it as a reusable agent                 |
-| Concurrent Workflow as Agent           | [agents/concurrent_workflow_as_agent.py](./agents/concurrent_workflow_as_agent.py)                             | Build a concurrent fan-out/fan-in workflow, then expose it as a reusable agent                       |
-| Magentic Workflow as Agent             | [agents/magentic_workflow_as_agent.py](./agents/magentic_workflow_as_agent.py)                                 | Configure Magentic orchestration with callbacks, then expose the workflow as an agent                |
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Thread          | [agents/workflow_as_agent_with_thread.py](./agents/workflow_as_agent_with_thread.py)                           | Use AgentThread to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
-| Handoff Workflow as Agent              | [agents/handoff_workflow_as_agent.py](./agents/handoff_workflow_as_agent.py)                                   | Use a HandoffBuilder workflow as an agent with HITL via FunctionCallContent/FunctionResultContent    |
 
 ### checkpoint
 
@@ -54,7 +50,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpoint & Resume            | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py)                                             | Create checkpoints, inspect them, and resume execution                                             |
 | Checkpoint & HITL Resume       | [checkpoint/checkpoint_with_human_in_the_loop.py](./checkpoint/checkpoint_with_human_in_the_loop.py)                       | Combine checkpointing with human approvals and resume pending HITL requests                        |
 | Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
-| Handoff + Tool Approval Resume | [checkpoint/handoff_with_tool_approval_checkpoint_resume.py](./checkpoint/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
+| Handoff + Tool Approval Resume | Moved to orchestration samples                                                                                               | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
 | Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
 
 ### composition
@@ -85,19 +81,13 @@ Once comfortable with these, explore the rest of the samples below.
 | Human-In-The-Loop (Guessing Game)          | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human via `ctx.request_info()`                            |
 | Agents with Approval Requests in Workflows | [human-in-the-loop/agents_with_approval_requests.py](./human-in-the-loop/agents_with_approval_requests.py)   | Agents that create approval requests during workflow execution and wait for human approval to proceed |
 | Agents with Declaration-Only Tools         | [human-in-the-loop/agents_with_declaration_only_tools.py](./human-in-the-loop/agents_with_declaration_only_tools.py) | Workflow pauses when agent calls a client-side tool (`func=None`), caller supplies the result         |
-| SequentialBuilder Request Info             | [human-in-the-loop/sequential_request_info.py](./human-in-the-loop/sequential_request_info.py)               | Request info for agent responses mid-workflow using `.with_request_info()` on SequentialBuilder       |
-| ConcurrentBuilder Request Info             | [human-in-the-loop/concurrent_request_info.py](./human-in-the-loop/concurrent_request_info.py)               | Review concurrent agent outputs before aggregation using `.with_request_info()` on ConcurrentBuilder  |
-| GroupChatBuilder Request Info              | [human-in-the-loop/group_chat_request_info.py](./human-in-the-loop/group_chat_request_info.py)               | Steer group discussions with periodic guidance using `.with_request_info()` on GroupChatBuilder       |
+
+Builder-oriented request-info samples are maintained in the orchestration sample set
+(sequential, concurrent, and group-chat builder variants).
 
 ### tool-approval
 
-Tool approval samples demonstrate using `@tool(approval_mode="always_require")` to gate sensitive tool executions with human approval. These work with the high-level builder APIs.
-
-| Sample                          | File                                                                                                     | Concepts                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| SequentialBuilder Tool Approval | [tool-approval/sequential_builder_tool_approval.py](./tool-approval/sequential_builder_tool_approval.py) | Sequential workflow with tool approval gates for sensitive operations |
-| ConcurrentBuilder Tool Approval | [tool-approval/concurrent_builder_tool_approval.py](./tool-approval/concurrent_builder_tool_approval.py) | Concurrent workflow with tool approvals across parallel agents        |
-| GroupChatBuilder Tool Approval  | [tool-approval/group_chat_builder_tool_approval.py](./tool-approval/group_chat_builder_tool_approval.py) | Group chat workflow with tool approval for multi-agent collaboration  |
+Builder-based tool approval samples are maintained in the orchestration sample set.
 
 ### observability
 
@@ -109,7 +99,8 @@ For additional observability samples in Agent Framework, see the [observability 
 
 ### orchestration
 
-Orchestration samples (Sequential, Concurrent, Handoff, GroupChat, Magentic) have moved to the dedicated [orchestrations samples directory](../orchestrations/README.md).
+Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
+`workflow.as_agent(...)` variants, are documented in the [orchestrations](../orchestrations/README.md) directory.
 
 ### parallelism
 
@@ -169,9 +160,9 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 
 ### Environment Variables
 
-- **AzureOpenAIChatClient**: Set Azure OpenAI environment variables as documented [here](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/chat_client/README.md#environment-variables).
-  These variables are required for samples that construct `AzureOpenAIChatClient`
+Workflow samples that use `AzureOpenAIResponsesClient` expect:
 
-- **OpenAI** (used in orchestration samples):
-  - [OpenAIChatClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_chat_client/README.md)
-  - [OpenAIResponsesClient env vars](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/agents/openai_responses_client/README.md)
+- `AZURE_AI_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (model deployment name)
+
+These values are passed directly into the client constructor via `os.getenv()` in sample code.

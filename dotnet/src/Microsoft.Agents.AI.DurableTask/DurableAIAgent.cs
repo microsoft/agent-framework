@@ -45,8 +45,9 @@ public sealed class DurableAIAgent : AIAgent
     /// </summary>
     /// <param name="session">The session to serialize.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         if (session is null)
         {
@@ -58,7 +59,7 @@ public sealed class DurableAIAgent : AIAgent
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
         }
 
-        return durableSession.Serialize(jsonSerializerOptions);
+        return new(durableSession.Serialize(jsonSerializerOptions));
     }
 
     /// <summary>

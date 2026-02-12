@@ -15,9 +15,9 @@ from agent_framework import (
     tool,
 )
 from agent_framework.exceptions import (
-    ServiceInitializationError,
     ServiceInvalidRequestError,
     ServiceResponseException,
+    SettingNotFoundError,
 )
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
@@ -182,7 +182,7 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL_ID"]], indirect=True)
 def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
         OllamaChatClient(
             host="http://localhost:12345",
             model_id=None,

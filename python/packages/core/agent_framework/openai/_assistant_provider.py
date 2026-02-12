@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel
+
+from agent_framework._settings import SecretString, load_settings
 
 from .._agents import Agent
 from .._memory import ContextProvider
@@ -107,7 +109,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         self,
         client: AsyncOpenAI | None = None,
         *,
-        api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         env_file_path: str | None = None,
@@ -147,35 +149,34 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
         if client is None:
             # Load settings and create client
-            try:
-                settings = OpenAISettings(
-                    api_key=api_key,  # type: ignore[reportArgumentType]
-                    org_id=org_id,
-                    base_url=base_url,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            except ValidationError as ex:
-                raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+            settings = load_settings(
+                OpenAISettings,
+                env_prefix="OPENAI_",
+                api_key=api_key,
+                org_id=org_id,
+                base_url=base_url,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
-            if not settings.api_key:
+            if not settings["api_key"]:
                 raise ServiceInitializationError(
                     "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
                 )
 
             # Get API key value
             api_key_value: str | Callable[[], str | Awaitable[str]] | None
-            if isinstance(settings.api_key, SecretStr):
-                api_key_value = settings.api_key.get_secret_value()
+            if isinstance(settings["api_key"], SecretString):
+                api_key_value = settings["api_key"].get_secret_value()
             else:
-                api_key_value = settings.api_key
+                api_key_value = settings["api_key"]
 
             # Create client
             client_args: dict[str, Any] = {"api_key": api_key_value}
-            if settings.org_id:
-                client_args["organization"] = settings.org_id
-            if settings.base_url:
-                client_args["base_url"] = settings.base_url
+            if settings["org_id"]:
+                client_args["organization"] = settings["org_id"]
+            if settings["base_url"]:
+                client_args["base_url"] = settings["base_url"]
 
             self._client = AsyncOpenAI(**client_args)
 

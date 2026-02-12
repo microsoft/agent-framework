@@ -121,6 +121,51 @@ class StubManagerAgent(Agent):
         )
 
 
+class ConcatenatedJsonManagerAgent(Agent):
+    """Manager agent that emits concatenated JSON in a single assistant message."""
+
+    def __init__(self) -> None:
+        super().__init__(client=MockChatClient(), name="concat_manager", description="Concatenated JSON manager")
+        self._call_count = 0
+
+    async def run(
+        self,
+        messages: str | Message | Sequence[str | Message] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        if self._call_count == 0:
+            self._call_count += 1
+            return AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        text=(
+                            '{"terminate": false, "reason": "invalid candidate", '
+                            '"next_speaker": "unknown", "final_message": null} '
+                            '{"terminate": false, "reason": "pick known participant", '
+                            '"next_speaker": "agent", "final_message": null}'
+                        ),
+                        author_name=self.name,
+                    )
+                ]
+            )
+
+        return AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    text=(
+                        '{"terminate": true, "reason": "Task complete", '
+                        '"next_speaker": null, "final_message": "concatenated manager final"}'
+                    ),
+                    author_name=self.name,
+                )
+            ]
+        )
+
+
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
 
@@ -219,6 +264,29 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
     response = await agent.run(conversation)
 
     assert response.messages, "Expected agent conversation output"
+
+
+async def test_agent_manager_handles_concatenated_json_output() -> None:
+    manager = ConcatenatedJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    outputs: list[list[Message]] = []
+    async for event in workflow.run("coordinate task", stream=True):
+        if event.type == "output":
+            data = event.data
+            if isinstance(data, list):
+                outputs.append(cast(list[Message], data))
+
+    assert outputs
+    conversation = outputs[-1]
+    assert any(msg.author_name == "agent" and msg.text == "worker response" for msg in conversation)
+    assert conversation[-1].author_name == manager.name
+    assert conversation[-1].text == "concatenated manager final"
 
 
 # Comprehensive tests for group chat functionality

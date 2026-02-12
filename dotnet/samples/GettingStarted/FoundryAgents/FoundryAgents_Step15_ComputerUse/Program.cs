@@ -18,8 +18,11 @@ internal sealed class Program
         string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-        AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 
                     

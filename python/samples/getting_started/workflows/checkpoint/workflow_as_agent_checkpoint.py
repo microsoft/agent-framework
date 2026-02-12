@@ -20,18 +20,21 @@ Key concepts:
 - These are complementary: threads track conversation, checkpoints track workflow state
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured for AzureOpenAIResponsesClient
 """
 
 import asyncio
+import os
 
 from agent_framework import (
     AgentThread,
     ChatMessageStore,
     InMemoryCheckpointStorage,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
+from azure.identity import AzureCliCredential
 
 
 async def basic_checkpointing() -> None:
@@ -40,7 +43,11 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     assistant = client.as_agent(
         name="assistant",
@@ -81,7 +88,11 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     assistant = client.as_agent(
         name="memory_assistant",
@@ -124,7 +135,11 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     assistant = client.as_agent(
         name="streaming_assistant",

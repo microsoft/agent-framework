@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
+from azure.identity import AzureCliCredential
 
 """
 Sample: Group Chat Orchestration
@@ -14,7 +16,8 @@ What it does:
 - The orchestrator coordinates a researcher (chat completions) and a writer (responses API) to solve a task.
 
 Prerequisites:
-- OpenAI environment variables configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured for `AzureOpenAIResponsesClient`.
 """
 
 
@@ -23,14 +26,22 @@ async def main() -> None:
         name="Researcher",
         description="Collects relevant background information.",
         instructions="Gather concise facts that help a teammate answer the question.",
-        client=OpenAIChatClient(model_id="gpt-4o-mini"),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     writer = Agent(
         name="Writer",
         description="Synthesizes a polished answer using the gathered notes.",
         instructions="Compose clear and structured answers using any notes provided.",
-        client=OpenAIResponsesClient(),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
@@ -38,7 +49,11 @@ async def main() -> None:
     workflow = GroupChatBuilder(
         participants=[researcher, writer],
         intermediate_outputs=True,
-        orchestrator_agent=OpenAIChatClient().as_agent(
+        orchestrator_agent=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ).as_agent(
             name="Orchestrator",
             instructions="You coordinate a team conversation to solve the user's task.",
         ),

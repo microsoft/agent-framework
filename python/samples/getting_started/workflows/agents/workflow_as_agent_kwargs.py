@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import os
 from typing import Annotated, Any
 
 from agent_framework import tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
+from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
@@ -28,7 +30,8 @@ When to use workflow.as_agent():
 - To maintain a consistent agent interface for callers
 
 Prerequisites:
-- OpenAI environment variables configured
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured
 """
 
 
@@ -80,7 +83,11 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agent with tools that use kwargs
     agent = client.as_agent(

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ from agent_framework import (
     Workflow,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 
@@ -39,8 +40,9 @@ Pattern:
   workflow.run(stream=True, checkpoint_id=..., responses=responses).)
 
 Prerequisites:
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Azure CLI authentication (az login).
-- Environment variables configured for AzureOpenAIChatClient.
+- Environment variables configured for AzureOpenAIResponsesClient.
 """
 
 CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
@@ -53,7 +55,7 @@ def submit_refund(refund_description: str, amount: str, order_id: str) -> str:
     return f"refund recorded for order {order_id} (amount: {amount}) with details: {refund_description}"
 
 
-def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent]:
+def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent]:
     """Create a simple handoff scenario: triage, refund, and order specialists."""
 
     triage = client.as_agent(
@@ -90,7 +92,11 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent]:
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     """Build the handoff workflow with checkpointing enabled."""
 
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     triage, refund, order = create_agents(client)
 
     # checkpoint_storage: Enable checkpointing for resume

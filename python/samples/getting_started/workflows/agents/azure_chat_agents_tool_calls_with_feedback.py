@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -21,7 +22,7 @@ from agent_framework import (
     response_handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from typing_extensions import Never
@@ -43,7 +44,8 @@ Demonstrates:
 - Streaming AgentRunUpdateEvent updates alongside human-in-the-loop pauses.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -170,7 +172,11 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="writer_agent",
         instructions=(
             "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
@@ -184,7 +190,11 @@ def create_writer_agent() -> Agent:
 
 def create_final_editor_agent() -> Agent:
     """Creates a final editor agent."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

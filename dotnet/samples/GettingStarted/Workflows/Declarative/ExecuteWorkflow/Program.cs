@@ -71,8 +71,11 @@ internal sealed class Program
     /// </summary>
     private Workflow CreateWorkflow()
     {
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
+        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new DefaultAzureCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = this.Functions

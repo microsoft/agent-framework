@@ -138,7 +138,7 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == 10
+    assert result == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -436,7 +436,7 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -480,7 +480,7 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -545,7 +545,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == 15
+    assert result == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -613,7 +613,7 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == 12
+    assert result == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]

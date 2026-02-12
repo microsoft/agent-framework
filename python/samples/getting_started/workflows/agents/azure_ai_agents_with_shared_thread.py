@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
 from agent_framework import (
     AgentExecutor,
@@ -12,8 +13,8 @@ from agent_framework import (
     WorkflowRunState,
     executor,
 )
-from agent_framework.azure import AzureAIProjectAgentProvider
-from azure.identity.aio import AzureCliCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 """
 Sample: Agents with a shared thread in a workflow
@@ -28,11 +29,12 @@ Notes:
 - Not all agents can share threads; usually only the same type of agents can share threads.
 
 Demonstrate:
-- Creating multiple agents with Azure AI Agent Service (V2 API).
+- Creating multiple agents with AzureOpenAIResponsesClient.
 - Setting up a shared thread between agents.
 
 Prerequisites:
-- Azure AI Agent Service configured, along with the required environment variables.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with agents, workflows, and executors in the agent framework.
 """
@@ -51,49 +53,49 @@ async def intercept_agent_response(
 
 
 async def main() -> None:
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIProjectAgentProvider(credential=credential) as provider,
-    ):
-        writer = await provider.create_agent(
-            instructions=(
-                "You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."
-            ),
-            name="writer",
-        )
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
-        reviewer = await provider.create_agent(
-            instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
-            name="reviewer",
-        )
+    writer = client.as_agent(
+        instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
+        name="writer",
+    )
 
-        shared_thread = writer.get_new_thread()
-        # Set the message store to store messages in memory.
-        shared_thread.message_store = ChatMessageStore()
+    reviewer = client.as_agent(
+        instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
+        name="reviewer",
+    )
 
-        writer_executor = AgentExecutor(writer, agent_thread=shared_thread)
-        reviewer_executor = AgentExecutor(reviewer, agent_thread=shared_thread)
+    shared_thread = writer.get_new_thread()
+    # Set the message store to store messages in memory.
+    shared_thread.message_store = ChatMessageStore()
 
-        workflow = (
-            WorkflowBuilder(start_executor=writer_executor)
-            .add_chain([writer_executor, intercept_agent_response, reviewer_executor])
-            .build()
-        )
+    writer_executor = AgentExecutor(writer, agent_thread=shared_thread)
+    reviewer_executor = AgentExecutor(reviewer, agent_thread=shared_thread)
 
-        result = await workflow.run(
-            "Write a tagline for a budget-friendly eBike.",
-            # Keyword arguments will be passed to each agent call.
-            # Setting store=False to avoid storing messages in the service for this example.
-            options={"store": False},
-        )
-        # The final state should be IDLE since the workflow no longer has messages to
-        # process after the reviewer agent responds.
-        assert result.get_final_state() == WorkflowRunState.IDLE
+    workflow = (
+        WorkflowBuilder(start_executor=writer_executor)
+        .add_chain([writer_executor, intercept_agent_response, reviewer_executor])
+        .build()
+    )
 
-        # The shared thread now contains the conversation between the writer and reviewer. Print it out.
-        print("=== Shared Thread Conversation ===")
-        for message in shared_thread.message_store.messages:
-            print(f"{message.author_name or message.role}: {message.text}")
+    result = await workflow.run(
+        "Write a tagline for a budget-friendly eBike.",
+        # Keyword arguments will be passed to each agent call.
+        # Setting store=False to avoid storing messages in the service for this example.
+        options={"store": False},
+    )
+    # The final state should be IDLE since the workflow no longer has messages to
+    # process after the reviewer agent responds.
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    # The shared thread now contains the conversation between the writer and reviewer. Print it out.
+    print("=== Shared Thread Conversation ===")
+    for message in shared_thread.message_store.messages:
+        print(f"{message.author_name or message.role}: {message.text}")
 
 
 if __name__ == "__main__":

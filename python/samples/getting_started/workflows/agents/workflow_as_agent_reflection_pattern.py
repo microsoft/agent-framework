@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 """
@@ -33,7 +35,8 @@ Key Concepts Demonstrated:
 - State management for pending requests and retry logic.
 
 Prerequisites:
-- OpenAI account configured and accessible for OpenAIChatClient.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.
 """
@@ -186,8 +189,22 @@ async def main() -> None:
     print("=" * 50)
 
     print("Building workflow with Worker ↔ Reviewer cycle...")
-    worker = Worker(id="worker", chat_client=OpenAIChatClient(model_id="gpt-4.1-nano"))
-    reviewer = Reviewer(id="reviewer", chat_client=OpenAIChatClient(model_id="gpt-4.1"))
+    worker = Worker(
+        id="worker",
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
+    )
+    reviewer = Reviewer(
+        id="reviewer",
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
+    )
 
     agent = (
         WorkflowBuilder(start_executor=worker)

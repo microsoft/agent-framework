@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from enum import Enum
 
 from agent_framework import (
@@ -8,13 +9,14 @@ from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    AgentResponseUpdate,
     Executor,
     Message,
     WorkflowBuilder,
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
@@ -26,7 +28,8 @@ What it does:
 - The workflow completes when the correct number is guessed.
 
 Prerequisites:
-- Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agent.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure AI/ Azure OpenAI for `AzureOpenAIResponsesClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -116,7 +119,11 @@ class ParseJudgeResponse(Executor):
 
 def create_judge_agent() -> Agent:
     """Create a judge agent that evaluates guesses."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
         name="judge_agent",
     )
@@ -140,12 +147,16 @@ async def main():
         .build()
     )
 
-    # Step 2: Run the workflow and print the events.
+    # Step 2: Run the workflow with concise streaming output.
     iterations = 0
     async for event in workflow.run(NumberSignal.INIT, stream=True):
         if event.type == "executor_completed" and event.executor_id == "guess_number":
             iterations += 1
-        print(f"Event: {event}")
+        elif event.type == "output":
+            if isinstance(event.data, AgentResponseUpdate):
+                # Agent executor streams token-level updates; skip to avoid noisy logs.
+                continue
+            print(f"Workflow output: {event.data}")
 
     # This is essentially a binary search, so the number of iterations should be logarithmic.
     # The maximum number of iterations is [log2(range size)]. For a range of 1 to 100, this is log2(100) which is 7.

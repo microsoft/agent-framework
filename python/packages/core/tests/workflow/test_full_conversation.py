@@ -8,6 +8,7 @@ from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
+    AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
@@ -150,3 +151,64 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     assert len(seen) == 2
     assert seen[0].role == "user" and "hello seq" in (seen[0].text or "")
     assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")
+
+
+class _RoundTripCoordinator(Executor):
+    """Loops once back to the same agent with full conversation + feedback."""
+
+    def __init__(self, *, target_agent_id: str, id: str = "round_trip_coordinator") -> None:
+        super().__init__(id=id)
+        self._target_agent_id = target_agent_id
+        self._seen = 0
+
+    @handler
+    async def handle_response(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[Never, dict[str, Any]],
+    ) -> None:
+        self._seen += 1
+        if self._seen == 1:
+            assert response.full_conversation is not None
+            await ctx.send_message(
+                AgentExecutorRequest(
+                    messages=list(response.full_conversation) + [Message(role="user", text="apply feedback")],
+                    should_respond=True,
+                ),
+                target_id=self._target_agent_id,
+            )
+            return
+
+        assert response.full_conversation is not None
+        await ctx.yield_output({
+            "roles": [m.role for m in response.full_conversation],
+            "texts": [m.text for m in response.full_conversation],
+        })
+
+
+async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_history() -> None:
+    """When full history is replayed, AgentExecutor should not duplicate prior turns."""
+    agent = _SimpleAgent(id="writer_agent", name="Writer", reply_text="draft reply")
+    agent_exec = AgentExecutor(agent, id="writer_agent")
+    coordinator = _RoundTripCoordinator(target_agent_id="writer_agent")
+
+    wf = (
+        WorkflowBuilder(start_executor=agent_exec, output_executors=[coordinator])
+        .add_edge(agent_exec, coordinator)
+        .add_edge(coordinator, agent_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    outputs = result.get_outputs()
+    assert len(outputs) == 1
+    payload = outputs[0]
+    assert isinstance(payload, dict)
+
+    # Expected conversation after one loop:
+    # user(initial), assistant(first reply), user(feedback), assistant(second reply)
+    assert payload["roles"] == ["user", "assistant", "user", "assistant"]
+    assert payload["texts"][0] == "initial prompt"
+    assert payload["texts"][1] == "draft reply"
+    assert payload["texts"][2] == "apply feedback"
+    assert payload["texts"][3] == "draft reply"

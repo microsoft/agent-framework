@@ -12,7 +12,7 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
     Annotation,
@@ -28,9 +28,11 @@ from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
 
+from .._settings import load_settings
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
+    _apply_azure_defaults,
 )
 
 if sys.version_info >= (3, 13):
@@ -247,37 +249,35 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
                 client: AzureOpenAIChatClient[MyOptions] = AzureOpenAIChatClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            # Filter out any None values from the arguments
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                chat_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-            )
-        except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            chat_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings)
 
-        if not azure_openai_settings.chat_deployment_name:
+        if not azure_openai_settings["chat_deployment_name"]:
             raise ServiceInitializationError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings.chat_deployment_name,
-            endpoint=azure_openai_settings.endpoint,
-            base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
+            deployment_name=azure_openai_settings["chat_deployment_name"],
+            endpoint=azure_openai_settings["endpoint"],
+            base_url=azure_openai_settings["base_url"],
+            api_version=azure_openai_settings["api_version"],  # type: ignore
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
-            token_endpoint=azure_openai_settings.token_endpoint,
+            token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
             client=async_client,

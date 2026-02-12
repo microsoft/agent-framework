@@ -146,3 +146,9 @@ class ContentError(AgentFrameworkException):
     """An error occurred while processing content."""
 
     pass
+
+
+class SettingNotFoundError(AgentFrameworkException):
+    """A required setting could not be resolved from any source."""
+
+    pass

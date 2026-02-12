@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -15,7 +16,8 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from typing_extensions import Never
 
 """
@@ -45,6 +47,7 @@ Demonstrate:
 - Handling approval requests during workflow execution.
 
 Prerequisites:
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Azure AI Agent Service configured, along with the required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
@@ -193,13 +196,20 @@ class EmailPreprocessor(Executor):
     @handler
     async def preprocess(self, email: Email, ctx: WorkflowContext[str]) -> None:
         """Preprocess the incoming email."""
-        message = str(email)
+        email_payload = (
+            f"Incoming email:\n"
+            f"From: {email.sender}\n"
+            f"Subject: {email.subject}\n"
+            f"Body: {email.body}"
+        )
+        message = email_payload
         if email.sender in self.special_email_addresses:
             note = (
-                "Pay special attention to this sender. This email is very important. "
-                "Gather relevant information from all previous emails within my team before responding."
+                "Priority sender context: this message is business-critical. "
+                "If additional context is needed, use available tools to retrieve only the minimum relevant "
+                "prior team communication related to this request."
             )
-            message = f"{note}\n\n{message}"
+            message = f"{note}\n\n{email_payload}"
 
         await ctx.send_message(message)
 
@@ -215,7 +225,11 @@ async def conclude_workflow(
 
 async def main() -> None:
     # Create agent
-    email_writer_agent = OpenAIChatClient().as_agent(
+    email_writer_agent = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    ).as_agent(
         name="EmailWriter",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests

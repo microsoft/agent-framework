@@ -21,9 +21,10 @@ from agent_framework import (
     ResponseStream,
     normalize_messages,
 )
+from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool
 from agent_framework._types import normalize_tools
-from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from agent_framework.exceptions import ServiceException
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
 from copilot.types import (
@@ -38,7 +39,6 @@ from copilot.types import (
     ToolResult,
 )
 from copilot.types import Tool as CopilotTool
-from pydantic import ValidationError
 
 from ._settings import GitHubCopilotSettings
 
@@ -207,17 +207,16 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
 
-        try:
-            self._settings = GitHubCopilotSettings(
-                cli_path=cli_path,
-                model=model,
-                timeout=timeout,
-                log_level=log_level,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create GitHub Copilot settings.", ex) from ex
+        self._settings = load_settings(
+            GitHubCopilotSettings,
+            env_prefix="GITHUB_COPILOT_",
+            cli_path=cli_path,
+            model=model,
+            timeout=timeout,
+            log_level=log_level,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
@@ -249,10 +248,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         if self._client is None:
             client_options: CopilotClientOptions = {}
-            if self._settings.cli_path:
-                client_options["cli_path"] = self._settings.cli_path
-            if self._settings.log_level:
-                client_options["log_level"] = self._settings.log_level  # type: ignore[typeddict-item]
+            if self._settings["cli_path"]:
+                client_options["cli_path"] = self._settings["cli_path"]
+            if self._settings["log_level"]:
+                client_options["log_level"] = self._settings["log_level"]  # type: ignore[typeddict-item]
 
             self._client = CopilotClient(client_options if client_options else None)
 
@@ -355,7 +354,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             thread = self.get_new_thread()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        timeout = opts.pop("timeout", None) or self._settings.timeout or DEFAULT_TIMEOUT_SECONDS
+        timeout = opts.pop("timeout", None) or self._settings["timeout"] or DEFAULT_TIMEOUT_SECONDS
 
         session = await self._get_or_create_session(thread, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
@@ -500,7 +499,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         return copilot_tools
 
-    def _tool_to_copilot_tool(self, ai_func: FunctionTool[Any, Any]) -> CopilotTool:
+    def _tool_to_copilot_tool(self, ai_func: FunctionTool[Any]) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
@@ -578,7 +577,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         opts = runtime_options or {}
         config: SessionConfig = {"streaming": streaming}
 
-        model = opts.get("model") or self._settings.model
+        model = opts.get("model") or self._settings["model"]
         if model:
             config["model"] = model  # type: ignore[typeddict-item]
 

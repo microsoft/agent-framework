@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 # Ensure local getting_started package can be imported when running as a script.
@@ -42,7 +43,8 @@ to a human, receives the human response, and then forwards that response back
 to the Worker. The workflow completes when idle.
 
 Prerequisites:
-- OpenAI account configured and accessible for OpenAIChatClient.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
 - (Optional) Review of reflection and escalation patterns, such as those in
@@ -100,7 +102,11 @@ async def main() -> None:
     # and escalation paths for human review.
     worker = Worker(
         id="worker",
-        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        chat_client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
     reviewer = ReviewerWithHumanInTheLoop(worker_id="worker")
 

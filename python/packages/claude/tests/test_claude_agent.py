@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponseUpdate, AgentThread, Content, Message, tool
+from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -15,23 +16,21 @@ from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
 class TestClaudeAgentSettings:
     """Tests for ClaudeAgentSettings."""
 
-    def test_env_prefix(self) -> None:
-        """Test that env_prefix is correctly set."""
-        assert ClaudeAgentSettings.env_prefix == "CLAUDE_AGENT_"
-
     def test_default_values(self) -> None:
         """Test default values are None."""
-        settings = ClaudeAgentSettings()
-        assert settings.cli_path is None
-        assert settings.model is None
-        assert settings.cwd is None
-        assert settings.permission_mode is None
-        assert settings.max_turns is None
-        assert settings.max_budget_usd is None
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["cli_path"] is None
+        assert settings["model"] is None
+        assert settings["cwd"] is None
+        assert settings["permission_mode"] is None
+        assert settings["max_turns"] is None
+        assert settings["max_budget_usd"] is None
 
     def test_explicit_values(self) -> None:
         """Test explicit values override defaults."""
-        settings = ClaudeAgentSettings(
+        settings = load_settings(
+            ClaudeAgentSettings,
+            env_prefix="CLAUDE_AGENT_",
             cli_path="/usr/local/bin/claude",
             model="sonnet",
             cwd="/home/user/project",
@@ -39,20 +38,20 @@ class TestClaudeAgentSettings:
             max_turns=10,
             max_budget_usd=5.0,
         )
-        assert settings.cli_path == "/usr/local/bin/claude"
-        assert settings.model == "sonnet"
-        assert settings.cwd == "/home/user/project"
-        assert settings.permission_mode == "default"
-        assert settings.max_turns == 10
-        assert settings.max_budget_usd == 5.0
+        assert settings["cli_path"] == "/usr/local/bin/claude"
+        assert settings["model"] == "sonnet"
+        assert settings["cwd"] == "/home/user/project"
+        assert settings["permission_mode"] == "default"
+        assert settings["max_turns"] == 10
+        assert settings["max_budget_usd"] == 5.0
 
     def test_env_variable_loading(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading from environment variables."""
         monkeypatch.setenv("CLAUDE_AGENT_MODEL", "opus")
         monkeypatch.setenv("CLAUDE_AGENT_MAX_TURNS", "20")
-        settings = ClaudeAgentSettings()
-        assert settings.model == "opus"
-        assert settings.max_turns == 20
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["model"] == "opus"
+        assert settings["max_turns"] == 20
 
 
 # region Test ClaudeAgent Initialization
@@ -95,9 +94,9 @@ class TestClaudeAgentInit:
             "max_turns": 10,
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._settings.model == "sonnet"  # type: ignore[reportPrivateUsage]
-        assert agent._settings.permission_mode == "default"  # type: ignore[reportPrivateUsage]
-        assert agent._settings.max_turns == 10  # type: ignore[reportPrivateUsage]
+        assert agent._settings["model"] == "sonnet"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] == "default"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["max_turns"] == 10  # type: ignore[reportPrivateUsage]
 
     def test_with_function_tool(self) -> None:
         """Test agent with function tool."""
@@ -620,13 +619,13 @@ class TestClaudeAgentPermissions:
     def test_default_permission_mode(self) -> None:
         """Test default permission mode."""
         agent = ClaudeAgent()
-        assert agent._settings.permission_mode is None  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] is None  # type: ignore[reportPrivateUsage]
 
     def test_permission_mode_from_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test permission mode from environment settings."""
         monkeypatch.setenv("CLAUDE_AGENT_PERMISSION_MODE", "acceptEdits")
-        settings = ClaudeAgentSettings()
-        assert settings.permission_mode == "acceptEdits"
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["permission_mode"] == "acceptEdits"
 
     def test_permission_mode_in_options(self) -> None:
         """Test permission mode in options."""
@@ -634,7 +633,7 @@ class TestClaudeAgentPermissions:
             "permission_mode": "bypassPermissions",
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._settings.permission_mode == "bypassPermissions"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] == "bypassPermissions"  # type: ignore[reportPrivateUsage]
 
 
 # region Test ClaudeAgent Error Handling
