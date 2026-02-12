@@ -36,7 +36,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
             this._values = [evaluatedValue];
         }
 
-        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
@@ -60,6 +60,11 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     }
 
     public async ValueTask CompleteAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    {
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 
