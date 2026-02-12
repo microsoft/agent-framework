@@ -11,7 +11,7 @@
 - Moved AgentSession.Serialize to AIAgent.SerializeSession ([#3650](https://github.com/microsoft/agent-framework/pull/3650))
 - Renamed serializedSession parameter to serializedState on DeserializeSessionAsync for consistency ([#3681](https://github.com/microsoft/agent-framework/pull/3681))
 - Introduce Core method pattern for Session management methods on AIAgent ([#3699](https://github.com/microsoft/agent-framework/pull/3699))
-- Updated to use base `AgentRunOptions.ResponseFormat` for structured output configuration ([#3658](https://github.com/microsoft/agent-framework/pull/3658))
+- Refactored `RunAsync<T>` methods to use `AgentResponse<T>`, added missing overloads, and marked them as `new` ([#3803](https://github.com/microsoft/agent-framework/pull/3803))
 
 ## v1.0.0-preview.251204.1
 
