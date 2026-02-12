@@ -16,7 +16,7 @@ from durabletask.entities import EntityInstanceId
 from durabletask.task import Task
 from pydantic import BaseModel
 
-from agent_framework_durabletask import DurableAgentThread
+from agent_framework_durabletask import DurableAgentSession
 from agent_framework_durabletask._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from agent_framework_durabletask._executors import (
     ClientAgentExecutor,
@@ -106,42 +106,42 @@ def configure_failed_entity_task(mock_entity_task: Mock) -> Any:
     return _configure
 
 
-class TestExecutorThreadCreation:
-    """Test that executors properly create DurableAgentThread with parameters."""
+class TestExecutorSessionCreation:
+    """Test that executors properly create DurableAgentSession with parameters."""
 
-    def test_client_executor_creates_durable_thread(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor creates DurableAgentThread instances."""
+    def test_client_executor_creates_durable_session(self, mock_client: Mock) -> None:
+        """Verify ClientAgentExecutor creates DurableAgentSession instances."""
         executor = ClientAgentExecutor(mock_client)
 
-        thread = executor.get_new_thread("test_agent")
+        session = executor.get_new_session("test_agent")
 
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, DurableAgentSession)
 
-    def test_client_executor_forwards_kwargs_to_thread(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor forwards kwargs to DurableAgentThread creation."""
+    def test_client_executor_forwards_kwargs_to_session(self, mock_client: Mock) -> None:
+        """Verify ClientAgentExecutor forwards kwargs to DurableAgentSession creation."""
         executor = ClientAgentExecutor(mock_client)
 
-        thread = executor.get_new_thread("test_agent", service_thread_id="client-123")
+        session = executor.get_new_session("test_agent", service_session_id="client-123")
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.service_thread_id == "client-123"
+        assert isinstance(session, DurableAgentSession)
+        assert session.service_session_id == "client-123"
 
-    def test_orchestration_executor_creates_durable_thread(
+    def test_orchestration_executor_creates_durable_session(
         self, orchestration_executor: OrchestrationAgentExecutor
     ) -> None:
-        """Verify OrchestrationAgentExecutor creates DurableAgentThread instances."""
-        thread = orchestration_executor.get_new_thread("test_agent")
+        """Verify OrchestrationAgentExecutor creates DurableAgentSession instances."""
+        session = orchestration_executor.get_new_session("test_agent")
 
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, DurableAgentSession)
 
-    def test_orchestration_executor_forwards_kwargs_to_thread(
+    def test_orchestration_executor_forwards_kwargs_to_session(
         self, orchestration_executor: OrchestrationAgentExecutor
     ) -> None:
-        """Verify OrchestrationAgentExecutor forwards kwargs to DurableAgentThread creation."""
-        thread = orchestration_executor.get_new_thread("test_agent", service_thread_id="orch-456")
+        """Verify OrchestrationAgentExecutor forwards kwargs to DurableAgentSession creation."""
+        session = orchestration_executor.get_new_session("test_agent", service_session_id="orch-456")
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.service_thread_id == "orch-456"
+        assert isinstance(session, DurableAgentSession)
+        assert session.service_session_id == "orch-456"
 
 
 class TestClientAgentExecutorRun:
@@ -353,18 +353,18 @@ class TestOrchestrationAgentExecutorRun:
         # Verify request dict
         assert request_dict_arg == sample_run_request.to_dict()
 
-    def test_orchestration_executor_uses_thread_session_id(
+    def test_orchestration_executor_uses_session_durable_id(
         self,
         mock_orchestration_context: Mock,
         orchestration_executor: OrchestrationAgentExecutor,
         sample_run_request: RunRequest,
     ) -> None:
-        """Verify executor uses thread's session ID when provided."""
-        # Create thread with specific session ID
+        """Verify executor uses session's durable session ID when provided."""
+        # Create session with specific durable session ID
         session_id = AgentSessionId(name="test_agent", key="specific-key-123")
-        thread = DurableAgentThread.from_session_id(session_id)
+        session = DurableAgentSession.from_session_id(session_id)
 
-        result = orchestration_executor.run_durable_agent("test_agent", sample_run_request, thread=thread)
+        result = orchestration_executor.run_durable_agent("test_agent", sample_run_request, session=session)
 
         # Verify call_entity was called with the specific key
         call_args = mock_orchestration_context.call_entity.call_args

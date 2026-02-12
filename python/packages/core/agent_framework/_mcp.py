@@ -102,21 +102,31 @@ def _parse_prompt_result_from_mcp(
         if isinstance(content, types.TextContent):
             parts.append(content.text)
         elif isinstance(content, (types.ImageContent, types.AudioContent)):
-            parts.append(json.dumps({
-                "type": "image" if isinstance(content, types.ImageContent) else "audio",
-                "data": content.data,
-                "mimeType": content.mimeType,
-            }, default=str))
+            parts.append(
+                json.dumps(
+                    {
+                        "type": "image" if isinstance(content, types.ImageContent) else "audio",
+                        "data": content.data,
+                        "mimeType": content.mimeType,
+                    },
+                    default=str,
+                )
+            )
         elif isinstance(content, types.EmbeddedResource):
             match content.resource:
                 case types.TextResourceContents():
                     parts.append(content.resource.text)
                 case types.BlobResourceContents():
-                    parts.append(json.dumps({
-                        "type": "blob",
-                        "data": content.resource.blob,
-                        "mimeType": content.resource.mimeType,
-                    }, default=str))
+                    parts.append(
+                        json.dumps(
+                            {
+                                "type": "blob",
+                                "data": content.resource.blob,
+                                "mimeType": content.resource.mimeType,
+                            },
+                            default=str,
+                        )
+                    )
         else:
             parts.append(str(content))
     if not parts:
@@ -159,27 +169,42 @@ def _parse_tool_result_from_mcp(
             case types.TextContent():
                 parts.append(item.text)
             case types.ImageContent() | types.AudioContent():
-                parts.append(json.dumps({
-                    "type": "image" if isinstance(item, types.ImageContent) else "audio",
-                    "data": item.data,
-                    "mimeType": item.mimeType,
-                }, default=str))
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
+                            "data": item.data,
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
             case types.ResourceLink():
-                parts.append(json.dumps({
-                    "type": "resource_link",
-                    "uri": str(item.uri),
-                    "mimeType": item.mimeType,
-                }, default=str))
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "resource_link",
+                            "uri": str(item.uri),
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
             case types.EmbeddedResource():
                 match item.resource:
                     case types.TextResourceContents():
                         parts.append(item.resource.text)
                     case types.BlobResourceContents():
-                        parts.append(json.dumps({
-                            "type": "blob",
-                            "data": item.resource.blob,
-                            "mimeType": item.resource.mimeType,
-                        }, default=str))
+                        parts.append(
+                            json.dumps(
+                                {
+                                    "type": "blob",
+                                    "data": item.resource.blob,
+                                    "mimeType": item.resource.mimeType,
+                                },
+                                default=str,
+                            )
+                        )
             case _:
                 parts.append(str(item))
     if not parts:
@@ -847,7 +872,7 @@ class MCPTool:
             k: v
             for k, v in kwargs.items()
             if k
-            not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
+            not in {"chat_options", "tools", "tool_choice", "session", "thread", "conversation_id", "options", "response_format"}
         }
 
         parser = self.parse_tool_results or _parse_tool_result_from_mcp

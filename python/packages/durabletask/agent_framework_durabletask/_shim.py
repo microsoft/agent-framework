@@ -12,10 +12,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentThread, Message, SupportsAgentRun
+from agent_framework import AgentSession, Message, SupportsAgentRun
 
 from ._executors import DurableAgentExecutor
-from ._models import DurableAgentThread
+from ._models import DurableAgentSession
 
 # TypeVar for the task type returned by executors
 # Covariant because TaskT only appears in return positions (output)
@@ -89,7 +89,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: dict[str, Any] | None = None,
     ) -> TaskT:
         """Execute the agent via the injected provider.
@@ -98,7 +98,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             messages: The message(s) to send to the agent
             stream: Whether to use streaming for the response (must be False)
                 DurableAgents do not support streaming mode.
-            thread: Optional agent thread for conversation context
+            session: Optional agent session for conversation context
             options: Optional options dictionary. Supported keys include
                 ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
                 Additional keys are forwarded to the agent execution.
@@ -129,12 +129,19 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         return self._executor.run_durable_agent(
             agent_name=self.name,
             run_request=run_request,
-            thread=thread,
+            session=session,
         )
 
-    def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
-        """Create a new agent thread via the provider."""
-        return self._executor.get_new_thread(self.name, **kwargs)
+    def create_session(self, **kwargs: Any) -> DurableAgentSession:
+        """Create a new agent session via the provider."""
+        return self._executor.get_new_session(self.name, **kwargs)
+
+    def get_session(self, **kwargs: Any) -> AgentSession:
+        """Retrieve an existing session via the provider.
+
+        For durable agents, sessions do not use `service_session_id` so this is not used.
+        """
+        return self._executor.get_new_session(self.name, **kwargs)
 
     def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
         """Convert supported message inputs to a single string.

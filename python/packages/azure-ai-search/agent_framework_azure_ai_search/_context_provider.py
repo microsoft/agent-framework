@@ -2,21 +2,20 @@
 
 """New-pattern Azure AI Search context provider using BaseContextProvider.
 
-This module provides ``_AzureAISearchContextProvider``, a side-by-side implementation of
-:class:`AzureAISearchContextProvider` built on the new :class:`BaseContextProvider` hooks
-pattern. It will replace the existing class in PR2.
+This module provides ``AzureAISearchContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._logging import get_logger
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework._settings import load_settings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -42,8 +41,6 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
-
-from ._search_provider import AzureAISearchSettings
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -111,16 +108,34 @@ logger = get_logger(__name__)
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
 
-class _AzureAISearchContextProvider(BaseContextProvider):
+class AzureAISearchSettings(TypedDict, total=False):
+    """Settings for Azure AI Search Context Provider with auto-loading from environment.
+
+    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
+    If the environment variables are not found, the settings can be loaded from a .env file.
+
+    Keys:
+        endpoint: Azure AI Search endpoint URL.
+            Can be set via environment variable AZURE_SEARCH_ENDPOINT.
+        index_name: Name of the search index.
+            Can be set via environment variable AZURE_SEARCH_INDEX_NAME.
+        knowledge_base_name: Name of an existing Knowledge Base (for agentic mode).
+            Can be set via environment variable AZURE_SEARCH_KNOWLEDGE_BASE_NAME.
+        api_key: API key for authentication (optional, use managed identity if not provided).
+            Can be set via environment variable AZURE_SEARCH_API_KEY.
+    """
+
+    endpoint: str | None
+    index_name: str | None
+    knowledge_base_name: str | None
+    api_key: SecretString | None
+
+
+class AzureAISearchContextProvider(BaseContextProvider):
     """Azure AI Search context provider using the new BaseContextProvider hooks pattern.
 
     Retrieves relevant context from Azure AI Search using semantic or agentic search
-    modes. This is the new-pattern equivalent of :class:`AzureAISearchContextProvider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`AzureAISearchContextProvider`. It will replace the existing class
-        in PR2.
+    modes.
     """
 
     _DEFAULT_SEARCH_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
@@ -179,10 +194,18 @@ class _AzureAISearchContextProvider(BaseContextProvider):
         """
         super().__init__(source_id)
 
+        # Determine which fields are required based on mode
+        required: list[str | tuple[str, ...]] = ["endpoint"]
+        if mode == "semantic":
+            required.append("index_name")
+        elif mode == "agentic":
+            required.append(("index_name", "knowledge_base_name"))
+
         # Load settings from environment/file
         settings = load_settings(
             AzureAISearchSettings,
             env_prefix="AZURE_SEARCH_",
+            required_fields=required,
             endpoint=endpoint,
             index_name=index_name,
             knowledge_base_name=knowledge_base_name,
@@ -191,31 +214,10 @@ class _AzureAISearchContextProvider(BaseContextProvider):
             env_file_encoding=env_file_encoding,
         )
 
-        if not settings.get("endpoint"):
+        if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
             raise ServiceInitializationError(
-                "Azure AI Search endpoint is required. Set via 'endpoint' parameter "
-                "or 'AZURE_SEARCH_ENDPOINT' environment variable."
+                "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
             )
-
-        if mode == "semantic":
-            if not settings.get("index_name"):
-                raise ServiceInitializationError(
-                    "Azure AI Search index name is required for semantic mode. "
-                    "Set via 'index_name' parameter or 'AZURE_SEARCH_INDEX_NAME' environment variable."
-                )
-        elif mode == "agentic":
-            if settings.get("index_name") and settings.get("knowledge_base_name"):
-                raise ServiceInitializationError(
-                    "For agentic mode, provide either 'index_name' OR 'knowledge_base_name', not both."
-                )
-            if not settings.get("index_name") and not settings.get("knowledge_base_name"):
-                raise ServiceInitializationError(
-                    "For agentic mode, provide either 'index_name' or 'knowledge_base_name'."
-                )
-            if settings.get("index_name") and not model_deployment_name:
-                raise ServiceInitializationError(
-                    "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
-                )
 
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
         if credential:
@@ -621,4 +623,4 @@ class _AzureAISearchContextProvider(BaseContextProvider):
         return text
 
 
-__all__ = ["_AzureAISearchContextProvider"]
+__all__ = ["AzureAISearchContextProvider"]

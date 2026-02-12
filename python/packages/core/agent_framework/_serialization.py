@@ -166,45 +166,22 @@ class SerializationMixin:
     during deserialization via the ``dependencies`` parameter.
 
     Examples:
-        **Nested object serialization with agent thread management:**
+        **Nested object serialization:**
 
         .. code-block:: python
 
             from agent_framework import Message
-            from agent_framework._threads import AgentThreadState, ChatMessageStoreState
+            from agent_framework._sessions import AgentSession
 
 
-            # ChatMessageStoreState handles nested Message serialization
-            store_state = ChatMessageStoreState(
-                messages=[
-                    Message(role="user", text="Hello agent"),
-                    Message(role="assistant", text="Hi! How can I help?"),
-                ]
-            )
+            # AgentSession uses SerializationMixin for state serialization
+            session = AgentSession(session_id="test")
 
-            # Nested serialization: messages are automatically converted to dicts
-            store_dict = store_state.to_dict()
-            # Result: {
-            #     "type": "chat_message_store_state",
-            #     "messages": [
-            #         {"type": "chat_message", "role": {...}, "contents": [...]},
-            #         {"type": "chat_message", "role": {...}, "contents": [...]}
-            #     ]
-            # }
+            # Serialization produces a clean dict representation
+            session_dict = session.to_dict()
 
-            # AgentThreadState contains nested ChatMessageStoreState
-            thread_state = AgentThreadState(chat_message_store_state=store_state)
-
-            # Deep serialization: nested SerializationMixin objects are handled automatically
-            thread_dict = thread_state.to_dict()
-            # The chat_message_store_state and its nested messages are all serialized
-
-            # Reconstruction from nested dictionaries with automatic type conversion
-            # The __init__ method handles MutableMapping -> object conversion:
-            reconstructed = AgentThreadState.from_dict({
-                "chat_message_store_state": {"messages": [{"role": "user", "text": "Hello again"}]}
-            })
-            # chat_message_store_state becomes ChatMessageStoreState instance automatically
+            # Reconstruction from dictionaries
+            restored = AgentSession.from_dict(session_dict)
 
         **Framework tools with exclusion patterns:**
 

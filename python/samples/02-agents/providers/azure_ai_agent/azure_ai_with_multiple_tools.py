@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework import (
-    AgentThread,
+    AgentSession,
     SupportsAgentRun,
     tool,
 )
@@ -35,7 +35,7 @@ To set up Bing Grounding:
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_time() -> str:
     """Get the current UTC time."""
@@ -43,11 +43,11 @@ def get_time() -> str:
     return f"The current UTC time is {current_time.strftime('%Y-%m-%d %H:%M:%S')}."
 
 
-async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread"):
-    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession"):
+    """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    result = await agent.run(query, thread=thread, store=True)
+    result = await agent.run(query, session=session, store=True)
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
@@ -62,7 +62,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, thread=thread, store=True)
+        result = await agent.run(new_input, session=session, store=True)
     return result
 
 
@@ -91,17 +91,17 @@ async def main() -> None:
                 get_time,
             ],
         )
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         # First query
         query1 = "How to create an Azure storage account using az cli and what time is it?"
         print(f"User: {query1}")
-        result1 = await handle_approvals_with_thread(query1, agent, thread)
+        result1 = await handle_approvals_with_session(query1, agent, session)
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
         query2 = "What is Microsoft Agent Framework and use a web search to see what is Reddit saying about it?"
         print(f"User: {query2}")
-        result2 = await handle_approvals_with_thread(query2, agent, thread)
+        result2 = await handle_approvals_with_session(query2, agent, session)
         print(f"{agent.name}: {result2}\n")
 
 

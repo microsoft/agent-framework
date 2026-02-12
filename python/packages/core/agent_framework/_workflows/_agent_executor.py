@@ -11,7 +11,7 @@ from typing_extensions import Never
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
-from .._threads import AgentThread
+from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message
 from ._agent_utils import resolve_agent_id
 from ._const import WORKFLOW_RUN_KWARGS_KEY
@@ -81,14 +81,14 @@ class AgentExecutor(Executor):
         self,
         agent: SupportsAgentRun,
         *,
-        agent_thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         id: str | None = None,
     ):
         """Initialize the executor with a unique identifier.
 
         Args:
             agent: The agent to be wrapped by this executor.
-            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
+            session: The session to use for running the agent. If None, a new session will be created.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
@@ -97,7 +97,7 @@ class AgentExecutor(Executor):
             raise ValueError("Agent must have a non-empty name or id or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
-        self._agent_thread = agent_thread or self._agent.get_new_thread()
+        self._session = session or self._agent.create_session()
 
         self._pending_agent_requests: dict[str, Content] = {}
         self._pending_responses_to_agent: list[Content] = []
@@ -205,35 +205,33 @@ class AgentExecutor(Executor):
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
-        NOTE: if the thread storage is on the server side, the full thread state
-        may not be serialized locally. Therefore, we are relying on the server-side
-        to ensure the thread state is preserved and immutable across checkpoints.
-        This is not the case for AzureAI Agents, but works for the Responses API.
+        NOTE: if the session uses service-side storage, the full session state
+        may not be serialized locally.
 
         Returns:
-            Dict containing serialized cache and thread state
+            Dict containing serialized cache and session state
         """
-        # Check if using AzureAIAgentClient with server-side thread and warn about checkpointing limitations
-        if is_chat_agent(self._agent) and self._agent_thread.service_thread_id is not None:
+        # Check if using AzureAIAgentClient with server-side session and warn about checkpointing limitations
+        if is_chat_agent(self._agent) and self._session.service_session_id is not None:
             client_class_name = self._agent.client.__class__.__name__
             client_module = self._agent.client.__class__.__module__
 
             if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
                 logger.warning(
-                    "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side threads. "
-                    "Currently, checkpointing does not capture messages from server-side threads "
-                    "(service_thread_id: %s). The thread state in checkpoints is not immutable and can be "
+                    "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side sessions. "
+                    "Currently, checkpointing does not capture messages from server-side sessions "
+                    "(service_session_id: %s). The session state in checkpoints is not immutable and can be "
                     "modified by subsequent runs. If you need reliable checkpointing with Azure AI agents, "
-                    "consider implementing a custom executor and managing the thread state yourself.",
-                    self._agent_thread.service_thread_id,
+                    "consider implementing a custom executor and managing the session state yourself.",
+                    self._session.service_session_id,
                 )
 
-        serialized_thread = await self._agent_thread.serialize()
+        serialized_session = self._session.to_dict()
 
         return {
             "cache": self._cache,
             "full_conversation": self._full_conversation,
-            "agent_thread": serialized_thread,
+            "agent_session": serialized_session,
             "pending_agent_requests": self._pending_agent_requests,
             "pending_responses_to_agent": self._pending_responses_to_agent,
         }
@@ -246,22 +244,34 @@ class AgentExecutor(Executor):
             state: Checkpoint data dict
         """
         cache_payload = state.get("cache")
-        self._cache = cache_payload or []
+        if cache_payload:
+            try:
+                self._cache = cache_payload
+            except Exception as exc:
+                logger.warning("Failed to restore cache: %s", exc)
+                self._cache = []
+        else:
+            self._cache = []
 
         full_conversation_payload = state.get("full_conversation")
-        self._full_conversation = full_conversation_payload or []
-
-        thread_payload = state.get("agent_thread")
-        if thread_payload:
+        if full_conversation_payload:
             try:
-                # Deserialize the thread state directly
-                self._agent_thread = await AgentThread.deserialize(thread_payload)
-
+                self._full_conversation = full_conversation_payload
             except Exception as exc:
-                logger.warning("Failed to restore agent thread: %s", exc)
-                self._agent_thread = self._agent.get_new_thread()
+                logger.warning("Failed to restore full conversation: %s", exc)
+                self._full_conversation = []
         else:
-            self._agent_thread = self._agent.get_new_thread()
+            self._full_conversation = []
+
+        session_payload = state.get("agent_session")
+        if session_payload:
+            try:
+                self._session = AgentSession.from_dict(session_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore agent session: %s", exc)
+                self._session = self._agent.create_session()
+        else:
+            self._session = self._agent.create_session()
 
         pending_requests_payload = state.get("pending_agent_requests")
         if pending_requests_payload:
@@ -321,7 +331,7 @@ class AgentExecutor(Executor):
         response = await self._agent.run(
             self._cache,
             stream=False,
-            thread=self._agent_thread,
+            session=self._session,
             options=options,
             **run_kwargs,
         )
@@ -352,7 +362,7 @@ class AgentExecutor(Executor):
         async for update in self._agent.run(
             self._cache,
             stream=True,
-            thread=self._agent_thread,
+            session=self._session,
             options=options,
             **run_kwargs,
         ):

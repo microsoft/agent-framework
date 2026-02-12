@@ -11,8 +11,7 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
-    ChatMessageStore,
+    AgentSession,
     Content,
     Executor,
     Message,
@@ -511,80 +510,53 @@ class TestWorkflowAgent:
         texts = [message.text for message in result.messages]
         assert texts == ["first message", "second message", "third fourth"]
 
-    async def test_thread_conversation_history_included_in_workflow_run(self) -> None:
-        """Test that conversation history from thread is included when running WorkflowAgent.
-
-        This verifies that when a thread with existing messages is provided to agent.run(),
-        the workflow receives the complete conversation history (thread history + new messages).
-        """
+    async def test_session_conversation_history_included_in_workflow_run(self) -> None:
+        """Test that messages provided to agent.run() are passed through to the workflow."""
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing", streaming=False)
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Thread History Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Session History Test Agent")
 
-        # Create a thread with existing conversation history
-        history_messages = [
-            Message(role="user", text="Previous user message"),
-            Message(role="assistant", text="Previous assistant response"),
-        ]
-        message_store = ChatMessageStore(messages=history_messages)
-        thread = AgentThread(message_store=message_store)
+        # Create a session
+        session = AgentSession()
 
-        # Run the agent with the thread and a new message
+        # Run the agent with the session and a new message
         new_message = "New user question"
-        await agent.run(new_message, thread=thread)
+        await agent.run(new_message, session=session)
 
-        # Verify the executor received both history AND new message
-        assert len(capturing_executor.received_messages) == 3
+        # Verify the executor received the message
+        assert len(capturing_executor.received_messages) == 1
+        assert capturing_executor.received_messages[0].text == "New user question"
 
-        # Verify the order: history first, then new message
-        assert capturing_executor.received_messages[0].text == "Previous user message"
-        assert capturing_executor.received_messages[1].text == "Previous assistant response"
-        assert capturing_executor.received_messages[2].text == "New user question"
-
-    async def test_thread_conversation_history_included_in_workflow_stream(self) -> None:
-        """Test that conversation history from thread is included when streaming WorkflowAgent.
-
-        This verifies that stream=True also includes thread history.
-        """
+    async def test_session_conversation_history_included_in_workflow_stream(self) -> None:
+        """Test that messages provided to agent.run() are passed through when streaming WorkflowAgent."""
         # Create an executor that captures all received messages
         capturing_executor = ConversationHistoryCapturingExecutor(id="capturing_stream")
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Thread Stream Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Session Stream Test Agent")
 
-        # Create a thread with existing conversation history
-        history_messages = [
-            Message(role="system", text="You are a helpful assistant"),
-            Message(role="user", text="Hello"),
-            Message("assistant", ["Hi there!"]),
-        ]
-        message_store = ChatMessageStore(messages=history_messages)
-        thread = AgentThread(message_store=message_store)
+        # Create a session
+        session = AgentSession()
 
-        # Stream from the agent with the thread and a new message
-        async for _ in agent.run("How are you?", stream=True, thread=thread):
+        # Stream from the agent with the session and a new message
+        async for _ in agent.run("How are you?", stream=True, session=session):
             pass
 
-        # Verify the executor received all messages (3 from history + 1 new)
-        assert len(capturing_executor.received_messages) == 4
+        # Verify the executor received the message
+        assert len(capturing_executor.received_messages) == 1
+        assert capturing_executor.received_messages[0].text == "How are you?"
 
-        # Verify the order
-        assert capturing_executor.received_messages[0].text == "You are a helpful assistant"
-        assert capturing_executor.received_messages[1].text == "Hello"
-        assert capturing_executor.received_messages[2].text == "Hi there!"
-        assert capturing_executor.received_messages[3].text == "How are you?"
-
-    async def test_empty_thread_works_correctly(self) -> None:
-        """Test that an empty thread (no message store) works correctly."""
-        capturing_executor = ConversationHistoryCapturingExecutor(id="empty_thread_test")
+    async def test_empty_session_works_correctly(self) -> None:
+        """Test that an empty session (no message store) works correctly."""
+        capturing_executor = ConversationHistoryCapturingExecutor(id="empty_session_test")
         workflow = WorkflowBuilder(start_executor=capturing_executor).build()
-        agent = WorkflowAgent(workflow=workflow, name="Empty Thread Test Agent")
+        agent = WorkflowAgent(workflow=workflow, name="Empty Session Test Agent")
 
-        # Create an empty thread
-        thread = AgentThread()
+        # Create an empty session
+        session = AgentSession()
 
-        # Run with the empty thread
-        await agent.run("Just a new message", thread=thread)
+        # Run with the empty session
+        await agent.run("Just a new message", session=session)
 
         # Should only receive the new message
         assert len(capturing_executor.received_messages) == 1
@@ -622,27 +594,27 @@ class TestWorkflowAgent:
                 self.description: str | None = None
                 self._response_text = response_text
 
-            def get_new_thread(self, **kwargs: Any) -> AgentThread:
-                return AgentThread()
+            def create_session(self, **kwargs: Any) -> AgentSession:
+                return AgentSession()
 
             def run(
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
                 stream: bool = False,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
                 if stream:
-                    return self._run_stream(messages=messages, thread=thread, **kwargs)
-                return self._run(messages=messages, thread=thread, **kwargs)
+                    return self._run_stream(messages=messages, session=session, **kwargs)
+                return self._run(messages=messages, session=session, **kwargs)
 
             async def _run(
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
                 stream: bool = False,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
 
@@ -654,7 +626,7 @@ class TestWorkflowAgent:
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
                 async def _iter():
@@ -710,27 +682,27 @@ class TestWorkflowAgent:
                 self.description: str | None = None
                 self._response_text = response_text
 
-            def get_new_thread(self, **kwargs: Any) -> AgentThread:
-                return AgentThread()
+            def create_session(self, **kwargs: Any) -> AgentSession:
+                return AgentSession()
 
             def run(
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
                 stream: bool = False,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
                 if stream:
-                    return self._run_stream(messages=messages, thread=thread, **kwargs)
-                return self._run(messages=messages, thread=thread, **kwargs)
+                    return self._run_stream(messages=messages, session=session, **kwargs)
+                return self._run(messages=messages, session=session, **kwargs)
 
             async def _run(
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
                 stream: bool = False,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> AgentResponse:
 
@@ -742,7 +714,7 @@ class TestWorkflowAgent:
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
                 *,
-                thread: AgentThread | None = None,
+                session: AgentSession | None = None,
                 **kwargs: Any,
             ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
                 async def _iter():
@@ -1037,7 +1009,7 @@ class TestWorkflowAgentMergeUpdates:
     def test_merge_updates_function_result_ordering_github_2977(self):
         """Test that FunctionResultContent updates are placed after their FunctionCallContent.
 
-        This test reproduces GitHub issue #2977: When using a thread with WorkflowAgent,
+        This test reproduces GitHub issue #2977: When using a session with WorkflowAgent,
         FunctionResultContent updates without response_id were being added to global_dangling
         and placed at the end of messages. This caused OpenAI to reject the conversation because
         "An assistant message with 'tool_calls' must be followed by tool messages responding

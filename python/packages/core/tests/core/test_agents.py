@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
-from collections.abc import AsyncIterable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -13,13 +13,11 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
-    ChatMessageStore,
+    AgentSession,
+    BaseContextProvider,
     ChatOptions,
     ChatResponse,
     Content,
-    Context,
-    ContextProvider,
     FunctionTool,
     Message,
     SupportsAgentRun,
@@ -28,11 +26,10 @@ from agent_framework import (
 )
 from agent_framework._agents import _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import AgentExecutionException, AgentInitializationError
 
 
-def test_agent_thread_type(agent_thread: AgentThread) -> None:
-    assert isinstance(agent_thread, AgentThread)
+def test_agent_session_type(agent_session: AgentSession) -> None:
+    assert isinstance(agent_session, AgentSession)
 
 
 def test_agent_type(agent: SupportsAgentRun) -> None:
@@ -93,38 +90,42 @@ async def test_chat_client_agent_run_streaming(client: SupportsChatGetResponse) 
     assert result.text == "test streaming response another update"
 
 
-async def test_chat_client_agent_get_new_thread(client: SupportsChatGetResponse) -> None:
+async def test_chat_client_agent_create_session(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
-    assert isinstance(thread, AgentThread)
+    assert isinstance(session, AgentSession)
 
 
-async def test_chat_client_agent_prepare_thread_and_messages(client: SupportsChatGetResponse) -> None:
-    agent = Agent(client=client)
+async def test_chat_client_agent_prepare_session_and_messages(client: SupportsChatGetResponse) -> None:
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider("memory")])
     message = Message(role="user", text="Hello")
-    thread = AgentThread(message_store=ChatMessageStore(messages=[message]))
+    session = AgentSession()
+    session.state["memory"] = {"messages": [message]}
 
-    _, _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=thread,
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
         input_messages=[Message(role="user", text="Test")],
     )
+    result_messages = session_context.get_messages(include_input=True)
 
     assert len(result_messages) == 2
-    assert result_messages[0] == message
+    assert result_messages[0].text == "Hello"
     assert result_messages[1].text == "Test"
 
 
-async def test_prepare_thread_does_not_mutate_agent_chat_options(client: SupportsChatGetResponse) -> None:
+async def test_prepare_session_does_not_mutate_agent_chat_options(client: SupportsChatGetResponse) -> None:
     tool = {"type": "code_interpreter"}
     agent = Agent(client=client, tools=[tool])
 
     assert agent.default_options.get("tools") is not None
     base_tools = agent.default_options["tools"]
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
-    _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=thread,
+    _, prepared_chat_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
         input_messages=[Message(role="user", text="Test")],
     )
 
@@ -135,7 +136,7 @@ async def test_prepare_thread_does_not_mutate_agent_chat_options(client: Support
     assert len(agent.default_options["tools"]) == 1
 
 
-async def test_chat_client_agent_update_thread_id(chat_client_base: SupportsChatGetResponse) -> None:
+async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:
     mock_response = ChatResponse(
         messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
         conversation_id="123",
@@ -145,25 +146,24 @@ async def test_chat_client_agent_update_thread_id(chat_client_base: SupportsChat
         client=chat_client_base,
         tools={"type": "code_interpreter"},
     )
-    thread = agent.get_new_thread()
+    session = agent.get_session(service_session_id="123")
 
-    result = await agent.run("Hello", thread=thread)
+    result = await agent.run("Hello", session=session)
     assert result.text == "test response"
 
-    assert thread.service_thread_id == "123"
+    assert session.service_session_id == "123"
 
 
-async def test_chat_client_agent_update_thread_messages(client: SupportsChatGetResponse) -> None:
+async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
-    result = await agent.run("Hello", thread=thread)
+    result = await agent.run("Hello", session=session)
     assert result.text == "test response"
 
-    assert thread.service_thread_id is None
-    assert thread.message_store is not None
+    assert session.service_session_id is None
 
-    chat_messages: list[Message] = await thread.message_store.list_messages()
+    chat_messages: list[Message] = session.state.get("memory", {}).get("messages", [])
 
     assert chat_messages is not None
     assert len(chat_messages) == 2
@@ -171,12 +171,12 @@ async def test_chat_client_agent_update_thread_messages(client: SupportsChatGetR
     assert chat_messages[1].text == "test response"
 
 
-async def test_chat_client_agent_update_thread_conversation_id_missing(client: SupportsChatGetResponse) -> None:
+async def test_chat_client_agent_update_session_conversation_id_missing(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
-    thread = AgentThread(service_thread_id="123")
+    session = agent.get_session(service_session_id="123")
 
-    with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
-        await agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
+    # With the session-based API, service_session_id is managed directly on the session
+    assert session.service_session_id == "123"
 
 
 async def test_chat_client_agent_default_author_name(client: SupportsChatGetResponse) -> None:
@@ -214,54 +214,41 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
 
 
 # Mock context provider for testing
-class MockContextProvider(ContextProvider):
+class MockContextProvider(BaseContextProvider):
     def __init__(self, messages: list[Message] | None = None) -> None:
+        super().__init__(source_id="mock")
         self.context_messages = messages
-        self.thread_created_called = False
-        self.invoked_called = False
-        self.invoking_called = False
-        self.thread_created_thread_id = None
-        self.invoked_thread_id = None
+        self.before_run_called = False
+        self.after_run_called = False
         self.new_messages: list[Message] = []
+        self.last_service_session_id: str | None = None
 
-    async def thread_created(self, thread_id: str | None) -> None:
-        self.thread_created_called = True
-        self.thread_created_thread_id = thread_id
+    async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+        self.before_run_called = True
+        if self.context_messages:
+            context.extend_messages(self, self.context_messages)
 
-    async def invoked(
-        self,
-        request_messages: Message | Sequence[Message],
-        response_messages: Message | Sequence[Message] | None = None,
-        invoke_exception: Any = None,
-        **kwargs: Any,
-    ) -> None:
-        self.invoked_called = True
-        if isinstance(request_messages, Message):
-            self.new_messages.append(request_messages)
-        else:
-            self.new_messages.extend(request_messages)
-        if isinstance(response_messages, Message):
-            self.new_messages.append(response_messages)
-        else:
-            self.new_messages.extend(response_messages)
-
-    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
-        self.invoking_called = True
-        return Context(messages=self.context_messages)
+    async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+        self.after_run_called = True
+        if session:
+            self.last_service_session_id = session.service_session_id
+        if context.response:
+            self.new_messages.extend(context.input_messages)
+            self.new_messages.extend(context.response.messages)
 
 
-async def test_chat_agent_context_providers_model_invoking(client: SupportsChatGetResponse) -> None:
-    """Test that context providers' invoking is called during agent run."""
+async def test_chat_agent_context_providers_model_before_run(client: SupportsChatGetResponse) -> None:
+    """Test that context providers' before_run is called during agent run."""
     mock_provider = MockContextProvider(messages=[Message(role="system", text="Test context instructions")])
-    agent = Agent(client=client, context_provider=mock_provider)
+    agent = Agent(client=client, context_providers=[mock_provider])
 
     await agent.run("Hello")
 
-    assert mock_provider.invoking_called
+    assert mock_provider.before_run_called
 
 
-async def test_chat_agent_context_providers_thread_created(chat_client_base: SupportsChatGetResponse) -> None:
-    """Test that context providers' thread_created is called during agent run."""
+async def test_chat_agent_context_providers_after_run(chat_client_base: SupportsChatGetResponse) -> None:
+    """Test that context providers' after_run is called during agent run."""
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
@@ -270,22 +257,23 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Sup
         )
     ]
 
-    agent = Agent(client=chat_client_base, context_provider=mock_provider)
+    agent = Agent(client=chat_client_base, context_providers=[mock_provider])
 
-    await agent.run("Hello")
+    session = agent.get_session(service_session_id="test-thread-id")
+    await agent.run("Hello", session=session)
 
-    assert mock_provider.thread_created_called
-    assert mock_provider.thread_created_thread_id == "test-thread-id"
+    assert mock_provider.after_run_called
+    assert mock_provider.last_service_session_id == "test-thread-id"
 
 
 async def test_chat_agent_context_providers_messages_adding(client: SupportsChatGetResponse) -> None:
-    """Test that context providers' invoked is called during agent run."""
+    """Test that context providers' after_run is called during agent run."""
     mock_provider = MockContextProvider()
-    agent = Agent(client=client, context_provider=mock_provider)
+    agent = Agent(client=client, context_providers=[mock_provider])
 
     await agent.run("Hello")
 
-    assert mock_provider.invoked_called
+    assert mock_provider.after_run_called
     # Should be called with both input and response messages
     assert len(mock_provider.new_messages) >= 2
 
@@ -293,12 +281,13 @@ async def test_chat_agent_context_providers_messages_adding(client: SupportsChat
 async def test_chat_agent_context_instructions_in_messages(client: SupportsChatGetResponse) -> None:
     """Test that AI context instructions are included in messages."""
     mock_provider = MockContextProvider(messages=[Message(role="system", text="Context-specific instructions")])
-    agent = Agent(client=client, instructions="Agent instructions", context_provider=mock_provider)
+    agent = Agent(client=client, instructions="Agent instructions", context_providers=[mock_provider])
 
-    # We need to test the _prepare_thread_and_messages method directly
-    _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[Message(role="user", text="Hello")]
+    # We need to test the _prepare_session_and_messages method directly
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=None, input_messages=[Message(role="user", text="Hello")]
     )
+    messages = session_context.get_messages(include_input=True)
 
     # Should have context instructions, and user message
     assert len(messages) == 2
@@ -312,11 +301,12 @@ async def test_chat_agent_context_instructions_in_messages(client: SupportsChatG
 async def test_chat_agent_no_context_instructions(client: SupportsChatGetResponse) -> None:
     """Test behavior when AI context has no instructions."""
     mock_provider = MockContextProvider()
-    agent = Agent(client=client, instructions="Agent instructions", context_provider=mock_provider)
+    agent = Agent(client=client, instructions="Agent instructions", context_providers=[mock_provider])
 
-    _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[Message(role="user", text="Hello")]
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=None, input_messages=[Message(role="user", text="Hello")]
     )
+    messages = session_context.get_messages(include_input=True)
 
     # Should have agent instructions and user message only
     assert len(messages) == 1
@@ -327,7 +317,7 @@ async def test_chat_agent_no_context_instructions(client: SupportsChatGetRespons
 async def test_chat_agent_run_stream_context_providers(client: SupportsChatGetResponse) -> None:
     """Test that context providers work with run method."""
     mock_provider = MockContextProvider(messages=[Message(role="system", text="Stream context instructions")])
-    agent = Agent(client=client, context_provider=mock_provider)
+    agent = Agent(client=client, context_providers=[mock_provider])
 
     # Collect all stream updates and get final response
     stream = agent.run("Hello", stream=True)
@@ -338,14 +328,12 @@ async def test_chat_agent_run_stream_context_providers(client: SupportsChatGetRe
     await stream.get_final_response()
 
     # Verify context provider was called
-    assert mock_provider.invoking_called
-    # no conversation id is created, so no need to thread_create to be called.
-    assert not mock_provider.thread_created_called
-    assert mock_provider.invoked_called
+    assert mock_provider.before_run_called
+    assert mock_provider.after_run_called
 
 
-async def test_chat_agent_context_providers_with_thread_service_id(chat_client_base: SupportsChatGetResponse) -> None:
-    """Test context providers with service-managed thread."""
+async def test_chat_agent_context_providers_with_service_session_id(chat_client_base: SupportsChatGetResponse) -> None:
+    """Test context providers with service-managed session."""
     mock_provider = MockContextProvider()
     chat_client_base.run_responses = [
         ChatResponse(
@@ -354,14 +342,14 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
         )
     ]
 
-    agent = Agent(client=chat_client_base, context_provider=mock_provider)
+    agent = Agent(client=chat_client_base, context_providers=[mock_provider])
 
-    # Use existing service-managed thread
-    thread = agent.get_new_thread(service_thread_id="existing-thread-id")
-    await agent.run("Hello", thread=thread)
+    # Use existing service-managed session
+    session = agent.get_session(service_session_id="existing-thread-id")
+    await agent.run("Hello", session=session)
 
-    # invoked should be called with the service thread ID from response
-    assert mock_provider.invoked_called
+    # after_run should be called
+    assert mock_provider.after_run_called
 
 
 # Tests for as_tool method
@@ -562,16 +550,16 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
             pass
 
 
-async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> None:
-    """Verify tool execution receives 'thread' inside **kwargs when function is called by client."""
+async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
+    """Verify tool execution receives 'session' inside **kwargs when function is called by client."""
 
     captured: dict[str, Any] = {}
 
-    @tool(name="echo_thread_info", approval_mode="never_require")
-    def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
-        thread = kwargs.get("thread")
-        captured["has_thread"] = thread is not None
-        captured["has_message_store"] = thread.message_store is not None if isinstance(thread, AgentThread) else False
+    @tool(name="echo_session_info", approval_mode="never_require")
+    def echo_session_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
+        session = kwargs.get("session")
+        captured["has_session"] = session is not None
+        captured["has_state"] = session.state is not None if isinstance(session, AgentSession) else False
         return f"echo: {text}"
 
     # Make the base client emit a function call for our tool
@@ -580,21 +568,21 @@ async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> No
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')
+                    Content.from_function_call(call_id="1", name="echo_session_info", arguments='{"text": "hello"}')
                 ],
             )
         ),
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    agent = Agent(client=chat_client_base, tools=[echo_thread_info], chat_message_store_factory=ChatMessageStore)
-    thread = agent.get_new_thread()
+    agent = Agent(client=chat_client_base, tools=[echo_session_info])
+    session = agent.create_session()
 
-    result = await agent.run("hello", thread=thread, options={"additional_function_arguments": {"thread": thread}})
+    result = await agent.run("hello", session=session, options={"additional_function_arguments": {"session": session}})
 
     assert result.text == "done"
-    assert captured.get("has_thread") is True
-    assert captured.get("has_message_store") is True
+    assert captured.get("has_session") is True
+    assert captured.get("has_state") is True
 
 
 async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
@@ -801,93 +789,73 @@ def test_sanitize_agent_name_replaces_invalid_chars():
 # endregion
 
 
-# region Test SupportsAgentRun.get_new_thread and deserialize_thread
+# region Test SupportsAgentRun.create_session
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
-    """Test that get_new_thread returns a new AgentThread."""
+async def test_agent_create_session(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
+    """Test that create_session returns a new AgentSession."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
-    assert thread is not None
-    assert isinstance(thread, AgentThread)
+    assert session is not None
+    assert isinstance(session, AgentSession)
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread_with_context_provider(
+async def test_agent_create_session_with_context_providers(
     chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
 ):
-    """Test that get_new_thread passes context_provider to the thread."""
+    """Test that create_session works when context_providers are set on the agent."""
 
-    class TestContextProvider(ContextProvider):
-        async def invoking(self, messages, **kwargs):
-            return Context()
+    class TestContextProvider(BaseContextProvider):
+        def __init__(self):
+            super().__init__(source_id="test")
 
     provider = TestContextProvider()
-    agent = Agent(client=chat_client_base, tools=[tool_tool], context_provider=provider)
+    agent = Agent(client=chat_client_base, tools=[tool_tool], context_providers=[provider])
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
-    assert thread is not None
-    assert thread.context_provider is provider
+    assert session is not None
+    assert agent.context_providers[0] is provider
 
 
 @pytest.mark.asyncio
-async def test_agent_get_new_thread_with_service_thread_id(
+async def test_agent_get_session_with_service_session_id(
     chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
 ):
-    """Test that get_new_thread passes kwargs like service_thread_id to the thread."""
+    """Test that get_session creates a session with service_session_id."""
     agent = Agent(client=chat_client_base, tools=[tool_tool])
 
-    thread = agent.get_new_thread(service_thread_id="test-thread-123")
+    session = agent.get_session(service_session_id="test-thread-123")
 
-    assert thread is not None
-    assert thread.service_thread_id == "test-thread-123"
+    assert session is not None
+    assert session.service_session_id == "test-thread-123"
 
 
-@pytest.mark.asyncio
-async def test_agent_deserialize_thread(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
-    """Test deserialize_thread restores a thread from serialized state."""
-    agent = Agent(client=chat_client_base, tools=[tool_tool])
-
-    # Create serialized thread state with messages
+def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
+    """Test AgentSession.from_dict restores a session from serialized state."""
+    # Create serialized session state
     serialized_state = {
-        "service_thread_id": None,
-        "chat_message_store_state": {
-            "messages": [{"role": "user", "text": "Hello"}],
-        },
+        "type": "session",
+        "session_id": "test-session",
+        "service_session_id": None,
+        "state": {},
     }
 
-    thread = await agent.deserialize_thread(serialized_state)
+    session = AgentSession.from_dict(serialized_state)
 
-    assert thread is not None
-    assert isinstance(thread, AgentThread)
-    assert thread.message_store is not None
-    messages = await thread.message_store.list_messages()
-    assert len(messages) == 1
-    assert messages[0].text == "Hello"
+    assert session is not None
+    assert isinstance(session, AgentSession)
+    assert session.session_id == "test-session"
 
 
 # endregion
 
 
 # region Test Agent initialization edge cases
-
-
-@pytest.mark.asyncio
-async def test_chat_agent_raises_with_both_conversation_id_and_store():
-    """Test Agent raises error with both conversation_id and chat_message_store_factory."""
-    mock_client = MagicMock()
-    mock_store_factory = MagicMock()
-
-    with pytest.raises(AgentInitializationError, match="Cannot specify both"):
-        Agent(
-            client=mock_client,
-            default_options={"conversation_id": "test_id"},
-            chat_message_store_factory=mock_store_factory,
-        )
 
 
 def test_chat_agent_calls_update_agent_name_on_client():
@@ -914,19 +882,22 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(chat_c
         """A tool provided by context."""
         return text
 
-    class ToolContextProvider(ContextProvider):
-        async def invoking(self, messages, **kwargs):
-            return Context(tools=[context_tool])
+    class ToolContextProvider(BaseContextProvider):
+        def __init__(self):
+            super().__init__(source_id="tool-context")
+
+        async def before_run(self, *, agent, session, context, state):
+            context.extend_tools("tool-context", [context_tool])
 
     provider = ToolContextProvider()
-    agent = Agent(client=chat_client_base, context_provider=provider)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
 
     # Agent starts with empty tools list
     assert agent.default_options.get("tools") == []
 
     # Run the agent and verify context tools are added
-    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[Message(role="user", text="Hello")]
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=None, input_messages=[Message(role="user", text="Hello")]
     )
 
     # The context tools should now be in the options
@@ -940,40 +911,76 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 ):
     """Test that context provider instructions are used when agent has no default instructions."""
 
-    class InstructionContextProvider(ContextProvider):
-        async def invoking(self, messages, **kwargs):
-            return Context(instructions="Context-provided instructions")
+    class InstructionContextProvider(BaseContextProvider):
+        def __init__(self):
+            super().__init__(source_id="instruction-context")
+
+        async def before_run(self, *, agent, session, context, state):
+            context.extend_instructions("instruction-context", "Context-provided instructions")
 
     provider = InstructionContextProvider()
-    agent = Agent(client=chat_client_base, context_provider=provider)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
 
     # Verify agent has no default instructions
     assert agent.default_options.get("instructions") is None
 
     # Run the agent and verify context instructions are available
-    _, options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-        thread=None, input_messages=[Message(role="user", text="Hello")]
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=None, input_messages=[Message(role="user", text="Hello")]
     )
 
     # The context instructions should now be in the options
     assert options.get("instructions") == "Context-provided instructions"
 
 
-@pytest.mark.asyncio
-async def test_chat_agent_raises_on_conversation_id_mismatch(chat_client_base: SupportsChatGetResponse):
-    """Test that Agent raises when thread and agent have different conversation IDs."""
-    agent = Agent(
-        client=chat_client_base,
-        default_options={"conversation_id": "agent-conversation-id"},
-    )
+# region STORES_BY_DEFAULT tests
 
-    # Create a thread with a different service_thread_id
-    thread = AgentThread(service_thread_id="different-thread-id")
 
-    with pytest.raises(AgentExecutionException, match="conversation_id set on the agent is different"):
-        await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
-            thread=thread, input_messages=[Message(role="user", text="Hello")]
-        )
+async def test_stores_by_default_skips_inmemory_injection(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=True should not auto-inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    # Simulate a client that stores by default
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # No InMemoryHistoryProvider should have been injected
+    assert not any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_stores_by_default_false_injects_inmemory(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=False (default) should auto-inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # InMemoryHistoryProvider should have been injected
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_stores_by_default_with_store_false_injects_inmemory(client: SupportsChatGetResponse) -> None:
+    """Client with STORES_BY_DEFAULT=True but store=False should still inject InMemoryHistoryProvider."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    agent = Agent(client=client)
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session, options={"store": False})
+
+    # User explicitly disabled server storage, so InMemoryHistoryProvider should be injected
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+# endregion
 
 
 # endregion

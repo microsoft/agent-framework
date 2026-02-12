@@ -9,7 +9,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -153,7 +153,7 @@ class StubAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -414,7 +414,7 @@ class StubManagerAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: Any = None,
+        session: Any = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -526,7 +526,7 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -554,7 +554,7 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 

@@ -13,7 +13,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Generic, Literal, NoReturn, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -237,6 +237,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
+
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 

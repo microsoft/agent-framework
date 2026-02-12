@@ -7,7 +7,7 @@ This sample demonstrates how to host multiple agents and run them concurrently u
 - Running multiple specialized agents in parallel within an orchestration.
 - Using `OrchestrationAgentExecutor` to get `DurableAgentTask` objects for concurrent execution.
 - Aggregating results from multiple agents using `task.when_all()`.
-- Creating separate conversation threads for independent agent contexts.
+- Creating separate conversation sessions for independent agent contexts.
 
 ## Environment Setup
 
@@ -64,7 +64,7 @@ You can view the state of the orchestration in the Durable Task Scheduler dashbo
 1. Open your browser and navigate to `http://localhost:8082`
 2. In the dashboard, you can view:
    - The concurrent execution of both agents (PhysicistAgent and ChemistAgent)
-   - Separate conversation threads for each agent
+   - Separate conversation sessions for each agent
    - Parallel task execution and completion timing
    - Aggregated results from both agents
 

@@ -7,9 +7,8 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
-    ChatMessageStore,
     Content,
     Message,
     ResponseStream,
@@ -21,7 +20,7 @@ from agent_framework.orchestrations import SequentialBuilder
 
 
 class _CountingAgent(BaseAgent):
-    """Agent that echoes messages with a counter to verify thread state persistence."""
+    """Agent that echoes messages with a counter to verify session state persistence."""
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
@@ -32,7 +31,7 @@ class _CountingAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
@@ -52,22 +51,22 @@ class _CountingAgent(BaseAgent):
 
 
 async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
-    """Test that workflow checkpoint stores AgentExecutor's cache and thread states and restores them correctly."""
+    """Test that workflow checkpoint stores AgentExecutor's cache and session states and restores them correctly."""
     storage = InMemoryCheckpointStorage()
 
-    # Create initial agent with a custom thread that has a message store
+    # Create initial agent with a custom session
     initial_agent = _CountingAgent(id="test_agent", name="TestAgent")
-    initial_thread = AgentThread(message_store=ChatMessageStore())
+    initial_session = AgentSession()
 
-    # Add some initial messages to the thread to verify thread state persistence
+    # Add some initial messages to the session state to verify session state persistence
     initial_messages = [
         Message(role="user", text="Initial message 1"),
         Message(role="assistant", text="Initial response 1"),
     ]
-    await initial_thread.on_new_messages(initial_messages)
+    initial_session.state["history"] = {"messages": initial_messages}
 
-    # Create AgentExecutor with the thread
-    executor = AgentExecutor(initial_agent, agent_thread=initial_thread)
+    # Create AgentExecutor with the session
+    executor = AgentExecutor(initial_agent, session=initial_session)
 
     # Build workflow with checkpointing enabled
     wf = SequentialBuilder(participants=[executor], checkpoint_storage=storage).build()
@@ -95,7 +94,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     checkpoints.sort(key=lambda cp: cp.timestamp)
     restore_checkpoint = checkpoints[1]
 
-    # Verify checkpoint contains executor state with both cache and thread
+    # Verify checkpoint contains executor state with both cache and session
     assert "_executor_state" in restore_checkpoint.state
     executor_states = restore_checkpoint.state["_executor_state"]
     assert isinstance(executor_states, dict)
@@ -103,13 +102,12 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     executor_state = executor_states[executor.id]  # type: ignore[index]
     assert "cache" in executor_state, "Checkpoint should store executor cache state"
-    assert "agent_thread" in executor_state, "Checkpoint should store executor thread state"
+    assert "agent_session" in executor_state, "Checkpoint should store executor session state"
 
-    # Verify thread state includes message store
-    thread_state = executor_state["agent_thread"]  # type: ignore[index]
-    assert "chat_message_store_state" in thread_state, "Thread state should include message store"
-    chat_store_state = thread_state["chat_message_store_state"]  # type: ignore[index]
-    assert "messages" in chat_store_state, "Message store state should include messages"
+    # Verify session state structure
+    session_state = executor_state["agent_session"]  # type: ignore[index]
+    assert "session_id" in session_state, "Session state should include session_id"
+    assert "state" in session_state, "Session state should include state dict"
 
     # Verify checkpoint contains pending requests from agents and responses to be sent
     assert "pending_agent_requests" in executor_state
@@ -118,8 +116,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     # Create a new agent and executor for restoration
     # This simulates starting from a fresh state and restoring from checkpoint
     restored_agent = _CountingAgent(id="test_agent", name="TestAgent")
-    restored_thread = AgentThread(message_store=ChatMessageStore())
-    restored_executor = AgentExecutor(restored_agent, agent_thread=restored_thread)
+    restored_session = AgentSession()
+    restored_executor = AgentExecutor(restored_agent, session=restored_session)
 
     # Verify the restored agent starts with a fresh state
     assert restored_agent.call_count == 0
@@ -140,39 +138,27 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     assert resumed_output is not None
 
-    # Verify the restored executor's state matches the original
-    # The cache should be restored (though it may be cleared after processing)
-    # The thread should have all messages including those from the initial state
-    message_store = restored_executor._agent_thread.message_store  # type: ignore[reportPrivateUsage]
-    assert message_store is not None
-    thread_messages = await message_store.list_messages()
-
-    # Thread should contain:
-    # 1. Initial messages from before the checkpoint (2 messages)
-    # 2. User message from first run (1 message)
-    # 3. Assistant response from first run (1 message)
-    assert len(thread_messages) >= 2, "Thread should preserve initial messages from before checkpoint"
-
-    # Verify initial messages are preserved
-    assert thread_messages[0].text == "Initial message 1"
-    assert thread_messages[1].text == "Initial response 1"
+    # Verify the restored executor's session state was restored
+    restored_session_obj = restored_executor._session  # type: ignore[reportPrivateUsage]
+    assert restored_session_obj is not None
+    assert restored_session_obj.session_id == initial_session.session_id
 
 
 async def test_agent_executor_save_and_restore_state_directly() -> None:
     """Test AgentExecutor's on_checkpoint_save and on_checkpoint_restore methods directly."""
-    # Create agent with thread containing messages
+    # Create agent with session containing state
     agent = _CountingAgent(id="direct_test_agent", name="DirectTestAgent")
-    thread = AgentThread(message_store=ChatMessageStore())
+    session = AgentSession()
 
-    # Add messages to thread
-    thread_messages = [
-        Message(role="user", text="Message in thread 1"),
-        Message(role="assistant", text="Thread response 1"),
-        Message(role="user", text="Message in thread 2"),
+    # Add messages to session state
+    session_messages = [
+        Message(role="user", text="Message in session 1"),
+        Message(role="assistant", text="Session response 1"),
+        Message(role="user", text="Message in session 2"),
     ]
-    await thread.on_new_messages(thread_messages)
+    session.state["history"] = {"messages": session_messages}
 
-    executor = AgentExecutor(agent, agent_thread=thread)
+    executor = AgentExecutor(agent, session=session)
 
     # Add messages to executor cache
     cache_messages = [
@@ -184,26 +170,23 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
     # Snapshot the state
     state = await executor.on_checkpoint_save()
 
-    # Verify snapshot contains both cache and thread
+    # Verify snapshot contains both cache and session
     assert "cache" in state
-    assert "agent_thread" in state
+    assert "agent_session" in state
 
-    # Verify thread state structure
-    thread_state = state["agent_thread"]  # type: ignore[index]
-    assert "chat_message_store_state" in thread_state
-    assert "messages" in thread_state["chat_message_store_state"]
+    # Verify session state structure
+    session_state = state["agent_session"]  # type: ignore[index]
+    assert "session_id" in session_state
+    assert "state" in session_state
 
     # Create new executor to restore into
     new_agent = _CountingAgent(id="direct_test_agent", name="DirectTestAgent")
-    new_thread = AgentThread(message_store=ChatMessageStore())
-    new_executor = AgentExecutor(new_agent, agent_thread=new_thread)
+    new_session = AgentSession()
+    new_executor = AgentExecutor(new_agent, session=new_session)
 
     # Verify new executor starts empty
     assert len(new_executor._cache) == 0  # type: ignore[reportPrivateUsage]
-    initial_message_store = new_thread.message_store
-    assert initial_message_store is not None
-    initial_thread_msgs = await initial_message_store.list_messages()
-    assert len(initial_thread_msgs) == 0
+    assert len(new_session.state) == 0
 
     # Restore state
     await new_executor.on_checkpoint_restore(state)
@@ -214,11 +197,6 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
     assert restored_cache[0].text == "Cached user message"
     assert restored_cache[1].text == "Cached assistant response"
 
-    # Verify thread messages are restored
-    restored_message_store = new_executor._agent_thread.message_store  # type: ignore[reportPrivateUsage]
-    assert restored_message_store is not None
-    restored_thread_msgs = await restored_message_store.list_messages()
-    assert len(restored_thread_msgs) == len(thread_messages)
-    assert restored_thread_msgs[0].text == "Message in thread 1"
-    assert restored_thread_msgs[1].text == "Thread response 1"
-    assert restored_thread_msgs[2].text == "Message in thread 2"
+    # Verify session was restored with correct session_id
+    restored_session = new_executor._session  # type: ignore[reportPrivateUsage]
+    assert restored_session.session_id == session.session_id

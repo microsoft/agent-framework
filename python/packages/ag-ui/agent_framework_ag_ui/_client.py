@@ -171,11 +171,11 @@ class AGUIChatClient(
 
             client = AGUIChatClient(endpoint="http://localhost:8888/")
             agent = Agent(name="assistant", client=client)
-            thread = await agent.get_new_thread()
+            session = agent.create_session()
 
             # Agent automatically maintains history and sends full context
-            response = await agent.run("Hello!", thread=thread)
-            response2 = await agent.run("How are you?", thread=thread)
+            response = await agent.run("Hello!", session=session)
+            response2 = await agent.run("How are you?", session=session)
 
         Streaming usage:
 

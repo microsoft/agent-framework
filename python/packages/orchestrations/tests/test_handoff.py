@@ -7,11 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    Context,
-    ContextProvider,
     Message,
     ResponseStream,
     WorkflowEvent,
@@ -306,16 +305,18 @@ async def test_tool_choice_preserved_from_agent_config():
 
 
 async def test_context_provider_preserved_during_handoff():
-    """Verify that context_provider is preserved when cloning agents in handoff workflows."""
+    """Verify that context_providers are preserved when cloning agents in handoff workflows."""
     # Track whether context provider methods were called
     provider_calls: list[str] = []
 
-    class TestContextProvider(ContextProvider):
+    class TestContextProvider(BaseContextProvider):
         """A test context provider that tracks its invocations."""
 
-        async def invoking(self, messages: Sequence[Message], **kwargs: Any) -> Context:
-            provider_calls.append("invoking")
-            return Context(instructions="Test context from provider.")
+        def __init__(self) -> None:
+            super().__init__("test")
+
+        async def before_run(self, **kwargs: Any) -> None:
+            provider_calls.append("before_run")
 
     # Create context provider
     context_provider = TestContextProvider()
@@ -328,13 +329,13 @@ async def test_context_provider_preserved_during_handoff():
         client=mock_client,
         name="test_agent",
         id="test_agent",
-        context_provider=context_provider,
+        context_providers=[context_provider],
     )
 
     # Verify the original agent has the context provider
-    assert agent.context_provider is context_provider, "Original agent should have context provider"
+    assert context_provider in agent.context_providers, "Original agent should have context provider"
 
-    # Build handoff workflow - this should clone the agent and preserve context_provider
+    # Build handoff workflow - this should clone the agent and preserve context_providers
     workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
 
     # Run workflow with a simple message to trigger context provider

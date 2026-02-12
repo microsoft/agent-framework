@@ -1,145 +1,120 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for sliding window message list."""
+"""Tests for sliding window history provider."""
 
 from unittest.mock import patch
 
 from agent_framework._types import Content, Message
-from agent_framework_lab_tau2._sliding_window import SlidingWindowChatMessageStore
+from agent_framework_lab_tau2._sliding_window import SlidingWindowHistoryProvider
 
 
-def test_initialization_empty():
-    """Test initializing with no messages."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-
-    assert sliding_window.max_tokens == 1000
-    assert sliding_window.system_message is None
-    assert sliding_window.tool_definitions is None
-    assert len(sliding_window.messages) == 0
-    assert len(sliding_window.truncated_messages) == 0
+def _make_state(provider: SlidingWindowHistoryProvider, messages: list[Message] | None = None) -> dict:
+    """Helper to create a session state dict with messages pre-loaded."""
+    state: dict = {}
+    if messages:
+        state[provider.source_id] = {"messages": list(messages)}
+    return state
 
 
-def test_initialization_with_parameters():
-    """Test initializing with system message and tool definitions."""
-    system_msg = "You are a helpful assistant"
-    tool_defs = [{"name": "test_tool", "description": "A test tool"}]
-
-    sliding_window = SlidingWindowChatMessageStore(
-        max_tokens=2000, system_message=system_msg, tool_definitions=tool_defs
+def test_initialization():
+    """Test initializing with parameters."""
+    provider = SlidingWindowHistoryProvider(
+        max_tokens=2000,
+        system_message="You are a helpful assistant",
+        tool_definitions=[{"name": "test_tool"}],
     )
 
-    assert sliding_window.max_tokens == 2000
-    assert sliding_window.system_message == system_msg
-    assert sliding_window.tool_definitions == tool_defs
+    assert provider.max_tokens == 2000
+    assert provider.system_message == "You are a helpful assistant"
+    assert provider.tool_definitions == [{"name": "test_tool"}]
+    assert provider.source_id == "memory"
 
 
-def test_initialization_with_messages():
-    """Test initializing with existing messages."""
-    messages = [
-        Message(role="user", contents=[Content.from_text(text="Hello")]),
-        Message(role="assistant", contents=[Content.from_text(text="Hi there!")]),
-    ]
-
-    sliding_window = SlidingWindowChatMessageStore(messages=messages, max_tokens=1000)
-
-    assert len(sliding_window.messages) == 2
-    assert len(sliding_window.truncated_messages) == 2
+async def test_get_messages_empty():
+    """Test getting messages from empty state."""
+    provider = SlidingWindowHistoryProvider(max_tokens=1000)
+    messages = await provider.get_messages(None, state={})
+    assert messages == []
 
 
-async def test_add_messages_simple():
-    """Test adding messages without truncation."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
-
-    new_messages = [
+async def test_get_messages_simple():
+    """Test getting messages without truncation."""
+    provider = SlidingWindowHistoryProvider(max_tokens=10000)
+    msgs = [
         Message(role="user", contents=[Content.from_text(text="What's the weather?")]),
         Message(role="assistant", contents=[Content.from_text(text="I can help with that.")]),
     ]
+    state = _make_state(provider, msgs)
 
-    await sliding_window.add_messages(new_messages)
-
-    messages = await sliding_window.list_messages()
-    assert len(messages) == 2
-    assert messages[0].text == "What's the weather?"
-    assert messages[1].text == "I can help with that."
+    result = await provider.get_messages(None, state=state)
+    assert len(result) == 2
+    assert result[0].text == "What's the weather?"
+    assert result[1].text == "I can help with that."
 
 
-async def test_list_all_messages_vs_list_messages():
-    """Test difference between list_all_messages and list_messages."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=50)  # Small limit to force truncation
+async def test_save_and_get_messages():
+    """Test saving then getting messages with truncation."""
+    provider = SlidingWindowHistoryProvider(max_tokens=50)
+    state: dict = {}
 
-    # Add many messages to trigger truncation
-    messages = [
+    # Save many messages
+    msgs = [
         Message(role="user", contents=[Content.from_text(text=f"Message {i} with some content")]) for i in range(10)
     ]
+    await provider.save_messages(None, msgs, state=state)
 
-    await sliding_window.add_messages(messages)
+    # get_messages returns truncated
+    truncated = await provider.get_messages(None, state=state)
+    # Full history is in session state
+    all_msgs = state[provider.source_id]["messages"]
 
-    truncated_messages = await sliding_window.list_messages()
-    all_messages = await sliding_window.list_all_messages()
-
-    # All messages should contain everything
-    assert len(all_messages) == 10
-
-    # Truncated messages should be fewer due to token limit
-    assert len(truncated_messages) < len(all_messages)
+    assert len(all_msgs) == 10
+    assert len(truncated) < len(all_msgs)
 
 
 def test_get_token_count_basic():
     """Test basic token counting."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    provider = SlidingWindowHistoryProvider(max_tokens=1000)
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
-    token_count = sliding_window.get_token_count()
-
-    # Should be more than 0 (exact count depends on encoding)
+    token_count = provider._get_token_count(messages)
     assert token_count > 0
 
 
 def test_get_token_count_with_system_message():
     """Test token counting includes system message."""
-    system_msg = "You are a helpful assistant"
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000, system_message=system_msg)
+    provider = SlidingWindowHistoryProvider(max_tokens=1000, system_message="You are a helpful assistant")
 
-    # Without messages
-    token_count_empty = sliding_window.get_token_count()
+    count_empty = provider._get_token_count([])
+    count_with_msg = provider._get_token_count([Message(role="user", contents=[Content.from_text(text="Hello")])])
 
-    # Add a message
-    sliding_window.truncated_messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
-    token_count_with_message = sliding_window.get_token_count()
-
-    # With message should be more tokens
-    assert token_count_with_message > token_count_empty
-    assert token_count_empty > 0  # System message contributes tokens
+    assert count_with_msg > count_empty
+    assert count_empty > 0  # System message contributes tokens
 
 
 def test_get_token_count_function_call():
     """Test token counting with function calls."""
     function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
+    provider = SlidingWindowHistoryProvider(max_tokens=1000)
 
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [Message(role="assistant", contents=[function_call])]
-
-    token_count = sliding_window.get_token_count()
+    token_count = provider._get_token_count([Message(role="assistant", contents=[function_call])])
     assert token_count > 0
 
 
 def test_get_token_count_function_result():
     """Test token counting with function results."""
     function_result = Content.from_function_result(call_id="call_123", result={"success": True, "data": "result"})
+    provider = SlidingWindowHistoryProvider(max_tokens=1000)
 
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-    sliding_window.truncated_messages = [Message(role="tool", contents=[function_result])]
-
-    token_count = sliding_window.get_token_count()
+    token_count = provider._get_token_count([Message(role="tool", contents=[function_result])])
     assert token_count > 0
 
 
 @patch("agent_framework_lab_tau2._sliding_window.logger")
-def test_truncate_messages_removes_old_messages(mock_logger):
+def test_truncate_removes_old_messages(mock_logger):
     """Test that truncation removes old messages when token limit exceeded."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=20)  # Very small limit
+    provider = SlidingWindowHistoryProvider(max_tokens=20)
 
-    # Create messages that will exceed the limit
     messages = [
         Message(
             role="user",
@@ -154,80 +129,45 @@ def test_truncate_messages_removes_old_messages(mock_logger):
         Message(role="user", contents=[Content.from_text(text="Short msg")]),
     ]
 
-    sliding_window.truncated_messages = messages.copy()
-    sliding_window.truncate_messages()
-
-    # Should have fewer messages after truncation
-    assert len(sliding_window.truncated_messages) < len(messages)
-
-    # Should have logged warnings
+    result = provider._truncate(list(messages))
+    assert len(result) < len(messages)
     assert mock_logger.warning.called
 
 
 @patch("agent_framework_lab_tau2._sliding_window.logger")
-def test_truncate_messages_removes_leading_tool_messages(mock_logger):
+def test_truncate_removes_leading_tool_messages(mock_logger):
     """Test that truncation removes leading tool messages."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
+    provider = SlidingWindowHistoryProvider(max_tokens=10000)
 
-    # Create messages starting with tool message
     tool_message = Message(role="tool", contents=[Content.from_function_result(call_id="call_123", result="result")])
     user_message = Message(role="user", contents=[Content.from_text(text="Hello")])
 
-    sliding_window.truncated_messages = [tool_message, user_message]
-    sliding_window.truncate_messages()
-
-    # Tool message should be removed from the beginning
-    assert len(sliding_window.truncated_messages) == 1
-    assert sliding_window.truncated_messages[0].role == "user"
-
-    # Should have logged warning about removing tool message
+    result = provider._truncate([tool_message, user_message])
+    assert len(result) == 1
+    assert result[0].role == "user"
     mock_logger.warning.assert_called()
 
 
-def test_estimate_any_object_token_count_dict():
-    """Test token counting for dictionary objects."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
+def test_estimate_any_object_token_count():
+    """Test token counting for various object types."""
+    provider = SlidingWindowHistoryProvider(max_tokens=1000)
 
-    test_dict = {"key": "value", "number": 42}
-    token_count = sliding_window.estimate_any_object_token_count(test_dict)
+    assert provider._estimate_any_object_token_count({"key": "value"}) > 0
+    assert provider._estimate_any_object_token_count("test string") > 0
 
-    assert token_count > 0
-
-
-def test_estimate_any_object_token_count_string():
-    """Test token counting for string objects."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-
-    test_string = "This is a test string"
-    token_count = sliding_window.estimate_any_object_token_count(test_string)
-
-    assert token_count > 0
-
-
-def test_estimate_any_object_token_count_non_serializable():
-    """Test token counting for non-JSON-serializable objects."""
-    sliding_window = SlidingWindowChatMessageStore(max_tokens=1000)
-
-    # Create an object that can't be JSON serialized
-    class CustomObject:
+    # Non-serializable falls back to str()
+    class Custom:
         def __str__(self):
-            return "CustomObject instance"
+            return "Custom instance"
 
-    custom_obj = CustomObject()
-    token_count = sliding_window.estimate_any_object_token_count(custom_obj)
-
-    # Should fall back to string representation
-    assert token_count > 0
+    assert provider._estimate_any_object_token_count(Custom()) > 0
 
 
 async def test_real_world_scenario():
     """Test a realistic conversation scenario."""
-    sliding_window = SlidingWindowChatMessageStore(
-        max_tokens=30,
-        system_message="You are a helpful assistant",  # Moderate limit
-    )
+    provider = SlidingWindowHistoryProvider(max_tokens=30, system_message="You are a helpful assistant")
+    state: dict = {}
 
-    # Simulate a conversation
     conversation = [
         Message(role="user", contents=[Content.from_text(text="Hello, how are you?")]),
         Message(
@@ -253,18 +193,13 @@ async def test_real_world_scenario():
         ),
     ]
 
-    await sliding_window.add_messages(conversation)
+    await provider.save_messages(None, conversation, state=state)
 
-    current_messages = await sliding_window.list_messages()
-    all_messages = await sliding_window.list_all_messages()
+    truncated = await provider.get_messages(None, state=state)
+    all_msgs = state[provider.source_id]["messages"]
 
-    # All messages should be preserved
-    assert len(all_messages) == 6
+    assert len(all_msgs) == 6
+    assert len(truncated) <= 6
 
-    # Current messages might be truncated
-    assert len(current_messages) <= 6
-
-    # Token count should be within or close to limit
-    token_count = sliding_window.get_token_count()
-    # Allow some margin since truncation happens when exceeded
-    assert token_count <= sliding_window.max_tokens * 1.1
+    token_count = provider._get_token_count(truncated)
+    assert token_count <= provider.max_tokens * 1.1

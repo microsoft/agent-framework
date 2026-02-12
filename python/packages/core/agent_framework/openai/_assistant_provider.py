@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from agent_framework._settings import SecretString, load_settings
 
 from .._agents import Agent
-from .._memory import ContextProvider
 from .._middleware import MiddlewareTypes
+from .._sessions import BaseContextProvider
 from .._tools import FunctionTool
 from .._types import normalize_tools
 from ..exceptions import ServiceInitializationError
@@ -208,7 +208,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         metadata: dict[str, str] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a new assistant on OpenAI and return a Agent.
 
@@ -230,7 +230,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
                 These options are applied to every run unless overridden.
                 Include ``response_format`` here for structured output responses.
             middleware: MiddlewareTypes for the Agent.
-            context_provider: Context provider for the Agent.
+            context_providers: Context providers for the Agent.
 
         Returns:
             A Agent instance wrapping the created assistant.
@@ -304,7 +304,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             tools=normalized_tools,
             instructions=instructions,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
             default_options=default_options,
         )
 
@@ -316,7 +316,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         instructions: str | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Retrieve an existing assistant by ID and return a Agent.
 
@@ -335,7 +335,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: MiddlewareTypes for the Agent.
-            context_provider: Context provider for the Agent.
+            context_providers: Context providers for the Agent.
 
         Returns:
             A Agent instance wrapping the retrieved assistant.
@@ -371,7 +371,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             instructions=instructions,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def as_agent(
@@ -382,7 +382,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         instructions: str | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Wrap an existing SDK Assistant object as a Agent.
 
@@ -400,7 +400,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: MiddlewareTypes for the Agent.
-            context_provider: Context provider for the Agent.
+            context_providers: Context providers for the Agent.
 
         Returns:
             A Agent instance wrapping the assistant.
@@ -437,7 +437,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             instructions=instructions,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _validate_function_tools(
@@ -524,7 +524,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         tools: list[FunctionTool | MutableMapping[str, Any]] | None,
         instructions: str | None,
         middleware: Sequence[MiddlewareTypes] | None,
-        context_provider: ContextProvider | None,
+        context_providers: Sequence[BaseContextProvider] | None,
         default_options: OptionsCoT | None = None,
         **kwargs: Any,
     ) -> Agent[OptionsCoT]:
@@ -535,7 +535,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             tools: Tools for the agent.
             instructions: Instructions override.
             middleware: MiddlewareTypes for the agent.
-            context_provider: Context provider for the agent.
+            context_providers: Context providers for the agent.
             default_options: Default chat options for the agent (may include response_format).
             **kwargs: Additional arguments passed to Agent.
 
@@ -563,7 +563,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             instructions=final_instructions,
             tools=tools if tools else None,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
             default_options=default_options,  # type: ignore[arg-type]
             **kwargs,
         )

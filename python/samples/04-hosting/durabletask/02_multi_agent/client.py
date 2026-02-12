@@ -70,30 +70,30 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
 
     # Get reference to WeatherAgent
     weather_agent = agent_client.get_agent("WeatherAgent")
-    weather_thread = weather_agent.get_new_thread()
+    weather_session = weather_agent.create_session()
 
-    logger.debug(f"Created weather conversation thread: {weather_thread.session_id}")
+    logger.debug(f"Created weather conversation session: {weather_session.session_id}")
 
     # Test WeatherAgent
     weather_message = "What is the weather in Seattle?"
     logger.info(f"User: {weather_message}")
 
-    weather_response = weather_agent.run(weather_message, thread=weather_thread)
+    weather_response = weather_agent.run(weather_message, session=weather_session)
     logger.info(f"WeatherAgent: {weather_response.text} \n")
 
     logger.debug("Testing MathAgent")
 
     # Get reference to MathAgent
     math_agent = agent_client.get_agent("MathAgent")
-    math_thread = math_agent.get_new_thread()
+    math_session = math_agent.create_session()
 
-    logger.debug(f"Created math conversation thread: {math_thread.session_id}")
+    logger.debug(f"Created math conversation session: {math_session.session_id}")
 
     # Test MathAgent
     math_message = "Calculate a 20% tip on a $50 bill"
     logger.info(f"User: {math_message}")
 
-    math_response = math_agent.run(math_message, thread=math_thread)
+    math_response = math_agent.run(math_message, session=math_session)
     logger.info(f"MathAgent: {math_response.text} \n")
 
     logger.debug("Both agents completed successfully!")
