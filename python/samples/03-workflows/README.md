@@ -100,7 +100,7 @@ For additional observability samples in Agent Framework, see the [observability 
 ### orchestration
 
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
-`workflow.as_agent(...)` variants, are documented in the [orchestrations](../orchestrations/README.md) directory.
+`workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.
 
 ### parallelism
 
