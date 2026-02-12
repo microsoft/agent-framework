@@ -40,6 +40,120 @@ logger = logging.getLogger(__name__)
 _current_middleware = threading.local()
 
 
+def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None:
+    """Parse security labels from GitHub MCP server format.
+    
+    The GitHub MCP server returns per-field labels in the format:
+    {
+        "labels": {
+            "title": {"integrity": "low", "confidentiality": ["public"]},
+            "body": {"integrity": "low", "confidentiality": ["public"]},
+            "user": {"integrity": "high", "confidentiality": ["public"]},
+            ...
+        }
+    }
+    
+    Confidentiality uses a "readers lattice":
+    - ["public"] → PUBLIC (anyone can read)
+    - ["user_id_1", "user_id_2", ...] → PRIVATE (only specific collaborators can read)
+    
+    This function extracts the most restrictive (lowest integrity, highest confidentiality)
+    label across all fields, focusing on user-controlled content like "body" and "title".
+    
+    Args:
+        labels_data: The "labels" dict from additional_properties containing per-field labels.
+        
+    Returns:
+        A ContentLabel with the most restrictive integrity/confidentiality found,
+        or None if parsing fails.
+    """
+    if not isinstance(labels_data, dict):
+        return None
+    
+    # Priority fields to check (user-controlled content that may be untrusted)
+    priority_fields = ["body", "title", "content", "message", "text", "description"]
+    
+    # GitHub MCP uses "low" for untrusted user content and "high" for system-controlled
+    # Map GitHub MCP integrity values to our IntegrityLabel enum
+    integrity_map = {
+        "low": IntegrityLabel.UNTRUSTED,
+        "medium": IntegrityLabel.UNTRUSTED,  # Treat medium as untrusted for safety
+        "high": IntegrityLabel.TRUSTED,
+    }
+    
+    most_restrictive_integrity = IntegrityLabel.TRUSTED
+    most_restrictive_confidentiality = ConfidentialityLabel.PUBLIC
+    
+    def parse_confidentiality_from_readers(conf_value: Any) -> ConfidentialityLabel:
+        """Parse confidentiality from GitHub's readers lattice format.
+        
+        GitHub MCP uses a readers lattice:
+        - ["public"] means anyone can read → PUBLIC
+        - ["user_id_1", "user_id_2", ...] means only those users → PRIVATE
+        """
+        if isinstance(conf_value, list):
+            if len(conf_value) == 1 and conf_value[0].lower() == "public":
+                return ConfidentialityLabel.PUBLIC
+            elif len(conf_value) > 0:
+                # Non-empty list of user IDs = private/restricted access
+                return ConfidentialityLabel.PRIVATE
+            else:
+                # Empty list - treat as public for safety
+                return ConfidentialityLabel.PUBLIC
+        elif isinstance(conf_value, str):
+            if conf_value.lower() == "public":
+                return ConfidentialityLabel.PUBLIC
+            elif conf_value.lower() in ("private", "internal", "confidential"):
+                return ConfidentialityLabel.PRIVATE
+            elif conf_value.lower() == "user_identity":
+                return ConfidentialityLabel.USER_IDENTITY
+        # Default to public
+        return ConfidentialityLabel.PUBLIC
+    
+    # First check priority fields (user-controlled content)
+    for field in priority_fields:
+        if field in labels_data:
+            field_label = labels_data[field]
+            if isinstance(field_label, dict):
+                # Parse integrity
+                integrity_str = field_label.get("integrity", "").lower()
+                if integrity_str in integrity_map:
+                    field_integrity = integrity_map[integrity_str]
+                    # UNTRUSTED is more restrictive than TRUSTED
+                    if field_integrity == IntegrityLabel.UNTRUSTED:
+                        most_restrictive_integrity = IntegrityLabel.UNTRUSTED
+                
+                # Parse confidentiality using readers lattice
+                conf_value = field_label.get("confidentiality")
+                field_conf = parse_confidentiality_from_readers(conf_value)
+                # Higher confidentiality is more restrictive
+                if field_conf.value > most_restrictive_confidentiality.value:
+                    most_restrictive_confidentiality = field_conf
+    
+    # Also check all other fields for completeness
+    for field, field_label in labels_data.items():
+        if field not in priority_fields and isinstance(field_label, dict):
+            # Parse integrity
+            integrity_str = field_label.get("integrity", "").lower()
+            if integrity_str in integrity_map:
+                field_integrity = integrity_map[integrity_str]
+                if field_integrity == IntegrityLabel.UNTRUSTED:
+                    most_restrictive_integrity = IntegrityLabel.UNTRUSTED
+            
+            # Parse confidentiality using readers lattice
+            conf_value = field_label.get("confidentiality")
+            if conf_value is not None:
+                field_conf = parse_confidentiality_from_readers(conf_value)
+                if field_conf.value > most_restrictive_confidentiality.value:
+                    most_restrictive_confidentiality = field_conf
+    
+    return ContentLabel(
+        integrity=most_restrictive_integrity,
+        confidentiality=most_restrictive_confidentiality,
+        metadata={"source": "github_mcp_labels"},
+    )
+
+
 class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     """Middleware that tracks and propagates security labels through tool invocations.
     
@@ -637,7 +751,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             result: The result to process (may be dict, list, or primitive).
             function_name: Name of the function that produced the result.
             fallback_label: Label to use if item has no embedded label.
-        
+            context_label: Label of the current context.
         Returns:
             Tuple of (processed_result, combined_label).
             - processed_result: Result with untrusted items replaced by variable references
@@ -658,6 +772,61 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     VariableReferenceContent(variable_id="var_xxx", ...),  # Item 2 hidden
                 ]
         """
+        from pydantic import BaseModel
+        
+        # Handle pydantic models (e.g., TextContent from MCP) with additional_properties
+        if isinstance(result, BaseModel) and hasattr(result, "additional_properties"):
+            additional_props = result.additional_properties
+            if additional_props and isinstance(additional_props, dict):
+                # Check for standard security_label
+                label_data = additional_props.get("security_label")
+                if label_data:
+                    try:
+                        item_label = ContentLabel.from_dict(label_data)
+                        # Only hide if context is trusted (untrusted content would taint it)
+                        # If context is already untrusted, no need to hide
+                        if (self.auto_hide_untrusted and 
+                            item_label.integrity == self.hide_threshold and
+                            self._context_label.integrity == IntegrityLabel.TRUSTED):
+                            hidden = self._hide_untrusted_result(result, item_label, function_name)
+                            return hidden, item_label
+                        return result, item_label
+                    except Exception as e:
+                        logger.warning(f"Failed to parse security_label from pydantic model: {e}")
+                
+                # Check for GitHub MCP server labels format
+                github_labels = additional_props.get("labels")
+                if github_labels and isinstance(github_labels, (dict, list)):
+                    try:
+                        if isinstance(github_labels, list) and github_labels:
+                            github_labels = github_labels[0] if isinstance(github_labels[0], dict) else {}
+                        
+                        item_label = _parse_github_mcp_labels(github_labels)
+                        if item_label:
+                            logger.info(
+                                f"Parsed GitHub MCP labels from pydantic model for '{function_name}': "
+                                f"integrity={item_label.integrity.value}, "
+                                f"confidentiality={item_label.confidentiality.value}"
+                            )
+                            # Only hide if context is trusted
+                            if (self.auto_hide_untrusted and 
+                                item_label.integrity == self.hide_threshold and
+                                self._context_label.integrity == IntegrityLabel.TRUSTED):
+                                hidden = self._hide_untrusted_result(result, item_label, function_name)
+                                return hidden, item_label
+                            return result, item_label
+                    except Exception as e:
+                        logger.warning(f"Failed to parse GitHub MCP labels from pydantic model: {e}")
+            
+            # No embedded labels found - use fallback
+            # Only hide if context is trusted
+            if (self.auto_hide_untrusted and 
+                fallback_label.integrity == self.hide_threshold and
+                self._context_label.integrity == IntegrityLabel.TRUSTED):
+                hidden = self._hide_untrusted_result(result, fallback_label, function_name)
+                return hidden, fallback_label
+            return result, fallback_label
+        
         if isinstance(result, dict):
             # Check for additional_properties.security_label (consistent with FunctionResultContent)
             additional_props = result.get("additional_properties")
@@ -667,14 +836,47 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     try:
                         item_label = ContentLabel.from_dict(label_data)
                         # This item has an explicit label
-                        if self.auto_hide_untrusted and item_label.integrity == self.hide_threshold:
+                        # Only hide if context is trusted
+                        if (self.auto_hide_untrusted and 
+                            item_label.integrity == self.hide_threshold and
+                            self._context_label.integrity == IntegrityLabel.TRUSTED):
                             # Hide this entire item
                             hidden = self._hide_untrusted_result(result, item_label, function_name)
                             return hidden, item_label
-                        # Item is trusted or hiding disabled - return as-is
+                        # Item is trusted or hiding disabled or context already untrusted - return as-is
                         return result, item_label
                     except Exception as e:
                         logger.warning(f"Failed to parse embedded security_label: {e}")
+                
+                # Check for GitHub MCP server labels format: additional_properties.labels
+                # This is per-field labels like {"body": {"integrity": "low", ...}, ...}
+                github_labels = additional_props.get("labels")
+                if github_labels and isinstance(github_labels, (dict, list)):
+                    try:
+                        # Handle list of labels (for list_issues) or dict of labels (for get_issue)
+                        if isinstance(github_labels, list) and github_labels:
+                            # Take the first item's labels as representative for the whole result
+                            github_labels = github_labels[0] if isinstance(github_labels[0], dict) else {}
+                        
+                        item_label = _parse_github_mcp_labels(github_labels)
+                        if item_label:
+                            logger.info(
+                                f"Parsed GitHub MCP labels for '{function_name}': "
+                                f"integrity={item_label.integrity.value}, "
+                                f"confidentiality={item_label.confidentiality.value}"
+                            )
+                            # This item has a label from GitHub MCP
+                            # Only hide if context is trusted
+                            if (self.auto_hide_untrusted and 
+                                item_label.integrity == self.hide_threshold and
+                                self._context_label.integrity == IntegrityLabel.TRUSTED):
+                                # Hide this entire item
+                                hidden = self._hide_untrusted_result(result, item_label, function_name)
+                                return hidden, item_label
+                            # Item is trusted or hiding disabled or context already untrusted - return as-is
+                            return result, item_label
+                    except Exception as e:
+                        logger.warning(f"Failed to parse GitHub MCP labels: {e}")
             
             # No embedded label on this dict - recurse into values
             # But only process list/dict values, not primitives
@@ -708,19 +910,31 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             
             # If no embedded labels were found anywhere and fallback is UNTRUSTED,
             # hide the entire dict (backward compatibility with old behavior)
+            # Only hide if context is trusted
             if not has_embedded_labels and not additional_props:
-                if self.auto_hide_untrusted and combined.integrity == self.hide_threshold:
+                if (self.auto_hide_untrusted and 
+                    combined.integrity == self.hide_threshold and
+                    self._context_label.integrity == IntegrityLabel.TRUSTED):
                     hidden = self._hide_untrusted_result(result, combined, function_name)
                     return hidden, combined
             
             return processed, combined
         
         elif isinstance(result, list):
-            # Check if any items have embedded labels
-            has_embedded_labels = any(
-                isinstance(item, dict) and item.get("additional_properties", {}).get("security_label")
-                for item in result
-            )
+            # Check if any items have embedded labels (dict items or pydantic models with additional_properties)
+            has_embedded_labels = False
+            for item in result:
+                if isinstance(item, dict):
+                    additional_props = item.get("additional_properties", {})
+                    if additional_props.get("security_label") or additional_props.get("labels"):
+                        has_embedded_labels = True
+                        break
+                elif hasattr(item, "additional_properties") and item.additional_properties:
+                    # Pydantic model with additional_properties (e.g., TextContent from MCP)
+                    additional_props = item.additional_properties
+                    if additional_props.get("security_label") or additional_props.get("labels"):
+                        has_embedded_labels = True
+                        break
             
             if has_embedded_labels:
                 # Process each item independently - some may be hidden, others visible
@@ -738,7 +952,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 return processed, combined
             else:
                 # No embedded labels - if fallback is UNTRUSTED, hide entire list
-                if self.auto_hide_untrusted and fallback_label.integrity == self.hide_threshold:
+                # Only hide if context is trusted
+                if (self.auto_hide_untrusted and 
+                    fallback_label.integrity == self.hide_threshold and
+                    self._context_label.integrity == IntegrityLabel.TRUSTED):
                     hidden = self._hide_untrusted_result(result, fallback_label, function_name)
                     return hidden, fallback_label
                 return result, fallback_label
@@ -746,7 +963,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         else:
             # Primitive value - no embedded label possible, use fallback
             # If fallback is UNTRUSTED, hide it
-            if self.auto_hide_untrusted and fallback_label.integrity == self.hide_threshold:
+            # Only hide if context is trusted
+            if (self.auto_hide_untrusted and 
+                fallback_label.integrity == self.hide_threshold and
+                self._context_label.integrity == IntegrityLabel.TRUSTED):
                 hidden = self._hide_untrusted_result(result, fallback_label, function_name)
                 return hidden, fallback_label
             return result, fallback_label
