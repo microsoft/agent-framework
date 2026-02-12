@@ -164,4 +164,10 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
     }
+
+    internal AITool GetWebSearchTool()
+    {
+        var bingGroundingConnectionId = s_config.BingConnectionId;
+        return ((ResponseTool)new BingGroundingAgentTool(new([new BingGroundingSearchConfiguration(bingGroundingConnectionId)]))).AsAITool();
+    }
 }

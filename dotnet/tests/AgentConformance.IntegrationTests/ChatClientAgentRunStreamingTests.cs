@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
@@ -65,6 +66,32 @@ public abstract class ChatClientAgentRunStreamingTests<TAgentFixture>(Func<TAgen
             // Assert
             var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
             Assert.Contains(questionAndAnswer.ExpectedAnswer, chatResponseText, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public virtual async Task RunWithImageContentWorksAsync()
+    {
+        const string AgentInstructions = "You are a helpful agent that can analyze images";
+        const string AgentName = "VisionAgent";
+
+        var agent = await this.Fixture.CreateChatClientAgentAsync(name: AgentName, instructions: AgentInstructions);
+        try
+        {
+            ChatMessage message = new(ChatRole.User, [
+                new TextContent("What do you see in this image?"),
+                new DataContent(File.ReadAllBytes(Path.Combine("shared", "assets", "walkway.jpg")), "image/jpeg")
+            ]);
+
+            var thread = agent.GetNewThread();
+            var response = (await agent.RunStreamingAsync(message, thread).ToListAsync()).ToAgentRunResponse();
+
+            var isImageDescriptionFoundResponse = await agent.RunAsync($"Respond with Yes or No:\n Does text below looks like the description of an image?\n {response.Text}");
+            Assert.Contains("Yes", isImageDescriptionFoundResponse.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await this.Fixture.DeleteAgentAsync(agent);
         }
     }
 }

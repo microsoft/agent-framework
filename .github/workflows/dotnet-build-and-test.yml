@@ -214,7 +214,7 @@ jobs:
           # Azure AI Foundry
           AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
           AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONECTIONID }}
+          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONNECTIONID }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           FOUNDRY_MEDIA_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MEDIA_DEPLOYMENT_NAME }}
           FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
