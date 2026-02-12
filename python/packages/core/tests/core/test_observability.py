@@ -2396,3 +2396,44 @@ async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemor
     # Verify tool result preserves Arabic characters
     tool_result = span.attributes[OtelAttr.TOOL_RESULT]
     assert arabic_text in tool_result
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Test that non-ASCII characters are preserved in tool arguments when using a Pydantic model."""
+    import json
+
+    from pydantic import BaseModel
+
+    japanese_text = "こんにちは"  # "Hello" in Japanese
+
+    class Greeting(BaseModel):
+        message: str
+
+    @tool
+    def greet_with_model(greeting: Greeting) -> str:
+        """Greet with a message contained in a Pydantic model."""
+        # When invoked via the tool's input_model, greeting is passed as a dict
+        if isinstance(greeting, dict):
+            return f"Greeted: {greeting['message']}"
+        return f"Greeted: {greeting.message}"
+
+    span_exporter.clear()
+    # Use the tool's input_model to properly pass the Pydantic model argument
+    input_model = greet_with_model.input_model
+    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool arguments preserve Japanese characters
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
+    assert japanese_text in tool_arguments_json
+    assert "\\u" not in tool_arguments_json
+
+    # Verify JSON is valid and contains the text
+    tool_arguments = json.loads(tool_arguments_json)
+    assert tool_arguments["greeting"]["message"] == japanese_text
