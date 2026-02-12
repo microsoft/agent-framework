@@ -47,16 +47,18 @@ def load_maths_tools(
 
     This tool demonstrates dynamic tool loading - it can add new tools to the
     agent during execution, making them available for immediate use.
+    The tools list is wrapped in an AdditiveToolsList for thread-safe mutations.
     """
-    # Access tools list directly
-    tools_list = kwargs.get("tools")
+    # Access tools list from framework's reserved key
+    tools_list = kwargs.get("_framework_tools")
 
     if not tools_list:
         return "Error: Cannot access tools list for dynamic tool loading"
 
     if operation == "advanced":
         # Check if advanced tools are already loaded
-        existing_tool_names = {getattr(tool, "__name__", None) for tool in tools_list if tool is not None}
+        # FunctionTool objects use .name property, raw callables use __name__
+        existing_tool_names = {getattr(tool, "name", getattr(tool, "__name__", None)) for tool in tools_list if tool is not None}
         advanced_tool_names = {"calculate_factorial", "calculate_fibonacci"}
 
         if advanced_tool_names.issubset(existing_tool_names):
@@ -86,10 +88,9 @@ def load_maths_tools(
             return f"The {n}th Fibonacci number is {b}"
 
         # Add the new tools to the tools list
-        if isinstance(tools_list, list):
-            tools_list.extend([calculate_factorial, calculate_fibonacci])
-            return "Successfully loaded advanced maths tools: factorial and fibonacci"
-        return "Error: Tools list is not a list"
+        # AdditiveToolsList.extend() ensures thread-safe addition during concurrent execution
+        tools_list.extend([calculate_factorial, calculate_fibonacci])
+        return "Successfully loaded advanced maths tools: factorial and fibonacci"
 
     return f"Unknown operation category: {operation}"
 

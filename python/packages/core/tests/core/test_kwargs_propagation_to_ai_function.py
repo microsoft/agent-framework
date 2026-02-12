@@ -2,6 +2,7 @@
 
 """Tests for kwargs propagation from get_response() to @tool functions."""
 
+import asyncio
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 
@@ -295,7 +296,7 @@ class TestKwargsPropagationToFunctionTool:
         @tool(approval_mode="never_require")
         def inspect_tools(action: str, **kwargs: Any) -> str:
             """A tool that inspects the tools list from kwargs."""
-            tools_list = kwargs.get("tools")
+            tools_list = kwargs.get("_framework_tools")
             if tools_list is not None:
                 captured_tools.extend(list(tools_list))
             return f"Inspected {len(tools_list) if tools_list else 0} tools"
@@ -341,7 +342,7 @@ class TestKwargsPropagationToFunctionTool:
         @tool(approval_mode="never_require")
         def load_additional_tools(category: str, **kwargs: Any) -> str:
             """Load additional tools dynamically based on category."""
-            tools_list = kwargs.get("tools")
+            tools_list = kwargs.get("_framework_tools")
             execution_log.append(f"load_additional_tools called with {len(tools_list) if tools_list else 0} tools")
 
             if not tools_list:
@@ -355,10 +356,9 @@ class TestKwargsPropagationToFunctionTool:
                     execution_log.append(f"multiply called: {a} * {b}")
                     return f"result: {a * b}"
 
-                # Add the new tool to the list
-                if isinstance(tools_list, list):
-                    tools_list.append(multiply)
-                    return f"Loaded math tools, now have {len(tools_list)} tools"
+                # Add the new tool to the list (thread-safe)
+                tools_list.append(multiply)
+                return f"Loaded math tools, now have {len(tools_list)} tools"
 
             return f"Unknown category: {category}"
 
@@ -419,7 +419,7 @@ class TestKwargsPropagationToFunctionTool:
         @tool(approval_mode="never_require")
         def count_and_add_tool(name: str, **kwargs: Any) -> str:
             """Count tools and optionally add a new one."""
-            tools_list = kwargs.get("tools")
+            tools_list = kwargs.get("_framework_tools")
             if not tools_list:
                 return "No tools list"
 
@@ -432,6 +432,7 @@ class TestKwargsPropagationToFunctionTool:
                 def dummy_tool() -> str:
                     return "dummy"
 
+                # Thread-safe mutation
                 tools_list.append(dummy_tool)
                 return f"Added tool, now have {len(tools_list)}"
 
@@ -496,6 +497,90 @@ class TestKwargsPropagationToFunctionTool:
         assert tool_counts[2] == 2  # After adding: original + dummy_tool
         assert result.messages[-1].text == "Done!"
 
+    async def test_concurrent_tools_list_mutations_thread_safe(self) -> None:
+        """Test that concurrent tool mutations don't cause race conditions.
+
+        This test verifies that when multiple function calls execute in parallel
+        (via asyncio.gather) and both try to mutate the tools list, all mutations
+        are properly serialized and no updates are lost.
+        """
+        mutation_log: list[str] = []
+
+        @tool(approval_mode="never_require")
+        async def tool_a(action: str, **kwargs: Any) -> str:
+            """Tool A that mutates the tools list."""
+            tools_list = kwargs.get("_framework_tools")
+            if not tools_list or action != "add":
+                return "skipped"
+
+            mutation_log.append("tool_a_start")
+
+            @tool(approval_mode="never_require")
+            def tool_a_dynamic() -> str:
+                return "dynamic_a"
+
+            # Simulate some async work before mutation
+            await asyncio.sleep(0.01)
+            tools_list.append(tool_a_dynamic)
+            mutation_log.append("tool_a_end")
+            return "tool_a added"
+
+        @tool(approval_mode="never_require")
+        async def tool_b(action: str, **kwargs: Any) -> str:
+            """Tool B that also mutates the tools list."""
+            tools_list = kwargs.get("_framework_tools")
+            if not tools_list or action != "add":
+                return "skipped"
+
+            mutation_log.append("tool_b_start")
+
+            @tool(approval_mode="never_require")
+            def tool_b_dynamic() -> str:
+                return "dynamic_b"
+
+            # Simulate some async work before mutation
+            await asyncio.sleep(0.01)
+            tools_list.append(tool_b_dynamic)
+            mutation_log.append("tool_b_end")
+            return "tool_b added"
+
+        client = FunctionInvokingMockClient()
+        # Return both function calls in parallel (this triggers asyncio.gather)
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(call_id="call_1", name="tool_a", arguments='{"action": "add"}'),
+                            Content.from_function_call(call_id="call_2", name="tool_b", arguments='{"action": "add"}'),
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Both tools added!")]),
+        ]
+
+        result = await client.get_response(
+            messages=[Message(role="user", text="Test concurrent mutations")],
+            stream=False,
+            options={
+                "tools": [tool_a, tool_b],
+            },
+        )
+
+        # Verify both tools were called
+        assert "tool_a_start" in mutation_log, f"tool_a should have started: {mutation_log}"
+        assert "tool_b_start" in mutation_log, f"tool_b should have started: {mutation_log}"
+        assert "tool_a_end" in mutation_log, f"tool_a should have completed: {mutation_log}"
+        assert "tool_b_end" in mutation_log, f"tool_b should have completed: {mutation_log}"
+
+        # Verify the final tools list has the correct number of tools
+        # Initial 2 (tool_a, tool_b) + 2 dynamically added = 4 total
+        # This test would fail with the old implementation due to race conditions
+        # losing one of the appends
+        assert result.messages[-1].text == "Both tools added!"
+
     async def test_tools_kwarg_not_in_regular_kwargs(self) -> None:
         """Test that tools list is not passed to tools without **kwargs."""
         tool_called = False
@@ -546,7 +631,7 @@ class TestKwargsPropagationToFunctionTool:
             """A tool requiring approval that inspects the tools list."""
             nonlocal captured_tools_count, tool_executed
             tool_executed = True
-            tools_list = kwargs.get("tools")
+            tools_list = kwargs.get("_framework_tools")
             if tools_list:
                 captured_tools_count = len(tools_list)
             return f"Approved action: {action}"
