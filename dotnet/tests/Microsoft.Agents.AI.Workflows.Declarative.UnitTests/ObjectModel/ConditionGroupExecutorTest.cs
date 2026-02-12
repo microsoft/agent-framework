@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -19,104 +19,103 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         Assert.Throws<DeclarativeModelException>(() => new ConditionGroupExecutor(new ConditionGroup(), this.State));
 
     [Fact]
-    public void ConditionGroupNamingConventionItem()
+    public void ConditionGroupDefaultNaming()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithConditions(nameof(ConditionGroupNamingConventionItem));
-        ConditionItem firstCondition = model.Conditions[0];
-        ConditionItem secondCondition = model.Conditions[1];
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupDefaultNaming), [false], includeElse: true, defineActionIds: false);
+        ConditionGroupExecutor executor = new(model, this.State);
+        ConditionItem condition = model.Conditions[0];
 
         // Act
-        string firstStepWithId = ConditionGroupExecutor.Steps.Item(model, firstCondition);
-        string secondStepWithoutId = ConditionGroupExecutor.Steps.Item(model, secondCondition);
+        string conditionStepId = ConditionGroupExecutor.Steps.Item(model, condition);
+        string elseStepId = ConditionGroupExecutor.Steps.Else(model);
 
-        // Assert - first condition has explicit ID
-        Assert.Equal(firstCondition.Id, firstStepWithId);
-        // Second condition has no ID, should use index-based naming
-        Assert.Equal($"{model.Id}_Items1", secondStepWithoutId);
+        // Assert
+        Assert.Equal($"{model.Id}_Items0", conditionStepId);
+        Assert.Equal(model.ElseActions.Id.Value, elseStepId);
     }
 
     [Fact]
-    public void ConditionGroupNamingConventionElse()
+    public void ConditionGroupExplicitNaming()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithElse(nameof(ConditionGroupNamingConventionElse));
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupDefaultNaming), [false], includeElse: true);
+        ConditionGroupExecutor executor = new(model, this.State);
+        ConditionItem condition = model.Conditions[0];
 
         // Act
-        string elseStepWithId = ConditionGroupExecutor.Steps.Else(model);
+        string conditionStepId = ConditionGroupExecutor.Steps.Item(model, condition);
+        string elseStepId = ConditionGroupExecutor.Steps.Else(model);
 
-        // Assert - else actions have explicit ID
-        Assert.Equal(model.ElseActions.Id.Value, elseStepWithId);
+        // Assert
+        Assert.Equal(condition.Id, conditionStepId);
+        Assert.Equal(model.ElseActions.Id.Value, elseStepId);
     }
 
     [Fact]
     public async Task ConditionGroupFirstConditionTrueAsync()
     {
-        // Act & Assert
+        // Arrange, Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ConditionGroupFirstConditionTrueAsync),
-            firstCondition: "true",
-            secondCondition: "false",
-            expectFirstMatch: true);
+            conditions: [true, false]);
     }
 
     [Fact]
     public async Task ConditionGroupSecondConditionTrueAsync()
     {
-        // Act & Assert
+        // Arrange, Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ConditionGroupSecondConditionTrueAsync),
-            firstCondition: "false",
-            secondCondition: "true",
-            expectFirstMatch: false,
-            expectSecondMatch: true);
+            conditions: [false, true]);
+    }
+
+    [Fact]
+    public async Task ConditionGroupFirstConditionNullAsync()
+    {
+        // Arrange, Act & Assert
+        await this.ExecuteTestAsync(
+            displayName: nameof(ConditionGroupFirstConditionNullAsync),
+            conditions: [null, true]);
     }
 
     [Fact]
     public async Task ConditionGroupElseBranchAsync()
     {
-        // Act & Assert
+        // Arrange, Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ConditionGroupElseBranchAsync),
-            firstCondition: "false",
-            secondCondition: "false",
-            expectElse: true);
+            conditions: [false, false],
+            includeElse: true);
     }
 
     [Fact]
-    public async Task ConditionGroupNullConditionSkippedAsync()
+    public async Task ConditionGroupDoneAsync()
     {
-        // Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(ConditionGroupNullConditionSkippedAsync),
-            firstCondition: null,
-            secondCondition: "true",
-            expectSecondMatch: true);
-    }
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupDoneAsync), [true]);
+        ConditionGroupExecutor action = new(model, this.State);
 
-    [Fact]
-    public async Task ConditionGroupAllConditionsNullAsync()
-    {
-        // Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(ConditionGroupAllConditionsNullAsync),
-            firstCondition: null,
-            secondCondition: null,
-            expectElse: true);
+        // Act
+        WorkflowEvent[] events = await this.ExecuteAsync("condition_done_id", action.DoneAsync);
+
+        // Assert
+        VerifyModel(model, action);
+
+        Assert.NotEmpty(events);
+        VerifyCompletionEvent(events);
     }
 
     [Fact]
     public void ConditionGroupIsMatchTrue()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithConditions(nameof(ConditionGroupIsMatchTrue));
-        ConditionGroupExecutor executor = new(model, this.State);
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupIsMatchTrue), [true]);
         ConditionItem firstCondition = model.Conditions[0];
-
-        object? message = this.CreateActionExecutorResult(ConditionGroupExecutor.Steps.Item(model, firstCondition));
+        ConditionGroupExecutor executor = new(model, this.State);
+        ActionExecutorResult result = new(executor.Id, ConditionGroupExecutor.Steps.Item(model, firstCondition));
 
         // Act
-        bool isMatch = executor.IsMatch(firstCondition, message);
+        bool isMatch = executor.IsMatch(firstCondition, result);
 
         // Assert
         Assert.True(isMatch);
@@ -126,14 +125,14 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     public void ConditionGroupIsMatchFalse()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithConditions(nameof(ConditionGroupIsMatchFalse));
-        ConditionGroupExecutor executor = new(model, this.State);
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupIsMatchFalse), [true, false]);
         ConditionItem firstCondition = model.Conditions[0];
-
-        object? message = this.CreateActionExecutorResult("different_step");
+        ConditionItem secondCondition = model.Conditions[1];
+        ConditionGroupExecutor executor = new(model, this.State);
+        ActionExecutorResult result = new(executor.Id, ConditionGroupExecutor.Steps.Item(model, secondCondition));
 
         // Act
-        bool isMatch = executor.IsMatch(firstCondition, message);
+        bool isMatch = executor.IsMatch(firstCondition, result);
 
         // Assert
         Assert.False(isMatch);
@@ -143,13 +142,12 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     public void ConditionGroupIsElseTrue()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithElse(nameof(ConditionGroupIsElseTrue));
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupIsElseTrue), [false]);
         ConditionGroupExecutor executor = new(model, this.State);
-
-        object? message = this.CreateActionExecutorResult(ConditionGroupExecutor.Steps.Else(model));
+        ActionExecutorResult result = new(executor.Id, ConditionGroupExecutor.Steps.Else(model));
 
         // Act
-        bool isElse = executor.IsElse(message);
+        bool isElse = executor.IsElse(result);
 
         // Assert
         Assert.True(isElse);
@@ -159,43 +157,24 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     public void ConditionGroupIsElseFalse()
     {
         // Arrange
-        ConditionGroup model = this.CreateModelWithElse(nameof(ConditionGroupIsElseFalse));
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupIsElseFalse), [false]);
         ConditionGroupExecutor executor = new(model, this.State);
-
-        object? message = this.CreateActionExecutorResult("different_step");
+        ActionExecutorResult result = new(executor.Id, "different_step");
 
         // Act
-        bool isElse = executor.IsElse(message);
+        bool isElse = executor.IsElse(result);
 
         // Assert
         Assert.False(isElse);
     }
 
-    [Fact]
-    public async Task ConditionGroupDoneAsync()
-    {
-        // Arrange
-        ConditionGroup model = this.CreateModelWithConditions(nameof(ConditionGroupDoneAsync));
-        ConditionGroupExecutor executor = new(model, this.State);
-
-        // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(executor.Id, executor.DoneAsync);
-
-        // Assert
-        VerifyModel(model, executor);
-        VerifyCompletionEvent(events);
-    }
-
     private async Task ExecuteTestAsync(
         string displayName,
-        string? firstCondition,
-        string? secondCondition,
-        bool expectFirstMatch = false,
-        bool expectSecondMatch = false,
-        bool expectElse = false)
+        bool?[] conditions,
+        bool includeElse = false)
     {
         // Arrange
-        ConditionGroup model = this.CreateModel(displayName, firstCondition, secondCondition);
+        ConditionGroup model = this.CreateModel(displayName, conditions, includeElse);
         ConditionGroupExecutor action = new(model, this.State);
 
         // Act
@@ -203,38 +182,18 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
 
         // Assert
         VerifyModel(model, action);
+
+        Assert.NotEmpty(events);
         VerifyInvocationEvent(events);
 
-        // Verify IsDiscreteAction property is false (using reflection since property is protected)
-        Assert.Equal(
-            false,
-            action.GetType().BaseType?
-                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                .GetValue(action));
-
-        // Verify execution completed without errors
-        Assert.NotEmpty(events);
-    }
-
-    /// <summary>
-    /// Creates an ActionExecutorResult using reflection since the constructor is internal.
-    /// </summary>
-    private object CreateActionExecutorResult(string result)
-    {
-        System.Reflection.ConstructorInfo? constructor = typeof(ActionExecutorResult).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            new System.Type[] { typeof(string), typeof(object) },
-            null);
-        Assert.NotNull(constructor);
-
-        return constructor.Invoke(new object[] { "test_executor", result });
+        VerifyIsDiscrete(action, isDiscrete: false);
     }
 
     private ConditionGroup CreateModel(
         string displayName,
-        string? firstCondition,
-        string? secondCondition)
+        bool?[] conditions,
+        bool includeElse = false,
+        bool defineActionIds = true)
     {
         ConditionGroup.Builder actionBuilder = new()
         {
@@ -242,120 +201,42 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
             DisplayName = this.FormatDisplayName(displayName),
         };
 
-        ConditionItem.Builder firstConditionBuilder = new()
+        for (int index = 0; index < conditions.Length; ++index)
         {
-            Id = "condition_item_a",
-            Actions = this.CreateActions("condition_a"),
-        };
-        if (firstCondition is not null)
-        {
-            firstConditionBuilder.Condition = BoolExpression.Expression(firstCondition);
+            bool? condition = conditions[index];
+
+            ConditionItem.Builder conditionBuilder = new()
+            {
+                Id = defineActionIds ? $"condition_{index}" : null,
+                Actions = this.CreateActions(defineActionIds ? $"condition_actions_{index}" : null),
+                Condition = condition is null ? null : BoolExpression.Literal(condition.Value).ToBuilder(),
+            };
+
+            actionBuilder.Conditions.Add(conditionBuilder);
         }
-        actionBuilder.Conditions.Add(firstConditionBuilder);
 
-        ConditionItem.Builder secondConditionBuilder = new()
+        if (includeElse)
         {
-            // No explicit ID - test index-based naming
-            Actions = this.CreateActions("condition_b"),
-        };
-        if (secondCondition is not null)
-        {
-            secondConditionBuilder.Condition = BoolExpression.Expression(secondCondition);
+            actionBuilder.ElseActions = this.CreateActions(defineActionIds ? "else_actions" : null);
         }
-        actionBuilder.Conditions.Add(secondConditionBuilder);
-
-        actionBuilder.ElseActions = this.CreateActions("else_actions");
 
         return AssignParent<ConditionGroup>(actionBuilder);
     }
 
-    private ConditionGroup CreateModelWithConditions(string displayName)
+    private ActionScope.Builder CreateActions(string? actionScopeId) // %%% NULLABLE ???
     {
-        ConditionGroup.Builder actionBuilder = new()
+        ActionScope.Builder actions = [];
+
+        if (actionScopeId is not null)
         {
-            Id = this.CreateActionId(),
-            DisplayName = this.FormatDisplayName(displayName),
-        };
-
-        actionBuilder.Conditions.Add(
-            new ConditionItem.Builder
-            {
-                Id = "condition_item_a",
-                Condition = BoolExpression.Expression("true"),
-                Actions = this.CreateActions("condition_a"),
-            });
-
-        actionBuilder.Conditions.Add(
-            new ConditionItem.Builder
-            {
-                // No explicit ID
-                Condition = BoolExpression.Expression("true"),
-                Actions = this.CreateActions("condition_b"),
-            });
-
-        actionBuilder.ElseActions = this.CreateActions("else_actions");
-
-        return AssignParent<ConditionGroup>(actionBuilder);
-    }
-
-    private ConditionGroup CreateModelWithElse(string displayName)
-    {
-        ConditionGroup.Builder actionBuilder = new()
-        {
-            Id = this.CreateActionId(),
-            DisplayName = this.FormatDisplayName(displayName),
-        };
-
-        actionBuilder.Conditions.Add(
-            new ConditionItem.Builder
-            {
-                Id = "condition_item_a",
-                Condition = BoolExpression.Expression("false"),
-                Actions = this.CreateActions("condition_a"),
-            });
-
-        actionBuilder.ElseActions = this.CreateActionsWithId("else_actions_with_id");
-
-        return AssignParent<ConditionGroup>(actionBuilder);
-    }
-
-    /// <summary>
-    /// Creates an ActionScope builder for testing.
-    /// </summary>
-    /// <param name="prefix">Descriptive prefix for the action scope (not used in IDs but kept for code clarity).</param>
-    private ActionScope.Builder CreateActions(string prefix)
-    {
-        ActionScope.Builder actions = new()
-        {
-            Id = this.CreateActionId(),
-        };
+            actions.Id = new ActionId(actionScopeId);
+        }
 
         actions.Actions.Add(
             new SendActivity.Builder
             {
-                Id = this.CreateActionId(),
-                Activity = new MessageActivityTemplate
-                {
-                },
-            });
-
-        return actions;
-    }
-
-    private ActionScope.Builder CreateActionsWithId(string id)
-    {
-        ActionScope.Builder actions = new()
-        {
-            Id = new ActionId(id),
-        };
-
-        actions.Actions.Add(
-            new SendActivity.Builder
-            {
-                Id = this.CreateActionId(),
-                Activity = new MessageActivityTemplate
-                {
-                },
+                Id = $"{actionScopeId ?? "action"}_send_activity",
+                Activity = new MessageActivityTemplate(),
             });
 
         return actions;

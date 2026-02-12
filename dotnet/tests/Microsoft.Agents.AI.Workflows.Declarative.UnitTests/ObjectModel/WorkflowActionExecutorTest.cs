@@ -12,6 +12,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 using Xunit.Sdk;
+using static System.Collections.Specialized.BitVector32;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -27,13 +28,16 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
     internal Task<WorkflowEvent[]> ExecuteAsync(string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
-        this.ExecuteAsync(new DelegateActionExecutor(actionId, this.State, executorAction), isDiscrete: false);
+        this.ExecuteAsync([new DelegateActionExecutor(actionId, this.State, executorAction)], isDiscrete: false);
 
     internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
         this.ExecuteAsync([executor, new DelegateActionExecutor(actionId, this.State, executorAction)], isDiscrete: false);
 
-    internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, bool isDiscrete = true) =>
-        this.ExecuteAsync([executor], isDiscrete);
+    internal async Task<WorkflowEvent[]> ExecuteAsync(DeclarativeActionExecutor executor, bool isDiscrete = true)
+    {
+        VerifyIsDiscrete(executor, isDiscrete);
+        return await this.ExecuteAsync([executor], isDiscrete);
+    }
 
     internal async Task<WorkflowEvent[]> ExecuteAsync(Executor[] executors, bool isDiscrete)
     {
@@ -77,6 +81,15 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         Assert.Equal(model.Id, action.Id);
         Assert.Equal(model, action.Model);
+    }
+
+    internal static void VerifyIsDiscrete(DeclarativeActionExecutor action, bool isDiscrete = true)
+    {
+        Assert.Equal(
+            isDiscrete,
+            action.GetType().BaseType?
+                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+                .GetValue(action));
     }
 
     protected static void VerifyInvocationEvent(WorkflowEvent[] events) =>
