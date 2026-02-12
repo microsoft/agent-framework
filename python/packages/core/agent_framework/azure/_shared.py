@@ -58,6 +58,12 @@ class AzureOpenAISettings(AFBaseSettings):
             Resource Management > Deployments in the Azure portal or, alternatively,
             under Management > Deployments in Azure AI Foundry.
             Can be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+        realtime_deployment_name: The name of the Azure Realtime deployment. This value
+            will correspond to the custom name you chose for your deployment
+            when you deployed a model. This value can be found under
+            Resource Management > Deployments in the Azure portal or, alternatively,
+            under Management > Deployments in Azure AI Foundry.
+            Can be set via environment variable AZURE_OPENAI_REALTIME_DEPLOYMENT_NAME.
         api_key: The API key for the Azure deployment. This value can be
             found in the Keys & Endpoint section when examining your resource in
             the Azure portal. You can use either KEY1 or KEY2.
@@ -104,6 +110,7 @@ class AzureOpenAISettings(AFBaseSettings):
 
     chat_deployment_name: str | None = None
     responses_deployment_name: str | None = None
+    realtime_deployment_name: str | None = None
     endpoint: HTTPsUrl | None = None
     base_url: HTTPsUrl | None = None
     api_key: SecretStr | None = None

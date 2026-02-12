@@ -32,6 +32,7 @@ members = [
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azure-ai-search",
+    "agent-framework-azure-voice-live",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
     "agent-framework-chatkit",
@@ -231,6 +232,21 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "azure-search-documents", specifier = "==11.7.0b2" },
+]
+
+[[package]]
+name = "agent-framework-azure-voice-live"
+version = "1.0.0b260116"
+source = { editable = "packages/azure-ai-voice-live" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-voicelive", extra = ["aiohttp"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-ai-voicelive", extras = ["aiohttp"], specifier = ">=1.0.0" },
 ]
 
 [[package]]
@@ -987,6 +1003,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/e0/3512d3f07e9dd2eb4af684387c31598c435bd87833b6a81850972963cb9c/azure_ai_projects-2.0.0b3.tar.gz", hash = "sha256:6d09ad110086e450a47b991ee8a3644f1be97fa3085d5981d543f900d78f4505", size = 431749, upload-time = "2026-01-06T05:31:25.849Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/b6/8fbd4786bb5c0dd19eaff86ddce0fbfb53a6f90d712038272161067a076a/azure_ai_projects-2.0.0b3-py3-none-any.whl", hash = "sha256:3b3048a3ba3904d556ba392b7bd20b6e84c93bb39df6d43a6470cdb0ad08af8c", size = 240717, upload-time = "2026-01-06T05:31:27.716Z" },
+]
+
+[[package]]
+name = "azure-ai-voicelive"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/46/e304076e2bdca64a3b77bf9b6c79b8b4f29b994cc22196ff8c72b93faf09/azure_ai_voicelive-1.1.0.tar.gz", hash = "sha256:9398d0a3ad8a3c43844e89dfb8c61a39422f294770820f405b114c4d752d3f43", size = 127417, upload-time = "2025-11-04T18:26:00.036Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/4b/48a81dae63b3fa1208603a71bffda884bc9cec46f04d223e867efd132357/azure_ai_voicelive-1.1.0-py3-none-any.whl", hash = "sha256:29f2ab8bef67dd41cddafb0239f059351ddb44a7d95bcc4e706516e0c2bfdcc4", size = 83156, upload-time = "2025-11-04T18:26:01.214Z" },
+]
+
+[package.optional-dependencies]
+aiohttp = [
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [[package]]
