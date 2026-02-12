@@ -713,7 +713,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 vector_queries = [
                     VectorizableTextQuery(
                         text=query,
-                        k_nearest_neighbors=vector_k,
+                        k=vector_k,
                         fields=self.vector_field_name,
                     )
                 ]
@@ -723,7 +723,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 vector_queries = [
                     VectorizedQuery(
                         vector=query_vector,
-                        k_nearest_neighbors=vector_k,
+                        k=vector_k,
                         fields=self.vector_field_name,
                     )
                 ]
