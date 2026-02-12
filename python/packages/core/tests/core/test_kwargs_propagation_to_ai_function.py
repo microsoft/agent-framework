@@ -588,7 +588,7 @@ class TestKwargsPropagationToFunctionTool:
             ChatResponse(messages=[Message(role="assistant", text="Approval processed!")]),
         ]
 
-        result = await client.get_response(
+        await client.get_response(
             messages=[
                 Message(role="user", text="Test"),
                 Message(
