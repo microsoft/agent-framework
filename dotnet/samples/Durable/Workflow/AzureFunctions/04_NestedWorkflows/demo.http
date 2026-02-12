@@ -1,0 +1,14 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Process an order through nested workflows (Payment → Inventory → Shipping)
+POST {{authority}}/api/workflows/OrderProcessing/run
+Content-Type: text/plain
+
+ORD-2026-001
+
+### Process another order
+POST {{authority}}/api/workflows/OrderProcessing/run
+Content-Type: text/plain
+
+ORD-2026-002

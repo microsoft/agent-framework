@@ -3,13 +3,16 @@
 using System.Net;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask;
+using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
@@ -21,6 +24,120 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
+
+    internal static readonly string RunWorkflowOrechstrtationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrechstrtationHttpTriggerAsync)}";
+    internal static readonly string InvokeWorkflowOrchestrationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowOrchestration)}";
+
+    internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
+    internal static readonly string RunWorkflowMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowMcpToolAsync)}";
+
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
+    internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
+#pragma warning restore IL3000
+
+    /// <summary>
+    /// Invokes a workflow orchestration using the encoded orchestration request.
+    /// </summary>
+    /// <param name="encodedOrchestratorRequest">The base64-encoded protobuf payload for the orchestration.</param>
+    /// <param name="functionContext">The function context.</param>
+    /// <returns>The encoded orchestration response.</returns>
+    internal static string InvokeWorkflowOrchestration(
+        string encodedOrchestratorRequest,
+        FunctionContext functionContext)
+    {
+        DurableOptions durableOptions = functionContext.InstanceServices.GetRequiredService<DurableOptions>();
+
+        return GrpcOrchestrationRunner.LoadAndRun<DurableWorkflowInput<object>, string>(
+            encodedOrchestratorRequest,
+            (orchestrationContext, input) => RunWorkflowOrchestrationCoreAsync(orchestrationContext, input, durableOptions)!,
+            functionContext.InstanceServices);
+    }
+
+    private static async Task<string> RunWorkflowOrchestrationCoreAsync(
+        TaskOrchestrationContext orchestrationContext,
+        DurableWorkflowInput<object>? input,
+        DurableOptions durableOptions)
+    {
+        ILogger logger = orchestrationContext.CreateReplaySafeLogger("DurableWorkflow");
+        DurableWorkflowRunner runner = new(durableOptions);
+
+        // ConfigureAwait(true) is required in orchestration code for deterministic replay.
+        return await runner.RunWorkflowOrchestrationAsync(
+            orchestrationContext,
+            input ?? new DurableWorkflowInput<object> { Input = string.Empty },
+            logger).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Invokes a workflow orchestration in response to an HTTP request.
+    /// </summary>
+    public static async Task<HttpResponseData> RunWorkflowOrechstrtationHttpTriggerAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        var workflowName = context.FunctionDefinition.Name.Replace(HttpPrefix, string.Empty);
+        var orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+        var inputMessage = await req.ReadAsStringAsync();
+
+        DurableWorkflowInput<string> orchestrtionInput = new() { Input = inputMessage! };
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrtionInput);
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteStringAsync($"InvokeWorkflowOrechstrtationAsync is invoked for {workflowName}. Orchestration instanceId: {instanceId}");
+        return response;
+    }
+
+    public static Task<string> InvokeWorkflowActivityAsync(
+        [ActivityTrigger] string input,
+        [DurableClient] DurableTaskClient durableTaskClient,
+        FunctionContext functionContext)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(durableTaskClient);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
+        string activityFunctionName = functionContext.FunctionDefinition.Name;
+        string executorName = WorkflowNamingHelper.ToWorkflowName(activityFunctionName);
+
+        DurableOptions durableOptions = functionContext.InstanceServices.GetRequiredService<DurableOptions>();
+        if (!durableOptions.Workflows.Executors.TryGetExecutor(executorName, out ExecutorRegistration? registration))
+        {
+            throw new InvalidOperationException($"Executor '{executorName}' not found in workflow options.");
+        }
+
+        return DurableActivityExecutor.ExecuteAsync(registration.Binding, input, functionContext.CancellationToken);
+    }
+
+    public static async Task<string?> RunWorkflowMcpToolAsync(
+        [McpToolTrigger("BuiltInWorkflowMcpTool")] ToolInvocationContext context,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext functionContext)
+    {
+        if (context.Arguments is null)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required arguments.");
+        }
+
+        if (!context.Arguments.TryGetValue("input", out object? inputObj) || inputObj is not string input)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required 'input' argument of type string.");
+        }
+
+        // Extract workflow name from the MCP tool name (format: mcptool-workflow-{workflowName})
+        string workflowName = context.Name;
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, input);
+
+        // Wait for the orchestration to complete and return the result
+        OrchestrationMetadata? metadata = await client.WaitForInstanceCompletionAsync(
+            instanceId,
+            getInputsAndOutputs: true,
+            cancellation: functionContext.CancellationToken);
+
+        return metadata?.ReadOutputAs<string>();
+    }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static Task<string> InvokeAgentAsync(

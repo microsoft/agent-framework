@@ -4,7 +4,10 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- CA2007: This rule should generally be suppressed in Durable Task libraries. Also, this is not library code. -->
-    <NoWarn>$(NoWarn);CA2007</NoWarn>
+    <!-- AD0001: Suppress analyzer crashes from DurableTask analyzers (known bug with certain code patterns) -->
+    <NoWarn>$(NoWarn);CA2007;AD0001</NoWarn>
+    <!-- Ensure analyzer exceptions don't fail the build -->
+    <ReportAnalyzerExceptionsAsErrors>false</ReportAnalyzerExceptionsAsErrors>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

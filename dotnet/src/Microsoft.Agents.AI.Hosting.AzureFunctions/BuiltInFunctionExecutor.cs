@@ -102,6 +102,43 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             return;
         }
 
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint)
+        {
+            if (httpRequestData == null)
+            {
+                throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            }
+            context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrechstrtationHttpTriggerAsync(
+                   httpRequestData,
+                   durableTaskClient,
+                   context);
+
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.InvokeWorkflowOrchestrationFunctionEntryPoint)
+        {
+            // The orchestration trigger binding provides an encoded orchestration request string.
+            // We use the same string binding that entities use (encodedEntityRequest is reused for orchestrations).
+            if (encodedEntityRequest is null)
+            {
+                throw new InvalidOperationException($"Orchestration trigger binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            // Execute the orchestration using the static method in BuiltInFunctions
+            context.GetInvocationResult().Value = BuiltInFunctions.InvokeWorkflowOrchestration(
+                encodedEntityRequest,
+                context);
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint)
+        {
+            // to do
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeWorkflowActivityAsync(encodedEntityRequest!, durableTaskClient, context);
+            return;
+        }
+
         throw new InvalidOperationException($"Unsupported function entry point '{context.FunctionDefinition.EntryPoint}' for invocation {context.InvocationId}.");
     }
 }

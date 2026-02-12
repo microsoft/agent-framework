@@ -1,0 +1,14 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Valid order (routes to PaymentProcessor)
+POST {{authority}}/api/workflows/AuditOrder/run
+Content-Type: text/plain
+
+12345
+
+### Blocked order (routes to NotifyFraud) - Order IDs containing 'B' are flagged
+POST {{authority}}/api/workflows/AuditOrder/run
+Content-Type: text/plain
+
+12345B

@@ -197,24 +197,33 @@ public static class ServiceCollectionExtensions
 
         // Configure Durable Task Worker - capture sharedOptions reference in closure.
         // The options object is populated by all Configure* calls before the worker starts.
-        services.AddDurableTaskWorker(builder =>
+
+        if (workerBuilder is not null)
         {
-            workerBuilder?.Invoke(builder);
+            services.AddDurableTaskWorker(builder =>
+            {
+                workerBuilder?.Invoke(builder);
 
-            builder.AddTasks(registry => RegisterTasksFromOptions(registry, sharedOptions));
-        });
-
+                builder.AddTasks(registry => RegisterTasksFromOptions(registry, sharedOptions));
+            });
+        }
         // Configure Durable Task Client
+        // Only register a client if explicitly configured. For Azure Functions,
+        // the Functions extension provides the DurableTaskClient automatically via bindings.
         if (clientBuilder is not null)
         {
             services.AddDurableTaskClient(clientBuilder);
+
+            // These services depend on DurableTaskClient from DI, so only register them
+            // when we're registering a client. For Azure Functions, the client comes from
+            // bindings, not DI, so these won't work there.
+            services.TryAddSingleton<DurableWorkflowClient>();
+            services.TryAddSingleton<IWorkflowClient>(sp => sp.GetRequiredService<DurableWorkflowClient>());
+            services.TryAddSingleton<IDurableAgentClient, DefaultDurableAgentClient>();
         }
 
-        // Register workflow and agent services
-        services.TryAddSingleton<DurableWorkflowClient>();
-        services.TryAddSingleton<IWorkflowClient>(sp => sp.GetRequiredService<DurableWorkflowClient>());
+        // Register workflow and agent services that don't depend on DurableTaskClient
         services.TryAddSingleton<DataConverter, DurableDataConverter>();
-        services.TryAddSingleton<IDurableAgentClient, DefaultDurableAgentClient>();
 
         // Register agent factories resolver - returns factories from the shared options
         services.TryAddSingleton(
@@ -257,7 +266,11 @@ public static class ServiceCollectionExtensions
                 ExecutorBinding binding = activity.Binding;
                 registry.AddActivityFunc<string, string>(
                     activity.ActivityName,
-                (context, input) => DurableActivityExecutor.ExecuteAsync(binding, input));
+                (context, input) =>
+                {
+                    // to do:a
+                    return DurableActivityExecutor.ExecuteAsync(binding, input);
+                });
             }
         }
 
