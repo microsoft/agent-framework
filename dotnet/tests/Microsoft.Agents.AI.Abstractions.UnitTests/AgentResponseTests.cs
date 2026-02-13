@@ -215,6 +215,42 @@ public class AgentResponseTests
     }
 
     [Fact]
+    public void ToAgentResponseUpdatesPropagatesCreatedAt()
+    {
+        // Sets different CreatedAt values on the AgentResponse and the ChatMessage to verify that the ChatMessage.CreatedAt is the one that gets propagated to the AgentResponseUpdate
+        AgentResponse response = new(new ChatMessage(new ChatRole("customRole"), "Text") { MessageId = "someMessage", CreatedAt = new DateTimeOffset(2024, 11, 11, 9, 20, 0, TimeSpan.Zero) })
+        {
+            AgentId = "agentId",
+            ResponseId = "12345",
+            CreatedAt = new DateTimeOffset(2024, 11, 10, 9, 20, 0, TimeSpan.Zero),
+            AdditionalProperties = new() { ["key1"] = "value1", ["key2"] = 42 },
+            Usage = new UsageDetails
+            {
+                TotalTokenCount = 100
+            },
+        };
+
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+        Assert.NotNull(updates);
+        Assert.Equal(2, updates.Length);
+
+        AgentResponseUpdate update0 = updates[0];
+        Assert.Equal("agentId", update0.AgentId);
+        Assert.Equal("12345", update0.ResponseId);
+        Assert.Equal("someMessage", update0.MessageId);
+        Assert.Equal(new DateTimeOffset(2024, 11, 11, 9, 20, 0, TimeSpan.Zero), update0.CreatedAt);
+        Assert.Equal("customRole", update0.Role?.Value);
+        Assert.Equal("Text", update0.Text);
+
+        AgentResponseUpdate update1 = updates[1];
+        Assert.Equal("value1", update1.AdditionalProperties?["key1"]);
+        Assert.Equal(42, update1.AdditionalProperties?["key2"]);
+        Assert.IsType<UsageContent>(update1.Contents[0]);
+        UsageContent usageContent = (UsageContent)update1.Contents[0];
+        Assert.Equal(100, usageContent.Details.TotalTokenCount);
+    }
+
+    [Fact]
     public void ParseAsStructuredOutputWithJSOSuccess()
     {
         // Arrange.
