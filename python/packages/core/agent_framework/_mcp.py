@@ -28,7 +28,6 @@ from pydantic import BaseModel, create_model
 
 from ._tools import (
     FunctionTool,
-    _build_pydantic_model_from_json_schema,
 )
 from ._types import (
     Content,
@@ -355,8 +354,12 @@ def _prepare_message_for_mcp(
     return messages
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
-    """Creates a Pydantic model from a prompt's parameters."""
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any] | type[BaseModel]:
+    """Get the input model from an MCP prompt.
+    
+    For prompts with arguments, returns the schema as a dict.
+    For prompts without arguments, returns an empty Pydantic model.
+    """
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
         return create_model(f"{prompt.name}_input")
@@ -374,13 +377,16 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
-    schema = {"properties": properties, "required": required}
-    return _build_pydantic_model_from_json_schema(prompt.name, schema)
+    schema = {"type": "object", "properties": properties, "required": required}
+    return schema
 
 
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
-    """Creates a Pydantic model from a tools parameters."""
-    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
+def _get_input_model_from_mcp_tool(tool: types.Tool) -> dict[str, Any]:
+    """Get the input schema from an MCP tool.
+    
+    Returns the schema as-is without conversion to Pydantic model.
+    """
+    return tool.inputSchema
 
 
 def _normalize_mcp_name(name: str) -> str:

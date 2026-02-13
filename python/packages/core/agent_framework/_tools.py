@@ -240,6 +240,8 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         "input_model",
         "_invocation_duration_histogram",
         "_cached_parameters",
+        "_input_schema",
+        "_schema_supplied",
     }
 
     def __init__(
@@ -299,6 +301,16 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         # FunctionTool-specific attributes
         self.func = func
         self._instance = None  # Store the instance for bound methods
+        
+        # Track if schema was supplied as JSON dict (for optimization)
+        self._schema_supplied = isinstance(input_model, Mapping) and not (
+            inspect.isclass(input_model) and issubclass(input_model, BaseModel)
+        )
+        
+        # Store the original JSON schema if provided
+        self._input_schema: dict[str, Any] | None = dict(input_model) if self._schema_supplied else None
+        
+        # Only create Pydantic model if schema wasn't supplied as dict
         self.input_model = self._resolve_input_model(input_model)
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
@@ -367,7 +379,11 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         return self
 
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
-        """Resolve the input model for the function."""
+        """Resolve the input model for the function.
+        
+        When a JSON schema is provided as a Mapping, we no longer convert it to a Pydantic model.
+        Instead, we store the schema as-is and use EmptyInputModel as a placeholder.
+        """
         if input_model is None:
             if self.func is None:
                 return cast(type[ArgsT], EmptyInputModel)
@@ -375,7 +391,9 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
             return input_model
         if isinstance(input_model, Mapping):
-            return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
+            # Don't convert to Pydantic model - store schema as-is
+            # Use EmptyInputModel as placeholder since we won't use it for validation
+            return cast(type[ArgsT], EmptyInputModel)
         raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -436,9 +454,22 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         original_kwargs = dict(kwargs)
         tool_call_id = original_kwargs.pop("tool_call_id", None)
         if arguments is not None:
-            if not isinstance(arguments, self.input_model):
-                raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-            kwargs = arguments.model_dump(exclude_none=True)
+            # For schema-supplied tools, skip Pydantic validation and extract kwargs directly
+            if self._schema_supplied:
+                # Extract kwargs from arguments (could be dict or BaseModel)
+                if isinstance(arguments, dict):
+                    kwargs = arguments
+                elif hasattr(arguments, "model_dump"):
+                    kwargs = arguments.model_dump(exclude_none=True)
+                elif hasattr(arguments, "__dict__"):
+                    kwargs = {k: v for k, v in arguments.__dict__.items() if not k.startswith("_")}
+                else:
+                    kwargs = dict(arguments)
+            else:
+                # For Pydantic models, do the normal validation
+                if not isinstance(arguments, self.input_model):
+                    raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                kwargs = arguments.model_dump(exclude_none=True)
             if getattr(self, "_forward_runtime_kwargs", False) and original_kwargs:
                 kwargs.update(original_kwargs)
         else:
@@ -475,11 +506,15 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
                 }
             }
             attributes.update({
-                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json(ensure_ascii=False)
-                if arguments
-                else json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
-                if serializable_kwargs
-                else "None"
+                OtelAttr.TOOL_ARGUMENTS: (
+                    arguments.model_dump_json(ensure_ascii=False)
+                    if arguments and hasattr(arguments, "model_dump_json")
+                    else json.dumps(arguments, default=str, ensure_ascii=False)
+                    if arguments and not hasattr(arguments, "model_dump_json")
+                    else json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
+                    if serializable_kwargs
+                    else "None"
+                )
             })
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
@@ -523,7 +558,12 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            self._cached_parameters = self.input_model.model_json_schema()
+            # If schema was supplied as JSON, return it directly
+            if self._schema_supplied and self._input_schema is not None:
+                self._cached_parameters = self._input_schema
+            else:
+                # Otherwise generate from Pydantic model
+                self._cached_parameters = self.input_model.model_json_schema()
         return self._cached_parameters
 
     @staticmethod

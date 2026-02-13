@@ -587,52 +587,30 @@ def test_prepare_message_for_mcp():
 def test_get_input_model_from_mcp_tool_parametrized(
     test_id, input_schema, valid_data, expected_values, invalid_data, validation_check
 ):
-    """Parametrized test for JSON schema to Pydantic model conversion.
+    """Parametrized test for MCP tool input schema passthrough.
 
-    This test covers various edge cases including:
-    - Basic types with required/optional fields
-    - Nested objects
-    - $ref resolution
-    - Typed arrays (strings, integers, objects)
-    - Deeply nested structures
-    - Complex $ref with nested structures
-    - Mixed types
+    This test verifies that MCP tool schemas are passed through as-is
+    without Pydantic conversion, which improves performance and preserves
+    the original schema structure.
 
     To add a new test case, add a tuple to the parametrize decorator with:
     - test_id: A descriptive name for the test case
     - input_schema: The JSON schema (inputSchema dict)
-    - valid_data: Valid data to instantiate the model
-    - expected_values: Dict of expected values (supports dot notation for nested access)
-    - invalid_data: Invalid data to test validation errors (None to skip)
-    - validation_check: Optional callable to perform additional validation checks
+    - valid_data: Valid data (used to verify FunctionTool works with the schema)
+    - expected_values: Not used in this test (kept for compatibility)
+    - invalid_data: Not used in this test (kept for compatibility)
+    - validation_check: Not used in this test (kept for compatibility)
     """
     tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
-    model = _get_input_model_from_mcp_tool(tool)
+    schema = _get_input_model_from_mcp_tool(tool)
 
-    # Test valid data
-    instance = model(**valid_data)
-
-    # Check expected values
-    for field_path, expected_value in expected_values.items():
-        # Support dot notation and array indexing for nested access
-        current = instance
-        parts = field_path.replace("]", "").replace("[", ".").split(".")
-        for part in parts:
-            current = current[int(part)] if part.isdigit() else getattr(current, part)
-        assert current == expected_value, f"Field {field_path} = {current}, expected {expected_value}"
-
-    # Run additional validation checks if provided
-    if validation_check:
-        assert validation_check(instance), f"Validation check failed for {test_id}"
-
-    # Test invalid data if provided
-    if invalid_data is not None:
-        with pytest.raises(ValidationError):
-            model(**invalid_data)
+    # Verify schema is returned as-is (dict)
+    assert isinstance(schema, dict), f"Expected dict, got {type(schema)}"
+    assert schema == input_schema, "Schema should be passed through unchanged"
 
 
 def test_get_input_model_from_mcp_prompt():
-    """Test creation of input model from MCP prompt."""
+    """Test creation of input schema from MCP prompt."""
     prompt = types.Prompt(
         name="test_prompt",
         description="A test prompt",
@@ -641,16 +619,15 @@ def test_get_input_model_from_mcp_prompt():
             types.PromptArgument(name="arg2", description="Second argument", required=False),
         ],
     )
-    model = _get_input_model_from_mcp_prompt(prompt)
+    result = _get_input_model_from_mcp_prompt(prompt)
 
-    # Create an instance to verify the model works
-    instance = model(arg1="test", arg2="optional")
-    assert instance.arg1 == "test"
-    assert instance.arg2 == "optional"
-
-    # Test validation
-    with pytest.raises(ValidationError):  # Missing required arg1
-        model(arg2="optional")
+    # Should return a dict (schema)
+    assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+    assert result["type"] == "object"
+    assert "arg1" in result["properties"]
+    assert "arg2" in result["properties"]
+    assert "arg1" in result["required"]
+    assert "arg2" not in result["required"]
 
 
 # MCPTool tests
