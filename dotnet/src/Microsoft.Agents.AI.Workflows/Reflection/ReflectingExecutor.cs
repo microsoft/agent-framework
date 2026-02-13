@@ -59,14 +59,17 @@ public class ReflectingExecutor<
             }
         }
 
-        var handlerAnnotatedTypes =
-            messageHandlers.Select(mhi => (SendTypes: mhi.HandlerInfo.GetCustomAttributes<SendsMessageAttribute>().Select(attr => attr.Type),
-                                           YieldTypes: mhi.HandlerInfo.GetCustomAttributes<YieldsOutputAttribute>().Select(attr => attr.Type)))
-                           .Aggregate((accumulate, next) => (accumulate.SendTypes == null ? next.SendTypes : accumulate.SendTypes.Concat(next.SendTypes),
-                                                             accumulate.YieldTypes == null ? next.YieldTypes : accumulate.YieldTypes.Concat(next.YieldTypes)));
+        if (messageHandlers.Count > 0)
+        {
+            var handlerAnnotatedTypes =
+                messageHandlers.Select(mhi => (SendTypes: mhi.HandlerInfo.GetCustomAttributes<SendsMessageAttribute>().Select(attr => attr.Type),
+                                               YieldTypes: mhi.HandlerInfo.GetCustomAttributes<YieldsOutputAttribute>().Select(attr => attr.Type)))
+                               .Aggregate((accumulate, next) => (accumulate.SendTypes == null ? next.SendTypes : accumulate.SendTypes.Concat(next.SendTypes),
+                                                                 accumulate.YieldTypes == null ? next.YieldTypes : accumulate.YieldTypes.Concat(next.YieldTypes)));
 
-        protocolBuilder.SendsMessageTypes(handlerAnnotatedTypes.SendTypes)
-                       .YieldsOutputTypes(handlerAnnotatedTypes.YieldTypes);
+            protocolBuilder.SendsMessageTypes(handlerAnnotatedTypes.SendTypes)
+                           .YieldsOutputTypes(handlerAnnotatedTypes.YieldTypes);
+        }
 
         return protocolBuilder;
     }

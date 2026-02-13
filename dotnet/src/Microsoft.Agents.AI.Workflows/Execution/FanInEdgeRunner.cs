@@ -75,7 +75,17 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
             IEnumerable<(Type?, MessageEnvelope)> MapRuntimeTypes((ExecutorProtocol, IGrouping<ExecutorIdentity, MessageEnvelope>) input)
             {
                 (ExecutorProtocol protocol, IGrouping<ExecutorIdentity, MessageEnvelope> grouping) = input;
-                return grouping.Select(envelope => (protocol.SendTypeTranslator.MapTypeId(envelope.MessageType), envelope));
+                return grouping.Select(envelope => (ResolveEnvelopeType(envelope), envelope));
+
+                Type? ResolveEnvelopeType(MessageEnvelope messageEnvelope)
+                {
+                    if (envelope.Message is PortableValue portableValue)
+                    {
+                        return protocol.SendTypeTranslator.MapTypeId(portableValue.TypeId);
+                    }
+
+                    return envelope.Message.GetType();
+                }
             }
         }
         catch (Exception) when (activity is not null)
