@@ -21,6 +21,11 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
     private static readonly string s_builtInFunctionsScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
 #pragma warning restore IL3000
 
+    /// <summary>
+    /// Tracks all registered function names to prevent duplicates across multiple metadata transformers.
+    /// </summary>
+    internal static readonly HashSet<string> RegisteredFunctionNames = new(StringComparer.OrdinalIgnoreCase);
+
     public DurableAgentFunctionMetadataTransformer(
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents,
         ILogger<DurableAgentFunctionMetadataTransformer> logger,
@@ -42,6 +47,13 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
         foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> kvp in this._agents)
         {
             string agentName = kvp.Key;
+            string entityFunctionName = AgentSessionId.ToEntityName(agentName);
+
+            // Skip if this entity function has already been registered by another transformer
+            if (!RegisteredFunctionNames.Add(entityFunctionName))
+            {
+                continue;
+            }
 
             this._logger.LogRegisteringTriggerForAgent(agentName, "entity");
 

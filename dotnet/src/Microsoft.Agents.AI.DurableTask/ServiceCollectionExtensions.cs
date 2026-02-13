@@ -235,19 +235,18 @@ public static class ServiceCollectionExtensions
 
     private static void RegisterTasksFromOptions(DurableTaskRegistry registry, DurableOptions durableOptions)
     {
-        // Build registrations for all workflows including sub-workflows
+        // Build registrations for all workflows including discovered sub-workflows
         List<WorkflowRegistrationInfo> registrations = [];
         HashSet<string> registeredActivities = [];
         HashSet<string> registeredOrchestrations = [];
 
-        foreach (Workflow workflow in durableOptions.Workflows.Workflows.Values.ToList())
+        foreach (Workflow workflow in durableOptions.Workflows.Workflows.Values)
         {
-            BuildWorkflowRegistrationRecursive(
-                workflow,
-                durableOptions.Workflows,
-                registrations,
-                registeredActivities,
-                registeredOrchestrations);
+            string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name!);
+            if (registeredOrchestrations.Add(orchestrationName))
+            {
+                registrations.Add(BuildWorkflowRegistration(workflow, registeredActivities));
+            }
         }
 
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agentFactories =
@@ -278,39 +277,6 @@ public static class ServiceCollectionExtensions
         foreach (string agentName in agentFactories.Keys)
         {
             registry.AddEntity<AgentEntity>(AgentSessionId.ToEntityName(agentName));
-        }
-    }
-
-    private static void BuildWorkflowRegistrationRecursive(
-        Workflow workflow,
-        DurableWorkflowOptions workflowOptions,
-        List<WorkflowRegistrationInfo> registrations,
-        HashSet<string> registeredActivities,
-        HashSet<string> registeredOrchestrations)
-    {
-        string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name!);
-
-        if (!registeredOrchestrations.Add(orchestrationName))
-        {
-            return;
-        }
-
-        registrations.Add(BuildWorkflowRegistration(workflow, registeredActivities));
-
-        // Process subworkflows recursively to register them as separate orchestrations
-        foreach (SubworkflowBinding subworkflowBinding in workflow.ReflectExecutors()
-            .Select(e => e.Value)
-            .OfType<SubworkflowBinding>())
-        {
-            Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
-            workflowOptions.AddWorkflow(subWorkflow);
-
-            BuildWorkflowRegistrationRecursive(
-                subWorkflow,
-                workflowOptions,
-                registrations,
-                registeredActivities,
-                registeredOrchestrations);
         }
     }
 

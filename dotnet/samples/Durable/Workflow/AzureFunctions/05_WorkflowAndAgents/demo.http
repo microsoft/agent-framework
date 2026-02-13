@@ -1,0 +1,20 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Single-agent workflow: Physics expert
+POST {{authority}}/api/workflows/PhysicsExpertReview/run
+Content-Type: text/plain
+
+What is the relationship between energy and mass?
+
+### Multi-agent workflow: Expert team (Physicist + Chemist in parallel)
+POST {{authority}}/api/workflows/ExpertTeamReview/run
+Content-Type: text/plain
+
+How does radiation affect living cells?
+
+### Single-agent workflow: Chemistry expert
+POST {{authority}}/api/workflows/ChemistryExpertReview/run
+Content-Type: text/plain
+
+What happens during combustion?

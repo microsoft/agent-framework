@@ -74,6 +74,7 @@ public sealed class DurableWorkflowOptions
 
     /// <summary>
     /// Registers all executors from a workflow, including AI agents if agent options are available.
+    /// Any sub-workflow bindings are automatically discovered and added recursively.
     /// </summary>
     private void RegisterWorkflowExecutors(Workflow workflow)
     {
@@ -85,6 +86,16 @@ public sealed class DurableWorkflowOptions
             this.Executors.Register(executorName, executorId, workflow);
 
             TryRegisterAgent(binding, agentOptions);
+
+            // Automatically discover and register sub-workflows
+            if (binding is SubworkflowBinding subworkflowBinding)
+            {
+                Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
+                if (subWorkflow.Name is not null && !this._workflows.ContainsKey(subWorkflow.Name))
+                {
+                    this.AddWorkflow(subWorkflow);
+                }
+            }
         }
     }
 

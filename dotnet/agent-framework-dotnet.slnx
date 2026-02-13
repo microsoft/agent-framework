@@ -59,6 +59,7 @@
     <Project Path="samples/Durable/Workflow/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
     <Project Path="samples/Durable/Workflow/AzureFunctions/03_ConditionalEdges/03_ConditionalEdges.csproj" />
     <Project Path="samples/Durable/Workflow/AzureFunctions/04_NestedWorkflows/04_NestedWorkflows.csproj" />
+    <Project Path="samples/Durable/Workflow/AzureFunctions/05_WorkflowAndAgents/05_WorkflowAndAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

@@ -10,7 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.Workflows;
 
 internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMetadataTransformer
 {
-    private static readonly HashSet<string> _registeredFunctionNames = new();
     private readonly ILogger<DurableWorkflowFunctionMetadataTransformer> _logger;
     private readonly DurableWorkflowOptions _options;
 
@@ -29,6 +28,14 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
 
         foreach (var workflow in this._options.Workflows)
         {
+            string httpFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}";
+
+            // Skip if this workflow's HTTP trigger has already been registered by another transformer
+            if (!DurableAgentFunctionMetadataTransformer.RegisteredFunctionNames.Add(httpFunctionName))
+            {
+                continue;
+            }
+
             this._logger.LogAddingWorkflowFunction(workflow.Key);
 
             // Currently due to how durable executor is registered, we are not able to bind TaskOrechestrationContext parameter properly
@@ -80,8 +87,8 @@ internal sealed class DurableWorkflowFunctionMetadataTransformer : IFunctionMeta
                     string executorName = WorkflowNamingHelper.GetExecutorName(executorId);
                     string functionName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
 
-                    // Skip if this function has already been registered by another workflow
-                    if (!_registeredFunctionNames.Add(functionName))
+                    // Skip if this function has already been registered by another workflow or transformer
+                    if (!DurableAgentFunctionMetadataTransformer.RegisteredFunctionNames.Add(functionName))
                     {
                         this._logger.LogSkippingDuplicateFunction(functionName, workflow.Key);
                         continue;

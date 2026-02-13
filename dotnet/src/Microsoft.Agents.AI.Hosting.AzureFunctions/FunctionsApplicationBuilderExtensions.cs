@@ -3,7 +3,6 @@
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Hosting.AzureFunctions.Workflows;
-using Microsoft.Agents.AI.Workflows;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
@@ -22,6 +21,16 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 public static class FunctionsApplicationBuilderExtensions
 {
     /// <summary>
+    /// Tracks workflow orchestration names that have already been registered to prevent duplicates.
+    /// </summary>
+    private static readonly HashSet<string> s_registeredOrchestrations = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Tracks whether middleware and shared services have been registered.
+    /// </summary>
+    private static bool s_middlewareRegistered;
+
+    /// <summary>
     /// Configures durable agents and workflows in a unified way.
     /// </summary>
     /// <param name="builder">The Functions application builder.</param>
@@ -31,6 +40,7 @@ public static class FunctionsApplicationBuilderExtensions
     /// This method provides a unified configuration point for both durable agents and workflows.
     /// It automatically generates HTTP API endpoints for agents and workflows, and configures
     /// the necessary middleware and services for durable execution.
+    /// Multiple calls to this method are supported and configurations are composed additively.
     /// </remarks>
     public static FunctionsApplicationBuilder ConfigureDurableOptions(
         this FunctionsApplicationBuilder builder,
@@ -39,56 +49,60 @@ public static class FunctionsApplicationBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
-        DurableOptions options = new();
-        configure(options);
+        // Delegate to the shared DurableOptions registration in Microsoft.Agents.AI.DurableTask.
+        // This ensures a single shared DurableOptions instance across all Configure* calls.
+        builder.Services.ConfigureDurableOptions(options => configure(options));
 
-        builder.Services.AddSingleton(options);
+        // Read the shared options to check if workflows were added
+        DurableOptions sharedOptions = GetOrCreateSharedOptions(builder.Services);
 
-        if (options.Workflows.Workflows.Count > 0)
+        if (sharedOptions.Workflows.Workflows.Count > 0)
         {
-            ConfigureWorkflowOrchestrations(builder, options.Workflows);
-            // Do things to enable workflow as orchestrator functions.
-            // Register the Workflow metadata transformer.
-            builder.ConfigureDurableWorkflows(durableWorkflwoOptions =>
-            {
-                // what
-            });
+            ConfigureWorkflowOrchestrations(builder, sharedOptions.Workflows);
 
-            builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
-
-            builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
-    string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
-    string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
-    string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal)
-    || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-
-     || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-        || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal)
-        || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
-    );
-            builder.Services.AddSingleton<BuiltInFunctionExecutor>();
-
-            //builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
-            //    string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-            //    || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal)
-            //    || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
-            //    || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal)
-            // );
-            //builder.Services.AddSingleton<BuiltInFunctionExecutor>();
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>());
         }
+
+        EnsureMiddlewareRegistered(builder);
 
         return builder;
     }
 
-    private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflows)
+    /// <summary>
+    /// Gets or creates a shared <see cref="DurableOptions"/> instance from the service collection.
+    /// </summary>
+    private static DurableOptions GetOrCreateSharedOptions(IServiceCollection services)
     {
-        // Discover sub-workflows recursively and add them to the workflows dictionary
-        // so they are registered as separate orchestrations alongside the main workflows.
-        DiscoverSubWorkflows(workflows);
+        ServiceDescriptor? existingDescriptor = services.FirstOrDefault(
+            d => d.ServiceType == typeof(DurableOptions) && d.ImplementationInstance is not null);
+
+        if (existingDescriptor?.ImplementationInstance is DurableOptions existing)
+        {
+            return existing;
+        }
+
+        DurableOptions options = new();
+        services.AddSingleton(options);
+        return options;
+    }
+
+    private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflowOptions)
+    {
+        // Collect only workflows that haven't been registered yet
+        List<string> newWorkflowNames = workflowOptions.Workflows
+            .Select(kp => kp.Key)
+            .Where(name => s_registeredOrchestrations.Add(name))
+            .ToList();
+
+        if (newWorkflowNames.Count == 0)
+        {
+            return;
+        }
 
         builder.ConfigureDurableWorker().AddTasks(tasks =>
         {
-            foreach (string workflowName in workflows.Workflows.Select(kp => kp.Key))
+            foreach (string workflowName in newWorkflowNames)
             {
                 string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
 
@@ -109,48 +123,19 @@ public static class FunctionsApplicationBuilderExtensions
         });
     }
 
-    private static void DiscoverSubWorkflows(DurableWorkflowOptions workflows)
-    {
-        HashSet<string> visited = new(workflows.Workflows.Keys);
-        Queue<Workflow> queue = new(workflows.Workflows.Values);
-
-        while (queue.Count > 0)
-        {
-            Workflow workflow = queue.Dequeue();
-
-            foreach (ExecutorBinding binding in workflow.ReflectExecutors().Values)
-            {
-                if (binding is SubworkflowBinding subworkflowBinding)
-                {
-                    Workflow subWorkflow = subworkflowBinding.WorkflowInstance;
-                    if (subWorkflow.Name is not null && visited.Add(subWorkflow.Name))
-                    {
-                        workflows.AddWorkflow(subWorkflow);
-                        queue.Enqueue(subWorkflow);
-                    }
-                }
-            }
-        }
-    }
-    internal static FunctionsApplicationBuilder RegisterWorkflowServices(this FunctionsApplicationBuilder builder)
-    {
-        // Register FunctionsWorkflowRunner as a singleton
-        // builder.Services.TryAddSingleton<FunctionsWorkflowRunner>();
-
-        // Also register it as DurableWorkflowRunner so orchestrations can resolve it by base type
-        //builder.Services.TryAddSingleton<DurableWorkflowRunner>(sp => sp.GetRequiredService<FunctionsWorkflowRunner>());
-
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>());
-
-        return builder;
-    }
-
     /// <summary>
-    /// Configures durable workflow services for the application and allows customization of durable workflow options.
+    /// Configures durable workflow services for the Azure Functions application.
     /// </summary>
-    /// <remarks>This method registers the services required for durable workflows using
-    /// Microsoft.DurableTask.Workflows. Call this method during application startup to enable durable workflows in your
-    /// Azure Functions app.</remarks>
+    /// <remarks>
+    /// <para>
+    /// This method registers the services required for durable workflows in an Azure Functions app,
+    /// including orchestration triggers, HTTP triggers, and activity/entity triggers for executors.
+    /// </para>
+    /// <para>
+    /// Multiple calls to this method are supported and configurations are composed additively.
+    /// Agents referenced in workflows are automatically discovered and registered.
+    /// </para>
+    /// </remarks>
     /// <param name="builder">The application builder used to configure services and middleware for the Azure Functions app.</param>
     /// <param name="configure">A delegate that is used to configure the durable workflow options. Cannot be null.</param>
     /// <returns>The same <see cref="FunctionsApplicationBuilder"/> instance that this method was called on, to support method
@@ -159,13 +144,7 @@ public static class FunctionsApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(configure);
 
-        //RegisterWorkflowServices(builder);
-        //builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableWorkflowFunctionMetadataTransformer>();
-
-        // The main durable workflows services registration is done in Microsoft.DurableTask.Workflows.
-        builder.Services.ConfigureDurableWorkflows(configure);
-
-        return builder;
+        return builder.ConfigureDurableOptions(options => configure(options.Workflows));
     }
 
     /// <summary>
@@ -188,19 +167,31 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
 
-        // Handling of built-in function execution for Agent HTTP, MCP tool, or Entity invocations.
+        EnsureMiddlewareRegistered(builder);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Registers the built-in function execution middleware and executor exactly once.
+    /// </summary>
+    private static void EnsureMiddlewareRegistered(FunctionsApplicationBuilder builder)
+    {
+        if (s_middlewareRegistered)
+        {
+            return;
+        }
+
+        s_middlewareRegistered = true;
+
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal)
-            || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-
-             || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal)
-                || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal)
-                || string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
-            );
-        builder.Services.AddSingleton<BuiltInFunctionExecutor>();
-
-        return builder;
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrechstrtationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
+        );
+        builder.Services.TryAddSingleton<BuiltInFunctionExecutor>();
     }
 }
