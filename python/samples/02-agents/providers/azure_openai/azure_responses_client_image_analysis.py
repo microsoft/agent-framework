@@ -20,21 +20,17 @@ async def main():
     # 1. Create an Azure Responses agent with vision capabilities
     agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).as_agent(
         name="VisionAgent",
-        instructions="You are a helpful agent that can analyze images.",
+        instructions="You are a image analysist, you get a image and need to respond with what you see in the picture.",
     )
 
-    # 2. Create multimodal user contents directly (text + image)
-    user_contents = [
-        Content.from_text("What do you see in this image?"),
+    # 2. Get the agent's response
+    print("User: What do you see in this image? [Image provided]")
+    result = await agent.run(
         Content.from_uri(
             uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
             media_type="image/jpeg",
-        ),
-    ]
-
-    # 3. Get the agent's response
-    print("User: What do you see in this image? [Image provided]")
-    result = await agent.run(user_contents)
+        )
+    )
     print(f"Agent: {result.text}")
     print()
 
