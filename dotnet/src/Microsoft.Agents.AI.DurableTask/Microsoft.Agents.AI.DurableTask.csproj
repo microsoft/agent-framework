@@ -17,6 +17,11 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedStructuredOutput>true</InjectSharedStructuredOutput>
+  </PropertyGroup>
+  
   <!-- Durable Task dependencies -->
   <ItemGroup>
     <PackageReference Include="Microsoft.DurableTask.Client" />

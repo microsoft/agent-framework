@@ -12,7 +12,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class AddConversationMessageExecutor(AddConversationMessage model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class AddConversationMessageExecutor(AddConversationMessage model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<AddConversationMessage>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)

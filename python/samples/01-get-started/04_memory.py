@@ -78,6 +78,7 @@ async def main() -> None:
     )
     # </create_agent>
 
+    # <run_with_memory>
     session = agent.create_session()
 
     # The provider doesn't know the user yet — it will ask for a name
@@ -93,6 +94,7 @@ async def main() -> None:
     print(f"Agent: {result}\n")
 
     print(f"[Memory] Stored user name: {memory.user_name}")
+    # </run_with_memory>
 
 
 if __name__ == "__main__":

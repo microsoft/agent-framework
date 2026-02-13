@@ -54,7 +54,7 @@ public class WeatherForecastAgent : DelegatingAIAgent
 
         // If the agent returned a valid structured output response
         // we might be able to enhance the response with an adaptive card.
-        if (response.TryDeserialize<WeatherForecastAgentResponse>(JsonSerializerOptions.Web, out var structuredOutput))
+        if (TryDeserialize<WeatherForecastAgentResponse>(response.Text, JsonSerializerOptions.Web, out var structuredOutput))
         {
             var textContentMessage = response.Messages.FirstOrDefault(x => x.Contents.OfType<TextContent>().Any());
             if (textContentMessage is not null)
@@ -111,5 +111,26 @@ public class WeatherForecastAgent : DelegatingAIAgent
             Text = "Temperature: " + temperature,
         });
         return card;
+    }
+
+    private static bool TryDeserialize<T>(string json, JsonSerializerOptions jsonSerializerOptions, out T structuredOutput)
+    {
+        try
+        {
+            T? result = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions);
+            if (result is null)
+            {
+                structuredOutput = default!;
+                return false;
+            }
+
+            structuredOutput = result;
+            return true;
+        }
+        catch
+        {
+            structuredOutput = default!;
+            return false;
+        }
     }
 }

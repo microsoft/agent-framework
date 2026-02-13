@@ -8,6 +8,7 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedStructuredOutput>true</InjectSharedStructuredOutput>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>

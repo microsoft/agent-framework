@@ -70,7 +70,8 @@ internal sealed class WorkflowSession : AgentSession
 
         this.RunId = sessionState.RunId;
         this.LastCheckpoint = sessionState.LastCheckpoint;
-        this.ChatHistoryProvider = new WorkflowChatHistoryProvider(sessionState.ChatHistoryProviderState);
+        this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
+        this.StateBag = sessionState.StateBag;
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -81,8 +82,8 @@ internal sealed class WorkflowSession : AgentSession
         SessionState info = new(
             this.RunId,
             this.LastCheckpoint,
-            this.ChatHistoryProvider.ExportStoreState(),
-            this._inMemoryCheckpointManager);
+            this._inMemoryCheckpointManager,
+            this.StateBag);
 
         return marshaller.Marshal(info);
     }
@@ -100,7 +101,7 @@ internal sealed class WorkflowSession : AgentSession
             RawRepresentation = raw
         };
 
-        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
+        this.ChatHistoryProvider.AddMessages(this, update.ToChatMessage());
 
         return update;
     }
@@ -117,7 +118,7 @@ internal sealed class WorkflowSession : AgentSession
             RawRepresentation = raw
         };
 
-        this.ChatHistoryProvider.AddMessages(update.ToChatMessage());
+        this.ChatHistoryProvider.AddMessages(this, update.ToChatMessage());
 
         return update;
     }
@@ -156,7 +157,7 @@ internal sealed class WorkflowSession : AgentSession
         try
         {
             this.LastResponseId = Guid.NewGuid().ToString("N");
-            List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark().ToList();
+            List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
 #pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
             await using Checkpointed<StreamingRun> checkpointed =
@@ -240,7 +241,7 @@ internal sealed class WorkflowSession : AgentSession
         finally
         {
             // Do we want to try to undo the step, and not update the bookmark?
-            this.ChatHistoryProvider.UpdateBookmark();
+            this.ChatHistoryProvider.UpdateBookmark(this);
         }
     }
 
@@ -254,12 +255,12 @@ internal sealed class WorkflowSession : AgentSession
     internal sealed class SessionState(
         string runId,
         CheckpointInfo? lastCheckpoint,
-        WorkflowChatHistoryProvider.StoreState chatHistoryProviderState,
-        InMemoryCheckpointManager? checkpointManager = null)
+        InMemoryCheckpointManager? checkpointManager = null,
+        AgentSessionStateBag? stateBag = null)
     {
         public string RunId { get; } = runId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
-        public WorkflowChatHistoryProvider.StoreState ChatHistoryProviderState { get; } = chatHistoryProviderState;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
+        public AgentSessionStateBag StateBag { get; } = stateBag ?? new();
     }
 }

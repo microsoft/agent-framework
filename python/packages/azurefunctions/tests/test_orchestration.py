@@ -129,6 +129,25 @@ def executor_with_context(mock_context_with_uuid: tuple[Mock, str]) -> tuple[Any
 class TestAgentResponseHelpers:
     """Tests for response handling through public AgentTask API."""
 
+    def test_try_set_value_exception_handling(self) -> None:
+        """Test try_set_value handles exceptions raised when converting a successful task result to AgentResponse."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate successful entity task with invalid result that causes exception
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = {"invalid": "format"}  # Missing required fields for AgentResponse
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value - should catch exception and set error
+        task.try_set_value(entity_task)
+
+        # Verify task failed due to conversion exception
+        assert task.state == TaskState.FAILED
+        assert isinstance(task.result, Exception)
+
     def test_try_set_value_success(self) -> None:
         """Test try_set_value correctly processes successful task completion."""
         entity_task = _create_entity_task()
@@ -277,6 +296,27 @@ class TestAzureFunctionsFireAndForget:
 
         # Should return an AgentTask
         assert isinstance(result, AgentTask)
+
+
+class TestAzureFunctionsAgentExecutor:
+    """Tests for AzureFunctionsAgentExecutor."""
+
+    def test_generate_unique_id(self, mock_context_with_uuid: tuple[Mock, str]) -> None:
+        """Test generate_unique_id method returns UUID from orchestration context."""
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        context, _ = mock_context_with_uuid
+        executor = AzureFunctionsAgentExecutor(context)
+
+        # Call generate_unique_id
+        unique_id = executor.generate_unique_id()
+
+        # Verify it returns the UUID from context (as string with dashes)
+        # The UUID is returned in standard format with dashes
+        context.new_uuid.assert_called_once()
+        # Just verify it's a string representation of UUID
+        assert isinstance(unique_id, str)
+        assert len(unique_id) > 0
 
 
 class TestOrchestrationIntegration:

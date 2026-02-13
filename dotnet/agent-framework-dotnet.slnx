@@ -389,6 +389,9 @@
     <File Path="src/Shared/Throw/README.md" />
     <File Path="src/Shared/Throw/Throw.cs" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/StructuredOutput/">
+    <File Path="src/Shared/StructuredOutput/StructuredOutputSchemaUtilities.cs" />
+  </Folder>
   <Folder Name="/Solution Items/tests/">
     <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
