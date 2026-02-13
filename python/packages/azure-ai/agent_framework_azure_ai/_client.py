@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast, get_args
+from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -96,10 +96,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    _RUNTIME_OVERRIDE_WARNING: ClassVar[str] = (
-        "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-        "Use ResponsesClient instead."
-    )
 
     def __init__(
         self,
@@ -417,17 +413,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if self._should_close_client:
             await self.project_client.close()
 
-    def _get_supported_option_keys(self) -> set[str]:
-        """Resolve option keys from the concrete client options TypedDict."""
-        option_type: Any = AzureAIProjectAgentOptions
-        original_type = getattr(self, "__orig_class__", None)
-        if original_type is not None:
-            type_args = get_args(original_type)
-            if type_args and hasattr(type_args[0], "__annotations__"):
-                option_type = type_args[0]
-        annotations = getattr(option_type, "__annotations__", {})
-        return set(annotations)
-
     def _extract_tool_names(self, tools: Any) -> set[str]:
         """Extract comparable tool names from runtime tool payloads."""
         if not isinstance(tools, Sequence) or isinstance(tools, str | bytes):
@@ -493,11 +478,13 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         )
 
         if tools_changed or structured_output_changed:
-            logger.warning(self._RUNTIME_OVERRIDE_WARNING)
+            logger.warning(
+                "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
+                "Use ResponsesClient instead."
+            )
 
     def _remove_agent_level_run_options(self, run_options: dict[str, Any]) -> None:
         """Remove request-level options that Azure AI only supports at agent creation time."""
-        supported_option_keys = self._get_supported_option_keys()
         agent_level_option_to_run_keys = {
             "model_id": ("model",),
             "tools": ("tools",),
@@ -508,9 +495,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "reasoning": ("reasoning",),
         }
 
-        for option_key, run_keys in agent_level_option_to_run_keys.items():
-            if option_key not in supported_option_keys:
-                continue
+        for run_keys in agent_level_option_to_run_keys.values():
             for run_key in run_keys:
                 run_options.pop(run_key, None)
 

@@ -1066,7 +1066,7 @@ async def test_prepare_options_excludes_response_format(
 async def test_prepare_options_keeps_values_for_unsupported_option_keys(
     mock_project_client: MagicMock,
 ) -> None:
-    """Test that run_options removal only applies to keys from the concrete options TypedDict."""
+    """Test that run_options removal only applies to known AzureAI agent-level option mappings."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
@@ -1086,14 +1086,13 @@ async def test_prepare_options_keeps_values_for_unsupported_option_keys(
             "_get_agent_reference_or_create",
             return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
         ),
-        patch.object(client, "_get_supported_option_keys", return_value={"model_id"}),
     ):
         run_options = await client._prepare_options(messages, {})
 
         assert "model" not in run_options
-        assert "tools" in run_options
-        assert "text" in run_options
-        assert "text_format" in run_options
+        assert "tools" not in run_options
+        assert "text" not in run_options
+        assert "text_format" not in run_options
         assert run_options["custom_option"] == "keep-me"
 
 
