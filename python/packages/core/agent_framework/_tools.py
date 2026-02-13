@@ -498,29 +498,25 @@ class FunctionTool(SerializationMixin):
             return parsed
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-            # Filter out framework kwargs that are not JSON serializable
-            serializable_kwargs = {
-                k: v
-                for k, v in kwargs.items()
-                if k
-                not in {
-                    "chat_options",
-                    "tools",
-                    "tool_choice",
-                    "session",
-                    "conversation_id",
-                    "options",
-                    "response_format",
-                }
+        # Filter out framework kwargs that are not JSON serializable.
+        serializable_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "conversation_id",
+                "options",
+                "response_format",
             }
+        }
+        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
-                    arguments.model_dump_json(ensure_ascii=False)
-                    if arguments and hasattr(arguments, "model_dump_json")
-                    else json.dumps(arguments, default=str, ensure_ascii=False)
-                    if arguments and not hasattr(arguments, "model_dump_json")
-                    else json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
+                    json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
                     if serializable_kwargs
                     else "None"
                 )
@@ -529,7 +525,7 @@ class FunctionTool(SerializationMixin):
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                logger.debug(f"Function arguments: {kwargs}")
+                logger.debug(f"Function arguments: {serializable_kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:

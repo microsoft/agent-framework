@@ -639,7 +639,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
