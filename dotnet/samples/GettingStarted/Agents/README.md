@@ -47,6 +47,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Deep research with an agent](./Agent_Step18_DeepResearch/)|This sample demonstrates how to use the Deep Research Tool to perform comprehensive research on complex topics|
 |[Declarative agent](./Agent_Step19_Declarative/)|This sample demonstrates how to declaratively define an agent.|
 |[Providing additional AI Context to an agent using multiple AIContextProviders](./Agent_Step20_AdditionalAIContext/)|This sample demonstrates how to inject additional AI context into a ChatClientAgent using multiple custom AIContextProvider components that are attached to the agent.|
+|[Using Shell Tool with security controls](./Agent_Step21_ShellTool/)|This sample demonstrates how to use the ShellTool with an AI agent, including security configuration options and human-in-the-loop approval for shell commands.|
 
 ## Running the samples from the console
 
