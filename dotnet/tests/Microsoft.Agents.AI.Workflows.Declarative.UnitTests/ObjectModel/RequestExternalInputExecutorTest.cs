@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
 using Moq;
 using Xunit.Abstractions;
 
@@ -79,6 +82,110 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
             action.GetType().BaseType?
                 .GetProperty("EmitResultEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
                 .GetValue(action));
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithoutConversationAsync()
+    {
+        // Arrange
+        RequestExternalInput model = this.CreateModel(
+            nameof(CaptureResponseWithoutConversationAsync),
+            "TestVariable");
+        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        RequestExternalInputExecutor action = new(model, mockProvider.Object, this.State);
+
+        ChatMessage testMessage = new(ChatRole.User, "Test input");
+        ExternalInputResponse response = new(testMessage);
+
+        // Create DeclarativeWorkflowContext with mock base context
+        Mock<IWorkflowContext> mockBaseContext = new(MockBehavior.Loose);
+        DeclarativeWorkflowContext context = new(mockBaseContext.Object, this.State);
+
+        // Act
+        await action.CaptureResponseAsync(context, response, CancellationToken.None);
+
+        // Assert
+        // Verify variable was set (should not be blank)
+        Assert.IsNotType<Microsoft.PowerFx.Types.BlankValue>(this.State.Get("TestVariable"));
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithConversationAsync()
+    {
+        // Arrange
+        RequestExternalInput model = this.CreateModel(
+            nameof(CaptureResponseWithConversationAsync),
+            "TestVariable");
+        const string conversationId = "test-conversation-123";
+
+        ChatMessage testMessage = new(ChatRole.User, "Test input");
+        ExternalInputResponse response = new(testMessage);
+
+        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        mockProvider
+            .Setup(p => p.CreateMessageAsync(conversationId, testMessage, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(testMessage);
+
+        RequestExternalInputExecutor action = new(model, mockProvider.Object, this.State);
+
+        // Set up conversation ID in state so GetWorkflowConversation returns it
+        this.State.Set(SystemScope.Names.ConversationId, Microsoft.PowerFx.Types.FormulaValue.New(conversationId), VariableScopeNames.System);
+
+        // Create DeclarativeWorkflowContext with mock base context
+        Mock<IWorkflowContext> mockBaseContext = new(MockBehavior.Loose);
+        DeclarativeWorkflowContext context = new(mockBaseContext.Object, this.State);
+
+        // Act
+        await action.CaptureResponseAsync(context, response, CancellationToken.None);
+
+        // Assert
+        mockProvider.Verify(
+            p => p.CreateMessageAsync(conversationId, testMessage, It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.IsNotType<Microsoft.PowerFx.Types.BlankValue>(this.State.Get("TestVariable"));
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithMultipleMessagesAsync()
+    {
+        // Arrange
+        RequestExternalInput model = this.CreateModel(
+            nameof(CaptureResponseWithMultipleMessagesAsync),
+            null);
+        const string conversationId = "test-conversation-456";
+
+        ChatMessage[] messages =
+        [
+            new ChatMessage(ChatRole.User, "First message"),
+            new ChatMessage(ChatRole.User, "Second message"),
+            new ChatMessage(ChatRole.User, "Third message")
+        ];
+        ExternalInputResponse response = new(messages);
+
+        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        foreach (ChatMessage message in messages)
+        {
+            mockProvider
+                .Setup(p => p.CreateMessageAsync(conversationId, message, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(message);
+        }
+
+        RequestExternalInputExecutor action = new(model, mockProvider.Object, this.State);
+
+        // Set up conversation ID in state
+        this.State.Set(SystemScope.Names.ConversationId, Microsoft.PowerFx.Types.FormulaValue.New(conversationId), VariableScopeNames.System);
+
+        // Create DeclarativeWorkflowContext with mock base context
+        Mock<IWorkflowContext> mockBaseContext = new(MockBehavior.Loose);
+        DeclarativeWorkflowContext context = new(mockBaseContext.Object, this.State);
+
+        // Act
+        await action.CaptureResponseAsync(context, response, CancellationToken.None);
+
+        // Assert
+        mockProvider.Verify(
+            p => p.CreateMessageAsync(conversationId, It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
     }
 
     private async Task ExecuteTestAsync(
