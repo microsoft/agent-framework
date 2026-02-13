@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);IDE1006;VSTHRD200</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Declarative.AzureAI\Microsoft.Agents.AI.Declarative.AzureAI.csproj" />
+  </ItemGroup>
+
+</Project>
