@@ -20,7 +20,6 @@ from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.semconv_ai import Meters, SpanAttributes
 
 from . import __version__ as version_info
-from ._logging import get_logger
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -75,7 +74,7 @@ AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -749,7 +748,7 @@ class ObservabilitySettings:
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
-            logger = logging.getLogger()
+            logger = logging.getLogger("agent_framework")
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)

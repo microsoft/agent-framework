@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -28,7 +29,6 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
 )
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import (
@@ -281,7 +281,7 @@ class OllamaSettings(TypedDict, total=False):
     model_id: str | None
 
 
-logger = get_logger("agent_framework.ollama")
+logger = logging.getLogger("agent_framework.ollama")
 
 
 class OllamaChatClient(

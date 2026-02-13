@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -34,7 +35,6 @@ from typing import (
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from .exceptions import ToolException
 from .observability import (
@@ -71,18 +71,8 @@ if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
-__all__ = [
-    "FunctionInvocationConfiguration",
-    "FunctionInvocationLayer",
-    "FunctionTool",
-    "normalize_function_invocation_configuration",
-    "tool",
-]
-
-
-logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")

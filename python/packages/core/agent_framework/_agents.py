@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -29,7 +30,6 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
-from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
@@ -68,7 +68,7 @@ else:
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
@@ -158,9 +158,6 @@ class _RunContext(TypedDict):
     chat_options: dict[str, Any]
     filtered_kwargs: dict[str, Any]
     finalize_kwargs: dict[str, Any]
-
-
-__all__ = ["Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"]
 
 
 # region Agent Protocol

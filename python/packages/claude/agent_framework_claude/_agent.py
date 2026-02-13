@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
@@ -19,7 +20,6 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
-    get_logger,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ClaudeAgent", "ClaudeAgentOptions"]
 
-logger = get_logger("agent_framework.claude")
+logger = logging.getLogger("agent_framework.claude")
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served

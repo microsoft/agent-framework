@@ -33,7 +33,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self, TypedDict  # type:ignore # pragma: no cover
 
-__all__ = ["OpenAIAssistantProvider"]
 
 # Type variable for options - allows typed OpenAIAssistantProvider[OptionsCoT] returns
 # Default matches OpenAIAssistantsClient's default options type

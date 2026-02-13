@@ -130,27 +130,6 @@ user_msg = UserMessage(content="Hello, world!")
 asst_msg = AssistantMessage(content="Hello, world!")
 ```
 
-### Logging
-
-Use the centralized logging system:
-
-```python
-from agent_framework import get_logger
-
-# For main package
-logger = get_logger()
-
-# For subpackages
-logger = get_logger('agent_framework.azure')
-```
-
-**Do not use** direct logging module imports:
-```python
-# ❌ Avoid this
-import logging
-logger = logging.getLogger(__name__)
-```
-
 ### Import Structure
 
 The package follows a flat import structure:
@@ -189,8 +168,6 @@ python/
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
 │   │       ├── _types.py       # Type definitions
-│   │       ├── _logging.py     # Logging utilities
-│   │       │
 │   │       │   # Provider folders - lazy load from connector packages
 │   │       ├── openai/         # OpenAI clients (built into core)
 │   │       ├── azure/          # Lazy loads from azure-ai, azure-ai-search, azurefunctions
@@ -405,12 +382,15 @@ If in doubt, use the link above to read much more considerations of what to do a
 
 **All wildcard imports (`from ... import *`) are prohibited** in production code, including both `.py` and `.pyi` files. Always use explicit import lists to maintain clarity and avoid namespace pollution.
 
-Define `__all__` in each module to explicitly declare the public API, then import specific symbols by name:
+Do not use ``__all__`` in internal modules. Define it in the ``__init__`` file of the level you want to expose.
+If a non-``__init__`` module is intentionally part of the public API surface (for example, ``observability.py``),
+it should define ``__all__`` as well.
+
+Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
+``from ._module import Symbol as Symbol``.
 
 ```python
 # ✅ Preferred - explicit __all__ and named imports
-__all__ = ["Agent", "Message", "ChatResponse"]
-
 from ._agents import Agent
 from ._types import Message, ChatResponse
 
@@ -422,9 +402,20 @@ from ._types import (
     ResponseStream,
 )
 
+__all__ = [
+    "Agent",
+    "AgentResponse",
+    "ChatResponse",
+    "Message",
+    "ResponseStream",
+]
+
 # ❌ Prohibited pattern: wildcard/star imports (do not use)
-# from ._agents import <all public symbols>
-# from ._types import <all public symbols>
+# from ._agents import *
+# from ._types import *
+
+# ❌ Prohibited pattern: identity alias imports (do not use)
+# from ._agents import Agent as Agent
 ```
 
 **Rationale:**
