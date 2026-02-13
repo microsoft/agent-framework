@@ -23,7 +23,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._types import AgentRunMessagesOrNone, normalize_tools
+from agent_framework._types import AgentRunInputsOrNone, normalize_tools
 from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
     AssistantMessage,
@@ -557,7 +557,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -568,7 +568,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     async def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -578,7 +578,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -612,7 +612,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     async def _get_stream(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,

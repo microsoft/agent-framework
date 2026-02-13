@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
 from agent_framework import AgentSession, SupportsAgentRun, normalize_messages
-from agent_framework._types import AgentRunMessagesOrNone
+from agent_framework._types import AgentRunInputsOrNone
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentSession
@@ -87,7 +87,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -144,7 +144,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """
         return self._executor.get_new_session(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: AgentRunMessagesOrNone) -> str:
+    def _normalize_messages(self, messages: AgentRunInputsOrNone) -> str:
         """Convert supported message inputs to a single string.
 
         Args:

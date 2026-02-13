@@ -18,7 +18,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._types import AgentRunMessagesOrNone
+from agent_framework._types import AgentRunInputsOrNone
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
@@ -188,7 +188,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -198,7 +198,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -207,7 +207,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -237,7 +237,7 @@ class CopilotStudioAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
@@ -262,7 +262,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def _run_stream_impl(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
