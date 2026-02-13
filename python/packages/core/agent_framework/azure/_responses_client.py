@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
     from ..openai._responses_client import OpenAIResponsesOptions
 
-__all__ = ["AzureOpenAIResponsesClient"]
-
 
 AzureOpenAIResponsesOptionsT = TypeVar(
     "AzureOpenAIResponsesOptionsT",

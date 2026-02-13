@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import re
 import sys
@@ -31,7 +32,6 @@ from agent_framework import (
     Role,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
 )
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
@@ -102,7 +102,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 

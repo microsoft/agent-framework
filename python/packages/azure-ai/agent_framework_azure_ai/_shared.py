@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
 from agent_framework import (
     FunctionTool,
-    get_logger,
 )
 from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import (
@@ -37,7 +37,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 class AzureAISettings(TypedDict, total=False):

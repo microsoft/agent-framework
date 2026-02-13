@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -15,7 +16,6 @@ from agent_framework import (
     Message,
     ResponseStream,
     SupportsAgentRun,
-    get_logger,
 )
 from durabletask.entities import DurableEntity
 
@@ -28,7 +28,7 @@ from ._durable_agent_state import (
 )
 from ._models import RunRequest
 
-logger = get_logger("agent_framework.durabletask.entities")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class AgentEntityStateProviderMixin:

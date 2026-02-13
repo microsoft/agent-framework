@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from ._logging import get_logger
-
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")

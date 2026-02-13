@@ -22,14 +22,13 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
 
-from .._logging import get_logger
 from .._serialization import SerializationMixin
 from .._settings import SecretString
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool
 from ..exceptions import ServiceInitializationError
 
-logger: logging.Logger = get_logger("agent_framework.openai")
+logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
 
 RESPONSE_TYPE = Union[
@@ -51,9 +50,6 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
-
-
-__all__ = ["OpenAISettings"]
 
 
 def _check_openai_version_for_callable_api_key() -> None:

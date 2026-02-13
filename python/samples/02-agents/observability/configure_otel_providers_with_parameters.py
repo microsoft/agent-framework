@@ -2,11 +2,12 @@
 
 import argparse
 import asyncio
+import logging
 from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import setup_logging, tool
+from agent_framework import tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -31,7 +32,9 @@ Use this approach when you need custom exporter configuration beyond what enviro
 SCENARIOS = ["client", "client_stream", "tool", "all"]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -101,7 +104,10 @@ async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "al
     """Run the selected scenario(s)."""
 
     # Setup the logging with the more complete format
-    setup_logging()
+    logging.basicConfig(
+        format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     # Create custom OTLP exporters with specific configuration
     # Note: You need to install opentelemetry-exporter-otlp-proto-grpc or -http separately

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -27,7 +28,6 @@ from typing import (
 
 from pydantic import BaseModel
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from ._tools import (
     FunctionInvocationConfiguration,
@@ -60,17 +60,7 @@ InputT = TypeVar("InputT", contravariant=True)
 EmbeddingT = TypeVar("EmbeddingT")
 BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
-logger = get_logger()
-
-__all__ = [
-    "BaseChatClient",
-    "SupportsChatGetResponse",
-    "SupportsCodeInterpreterTool",
-    "SupportsFileSearchTool",
-    "SupportsImageGenerationTool",
-    "SupportsMCPTool",
-    "SupportsWebSearchTool",
-]
+logger = logging.getLogger("agent_framework")
 
 
 # region SupportsChatGetResponse Protocol

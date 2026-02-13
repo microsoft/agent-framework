@@ -42,6 +42,3 @@ def normalize_messages_input(
                 f"Messages sequence must contain only str, Content, or Message instances; found {type(item).__name__}."
             )
     return normalized
-
-
-__all__ = ["normalize_messages_input"]

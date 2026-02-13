@@ -178,12 +178,15 @@ The `configure_otel_providers()` function automatically reads **standard OpenTel
 > **Note**: These are standard OpenTelemetry environment variables. See the [OpenTelemetry spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) for more details.
 
 #### Logging
-Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
+Use standard Python logging configuration to align logs with telemetry output.
 
 ```python
-from agent_framework import setup_logging
+import logging
 
-setup_logging()
+logging.basicConfig(
+    format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 ```
 You can control at what level logging happens and thus what logs get exported, you can do this, by adding this:
 

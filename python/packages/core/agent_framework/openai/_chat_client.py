@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
@@ -20,7 +21,6 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
@@ -60,9 +60,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
-
-logger = get_logger("agent_framework.openai")
+logger = logging.getLogger("agent_framework.openai")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 

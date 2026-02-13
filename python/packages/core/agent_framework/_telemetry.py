@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Final
 
 from . import __version__ as version_info
-from ._logging import get_logger
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
-__all__ = [
-    "AGENT_FRAMEWORK_USER_AGENT",
-    "APP_INFO",
-    "USER_AGENT_KEY",
-    "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
-    "prepend_agent_framework_to_user_agent",
-]
 
 # Note that if this environment variable does not exist, user agent telemetry is enabled.
 USER_AGENT_TELEMETRY_DISABLED_ENV_VAR = "AGENT_FRAMEWORK_USER_AGENT_DISABLED"
