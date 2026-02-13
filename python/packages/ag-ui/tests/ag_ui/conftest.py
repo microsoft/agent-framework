@@ -55,7 +55,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[Any],
@@ -65,7 +65,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = ...,
@@ -75,7 +75,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = ...,
@@ -84,7 +84,7 @@ class StreamingChatClientStub(
 
     def get_response(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,

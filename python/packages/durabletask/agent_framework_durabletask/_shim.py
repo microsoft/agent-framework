@@ -152,8 +152,18 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
         Returns:
             A single string representation of the messages
+
+        Raises:
+            ValueError: If normalized messages contain non-text content only.
         """
         normalized_messages = normalize_messages(messages)
         if not normalized_messages:
             return ""
-        return "\n".join(message.text or "" for message in normalized_messages)
+
+        message_texts: list[str] = []
+        for message in normalized_messages:
+            if not message.text:
+                raise ValueError("DurableAIAgent only supports text message inputs.")
+            message_texts.append(message.text)
+
+        return "\n".join(message_texts)

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Content, Message
+from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -22,21 +22,18 @@ async def main():
         instructions="You are a helpful agent that can analyze images.",
     )
 
-    # 2. Create a simple message with both text and image content
-    user_message = Message(
-        role="user",
-        contents=[
-            Content.from_text(text="What do you see in this image?"),
-            Content.from_uri(
-                uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
-                media_type="image/jpeg",
-            ),
-        ],
-    )
+    # 2. Create multimodal user contents directly (text + image)
+    user_contents = [
+        Content.from_text(text="What do you see in this image?"),
+        Content.from_uri(
+            uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
+            media_type="image/jpeg",
+        ),
+    ]
 
     # 3. Get the agent's response
     print("User: What do you see in this image? [Image provided]")
-    result = await agent.run(user_message)
+    result = await agent.run(user_contents)
     print(f"Agent: {result.text}")
     print()
 
