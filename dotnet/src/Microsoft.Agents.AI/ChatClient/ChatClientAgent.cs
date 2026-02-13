@@ -228,14 +228,11 @@ public sealed partial class ChatClientAgent : AIAgent
         // Notify the AIContextProvider of all new messages.
         await this.NotifyAIContextProviderOfSuccessAsync(safeSession, inputMessagesForChatClient, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
 
-        var agentResponse = new AgentResponse(chatResponse)
+        return new AgentResponse(chatResponse)
         {
+            AgentId = this.Id,
             ContinuationToken = WrapContinuationToken(chatResponse.ContinuationToken)
         };
-
-        agentResponse.AgentId = this.Id;
-
-        return agentResponse;
     }
 
     /// <summary>
