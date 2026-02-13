@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-// Trivial change to trigger CosmosDB emulator testing in CI/CD
 
 using System;
 using System.Collections.Generic;
@@ -16,7 +15,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class.
+/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class for persistent chat history storage.
 /// </summary>
 [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
