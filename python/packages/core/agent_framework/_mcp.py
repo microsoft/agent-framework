@@ -61,6 +61,19 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 logger = logging.getLogger(__name__)
 
+
+async def _inject_otel_context(request: httpx.Request) -> None:  # noqa: RUF029
+    """Inject OpenTelemetry trace context into outgoing HTTP request headers.
+
+    Used as an httpx event hook to propagate the active span context
+    (W3C ``traceparent`` / ``tracestate``) so that remote MCP servers
+    can correlate their spans with the calling agent's trace.
+    """
+    from opentelemetry.propagate import inject
+
+    inject(carrier=request.headers)
+
+
 # region: Helpers
 
 LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
@@ -1244,6 +1257,25 @@ class MCPStreamableHTTPTool(MCPTool):
         self.url = url
         self.terminate_on_close = terminate_on_close
         self._httpx_client: httpx.AsyncClient | None = http_client
+        self._auto_httpx_client: httpx.AsyncClient | None = None
+
+    def _get_instrumented_httpx_client(self) -> httpx.AsyncClient:
+        """Return an httpx client with OpenTelemetry trace context propagation.
+
+        If a user-provided client exists, the trace injection hook is added to it
+        (idempotently). Otherwise, an internally managed client is created and cached.
+        """
+        if self._httpx_client is not None:
+            client = self._httpx_client
+            if _inject_otel_context not in client.event_hooks.get("request", []):
+                client.event_hooks.setdefault("request", []).append(_inject_otel_context)
+            return client
+
+        if self._auto_httpx_client is None:
+            self._auto_httpx_client = httpx.AsyncClient(
+                event_hooks={"request": [_inject_otel_context]}
+            )
+        return self._auto_httpx_client
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1251,12 +1283,18 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        # Pass the http_client (which may be None) to streamable_http_client
         return streamable_http_client(
             url=self.url,
-            http_client=self._httpx_client,
+            http_client=self._get_instrumented_httpx_client(),
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    async def close(self) -> None:
+        """Disconnect from the MCP server and clean up resources."""
+        await super().close()
+        if self._auto_httpx_client is not None:
+            await self._auto_httpx_client.aclose()
+            self._auto_httpx_client = None
 
 
 class MCPWebsocketTool(MCPTool):
