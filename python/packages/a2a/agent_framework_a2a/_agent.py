@@ -40,6 +40,7 @@ from agent_framework import (
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._types import AgentRunMessagesOrNone
 from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
@@ -208,7 +209,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -220,7 +221,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -231,7 +232,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
