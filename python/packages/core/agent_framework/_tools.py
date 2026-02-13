@@ -237,11 +237,6 @@ class FunctionTool(SerializationMixin):
         "_schema_supplied",
     }
 
-    @classmethod
-    def __class_getitem__(cls, item: Any) -> type[FunctionTool]:
-        """Support legacy type annotations like FunctionTool[Any]."""
-        return cls
-
     def __init__(
         self,
         *,
