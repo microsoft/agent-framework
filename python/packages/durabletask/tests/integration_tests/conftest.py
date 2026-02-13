@@ -382,7 +382,7 @@ def worker_process(
         pytest.fail("Test class must have @pytest.mark.sample() marker")
 
     sample_name: str = cast(str, sample_marker.args[0])  # type: ignore[union-attr]
-    sample_path: Path = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / sample_name
+    sample_path: Path = Path(__file__).parents[4] / "samples" / "04-hosting" / "durabletask" / sample_name
     worker_file: Path = sample_path / "worker.py"
 
     if not worker_file.exists():

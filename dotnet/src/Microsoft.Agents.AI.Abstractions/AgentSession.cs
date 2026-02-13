@@ -36,7 +36,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentSession"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
-/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSession(AgentSession, JsonSerializerOptions?)"/> method to serialize the session to a
+/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSessionAsync(AgentSession, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method to serialize the session to a
 /// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the session.
 /// </para>

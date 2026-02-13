@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260212] - 2026-02-12
+
+### Added
+
+- **agent-framework-core**: Allow `AzureOpenAIResponsesClient` creation with Foundry project endpoint ([#3814](https://github.com/microsoft/agent-framework/pull/3814))
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Wire context provider pipeline, remove old types, update all consumers ([#3850](https://github.com/microsoft/agent-framework/pull/3850))
+- **agent-framework-core**: [BREAKING] Checkpoint refactor: encode/decode, checkpoint format, etc ([#3744](https://github.com/microsoft/agent-framework/pull/3744))
+- **agent-framework-core**: [BREAKING] Replace `Hosted*Tool` classes with tool methods ([#3634](https://github.com/microsoft/agent-framework/pull/3634))
+- **agent-framework-core**: Replace Pydantic Settings with `TypedDict` + `load_settings()` ([#3843](https://github.com/microsoft/agent-framework/pull/3843))
+- **agent-framework-core**: Centralize tool result parsing in `FunctionTool.invoke()` ([#3854](https://github.com/microsoft/agent-framework/pull/3854))
+- **samples**: Restructure Python samples into progressive 01-05 layout ([#3862](https://github.com/microsoft/agent-framework/pull/3862))
+- **samples**: Adopt `AzureOpenAIResponsesClient`, reorganize orchestration examples, and fix workflow/orchestration bugs ([#3873](https://github.com/microsoft/agent-framework/pull/3873))
+
+### Fixed
+
+- **agent-framework-core**: Fix non-ascii chars in span attributes ([#3894](https://github.com/microsoft/agent-framework/pull/3894))
+- **agent-framework-core**: Fix streamed workflow agent continuation context by finalizing `AgentExecutor` streams ([#3882](https://github.com/microsoft/agent-framework/pull/3882))
+- **agent-framework-ag-ui**: Fix `Workflow.as_agent()` streaming regression ([#3875](https://github.com/microsoft/agent-framework/pull/3875))
+- **agent-framework-declarative**: Fix declarative package powerfx import crash and `response_format` kwarg error ([#3841](https://github.com/microsoft/agent-framework/pull/3841))
+
+## [1.0.0b260210] - 2026-02-10
+
+### Added
+
+- **agent-framework-core**: Add long-running agents and background responses support with `ContinuationToken` TypedDict, `background` option in `OpenAIResponsesOptions`, and continuation token propagation through response types ([#3808](https://github.com/microsoft/agent-framework/pull/3808))
+- **agent-framework-core**: Add streaming support for code interpreter deltas ([#3775](https://github.com/microsoft/agent-framework/pull/3775))
+- **agent-framework-core**: Add explicit input, output, and workflow_output parameters to `@handler`, `@executor` and `request_info` ([#3472](https://github.com/microsoft/agent-framework/pull/3472))
+- **agent-framework-core**: Add explicit schema handling to `@tool` decorator ([#3734](https://github.com/microsoft/agent-framework/pull/3734))
+- **agent-framework-core**: New session and context provider types ([#3763](https://github.com/microsoft/agent-framework/pull/3763))
+- **agent-framework-purview**: Add tests to Purview package ([#3513](https://github.com/microsoft/agent-framework/pull/3513))
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Renamed core types for simpler API: `ChatAgent` → `Agent`, `RawChatAgent` → `RawAgent`, `ChatMessage` → `Message`, `ChatClientProtocol` → `SupportsChatGetResponse` ([#3747](https://github.com/microsoft/agent-framework/pull/3747))
+- **agent-framework-core**: [BREAKING] Moved to a single `get_response` and `run` API ([#3379](https://github.com/microsoft/agent-framework/pull/3379))
+- **agent-framework-core**: [BREAKING] Merge `send_responses` into `run` method ([#3720](https://github.com/microsoft/agent-framework/pull/3720))
+- **agent-framework-core**: [BREAKING] Renamed `AgentRunContext` to `AgentContext` ([#3714](https://github.com/microsoft/agent-framework/pull/3714))
+- **agent-framework-core**: [BREAKING] Renamed `AgentProtocol` to `SupportsAgentRun` ([#3717](https://github.com/microsoft/agent-framework/pull/3717))
+- **agent-framework-core**: [BREAKING] Renamed next middleware parameter to `call_next` ([#3735](https://github.com/microsoft/agent-framework/pull/3735))
+- **agent-framework-core**: [BREAKING] Standardize TypeVar naming convention (`TName` → `NameT`) ([#3770](https://github.com/microsoft/agent-framework/pull/3770))
+- **agent-framework-core**: [BREAKING] Refactor workflow events to unified discriminated union pattern ([#3690](https://github.com/microsoft/agent-framework/pull/3690))
+- **agent-framework-core**: [BREAKING] Refactor `SharedState` to `State` with sync methods and superstep caching ([#3667](https://github.com/microsoft/agent-framework/pull/3667))
+- **agent-framework-core**: [BREAKING] Move single-config fluent methods to constructor parameters ([#3693](https://github.com/microsoft/agent-framework/pull/3693))
+- **agent-framework-core**: [BREAKING] Types API Review improvements ([#3647](https://github.com/microsoft/agent-framework/pull/3647))
+- **agent-framework-core**: [BREAKING] Fix workflow as agent streaming output ([#3649](https://github.com/microsoft/agent-framework/pull/3649))
+- **agent-framework-orchestrations**: [BREAKING] Move orchestrations to dedicated package ([#3685](https://github.com/microsoft/agent-framework/pull/3685))
+- **agent-framework-core**: [BREAKING] Remove workflow register factory methods; update tests and samples ([#3781](https://github.com/microsoft/agent-framework/pull/3781))
+- **agent-framework-core**: Include sub-workflow structure in graph signature for checkpoint validation ([#3783](https://github.com/microsoft/agent-framework/pull/3783))
+- **agent-framework-core**: Adjust workflows TypeVars from prefix to suffix naming convention ([#3661](https://github.com/microsoft/agent-framework/pull/3661))
+- **agent-framework-purview**: Update CorrelationId ([#3745](https://github.com/microsoft/agent-framework/pull/3745))
+- **agent-framework-anthropic**: Added internal kwargs filtering for Anthropic client ([#3544](https://github.com/microsoft/agent-framework/pull/3544))
+- **agent-framework-github-copilot**: Updated instructions/system_message logic in GitHub Copilot agent ([#3625](https://github.com/microsoft/agent-framework/pull/3625))
+- **agent-framework-mem0**: Disable mem0 telemetry by default ([#3506](https://github.com/microsoft/agent-framework/pull/3506))
+
+### Fixed
+
+- **agent-framework-core**: Fix workflow not pausing when agent calls declaration-only tool ([#3757](https://github.com/microsoft/agent-framework/pull/3757))
+- **agent-framework-core**: Fix GroupChat orchestrator message cleanup issue ([#3712](https://github.com/microsoft/agent-framework/pull/3712))
+- **agent-framework-core**: Fix HandoffBuilder silently dropping `context_provider` during agent cloning ([#3721](https://github.com/microsoft/agent-framework/pull/3721))
+- **agent-framework-core**: Fix subworkflow duplicate request info events ([#3689](https://github.com/microsoft/agent-framework/pull/3689))
+- **agent-framework-core**: Fix workflow cancellation not propagating to active executors ([#3663](https://github.com/microsoft/agent-framework/pull/3663))
+- **agent-framework-core**: Filter `response_format` from MCP tool call kwargs ([#3494](https://github.com/microsoft/agent-framework/pull/3494))
+- **agent-framework-core**: Fix broken Content API imports in Python samples ([#3639](https://github.com/microsoft/agent-framework/pull/3639))
+- **agent-framework-core**: Potential fix for clear-text logging of sensitive information ([#3573](https://github.com/microsoft/agent-framework/pull/3573))
+- **agent-framework-core**: Skip `model_deployment_name` validation for application endpoints ([#3621](https://github.com/microsoft/agent-framework/pull/3621))
+- **agent-framework-azure-ai**: Fix AzureAIClient dropping agent instructions (Responses API) ([#3636](https://github.com/microsoft/agent-framework/pull/3636))
+- **agent-framework-azure-ai**: Fix AzureAIAgentClient dropping agent instructions in sequential workflows ([#3563](https://github.com/microsoft/agent-framework/pull/3563))
+- **agent-framework-ag-ui**: Fix AG-UI message handling and MCP tool double-call bug ([#3635](https://github.com/microsoft/agent-framework/pull/3635))
+- **agent-framework-claude**: Handle API errors in `run_stream()` method ([#3653](https://github.com/microsoft/agent-framework/pull/3653))
+- **agent-framework-claude**: Preserve `$defs` in JSON schema for nested Pydantic models ([#3655](https://github.com/microsoft/agent-framework/pull/3655))
+
 ## [1.0.0b260130] - 2026-01-30
 
 ### Added
@@ -268,7 +342,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **agent-framework-core**: [BREAKING] Support Magentic agent tool call approvals and plan stalling HITL behavior (#2569)
-- **agent-framework-core**: [BREAKING] Standardize orchestration outputs as list of `ChatMessage`; allow agent as group chat manager (#2291)
+- **agent-framework-core**: [BREAKING] Standardize orchestration outputs as list of `Message`; allow agent as group chat manager (#2291)
 - **agent-framework-core**: [BREAKING] Respond with `AgentRunResponse` including serialized structured output (#2285)
 - **observability**: Use `executor_id` and `edge_group_id` as span names for clearer traces (#2538)
 - **agent-framework-devui**: Add multimodal input support for workflows and refactor chat input (#2593)
@@ -314,7 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-core**: Fix tool execution bleed-over in aiohttp/Bot Framework scenarios ([#2314](https://github.com/microsoft/agent-framework/pull/2314))
 - **agent-framework-core**: `@ai_function` now correctly handles `self` parameter ([#2266](https://github.com/microsoft/agent-framework/pull/2266))
 - **agent-framework-core**: Resolve string annotations in `FunctionExecutor` ([#2308](https://github.com/microsoft/agent-framework/pull/2308))
-- **agent-framework-core**: Langfuse observability captures ChatAgent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
+- **agent-framework-core**: Langfuse observability captures Agent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
 - **agent-framework-core**: Incomplete URL substring sanitization fix ([#2274](https://github.com/microsoft/agent-framework/pull/2274))
 - **observability**: Handle datetime serialization in tool results ([#2248](https://github.com/microsoft/agent-framework/pull/2248))
 
@@ -571,7 +645,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260130...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260212...HEAD
+[1.0.0b260212]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260210...python-1.0.0b260212
+[1.0.0b260210]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260130...python-1.0.0b260210
 [1.0.0b260130]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260128...python-1.0.0b260130
 [1.0.0b260128]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...python-1.0.0b260128
 [1.0.0b260127]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260123...python-1.0.0b260127

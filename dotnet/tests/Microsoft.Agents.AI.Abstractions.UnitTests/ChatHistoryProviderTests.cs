@@ -22,7 +22,7 @@ public class ChatHistoryProviderTests
     #region InvokingAsync Message Stamping Tests
 
     [Fact]
-    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceAsync()
+    public async Task InvokingAsync_StampsMessagesWithSourceTypeAndSourceIdAsync()
     {
         // Arrange
         var provider = new TestChatHistoryProvider();
@@ -34,18 +34,18 @@ public class ChatHistoryProviderTests
         // Assert
         ChatMessage message = messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(typeof(TestChatHistoryProvider).FullName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, typedAttribution.SourceType);
+        Assert.Equal(typeof(TestChatHistoryProvider).FullName, typedAttribution.SourceId);
     }
 
     [Fact]
-    public async Task InvokingAsync_WithCustomSourceName_StampsMessagesWithCustomSourceAsync()
+    public async Task InvokingAsync_WithCustomSourceId_StampsMessagesWithCustomSourceIdAsync()
     {
         // Arrange
-        const string CustomSourceName = "CustomHistorySource";
-        var provider = new TestChatHistoryProviderWithCustomSource(CustomSourceName);
+        const string CustomSourceId = "CustomHistorySource";
+        var provider = new TestChatHistoryProviderWithCustomSource(CustomSourceId);
         var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Request")]);
 
         // Act
@@ -54,10 +54,10 @@ public class ChatHistoryProviderTests
         // Assert
         ChatMessage message = messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(CustomSourceName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, typedAttribution.SourceType);
+        Assert.Equal(CustomSourceId, typedAttribution.SourceId);
     }
 
     [Fact]
@@ -73,10 +73,10 @@ public class ChatHistoryProviderTests
         // Assert
         ChatMessage message = messages.Single();
         Assert.NotNull(message.AdditionalProperties);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
-        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-        Assert.Equal(typeof(TestChatHistoryProviderWithPreStampedMessages).FullName, source);
+        Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+        var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, typedAttribution.SourceType);
+        Assert.Equal(typeof(TestChatHistoryProviderWithPreStampedMessages).FullName, typedAttribution.SourceId);
     }
 
     [Fact]
@@ -96,10 +96,10 @@ public class ChatHistoryProviderTests
         foreach (ChatMessage message in messageList)
         {
             Assert.NotNull(message.AdditionalProperties);
-            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceType.AdditionalPropertiesKey, out object? sourceType));
-            Assert.Equal(AgentRequestMessageSourceType.ChatHistory, sourceType);
-            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSource.AdditionalPropertiesKey, out object? source));
-            Assert.Equal(typeof(TestChatHistoryProviderWithMultipleMessages).FullName, source);
+            Assert.True(message.AdditionalProperties.TryGetValue(AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, out object? attribution));
+            var typedAttribution = Assert.IsType<AgentRequestMessageSourceAttribution>(attribution);
+            Assert.Equal(AgentRequestMessageSourceType.ChatHistory, typedAttribution.SourceType);
+            Assert.Equal(typeof(TestChatHistoryProviderWithMultipleMessages).FullName, typedAttribution.SourceId);
         }
     }
 
@@ -383,7 +383,7 @@ public class ChatHistoryProviderTests
 
     private sealed class TestChatHistoryProviderWithCustomSource : ChatHistoryProvider
     {
-        public TestChatHistoryProviderWithCustomSource(string sourceName) : base(sourceName)
+        public TestChatHistoryProviderWithCustomSource(string sourceId) : base(sourceId)
         {
         }
 
@@ -404,8 +404,7 @@ public class ChatHistoryProviderTests
             var message = new ChatMessage(ChatRole.User, "Pre-stamped Message");
             message.AdditionalProperties = new AdditionalPropertiesDictionary
             {
-                [AgentRequestMessageSourceType.AdditionalPropertiesKey] = AgentRequestMessageSourceType.ChatHistory,
-                [AgentRequestMessageSource.AdditionalPropertiesKey] = this.GetType().FullName!
+                [AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] = new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!)
             };
             return new([message]);
         }

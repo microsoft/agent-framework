@@ -14,10 +14,10 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentResponse,
     BaseChatClient,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     SupportsAgentRun,
     UsageDetails,
@@ -27,9 +27,10 @@ from agent_framework import (
 from agent_framework.observability import (
     ROLE_EVENT_MAP,
     AgentTelemetryLayer,
-    ChatMessageListTimestampFilter,
     ChatTelemetryLayer,
+    MessageListTimestampFilter,
     OtelAttr,
+    _capture_messages,
     get_function_span,
 )
 
@@ -54,12 +55,12 @@ def test_enum_values():
     assert OtelAttr.AGENT_INVOKE_OPERATION == "invoke_agent"
 
 
-# region Test ChatMessageListTimestampFilter
+# region Test MessageListTimestampFilter
 
 
 def test_filter_without_index_key():
     """Test filter method when record doesn't have INDEX_KEY."""
-    log_filter = ChatMessageListTimestampFilter()
+    log_filter = MessageListTimestampFilter()
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0, msg="test message", args=(), exc_info=None
     )
@@ -73,14 +74,14 @@ def test_filter_without_index_key():
 
 def test_filter_with_index_key():
     """Test filter method when record has INDEX_KEY."""
-    log_filter = ChatMessageListTimestampFilter()
+    log_filter = MessageListTimestampFilter()
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0, msg="test message", args=(), exc_info=None
     )
     original_created = record.created
 
     # Add the index key
-    setattr(record, ChatMessageListTimestampFilter.INDEX_KEY, 5)
+    setattr(record, MessageListTimestampFilter.INDEX_KEY, 5)
 
     result = log_filter.filter(record)
 
@@ -91,7 +92,7 @@ def test_filter_with_index_key():
 
 def test_index_key_constant():
     """Test that INDEX_KEY constant is correctly defined."""
-    assert ChatMessageListTimestampFilter.INDEX_KEY == "chat_message_index"
+    assert MessageListTimestampFilter.INDEX_KEY == "chat_message_index"
 
 
 # region Test get_function_span
@@ -162,7 +163,7 @@ def mock_chat_client():
             return "https://test.example.com"
 
         def _inner_get_response(
-            self, *, messages: MutableSequence[ChatMessage], stream: bool, options: dict[str, Any], **kwargs: Any
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             if stream:
                 return self._get_streaming_response(messages=messages, options=options, **kwargs)
@@ -173,16 +174,16 @@ def mock_chat_client():
             return _get()
 
         async def _get_non_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+            self, *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
         ) -> ChatResponse:
             return ChatResponse(
-                messages=[ChatMessage("assistant", ["Test response"])],
+                messages=[Message("assistant", ["Test response"])],
                 usage_details=UsageDetails(input_token_count=10, output_token_count=20),
                 finish_reason=None,
             )
 
         def _get_streaming_response(
-            self, *, messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+            self, *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
         ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
@@ -203,7 +204,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
     """Test that when diagnostics are enabled, telemetry is applied."""
     client = mock_chat_client()
 
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
     assert response is not None
@@ -226,7 +227,7 @@ async def test_chat_client_streaming_observability(
 ):
     """Test streaming telemetry through the chat telemetry mixin."""
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
@@ -257,7 +258,7 @@ async def test_chat_client_observability_with_instructions(
 
     client = mock_chat_client()
 
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -286,7 +287,7 @@ async def test_chat_client_streaming_observability_with_instructions(
     import json
 
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
     options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
 
@@ -315,7 +316,7 @@ async def test_chat_client_observability_without_instructions(
     """Test that system_instructions attribute is not set when instructions are not provided."""
     client = mock_chat_client()
 
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
     options = {"model_id": "Test"}  # No instructions
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -336,7 +337,7 @@ async def test_chat_client_observability_with_empty_instructions(
     """Test that system_instructions attribute is not set when instructions is an empty string."""
     client = mock_chat_client()
 
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": ""}  # Empty string
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -359,7 +360,7 @@ async def test_chat_client_observability_with_list_instructions(
 
     client = mock_chat_client()
 
-    messages = [ChatMessage(role="user", text="Test message")]
+    messages = [Message(role="user", text="Test message")]
     options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
@@ -380,7 +381,7 @@ async def test_chat_client_observability_with_list_instructions(
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
     span_exporter.clear()
     response = await client.get_response(messages=messages)
 
@@ -399,7 +400,7 @@ async def test_chat_client_streaming_without_model_id_observability(
 ):
     """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
@@ -441,19 +442,19 @@ def mock_chat_agent():
             self.description = "Test agent description"
             self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
-        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
+        def run(self, messages=None, *, session=None, stream=False, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(
-                messages=[ChatMessage("assistant", ["Agent response"])],
+                messages=[Message("assistant", ["Agent response"])],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
             )
 
-        async def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 
             async def _stream():
@@ -1261,7 +1262,7 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
             raise ValueError("Test error")
 
     client = FailingChatClient()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Test error"):
@@ -1291,7 +1292,7 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
             return ResponseStream(_stream(), finalizer=ChatResponse.from_updates)
 
     client = FailingStreamingChatClient()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Streaming error"):
@@ -1572,21 +1573,21 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             messages=None,
             *,
             stream: bool = False,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             if stream:
                 return ResponseStream(
-                    self._run_stream(messages=messages, thread=thread),
+                    self._run_stream(messages=messages, session=session),
                     finalizer=lambda x: AgentResponse.from_updates(x),
                 )
-            return AgentResponse(messages=[ChatMessage("assistant", ["Test response"])])
+            return AgentResponse(messages=[Message("assistant", ["Test response"])])
 
         async def _run_stream(
             self,
             messages=None,
             *,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             from agent_framework import AgentResponseUpdate
@@ -1635,7 +1636,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             raise RuntimeError("Agent failed")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):
@@ -1685,15 +1686,15 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
-            return AgentResponse(messages=[ChatMessage("assistant", ["Test"])])
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
+            return AgentResponse(messages=[Message("assistant", ["Test"])])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant")
                 yield AgentResponseUpdate(contents=[Content.from_text("World")], role="assistant")
@@ -1767,13 +1768,13 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     class ClientWithFinishReason(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
             return ChatResponse(
-                messages=[ChatMessage(role="assistant", text="Done")],
+                messages=[Message(role="assistant", text="Done")],
                 usage_details=UsageDetails(input_token_count=5, output_token_count=10),
                 finish_reason="stop",
             )
 
     client = ClientWithFinishReason()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
@@ -1822,15 +1823,15 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Starting")], role="assistant")
                 raise RuntimeError("Stream failed")
@@ -1863,7 +1864,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
 async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test that no spans are created when instrumentation is disabled."""
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
     response = await client.get_response(messages=messages, model_id="Test")
@@ -1878,7 +1879,7 @@ async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_when_disabled(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test streaming creates no spans when instrumentation is disabled."""
     client = mock_chat_client()
-    messages = [ChatMessage(role="user", text="Test")]
+    messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
     updates = []
@@ -1919,7 +1920,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             if stream:
                 return ResponseStream(
                     self._run_stream(messages=messages, **kwargs),
@@ -1927,7 +1928,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
                 )
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
@@ -1974,15 +1975,15 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream(messages=messages, **kwargs)
             return self._run(messages=messages, **kwargs)
 
-        async def _run(self, messages=None, *, thread=None, **kwargs):
+        async def _run(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
     class TestAgent(AgentTelemetryLayer, _TestAgent):
@@ -2208,14 +2209,14 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
             return "https://test.example.com"
 
         def _inner_get_response(
-            self, *, messages: MutableSequence[ChatMessage], stream: bool, options: dict[str, Any], **kwargs: Any
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _get() -> ChatResponse:
                 self.call_count += 1
                 if self.call_count == 1:
                     return ChatResponse(
                         messages=[
-                            ChatMessage(
+                            Message(
                                 role="assistant",
                                 contents=[
                                     Content.from_function_call(
@@ -2228,7 +2229,7 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
                         ],
                     )
                 return ChatResponse(
-                    messages=[ChatMessage(role="assistant", text="The weather in Seattle is sunny!")],
+                    messages=[Message(role="assistant", text="The weather in Seattle is sunny!")],
                 )
 
             return _get()
@@ -2237,7 +2238,7 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
     span_exporter.clear()
 
     response = await client.get_response(
-        messages=[ChatMessage(role="user", text="What's the weather in Seattle?")],
+        messages=[Message(role="user", text="What's the weather in Seattle?")],
         options={"tools": [get_weather], "tool_choice": "auto"},
     )
 
@@ -2263,3 +2264,176 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
     # Third span: second chat (LLM call with function result)
     assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"
+
+
+# region Test non-ASCII character handling in JSON serialization
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client, span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters (e.g., Japanese) are preserved in span attributes."""
+    import json
+
+    japanese_text = "こんにちは世界"  # "Hello World" in Japanese
+
+    class ClientWithJapanese(mock_chat_client):
+        async def _inner_get_response(self, *, messages, options, **kwargs):
+            return ChatResponse(
+                messages=[Message(role="assistant", text=japanese_text)],
+                usage_details=UsageDetails(input_token_count=5, output_token_count=10),
+            )
+
+    client = ClientWithJapanese()
+    messages = [Message(role="user", text=japanese_text)]
+
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, model_id="Test")
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify input messages preserve Japanese characters
+    input_messages_json = span.attributes[OtelAttr.INPUT_MESSAGES]
+    assert japanese_text in input_messages_json
+    # Ensure it's not escaped to Unicode
+    assert "\\u" not in input_messages_json
+
+    # Verify output messages preserve Japanese characters
+    output_messages_json = span.attributes[OtelAttr.OUTPUT_MESSAGES]
+    assert japanese_text in output_messages_json
+    assert "\\u" not in output_messages_json
+
+    # Verify JSON is valid and contains the text
+    input_messages = json.loads(input_messages_json)
+    assert input_messages[0]["parts"][0]["content"] == japanese_text
+    output_messages = json.loads(output_messages_json)
+    assert output_messages[0]["parts"][0]["content"] == japanese_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_system_instructions_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in system instructions span attribute."""
+    import json
+
+    from opentelemetry import trace
+
+    chinese_text = "你好世界"  # "Hello World" in Chinese
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", text="Test")],
+            system_instructions=chinese_text,
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system instructions preserve Chinese characters
+    system_instructions_json = span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS]
+    assert chinese_text in system_instructions_json
+    assert "\\u" not in system_instructions_json
+
+    # Verify JSON is valid and contains the text
+    system_instructions = json.loads(system_instructions_json)
+    assert system_instructions[0]["content"] == chinese_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in tool arguments span attribute."""
+    import json
+
+    korean_text = "안녕하세요"  # "Hello" in Korean
+
+    @tool
+    def greet(message: str) -> str:
+        """Greet with a message."""
+        return f"Greeted: {message}"
+
+    span_exporter.clear()
+    await greet.invoke(message=korean_text)
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool arguments preserve Korean characters
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
+    assert korean_text in tool_arguments_json
+    assert "\\u" not in tool_arguments_json
+
+    # Verify JSON is valid and contains the text
+    tool_arguments = json.loads(tool_arguments_json)
+    assert tool_arguments["message"] == korean_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in tool result span attribute."""
+    arabic_text = "مرحبا بالعالم"  # "Hello World" in Arabic
+
+    @tool
+    def echo(text: str) -> str:
+        """Echo the text back."""
+        return text
+
+    span_exporter.clear()
+    result = await echo.invoke(text=arabic_text)
+
+    assert result == arabic_text
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool result preserves Arabic characters
+    tool_result = span.attributes[OtelAttr.TOOL_RESULT]
+    assert arabic_text in tool_result
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Test that non-ASCII characters are preserved in tool arguments when using a Pydantic model."""
+    import json
+
+    from pydantic import BaseModel
+
+    japanese_text = "こんにちは"  # "Hello" in Japanese
+
+    class Greeting(BaseModel):
+        message: str
+
+    @tool
+    def greet_with_model(greeting: Greeting) -> str:
+        """Greet with a message contained in a Pydantic model."""
+        # When invoked via the tool's input_model, greeting is passed as a dict
+        if isinstance(greeting, dict):
+            return f"Greeted: {greeting['message']}"
+        return f"Greeted: {greeting.message}"
+
+    span_exporter.clear()
+    # Use the tool's input_model to properly pass the Pydantic model argument
+    input_model = greet_with_model.input_model
+    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool arguments preserve Japanese characters
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
+    assert japanese_text in tool_arguments_json
+    assert "\\u" not in tool_arguments_json
+
+    # Verify JSON is valid and contains the text
+    tool_arguments = json.loads(tool_arguments_json)
+    assert tool_arguments["greeting"]["message"] == japanese_text

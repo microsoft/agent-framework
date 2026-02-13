@@ -17,11 +17,14 @@ string? apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 using AnthropicClient client = (resource is null)
     ? new AnthropicClient() { ApiKey = apiKey ?? throw new InvalidOperationException("ANTHROPIC_API_KEY is required when no ANTHROPIC_RESOURCE is provided") }  // If no resource is provided, use Anthropic public API
     : (apiKey is not null)
         ? new AnthropicFoundryClient(new AnthropicFoundryApiKeyCredentials(apiKey, resource)) // If an apiKey is provided, use Foundry with ApiKey authentication
-        : new AnthropicFoundryClient(new AnthropicFoundryIdentityTokenCredentials(new AzureCliCredential(), resource, ["https://ai.azure.com/.default"])); // Otherwise, use Foundry with Azure TokenCredential authentication
+        : new AnthropicFoundryClient(new AnthropicFoundryIdentityTokenCredentials(new DefaultAzureCredential(), resource, ["https://ai.azure.com/.default"])); // Otherwise, use Foundry with Azure TokenCredential authentication
 
 AIAgent agent = client.AsAIAgent(model: deploymentName, instructions: JokerInstructions, name: JokerName);
 

@@ -24,9 +24,12 @@ using HttpClient mem0HttpClient = new();
 mem0HttpClient.BaseAddress = new Uri(mem0ServiceUri);
 mem0HttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", mem0ApiKey);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
@@ -55,7 +58,7 @@ await Task.Delay(TimeSpan.FromSeconds(2));
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
 Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
-JsonElement serializedSession = agent.SerializeSession(session);
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 

@@ -9,7 +9,7 @@
 #   uv run samples/autogen-migration/single_agent/01_basic_assistant_agent.py
 
 # Copyright (c) Microsoft. All rights reserved.
-"""Basic AutoGen AssistantAgent vs Agent Framework ChatAgent.
+"""Basic AutoGen AssistantAgent vs Agent Framework Agent.
 
 Both samples expect OpenAI-compatible environment variables (OPENAI_API_KEY or
 Azure OpenAI configuration). Update the prompts or client wiring to match your
@@ -38,10 +38,10 @@ async def run_autogen() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Call Agent Framework's ChatAgent created from OpenAIChatClient."""
+    """Call Agent Framework's Agent created from OpenAIChatClient."""
     from agent_framework.openai import OpenAIChatClient
 
-    # AF constructs a lightweight ChatAgent backed by OpenAIChatClient
+    # AF constructs a lightweight Agent backed by OpenAIChatClient
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
     agent = client.as_agent(
         name="assistant",

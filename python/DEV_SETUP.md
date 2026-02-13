@@ -116,7 +116,7 @@ You will then configure the ChatClient class with the keyword argument `env_file
 ```python
 from agent_framework.openai import OpenAIChatClient
 
-chat_client = OpenAIChatClient(env_file_path="openai.env")
+client = OpenAIChatClient(env_file_path="openai.env")
 ```
 
 ## Tests

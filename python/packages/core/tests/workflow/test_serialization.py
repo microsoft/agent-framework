@@ -647,12 +647,11 @@ class TestSerializationWorkflowClasses:
         # Test 2: Without name and description (defaults)
         workflow2 = WorkflowBuilder(start_executor=SampleExecutor(id="e2")).build()
 
-        assert workflow2.name is None
+        assert workflow2.name is not None
         assert workflow2.description is None
 
         data2 = workflow2.to_dict()
-        assert "name" not in data2  # Should not include None values
-        assert "description" not in data2
+        assert "description" not in data2  # Should not include None values
 
         # Test 3: With only name (no description)
         workflow3 = WorkflowBuilder(name="Named Only", start_executor=SampleExecutor(id="e3")).build()

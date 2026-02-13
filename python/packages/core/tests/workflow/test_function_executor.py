@@ -8,9 +8,9 @@ from typing_extensions import Never
 
 from agent_framework import (
     FunctionExecutor,
-    Message,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowMessage,
     executor,
 )
 
@@ -253,9 +253,9 @@ class TestFunctionExecutor:
         async def string_processor(text: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message(text)
 
-        assert string_processor.can_handle(Message(data="hello", source_id="Mock"))
-        assert not string_processor.can_handle(Message(data=123, source_id="Mock"))
-        assert not string_processor.can_handle(Message(data=[], source_id="Mock"))
+        assert string_processor.can_handle(WorkflowMessage(data="hello", source_id="Mock"))
+        assert not string_processor.can_handle(WorkflowMessage(data=123, source_id="Mock"))
+        assert not string_processor.can_handle(WorkflowMessage(data=[], source_id="Mock"))
 
     def test_duplicate_handler_registration(self):
         """Test that registering duplicate handlers raises an error."""
@@ -332,9 +332,9 @@ class TestFunctionExecutor:
         async def int_processor(value: int):
             return value * 2
 
-        assert int_processor.can_handle(Message(data=42, source_id="mock"))
-        assert not int_processor.can_handle(Message(data="hello", source_id="mock"))
-        assert not int_processor.can_handle(Message(data=[], source_id="mock"))
+        assert int_processor.can_handle(WorkflowMessage(data=42, source_id="mock"))
+        assert not int_processor.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert not int_processor.can_handle(WorkflowMessage(data=[], source_id="mock"))
 
     async def test_single_parameter_execution(self):
         """Test that single-parameter functions can be executed properly."""
@@ -348,7 +348,7 @@ class TestFunctionExecutor:
         WorkflowBuilder(start_executor=double_value).build()
 
         # For testing purposes, we can check that the handler is registered correctly
-        assert double_value.can_handle(Message(data=5, source_id="mock"))
+        assert double_value.can_handle(WorkflowMessage(data=5, source_id="mock"))
         assert int in double_value._handlers
 
     def test_sync_function_basic(self):
@@ -392,9 +392,9 @@ class TestFunctionExecutor:
         def string_handler(text: str):
             return text.strip()
 
-        assert string_handler.can_handle(Message(data="hello", source_id="mock"))
-        assert not string_handler.can_handle(Message(data=123, source_id="mock"))
-        assert not string_handler.can_handle(Message(data=[], source_id="mock"))
+        assert string_handler.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert not string_handler.can_handle(WorkflowMessage(data=123, source_id="mock"))
+        assert not string_handler.can_handle(WorkflowMessage(data=[], source_id="mock"))
 
     def test_sync_function_validation(self):
         """Test validation for synchronous functions."""
@@ -436,8 +436,8 @@ class TestFunctionExecutor:
         assert isinstance(async_func, FunctionExecutor)
 
         # Both should handle strings
-        assert sync_func.can_handle(Message(data="test", source_id="mock"))
-        assert async_func.can_handle(Message(data="test", source_id="mock"))
+        assert sync_func.can_handle(WorkflowMessage(data="test", source_id="mock"))
+        assert async_func.can_handle(WorkflowMessage(data="test", source_id="mock"))
 
         # Both should be different instances
         assert sync_func is not async_func
@@ -466,8 +466,8 @@ class TestFunctionExecutor:
         assert async_spec["workflow_output_types"] == [str]  # Second parameter is str
 
         # Verify the executors can handle their input types
-        assert to_upper_sync.can_handle(Message(data="hello", source_id="mock"))
-        assert reverse_async.can_handle(Message(data="HELLO", source_id="mock"))
+        assert to_upper_sync.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert reverse_async.can_handle(WorkflowMessage(data="HELLO", source_id="mock"))
 
         # For integration testing, we mainly verify that the handlers are properly registered
         # and the functions are wrapped correctly
@@ -574,9 +574,9 @@ class TestExecutorExplicitTypes:
         assert len(process._handlers) == 1
 
         # Can handle str messages
-        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
         # Cannot handle int messages
-        assert not process.can_handle(Message(data=42, source_id="mock"))
+        assert not process.can_handle(WorkflowMessage(data=42, source_id="mock"))
 
     def test_executor_with_explicit_output_type(self):
         """Test that explicit output_type takes precedence over introspection."""
@@ -609,8 +609,8 @@ class TestExecutorExplicitTypes:
         assert spec["output_types"] == [list]
 
         # Verify can_handle
-        assert process.can_handle(Message(data={"key": "value"}, source_id="mock"))
-        assert not process.can_handle(Message(data="string", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data={"key": "value"}, source_id="mock"))
+        assert not process.can_handle(WorkflowMessage(data="string", source_id="mock"))
 
     def test_executor_with_explicit_union_input_type(self):
         """Test that explicit union input_type is handled correctly."""
@@ -623,10 +623,10 @@ class TestExecutorExplicitTypes:
         assert len(process._handlers) == 1
 
         # Can handle both str and int messages
-        assert process.can_handle(Message(data="hello", source_id="mock"))
-        assert process.can_handle(Message(data=42, source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data=42, source_id="mock"))
         # Cannot handle float
-        assert not process.can_handle(Message(data=3.14, source_id="mock"))
+        assert not process.can_handle(WorkflowMessage(data=3.14, source_id="mock"))
 
     def test_executor_with_explicit_union_output_type(self):
         """Test that explicit union output_type is normalized to a list."""
@@ -695,7 +695,7 @@ class TestExecutorExplicitTypes:
 
         # Should work with explicit input_type
         assert str in process._handlers
-        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
     def test_executor_explicit_types_with_id(self):
         """Test that explicit types work together with id parameter."""
@@ -717,8 +717,8 @@ class TestExecutorExplicitTypes:
 
         # Should work with explicit input_type
         assert str in process._handlers
-        assert process.can_handle(Message(data="hello", source_id="mock"))
-        assert not process.can_handle(Message(data=42, source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert not process.can_handle(WorkflowMessage(data=42, source_id="mock"))
 
     def test_executor_explicit_types_with_sync_function(self):
         """Test that explicit types work with synchronous functions."""
@@ -752,8 +752,8 @@ class TestExecutorExplicitTypes:
             pass
 
         # Can handle both str and int
-        assert process.can_handle(Message(data="hello", source_id="mock"))
-        assert process.can_handle(Message(data=42, source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data=42, source_id="mock"))
 
         # Output types should include both
         assert set(process.output_types) == {bool, float}
@@ -767,7 +767,7 @@ class TestExecutorExplicitTypes:
 
         # Should resolve the string to the actual type
         assert FuncExecForwardRefMessage in process._handlers
-        assert process.can_handle(Message(data=FuncExecForwardRefMessage("hello"), source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data=FuncExecForwardRefMessage("hello"), source_id="mock"))
 
     def test_executor_with_string_forward_reference_union(self):
         """Test that string forward references work with union types."""
@@ -777,8 +777,8 @@ class TestExecutorExplicitTypes:
             pass
 
         # Should handle both types
-        assert process.can_handle(Message(data=FuncExecForwardRefTypeA("hello"), source_id="mock"))
-        assert process.can_handle(Message(data=FuncExecForwardRefTypeB(42), source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data=FuncExecForwardRefTypeA("hello"), source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data=FuncExecForwardRefTypeB(42), source_id="mock"))
 
     def test_executor_with_string_forward_reference_output_type(self):
         """Test that string forward references work for output_type."""
@@ -827,7 +827,7 @@ class TestExecutorExplicitTypes:
 
         # Check input type
         assert str in process._handlers
-        assert process.can_handle(Message(data="hello", source_id="mock"))
+        assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
         # Check output_type
         assert int in process.output_types

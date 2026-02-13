@@ -5,7 +5,8 @@
 import json
 
 import pytest
-from agent_framework import ChatAgent, ChatResponseUpdate, Content
+from agent_framework import Agent, ChatResponseUpdate, Content
+from agent_framework.orchestrations import SequentialBuilder
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
 from fastapi.testclient import TestClient
@@ -28,7 +29,7 @@ def build_chat_client(streaming_chat_client_stub, stream_from_updates_fixture):
 async def test_add_endpoint_with_agent_protocol(build_chat_client):
     """Test adding endpoint with raw SupportsAgentRun."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/test-agent")
 
@@ -42,7 +43,7 @@ async def test_add_endpoint_with_agent_protocol(build_chat_client):
 async def test_add_endpoint_with_wrapped_agent(build_chat_client):
     """Test adding endpoint with pre-wrapped AgentFrameworkAgent."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     wrapped_agent = AgentFrameworkAgent(agent=agent, name="wrapped")
 
     add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/wrapped-agent")
@@ -57,7 +58,7 @@ async def test_add_endpoint_with_wrapped_agent(build_chat_client):
 async def test_endpoint_with_state_schema(build_chat_client):
     """Test endpoint with state_schema parameter."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     state_schema = {"document": {"type": "string"}}
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/stateful", state_schema=state_schema)
@@ -73,7 +74,7 @@ async def test_endpoint_with_state_schema(build_chat_client):
 async def test_endpoint_with_default_state_seed(build_chat_client):
     """Test endpoint seeds default state when client omits it."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     state_schema = {"proverbs": {"type": "array"}}
     default_state = {"proverbs": ["Keep the original."]}
 
@@ -100,7 +101,7 @@ async def test_endpoint_with_default_state_seed(build_chat_client):
 async def test_endpoint_with_predict_state_config(build_chat_client):
     """Test endpoint with predict_state_config parameter."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     predict_config = {"document": {"tool": "write_doc", "tool_argument": "content"}}
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/predictive", predict_state_config=predict_config)
@@ -114,7 +115,7 @@ async def test_endpoint_with_predict_state_config(build_chat_client):
 async def test_endpoint_request_logging(build_chat_client):
     """Test that endpoint logs request details."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/logged")
 
@@ -134,7 +135,7 @@ async def test_endpoint_request_logging(build_chat_client):
 async def test_endpoint_event_streaming(build_chat_client):
     """Test that endpoint streams events correctly."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client("Streamed response"))
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client("Streamed response"))
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/stream")
 
@@ -165,10 +166,32 @@ async def test_endpoint_event_streaming(build_chat_client):
     assert found_run_finished
 
 
+async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):
+    """Test endpoint handles workflow-as-agent stream outputs."""
+    app = FastAPI()
+    brainstorm_agent = Agent(name="brainstorm", instructions="Brainstorm ideas", client=build_chat_client("Idea"))
+    reviewer_agent = Agent(name="reviewer", instructions="Review ideas", client=build_chat_client("Review"))
+    agent = SequentialBuilder(participants=[brainstorm_agent, reviewer_agent]).build().as_agent()
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/workflow-like")
+
+    client = TestClient(app)
+    response = client.post("/workflow-like", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    event_types = [json.loads(line[6:]).get("type") for line in lines]
+
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
+
+
 async def test_endpoint_error_handling(build_chat_client):
     """Test endpoint error handling during request parsing."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/failing")
 
@@ -184,8 +207,8 @@ async def test_endpoint_error_handling(build_chat_client):
 async def test_endpoint_multiple_paths(build_chat_client):
     """Test adding multiple endpoints with different paths."""
     app = FastAPI()
-    agent1 = ChatAgent(name="agent1", instructions="First agent", chat_client=build_chat_client("Response 1"))
-    agent2 = ChatAgent(name="agent2", instructions="Second agent", chat_client=build_chat_client("Response 2"))
+    agent1 = Agent(name="agent1", instructions="First agent", client=build_chat_client("Response 1"))
+    agent2 = Agent(name="agent2", instructions="Second agent", client=build_chat_client("Response 2"))
 
     add_agent_framework_fastapi_endpoint(app, agent1, path="/agent1")
     add_agent_framework_fastapi_endpoint(app, agent2, path="/agent2")
@@ -202,7 +225,7 @@ async def test_endpoint_multiple_paths(build_chat_client):
 async def test_endpoint_default_path(build_chat_client):
     """Test endpoint with default path."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent)
 
@@ -215,7 +238,7 @@ async def test_endpoint_default_path(build_chat_client):
 async def test_endpoint_response_headers(build_chat_client):
     """Test that endpoint sets correct response headers."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/headers")
 
@@ -231,7 +254,7 @@ async def test_endpoint_response_headers(build_chat_client):
 async def test_endpoint_empty_messages(build_chat_client):
     """Test endpoint with empty messages list."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/empty")
 
@@ -244,7 +267,7 @@ async def test_endpoint_empty_messages(build_chat_client):
 async def test_endpoint_complex_input(build_chat_client):
     """Test endpoint with complex input data."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/complex")
 
@@ -269,7 +292,7 @@ async def test_endpoint_complex_input(build_chat_client):
 async def test_endpoint_openapi_schema(build_chat_client):
     """Test that endpoint generates proper OpenAPI schema with request model."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/schema-test")
 
@@ -313,7 +336,7 @@ async def test_endpoint_openapi_schema(build_chat_client):
 async def test_endpoint_default_tags(build_chat_client):
     """Test that endpoint uses default 'AG-UI' tag."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/default-tags")
 
@@ -331,7 +354,7 @@ async def test_endpoint_default_tags(build_chat_client):
 async def test_endpoint_custom_tags(build_chat_client):
     """Test that endpoint accepts custom tags."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/custom-tags", tags=["Custom", "Agent"])
 
@@ -349,7 +372,7 @@ async def test_endpoint_custom_tags(build_chat_client):
 async def test_endpoint_missing_required_field(build_chat_client):
     """Test that endpoint validates required fields with Pydantic."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     add_agent_framework_fastapi_endpoint(app, agent, path="/validation")
 
@@ -368,7 +391,7 @@ async def test_endpoint_internal_error_handling(build_chat_client):
     from unittest.mock import patch
 
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     # Use default_state to trigger the code path that can raise an exception
     add_agent_framework_fastapi_endpoint(app, agent, path="/error-test", default_state={"key": "value"})
@@ -387,7 +410,7 @@ async def test_endpoint_internal_error_handling(build_chat_client):
 async def test_endpoint_with_dependencies_blocks_unauthorized(build_chat_client):
     """Test that endpoint blocks requests when authentication dependency fails."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     async def require_api_key(x_api_key: str | None = Header(None)):
         if x_api_key != "secret-key":
@@ -406,7 +429,7 @@ async def test_endpoint_with_dependencies_blocks_unauthorized(build_chat_client)
 async def test_endpoint_with_dependencies_allows_authorized(build_chat_client):
     """Test that endpoint allows requests when authentication dependency passes."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     async def require_api_key(x_api_key: str | None = Header(None)):
         if x_api_key != "secret-key":
@@ -429,7 +452,7 @@ async def test_endpoint_with_dependencies_allows_authorized(build_chat_client):
 async def test_endpoint_with_multiple_dependencies(build_chat_client):
     """Test that endpoint supports multiple dependencies."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     execution_order: list[str] = []
 
@@ -457,7 +480,7 @@ async def test_endpoint_with_multiple_dependencies(build_chat_client):
 async def test_endpoint_without_dependencies_is_accessible(build_chat_client):
     """Test that endpoint without dependencies remains accessible (backward compatibility)."""
     app = FastAPI()
-    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
     # No dependencies parameter - should be accessible without auth
     add_agent_framework_fastapi_endpoint(app, agent, path="/open")
