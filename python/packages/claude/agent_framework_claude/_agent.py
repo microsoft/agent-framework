@@ -557,7 +557,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -568,7 +568,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -578,7 +578,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -612,7 +612,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     async def _get_stream(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,

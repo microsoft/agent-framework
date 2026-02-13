@@ -150,7 +150,7 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -411,7 +411,7 @@ class StubManagerAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: Any = None,

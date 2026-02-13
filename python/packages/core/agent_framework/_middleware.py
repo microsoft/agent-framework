@@ -16,6 +16,7 @@ from ._types import (
     AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     prepare_messages,
@@ -67,6 +68,8 @@ __all__ = [
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ContextT = TypeVar("ContextT")
 UpdateT = TypeVar("UpdateT")
+AgentRunMessages = str | Content | Message | Sequence[str | Content | Message]
+AgentRunMessagesOrNone = AgentRunMessages | None
 
 
 class _EmptyAsyncIterator(Generic[UpdateT]):
@@ -978,7 +981,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -988,7 +991,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -998,7 +1001,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1007,7 +1010,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1034,7 +1037,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
         context = ChatContext(
             client=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages),
+            messages=messages,
             options=options,
             stream=stream,
             kwargs=kwargs,
@@ -1095,7 +1098,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1107,7 +1110,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1119,7 +1122,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1130,7 +1133,7 @@ class AgentMiddlewareLayer:
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1161,7 +1164,7 @@ class AgentMiddlewareLayer:
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages),  # type: ignore[arg-type]
+            messages=prepare_messages(messages) if messages is not None else [],
             session=session,
             options=options,
             stream=stream,

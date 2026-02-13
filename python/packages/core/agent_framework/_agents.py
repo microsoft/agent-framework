@@ -43,6 +43,7 @@ from ._types import (
     AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     map_chat_to_agent_update,
@@ -76,6 +77,8 @@ OptionsCoT = TypeVar(
     default="ChatOptions[None]",
     covariant=True,
 )
+AgentRunMessages = str | Content | Message | Sequence[str | Content | Message]
+AgentRunMessagesOrNone = AgentRunMessages | None
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +233,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -242,7 +245,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -253,7 +256,7 @@ class SupportsAgentRun(Protocol):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -763,7 +766,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -780,7 +783,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -797,7 +800,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -813,7 +816,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunMessagesOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1000,7 +1003,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     async def _prepare_run_context(
         self,
         *,
-        messages: str | Message | Sequence[str | Message] | None,
+        messages: AgentRunMessagesOrNone,
         session: AgentSession | None,
         tools: FunctionTool
         | Callable[..., Any]

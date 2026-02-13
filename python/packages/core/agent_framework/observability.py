@@ -1084,7 +1084,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1094,7 +1094,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1104,7 +1104,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1113,7 +1113,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1277,7 +1277,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1287,7 +1287,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1296,7 +1296,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1614,7 +1614,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | Message | Sequence[str | Message],
+    messages: str | Content | Message | Sequence[str | Content | Message],
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
