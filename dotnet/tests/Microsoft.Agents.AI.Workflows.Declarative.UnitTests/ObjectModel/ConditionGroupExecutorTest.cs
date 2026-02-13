@@ -23,7 +23,6 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     {
         // Arrange
         ConditionGroup model = this.CreateModel(nameof(ConditionGroupDefaultNaming), [false], includeElse: true, defineActionIds: false);
-        ConditionGroupExecutor executor = new(model, this.State);
         ConditionItem condition = model.Conditions[0];
 
         // Act
@@ -39,8 +38,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
     public void ConditionGroupExplicitNaming()
     {
         // Arrange
-        ConditionGroup model = this.CreateModel(nameof(ConditionGroupDefaultNaming), [false], includeElse: true);
-        ConditionGroupExecutor executor = new(model, this.State);
+        ConditionGroup model = this.CreateModel(nameof(ConditionGroupExplicitNaming), [false], includeElse: true);
         ConditionItem condition = model.Conditions[0];
 
         // Act
