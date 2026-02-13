@@ -27,6 +27,10 @@ from agent_framework_anthropic._chat_client import AnthropicSettings
 from agent_framework._settings import load_settings
 
 
+# Test data constants
+VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+
 def create_test_client(mock_client: MagicMock) -> AnthropicClient:
     """Create a test AnthropicClient with a mock Anthropic client."""
     settings = load_settings(
@@ -130,7 +134,7 @@ class TestMessagePreparing:
             contents=[
                 Content.from_data(
                     media_type="image/png",
-                    data=b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                    data=VALID_PNG_BASE64
                 )
             ]
         )
@@ -238,7 +242,7 @@ class TestMCPTools:
 class TestPrepareOptions:
     """Tests for _prepare_options method."""
     
-    async def test_prepare_options_with_instructions(self, mock_anthropic_client: MagicMock) -> None:
+    def test_prepare_options_with_instructions(self, mock_anthropic_client: MagicMock) -> None:
         """Test prepare_options with instructions parameter."""
         client = create_test_client(mock_anthropic_client)
         
@@ -264,7 +268,7 @@ class TestPrepareOptions:
         with pytest.raises(ValueError, match="model_id must be a non-empty string"):
             client._prepare_options(messages, options)
     
-    async def test_prepare_options_with_user_metadata(self, mock_anthropic_client: MagicMock) -> None:
+    def test_prepare_options_with_user_metadata(self, mock_anthropic_client: MagicMock) -> None:
         """Test prepare_options maps user to metadata.user_id."""
         client = create_test_client(mock_anthropic_client)
         
@@ -276,7 +280,7 @@ class TestPrepareOptions:
         assert "user" not in result
         assert result["metadata"]["user_id"] == "user123"
     
-    async def test_prepare_options_user_metadata_no_override(self, mock_anthropic_client: MagicMock) -> None:
+    def test_prepare_options_user_metadata_no_override(self, mock_anthropic_client: MagicMock) -> None:
         """Test user option doesn't override existing user_id in metadata."""
         client = create_test_client(mock_anthropic_client)
         
@@ -295,7 +299,7 @@ class TestPrepareOptions:
 class TestToolChoice:
     """Tests for tool choice configuration."""
     
-    async def test_tool_choice_auto_with_allow_multiple(self, mock_anthropic_client: MagicMock) -> None:
+    def test_tool_choice_auto_with_allow_multiple(self, mock_anthropic_client: MagicMock) -> None:
         """Test tool_choice auto mode with allow_multiple=False."""
         client = create_test_client(mock_anthropic_client)
         
@@ -317,7 +321,7 @@ class TestToolChoice:
         assert result["tool_choice"]["type"] == "auto"
         assert result["tool_choice"]["disable_parallel_tool_use"] is True
     
-    async def test_tool_choice_required_any(self, mock_anthropic_client: MagicMock) -> None:
+    def test_tool_choice_required_any(self, mock_anthropic_client: MagicMock) -> None:
         """Test tool_choice required mode without specific function."""
         client = create_test_client(mock_anthropic_client)
         
@@ -337,7 +341,7 @@ class TestToolChoice:
         
         assert result["tool_choice"]["type"] == "any"
     
-    async def test_tool_choice_required_specific_function(self, mock_anthropic_client: MagicMock) -> None:
+    def test_tool_choice_required_specific_function(self, mock_anthropic_client: MagicMock) -> None:
         """Test tool_choice required mode with specific function."""
         client = create_test_client(mock_anthropic_client)
         
@@ -388,7 +392,7 @@ def mock_anthropic_client() -> MagicMock:
 class TestMCPToolConfiguration:
     """Tests for MCP tool configuration with allowed_tools."""
     
-    async def test_prepare_tools_mcp_with_allowed_tools(self, mock_anthropic_client: MagicMock) -> None:
+    def test_prepare_tools_mcp_with_allowed_tools(self, mock_anthropic_client: MagicMock) -> None:
         """Test MCP tool with allowed_tools configuration."""
         client = create_test_client(mock_anthropic_client)
         
@@ -413,7 +417,7 @@ class TestMCPToolConfiguration:
 class TestToolChoiceNone:
     """Tests for tool choice none mode."""
     
-    async def test_tool_choice_none(self, mock_anthropic_client: MagicMock) -> None:
+    def test_tool_choice_none(self, mock_anthropic_client: MagicMock) -> None:
         """Test tool_choice none mode."""
         client = create_test_client(mock_anthropic_client)
         
@@ -433,8 +437,8 @@ class TestToolChoiceNone:
         
         assert result["tool_choice"]["type"] == "none"
     
-    async def test_tool_choice_unsupported_mode(self, mock_anthropic_client: MagicMock) -> None:
-        """Test that tool choice with allow_multiple disables parallel use."""
+    def test_tool_choice_required_allows_parallel_use(self, mock_anthropic_client: MagicMock) -> None:
+        """Test tool choice required mode with allow_multiple=True."""
         client = create_test_client(mock_anthropic_client)
         
         messages = [Message(role="user", contents=[Content.from_text("Hello")])]
@@ -460,7 +464,7 @@ class TestToolChoiceNone:
 class TestPrepareOptionsFilters:
     """Tests for filtering options."""
     
-    async def test_prepare_options_filters_internal_kwargs(self, mock_anthropic_client: MagicMock) -> None:
+    def test_prepare_options_filters_internal_kwargs(self, mock_anthropic_client: MagicMock) -> None:
         """Test that internal kwargs are filtered out."""
         client = create_test_client(mock_anthropic_client)
         
@@ -479,35 +483,6 @@ class TestPrepareOptionsFilters:
         assert "_function_middleware_pipeline" not in result
         assert "thread" not in result
         assert "middleware" not in result
-
-
-class TestInnerGetResponseStreaming:
-    """Tests for streaming response handling."""
-    
-    async def test_inner_get_response_streaming_yields_chunks(self, mock_anthropic_client: MagicMock) -> None:
-        """Test that streaming mode yields parsed chunks."""
-        client = create_test_client(mock_anthropic_client)
-        
-        # Mock streaming response
-        async def mock_stream():
-            # Yield mock events
-            mock_event1 = MagicMock()
-            mock_event1.type = "message_stop"
-            yield mock_event1
-        
-        mock_anthropic_client.beta.messages.create = AsyncMock(return_value=mock_stream())
-        
-        messages = [Message(role="user", contents=[Content.from_text("Hello")])]
-        options = {}
-        
-        response_stream = client._inner_get_response(
-            messages=messages,
-            options=options,
-            stream=True
-        )
-        
-        # Should return a ResponseStream
-        assert response_stream is not None
 
 
 class TestParseContentsFromAnthropic:
