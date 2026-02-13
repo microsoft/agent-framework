@@ -59,13 +59,13 @@ namespace SampleApp
 
             // Get existing messages from the store
             var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
-            var storeMessages = await this.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
+            var userAndChatHistoryMessages = await this.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, responseMessages);
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, userAndChatHistoryMessages, responseMessages);
             await this.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             return new AgentResponse
@@ -88,13 +88,13 @@ namespace SampleApp
 
             // Get existing messages from the store
             var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
-            var storeMessages = await this.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
+            var userAndChatHistoryMessages = await this.ChatHistoryProvider.InvokingAsync(invokingContext, cancellationToken);
 
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the session of the input and output messages.
-            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, messages, responseMessages);
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, userAndChatHistoryMessages, responseMessages);
             await this.ChatHistoryProvider.InvokedAsync(invokedContext, cancellationToken);
 
             foreach (var message in responseMessages)

@@ -223,9 +223,9 @@ public abstract class AIContextProvider
     /// Contains the context information provided to <see cref="InvokedCoreAsync(InvokedContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
-    /// This class provides context about a completed agent invocation, including both the
-    /// request messages that were used and the response messages that were generated. It also indicates
-    /// whether the invocation succeeded or failed.
+    /// This class provides context about a completed agent invocation, including the accumulated
+    /// request messages (user input, chat history and any others provided by AI context providers) that were used
+    /// and the response messages that were generated. It also indicates whether the invocation succeeded or failed.
     /// </remarks>
     public sealed class InvokedContext
     {
@@ -234,7 +234,8 @@ public abstract class AIContextProvider
         /// </summary>
         /// <param name="agent">The agent that was invoked.</param>
         /// <param name="session">The session associated with the agent invocation.</param>
-        /// <param name="requestMessages">The messages that were used by the agent for this invocation.</param>
+        /// <param name="requestMessages">The accumulated request messages (user input, chat history and any others provided by AI context providers)
+        /// that were used by the agent for this invocation.</param>
         /// <param name="responseMessages">The response messages generated during this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/>, <paramref name="requestMessages"/>, or <paramref name="responseMessages"/> is <see langword="null"/>.</exception>
         public InvokedContext(
@@ -254,7 +255,8 @@ public abstract class AIContextProvider
         /// </summary>
         /// <param name="agent">The agent that was invoked.</param>
         /// <param name="session">The session associated with the agent invocation.</param>
-        /// <param name="requestMessages">The messages that were used by the agent for this invocation.</param>
+        /// <param name="requestMessages">The accumulated request messages (user input, chat history and any others provided by AI context providers)
+        /// that were used by the agent for this invocation.</param>
         /// <param name="invokeException">The exception that caused the invocation to fail.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/>, <paramref name="requestMessages"/>, or <paramref name="invokeException"/> is <see langword="null"/>.</exception>
         public InvokedContext(
@@ -280,7 +282,8 @@ public abstract class AIContextProvider
         public AgentSession? Session { get; }
 
         /// <summary>
-        /// Gets the messages that were used by the agent for this invocation.
+        /// Gets the accumulated request messages (user input, chat history and any others provided by AI context providers)
+        /// that were used by the agent for this invocation.
         /// </summary>
         /// <value>
         /// A collection of <see cref="ChatMessage"/> instances representing all messages that were used by the agent for this invocation.

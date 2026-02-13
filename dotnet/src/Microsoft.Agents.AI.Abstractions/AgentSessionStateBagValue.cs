@@ -78,10 +78,17 @@ internal class AgentSessionStateBagValue
 
         lock (this._lock)
         {
-            if (this._cache is { } cache)
+            switch (this._cache)
             {
-                value = cache.Value as T;
-                return true;
+                case DeserializedCache { Value: null, ValueType: Type cacheValueType } when cacheValueType == typeof(T):
+                    value = null;
+                    return true;
+                case DeserializedCache { Value: T cacheValue, ValueType: Type cacheValueType } when cacheValueType == typeof(T):
+                    value = cacheValue;
+                    return true;
+                case DeserializedCache { ValueType: Type cacheValueType } when cacheValueType != typeof(T):
+                    value = null;
+                    return false;
             }
 
             switch (this._jsonValue)
@@ -118,9 +125,14 @@ internal class AgentSessionStateBagValue
 
         lock (this._lock)
         {
-            if (this._cache is { } cache)
+            switch (this._cache)
             {
-                return cache.Value as T;
+                case DeserializedCache { Value: null, ValueType: Type cacheValueType } when cacheValueType == typeof(T):
+                    return null;
+                case DeserializedCache { Value: T cacheValue, ValueType: Type cacheValueType } when cacheValueType == typeof(T):
+                    return cacheValue;
+                case DeserializedCache { ValueType: Type cacheValueType } when cacheValueType != typeof(T):
+                    throw new InvalidOperationException($"The type of the cached value is {cacheValueType.FullName}, but the requested type is {typeof(T).FullName}.");
             }
 
             switch (this._jsonValue)
@@ -144,7 +156,7 @@ internal class AgentSessionStateBagValue
     /// Sets the deserialized value of this session state value, updating the cache accordingly.
     /// This does not update the JsonValue directly; the JsonValue will be updated on the next read or when the object is serialized.
     /// </summary>
-    public void SetDeserialized(object? deserializedValue, Type valueType, JsonSerializerOptions jsonSerializerOptions)
+    public void SetDeserialized<T>(T? deserializedValue, Type valueType, JsonSerializerOptions jsonSerializerOptions)
     {
         lock (this._lock)
         {

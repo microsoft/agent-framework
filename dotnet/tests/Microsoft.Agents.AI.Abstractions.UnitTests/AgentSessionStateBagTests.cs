@@ -534,14 +534,9 @@ public sealed class AgentSessionStateBagTests
         for (int i = 0; i < 200; i++)
         {
             int index = i;
-            if (index % 2 == 0)
-            {
-                tasks[i] = System.Threading.Tasks.Task.Run(() => stateBag.GetValue<string>("key"));
-            }
-            else
-            {
-                tasks[i] = System.Threading.Tasks.Task.Run(() => stateBag.SetValue("key", $"value{index}"));
-            }
+            tasks[i] = (index % 2 == 0)
+                ? System.Threading.Tasks.Task.Run(() => stateBag.GetValue<string>("key"))
+                : System.Threading.Tasks.Task.Run(() => stateBag.SetValue("key", $"value{index}"));
         }
 
         await System.Threading.Tasks.Task.WhenAll(tasks);
@@ -646,6 +641,104 @@ public sealed class AgentSessionStateBagTests
         Assert.Equal(7, animalElement.GetProperty("id").GetInt32());
         Assert.Equal("Spot", animalElement.GetProperty("fullName").GetString());
         Assert.Equal("Walrus", animalElement.GetProperty("species").GetString());
+    }
+
+    #endregion
+
+    #region Type Mismatch Tests
+
+    [Fact]
+    public void TryGetValue_WithDifferentTypeAfterSet_ReturnsFalse()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue("key1", "hello");
+
+        // Act
+        var found = stateBag.TryGetValue<Animal>("key1", out var result, TestJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.False(found);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetValue_WithDifferentTypeAfterSet_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue("key1", "hello");
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() => stateBag.GetValue<Animal>("key1", TestJsonSerializerContext.Default.Options));
+    }
+
+    [Fact]
+    public void TryGetValue_WithDifferentTypeAfterDeserializedRead_ReturnsFalse()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue("key1", "hello");
+
+        // First read caches the value as string
+        var cachedValue = stateBag.GetValue<string>("key1");
+        Assert.Equal("hello", cachedValue);
+
+        // Act - request as a different type
+        var found = stateBag.TryGetValue<Animal>("key1", out var result, TestJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.False(found);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetValue_WithDifferentTypeAfterDeserializedRoundtrip_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var originalStateBag = new AgentSessionStateBag();
+        originalStateBag.SetValue("key1", "hello");
+
+        // Round-trip through serialization
+        var json = originalStateBag.Serialize();
+        var restoredStateBag = AgentSessionStateBag.Deserialize(json);
+
+        // First read caches the value as string
+        var cachedValue = restoredStateBag.GetValue<string>("key1");
+        Assert.Equal("hello", cachedValue);
+
+        // Act & Assert - request as a different type
+        Assert.Throws<InvalidOperationException>(() => restoredStateBag.GetValue<Animal>("key1", TestJsonSerializerContext.Default.Options));
+    }
+
+    [Fact]
+    public void TryGetValue_ComplexTypeAfterSetString_ReturnsFalse()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue("animal", "not an animal");
+
+        // Act
+        var found = stateBag.TryGetValue<Animal>("animal", out var result, TestJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.False(found);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetValue_TypeMismatch_ExceptionMessageContainsBothTypeNames()
+    {
+        // Arrange
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue("key1", "hello");
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() => stateBag.GetValue<Animal>("key1", TestJsonSerializerContext.Default.Options));
+
+        // Assert
+        Assert.Contains(typeof(string).FullName!, exception.Message);
+        Assert.Contains(typeof(Animal).FullName!, exception.Message);
     }
 
     #endregion
